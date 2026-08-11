@@ -3269,13 +3269,7 @@ func TestTencentProviderStagedStorageSeparatesCBSCreateAndStaticBinding(t *testi
 		IdempotencyKey: volume.OperationID, OperationID: volume.OperationID,
 	}
 
-	// RED: normal launch must expose the staged provider boundary rather than
-	// coupling CBS creation to Kubernetes binding.
-	staged, ok := any(provider).(stagedStorageProvider)
-	if !ok {
-		t.Fatal("TencentProvider must implement stagedStorageProvider")
-	}
-	created, err := staged.CreateCBSVolume(context.Background(), input)
+	created, err := provider.CreateCBSVolume(context.Background(), input)
 	if err != nil || created.ProviderResourceID != "disk-staged-alpha" {
 		t.Fatalf("CBS create=%#v err=%v", created, err)
 	}
@@ -3283,7 +3277,7 @@ func TestTencentProviderStagedStorageSeparatesCBSCreateAndStaticBinding(t *testi
 		t.Fatalf("CBS stage actions=%v", actions)
 	}
 
-	read, err := staged.ReadCBSVolume(context.Background(), input, created)
+	read, err := provider.ReadCBSVolume(context.Background(), input, created)
 	if err != nil || read.ProviderResourceID != created.ProviderResourceID || len(actions) != 2 || actions[1] != "sync_storage_volume" {
 		t.Fatalf("CBS readback=%#v err=%v actions=%v", read, err, actions)
 	}
@@ -3308,11 +3302,11 @@ func TestTencentProviderStagedStorageSeparatesCBSCreateAndStaticBinding(t *testi
 			return nil, fmt.Errorf("unexpected kubectl action %#v", args)
 		}
 	}
-	bound, err := staged.ApplyStaticStorageBinding(context.Background(), read)
+	bound, err := provider.ApplyStaticStorageBinding(context.Background(), read)
 	if err != nil || bound.Status != "ready" || applyCalls != 1 {
 		t.Fatalf("static binding=%#v err=%v applyCalls=%d getCalls=%d", bound, err, applyCalls, getCalls)
 	}
-	readBound, err := staged.ReadStaticStorageBinding(context.Background(), bound)
+	readBound, err := provider.ReadStaticStorageBinding(context.Background(), bound)
 	if err != nil || readBound.Status != "ready" || applyCalls != 1 || getCalls == 0 {
 		t.Fatalf("static readback=%#v err=%v applyCalls=%d getCalls=%d", readBound, err, applyCalls, getCalls)
 	}
@@ -3735,4 +3729,21 @@ func findVolume(entries []any, name string) map[string]any {
 		}
 	}
 	return nil
+}
+
+func cloneJSONMap(input map[string]any) map[string]any {
+	encoded := mustJSON(input)
+	var output map[string]any
+	if err := json.Unmarshal(encoded, &output); err != nil {
+		panic(err)
+	}
+	return output
+}
+
+func repeatHex(value string, count int) string {
+	result := ""
+	for range count {
+		result += value
+	}
+	return result
 }

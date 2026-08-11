@@ -49,9 +49,6 @@ func selectedProvider(getenv func(string) string) (fabric.Provider, error) {
 	name := getenv("OPL_FABRIC_PROVIDER")
 	if name == "" {
 		name = "local-docker"
-		if getenv("NODE_ENV") == "production" {
-			name = "tencent-tke"
-		}
 	}
 	switch name {
 	case "local-docker":

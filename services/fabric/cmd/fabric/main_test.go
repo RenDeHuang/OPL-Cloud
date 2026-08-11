@@ -14,14 +14,14 @@ func TestSelectedProviderDefaultsLocalOutsideProduction(t *testing.T) {
 	}
 }
 
-func TestSelectedProviderPreservesProductionTencentDefault(t *testing.T) {
+func TestSelectedProviderDefaultsLocalInProduction(t *testing.T) {
 	provider, err := selectedProvider(func(key string) string {
 		if key == "NODE_ENV" {
 			return "production"
 		}
 		return ""
 	})
-	if err != nil || provider.Descriptor().Name != "tencent-tke" {
+	if err != nil || provider.Descriptor().Name != "local-docker" {
 		t.Fatalf("selected provider = %#v, %v", provider, err)
 	}
 }

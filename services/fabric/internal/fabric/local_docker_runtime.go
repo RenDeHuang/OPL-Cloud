@@ -81,33 +81,62 @@ func (p *LocalDockerProvider) gatewayMetadata(ctx context.Context, secretRef str
 func (p *LocalDockerProvider) UpsertGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
 	secretRef := gatewaySecretName(input.WorkspaceID)
 	labels := localDockerLabels(input.AccountID, input.WorkspaceID, secretRef, input.IdempotencyKey, "secret")
+	volumeAttempt, err := beginProviderMutation(ctx, "local_docker_secret_volume_create", "gateway_secret", secretRef, secretRef)
+	if err != nil {
+		return GatewaySecret{}, err
+	}
 	readback, exists, err := p.inspectVolume(ctx, secretRef)
 	if err != nil {
 		return GatewaySecret{}, err
 	}
 	if !exists {
+		if volumeAttempt != nil && !volumeAttempt.Fresh {
+			err := fmt.Errorf("local_docker_secret_volume_readback_pending")
+			_ = volumeAttempt.complete(ctx, "", GatewaySecret{SecretRef: secretRef}, err)
+			return GatewaySecret{}, err
+		}
 		args := append([]string{"volume", "create"}, dockerLabelArgs(labels)...)
 		args = append(args, secretRef)
 		if _, err := p.runner.Run(ctx, nil, args...); err != nil {
+			_ = volumeAttempt.complete(ctx, "", GatewaySecret{SecretRef: secretRef}, err)
 			return GatewaySecret{}, err
 		}
 		readback, exists, err = p.inspectVolume(ctx, secretRef)
 	}
 	if err != nil || !exists || !exactDockerLabels(readback.Labels, labels) {
-		return GatewaySecret{}, fmt.Errorf("local_docker_secret_readback_mismatch")
+		readErr := fmt.Errorf("local_docker_secret_readback_mismatch")
+		_ = volumeAttempt.complete(ctx, "", GatewaySecret{SecretRef: secretRef}, readErr)
+		return GatewaySecret{}, readErr
+	}
+	if completeErr := volumeAttempt.complete(ctx, providerRequestID("docker-secret-volume", secretRef), GatewaySecret{SecretRef: secretRef}, nil); completeErr != nil {
+		return GatewaySecret{}, completeErr
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
 	metadata := localDockerGatewayMetadata{
 		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, WorkspaceAPIKeyID: input.WorkspaceAPIKeyID,
 		SecretRef: secretRef, Fingerprint: "sha256:" + digest, Version: digest[:16],
 	}
-	if err := p.writeGatewaySecret(ctx, secretRef, []byte(input.GatewayAPIKey), metadata); err != nil {
-		return GatewaySecret{}, err
+	writeAttempt, beginErr := beginProviderMutation(ctx, "local_docker_secret_write", "gateway_secret", secretRef, metadata.Version)
+	if beginErr != nil {
+		return GatewaySecret{}, beginErr
 	}
-	return p.ReadGatewaySecretByDigest(ctx, GatewaySecretReadbackInput{
+	if writeAttempt == nil || writeAttempt.Fresh {
+		if err := p.writeGatewaySecret(ctx, secretRef, []byte(input.GatewayAPIKey), metadata); err != nil {
+			_ = writeAttempt.complete(ctx, "", GatewaySecret{SecretRef: secretRef}, err)
+			return GatewaySecret{}, err
+		}
+	}
+	secret, err := p.ReadGatewaySecretByDigest(ctx, GatewaySecretReadbackInput{
 		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, WorkspaceAPIKeyID: input.WorkspaceAPIKeyID,
 		SecretRef: secretRef, Fingerprint: input.Fingerprint, KeyDigest: digest,
 	})
+	if err != nil {
+		return GatewaySecret{}, err
+	}
+	if completeErr := writeAttempt.complete(ctx, providerRequestID("docker-secret-write", secretRef), secret, nil); completeErr != nil {
+		return GatewaySecret{}, completeErr
+	}
+	return secret, nil
 }
 
 func (p *LocalDockerProvider) ReadGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
@@ -225,15 +254,24 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 	} {
 		labels[key] = value
 	}
+	attempt, beginErr := beginProviderMutation(ctx, "local_docker_runtime_create", "workspace_runtime", runtimeID, name)
+	if beginErr != nil {
+		return WorkspaceRuntime{}, beginErr
+	}
 	container, exists, inspectErr := p.inspectContainer(ctx, name)
 	if inspectErr != nil {
 		return WorkspaceRuntime{}, inspectErr
 	}
 	if !exists {
-		volumeName := firstNonEmpty(volumeReadback.ProviderData["volumeName"], strings.TrimPrefix(volumeReadback.ProviderResourceID, "volume/"))
+		if attempt != nil && !attempt.Fresh {
+			err := fmt.Errorf("local_docker_runtime_mutation_readback_pending")
+			_ = attempt.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, err)
+			return WorkspaceRuntime{}, err
+		}
+		volumeName := localDockerName("opl-storage", volumeReadback.ID)
 		args := append([]string{"run", "-d", "--name", name}, dockerLabelArgs(labels)...)
 		args = append(args,
-			"--network", computeReadback.MachineName,
+			"--network", localDockerName("opl-compute", computeReadback.ID),
 			"--mount", "type=volume,source="+volumeName+",target=/data",
 			"--mount", "type=volume,source="+input.GatewaySecretRef+",target=/run/secrets,readonly",
 			"-p", p.runtimeHost+"::3000",
@@ -243,6 +281,7 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 			"-e", "OPL_PROJECTS_DIR=/data/projects", input.ImageID,
 		)
 		if _, err := p.runner.Run(ctx, nil, args...); err != nil {
+			_ = attempt.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, err)
 			return WorkspaceRuntime{}, err
 		}
 		container, exists, inspectErr = p.inspectContainer(ctx, name)
@@ -250,9 +289,18 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 	if inspectErr != nil || !exists || !exactDockerLabels(container.Config.Labels, labels) ||
 		!runtimeMountPresent(container, strings.TrimPrefix(volumeReadback.ProviderResourceID, "volume/"), "/data") ||
 		!runtimeMountPresent(container, input.GatewaySecretRef, "/run/secrets") {
-		return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_readback_mismatch")
+		readErr := fmt.Errorf("local_docker_runtime_readback_mismatch")
+		_ = attempt.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, readErr)
+		return WorkspaceRuntime{}, readErr
 	}
-	return p.runtimeFromContainer(container)
+	resource, err := p.runtimeFromContainer(container)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	if completeErr := attempt.complete(ctx, resource.ProviderRequestID, resource, nil); completeErr != nil {
+		return WorkspaceRuntime{}, completeErr
+	}
+	return resource, nil
 }
 
 func (p *LocalDockerProvider) runtimeFromContainer(container dockerContainerInspect) (WorkspaceRuntime, error) {
@@ -278,8 +326,7 @@ func (p *LocalDockerProvider) runtimeFromContainer(container dockerContainerInsp
 	return WorkspaceRuntime{
 		ID: runtimeID, OperationID: labels["opl.operation.id"], WorkspaceID: workspaceID, URL: url, Status: status,
 		ServiceName: container.Name, ImageID: labels["opl.image.ref"], ProviderRequestID: providerRequestID("docker-runtime-read", runtimeID), Ready: ready,
-		Checks:   []Check{{Name: "docker_container_running", OK: container.State.Running}, {Name: "runtime_port_published", OK: url != ""}},
-		CostTags: localDockerLabels(labels["opl.account.id"], workspaceID, runtimeID, labels["opl.operation.id"], "runtime"), CreatedAt: p.now(),
+		Checks: []Check{{Name: "docker_container_running", OK: container.State.Running}, {Name: "runtime_port_published", OK: url != ""}}, CreatedAt: p.now(),
 	}, nil
 }
 

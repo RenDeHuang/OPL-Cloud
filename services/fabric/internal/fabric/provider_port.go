@@ -21,8 +21,7 @@ type ComputePlan struct {
 	InstanceType string
 }
 
-// plan remains an internal alias while the Tencent adapter is migrated away
-// from its historical name.
+// plan remains an internal alias for existing validation helpers.
 type plan = ComputePlan
 
 type computeProvider interface {
@@ -75,26 +74,6 @@ type Provider interface {
 	Readiness(context.Context) (map[string]any, error)
 }
 
-type monthlyProviderTruthProvider interface {
-	MonthlyProviderTruth(context.Context, ComputeAllocation, StorageVolume) (MonthlyProviderTruth, error)
-}
-
-type computeClaimRecoveryProvider interface {
-	ProveComputeClaimRecovery(context.Context, ComputeAllocation, ComputeAllocationPreparation, MachineOwnership) (ComputeClaimProviderProof, error)
-}
-
-type computeClaimRecoveryClaimProvider interface {
-	ClaimComputeRecovery(context.Context, ComputeAllocation, ComputeAllocationPreparation, MachineOwnership) (ComputeClaimProviderClaim, error)
-}
-
-type computeClaimRecoveryNodeOnlyProvider interface {
-	ClaimComputeRecoveryNodeOnly(context.Context, ComputeAllocation, ComputeAllocationPreparation, MachineOwnership) (ComputeClaimProviderClaim, error)
-}
-
-type storageRecoveryDiscoveryProvider interface {
-	DiscoverStorageRecovery(context.Context, StorageVolumeInput) (StorageRecoveryDiscovery, error)
-}
-
 type runtimeGatewaySecretProvider interface {
 	BindWorkspaceRuntimeGatewaySecret(context.Context, WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error)
 	WorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretBinding, error)
@@ -102,6 +81,15 @@ type runtimeGatewaySecretProvider interface {
 
 type gatewaySecretReadbackProvider interface {
 	ReadGatewaySecret(context.Context, GatewaySecretInput) (GatewaySecret, error)
+}
+
+type GatewaySecretReadbackInput struct {
+	AccountID         string
+	WorkspaceID       string
+	WorkspaceAPIKeyID int64
+	SecretRef         string
+	Fingerprint       string
+	KeyDigest         string
 }
 
 type providerFactsReader interface {
@@ -124,18 +112,6 @@ type computeAllocationReadbackProvider interface {
 
 type computeAllocationDiscoveryProvider interface {
 	DiscoverComputeAllocation(context.Context, ComputeAllocation, ComputeAllocationPreparation) (ComputeAllocation, error)
-}
-
-type normalComputeClaimStageProvider interface {
-	TagComputeMachineCVM(context.Context, ProviderMachine, MachineOwnership) error
-	ClaimComputeNode(context.Context, ComputeAllocation, MachineOwnership) error
-}
-
-type stagedStorageProvider interface {
-	CreateCBSVolume(context.Context, StorageVolumeInput) (StorageVolume, error)
-	ReadCBSVolume(context.Context, StorageVolumeInput, StorageVolume) (StorageVolume, error)
-	ApplyStaticStorageBinding(context.Context, StorageVolume) (StorageVolume, error)
-	ReadStaticStorageBinding(context.Context, StorageVolume) (StorageVolume, error)
 }
 
 type runtimeHealthSummaryProvider interface {

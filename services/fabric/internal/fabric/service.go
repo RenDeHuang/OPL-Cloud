@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -229,2581 +228,8 @@ func (s *Service) MonthlyPreflight(ctx context.Context, input MonthlyPreflightIn
 	return result, nil
 }
 
-func (s *Service) ReadComputePoolHead(ctx context.Context, nodePoolID string) (ComputePoolHeadReadback, error) {
-	result := ComputePoolHeadReadback{SchemaVersion: 1, Status: "unknown", ContinuationState: "unknown", FailureStage: "compute_pool_head", ErrorCode: "fabric_compute_pool_head_unavailable"}
-	if !validComputePoolNodePoolID(nodePoolID) {
-		return result, ErrInvalidMonthlyPreflight
-	}
-	head, found, err := s.operations.ComputePoolHead(ctx, nodePoolID)
-	if err != nil {
-		return result, fmt.Errorf("%w: compute_pool_head_read_failed", ErrMonthlyPreflightUnavailable)
-	}
-	if !found {
-		result.Status, result.ContinuationState, result.FailureStage, result.ErrorCode = "absent", "absent", "none", "none"
-		return result, nil
-	}
-	result.Status = head.Status
-	var allocation ComputeAllocation
-	plan, hasPlan := decodeComputeAllocationPlan(head)
-	if !decodeOperationResource(head, &allocation) || !hasPlan || head.ComputePoolKey != nodePoolID || allocation.NodePoolID != nodePoolID ||
-		validateComputeAllocationPreparation(plan, allocation, packagePlan(allocation.PackageID)) != nil || validateNewComputeAllocation(allocation, plan) != nil {
-		return result, nil
-	}
-	if head.Status == "started" {
-		result.ContinuationState, result.FailureStage, result.ErrorCode = "continuable", "none", "none"
-		return result, nil
-	}
-	if head.Status != "claim_pending" {
-		return result, nil
-	}
-	_, manualPresent, manualValid := decodeComputeClaimRecoveryMutation(head)
-	if manualPresent {
-		if manualValid {
-			result.ContinuationState, result.ErrorCode = "blocked", "fabric_compute_pool_head_manual_recovery"
-		}
-		return result, nil
-	}
-	binding, bindingOK := automaticComputeClaimRecoveryBinding(head, allocation, plan)
-	persisted, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(head)
-	ownership, ownershipErr := s.operations.MachineOwnership(ctx, allocation.ID)
-	requestHashRecovery := exactUnmarkedLegacyKubectlClientRejection(head, allocation, plan)
-	historicalRecovery := ownershipErr == nil && exactHistoricalComputeClaimRecoveryWithoutLedger(head, allocation, plan, ownership)
-	if bindingOK && (requestHashRecovery || historicalRecovery || !bindingPresent || bindingValid && persisted == binding) &&
-		ownershipErr == nil && validComputeClaimRecoveryOwnership(allocation, ownership) {
-		result.ContinuationState, result.FailureStage, result.ErrorCode = "continuable", "none", "none"
-	}
-	return result, nil
-}
-
-func exactHistoricalComputeClaimRecoveryWithoutLedger(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation, ownership MachineOwnership) bool {
-	input, inputOK := automaticComputeClaimRecoveryInput(operation, allocation, plan)
-	if !inputOK || allocation.Status != "quarantined" || ownership.Status != "quarantined" ||
-		!validComputeClaimRecoveryOwnership(allocation, ownership) {
-		return false
-	}
-	persisted, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
-	_, mutationPresent, _ := decodeComputeClaimRecoveryMutation(operation)
-	_, reconciliationPresent, _ := decodeComputeClaimRecoveryReconciliation(operation)
-	_, clientRejectionPresent, _ := decodeComputeClaimNodeClientRejectionRecovery(operation)
-	return bindingPresent && bindingValid && persisted == historicalComputeClaimRecoveryBinding(input) &&
-		!mutationPresent && !reconciliationPresent && !clientRejectionPresent
-}
-
-func exactUnmarkedLegacyKubectlClientRejection(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation) bool {
-	input, inputOK := automaticComputeClaimRecoveryInput(operation, allocation, plan)
-	if !inputOK {
-		return false
-	}
-	persisted, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
-	if !bindingPresent || !bindingValid {
-		return false
-	}
-	provenance, provenanceOK := isolatedRequestHashReconciliationProvenance(operation, input, persisted, bindingPresent, bindingValid)
-	if !provenanceOK || provenance.SchemaVersion != 2 {
-		return false
-	}
-	reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(operation)
-	if !reconciliationPresent || !reconciliationValid || !exactLegacyKubectlClientRejectedReconciliation(reconciliation) ||
-		!computeClaimRecoveryReconciliationMatches(reconciliation, operation, input, persisted, computeClaimRecoveryMutationLedger{}) {
-		return false
-	}
-	_, clientRejectionPresent, clientRejectionValid := decodeComputeClaimNodeClientRejectionRecovery(operation)
-	return !clientRejectionPresent && !clientRejectionValid
-}
-
-type computePoolHeadTerminalizationCandidate struct {
-	operation  FabricOperation
-	allocation ComputeAllocation
-	plan       ComputeAllocationPreparation
-	ownership  MachineOwnership
-	binding    computeClaimRecoveryBinding
-	ledger     computeClaimRecoveryMutationLedger
-	readback   ComputePoolHeadTerminalizationReadback
-}
-
-func (s *Service) ReadComputePoolHeadTerminalization(ctx context.Context, nodePoolID string) (ComputePoolHeadTerminalizationReadback, error) {
-	candidate, err := s.computePoolHeadTerminalizationCandidate(ctx, nodePoolID)
-	if err != nil {
-		return ComputePoolHeadTerminalizationReadback{SchemaVersion: 1, Status: "blocked"}, err
-	}
-	return candidate.readback, nil
-}
-
-func (s *Service) computePoolHeadTerminalizationCandidate(ctx context.Context, nodePoolID string) (computePoolHeadTerminalizationCandidate, error) {
-	if !validComputePoolNodePoolID(nodePoolID) {
-		return computePoolHeadTerminalizationCandidate{}, ErrInvalidComputePoolHeadTerminalization
-	}
-	operation, found, err := s.operations.ComputePoolHead(ctx, nodePoolID)
-	if err != nil || !found || operation.Status != "claim_pending" || operation.ComputePoolKey != nodePoolID {
-		return computePoolHeadTerminalizationCandidate{}, fmt.Errorf("%w: exact_claim_pending_head_required", ErrComputePoolHeadTerminalizationUnavailable)
-	}
-	var allocation ComputeAllocation
-	plan, hasPlan := decodeComputeAllocationPlan(operation)
-	if !decodeOperationResource(operation, &allocation) || !hasPlan || allocation.ID != operation.ResourceID || allocation.NodePoolID != nodePoolID ||
-		(allocation.Status != "compute_claim_pending" && allocation.Status != "quarantined") ||
-		validateComputeAllocationPreparation(plan, allocation, packagePlan(allocation.PackageID)) != nil || validateNewComputeAllocation(allocation, plan) != nil {
-		return computePoolHeadTerminalizationCandidate{}, fmt.Errorf("%w: allocation_identity_invalid", ErrComputePoolHeadTerminalizationUnavailable)
-	}
-	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
-	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
-	ownership, ownershipErr := s.operations.MachineOwnership(ctx, allocation.ID)
-	if !bindingPresent || !bindingValid || !validComputePoolHeadTerminalizationBinding(operation, binding) || !ledgerPresent || !ledgerValid ||
-		ownershipErr != nil || ownership.Status != "quarantined" || !validComputeClaimRecoveryOwnership(allocation, ownership) {
-		return computePoolHeadTerminalizationCandidate{}, fmt.Errorf("%w: terminalization_binding_invalid", ErrComputePoolHeadTerminalizationUnavailable)
-	}
-	bindingDigest := computeClaimIdentityDigest(binding.LaunchOperationID + "|" + binding.IdempotencyKey + "|" + binding.TargetHash + "|" + binding.RequestHash)
-	_, _, ledgerDigest := computeClaimMutationLedgerEvidence(operation)
-	approvalDigest := hashInput(struct {
-		SchemaVersion  int
-		OperationID    string
-		ResourceID     string
-		Status         string
-		RequestHash    string
-		IdempotencyKey string
-		ComputePoolKey string
-		Allocation     ComputeAllocation
-		Plan           ComputeAllocationPreparation
-		Ownership      MachineOwnership
-		Binding        computeClaimRecoveryBinding
-		Ledger         computeClaimRecoveryMutationLedger
-	}{1, operation.OperationID, operation.ResourceID, operation.Status, operation.RequestHash, operation.IdempotencyKey, operation.ComputePoolKey, allocation, plan, ownership, binding, ledger})
-	readback := ComputePoolHeadTerminalizationReadback{
-		SchemaVersion: 1, Status: "candidate", HeadStatus: operation.Status, AllocationStatus: allocation.Status, OwnershipStatus: ownership.Status,
-		ApprovalDigest: approvalDigest, BindingDigest: bindingDigest, ManualRecoveryLedgerDigest: ledgerDigest,
-	}
-	return computePoolHeadTerminalizationCandidate{operation: operation, allocation: allocation, plan: plan, ownership: ownership, binding: binding, ledger: ledger, readback: readback}, nil
-}
-
-func (s *Service) TerminalizeComputePoolHead(ctx context.Context, input ComputePoolHeadTerminalizationInput) (ComputePoolHeadTerminalizationReadback, error) {
-	if !validComputePoolNodePoolID(input.NodePoolID) || !validComputePoolTerminalizationToken(input.ApprovalID) ||
-		input.IdempotencyKey != input.ApprovalID || !validComputePoolTerminalizationToken(input.IdempotencyKey) || !validSHA256Hex(input.ApprovalDigest) {
-		return ComputePoolHeadTerminalizationReadback{}, ErrInvalidComputePoolHeadTerminalization
-	}
-	if replay, found, err := s.computePoolHeadTerminalizationReplay(ctx, input); found || err != nil {
-		return replay, err
-	}
-	candidate, err := s.computePoolHeadTerminalizationCandidate(ctx, input.NodePoolID)
-	if err != nil {
-		return ComputePoolHeadTerminalizationReadback{}, err
-	}
-	if subtle.ConstantTimeCompare([]byte(candidate.readback.ApprovalDigest), []byte(input.ApprovalDigest)) != 1 {
-		return ComputePoolHeadTerminalizationReadback{}, ErrComputePoolHeadTerminalizationConflict
-	}
-	approval := input
-	if err := terminalizeComputeClaimPendingWithApproval(ctx, s, candidate.operation, candidate.allocation, candidate.plan, "compute_claim_finalization", "operator_terminalized", nil, nil, &approval); err != nil {
-		if replay, found, replayErr := s.computePoolHeadTerminalizationReplay(ctx, input); found || replayErr != nil {
-			return replay, replayErr
-		}
-		return ComputePoolHeadTerminalizationReadback{}, err
-	}
-	result := candidate.readback
-	result.Status, result.HeadStatus, result.TerminalStatus = "succeeded", "failed", "terminal_unprovable"
-	return result, nil
-}
-
-func (s *Service) ReadComputePoolHeadTerminalizationResult(ctx context.Context, input ComputePoolHeadTerminalizationInput) (ComputePoolHeadTerminalizationReadback, error) {
-	if !validComputePoolNodePoolID(input.NodePoolID) || !validComputePoolTerminalizationToken(input.ApprovalID) ||
-		input.IdempotencyKey != input.ApprovalID || !validSHA256Hex(input.ApprovalDigest) {
-		return ComputePoolHeadTerminalizationReadback{}, ErrInvalidComputePoolHeadTerminalization
-	}
-	if replay, found, err := s.computePoolHeadTerminalizationReplay(ctx, input); found || err != nil {
-		return replay, err
-	}
-	candidate, err := s.computePoolHeadTerminalizationCandidate(ctx, input.NodePoolID)
-	if err != nil {
-		return ComputePoolHeadTerminalizationReadback{}, err
-	}
-	if subtle.ConstantTimeCompare([]byte(candidate.readback.ApprovalDigest), []byte(input.ApprovalDigest)) != 1 {
-		return ComputePoolHeadTerminalizationReadback{}, ErrComputePoolHeadTerminalizationConflict
-	}
-	result := candidate.readback
-	result.Status = "pending"
-	return result, nil
-}
-
-func (s *Service) computePoolHeadTerminalizationReplay(ctx context.Context, input ComputePoolHeadTerminalizationInput) (ComputePoolHeadTerminalizationReadback, bool, error) {
-	operations, err := s.operations.List(ctx)
-	if err != nil {
-		return ComputePoolHeadTerminalizationReadback{}, false, err
-	}
-	for _, operation := range operations {
-		evidence, present, valid := decodeComputeClaimTerminalEvidence(operation)
-		if !present || !valid || evidence.OperatorApprovalID != input.ApprovalID && evidence.OperatorIdempotencyKey != input.IdempotencyKey {
-			continue
-		}
-		if evidence.OperatorApprovalID != input.ApprovalID || evidence.OperatorIdempotencyKey != input.IdempotencyKey || evidence.OperatorApprovalDigest != input.ApprovalDigest ||
-			operation.ComputePoolKey != input.NodePoolID || operation.Status != "failed" {
-			return ComputePoolHeadTerminalizationReadback{}, true, ErrComputePoolHeadTerminalizationConflict
-		}
-		return ComputePoolHeadTerminalizationReadback{
-			SchemaVersion: 1, Status: "succeeded", HeadStatus: "failed", AllocationStatus: "quarantined", OwnershipStatus: "quarantined",
-			TerminalStatus: "terminal_unprovable", ApprovalDigest: evidence.OperatorApprovalDigest, BindingDigest: evidence.BindingDigest,
-			ManualRecoveryLedgerDigest: evidence.ManualRecoveryLedgerDigest, Replayed: true,
-		}, true, nil
-	}
-	return ComputePoolHeadTerminalizationReadback{}, false, nil
-}
-
-func validComputePoolNodePoolID(value string) bool {
-	value = strings.TrimSpace(value)
-	return value != "" && len(value) <= 200 && !strings.ContainsAny(value, "\r\n\t ")
-}
-
-func validComputePoolTerminalizationToken(value string) bool {
-	if len(value) < 16 || len(value) > 120 || value != strings.TrimSpace(value) {
-		return false
-	}
-	for _, character := range value {
-		if character != '-' && character != '_' && (character < 'a' || character > 'z') && (character < '0' || character > '9') {
-			return false
-		}
-	}
-	return true
-}
-
-func validComputePoolHeadTerminalizationBinding(operation FabricOperation, binding computeClaimRecoveryBinding) bool {
-	launchOperationID, ok := strings.CutSuffix(strings.TrimSpace(operation.IdempotencyKey), ":compute")
-	return ok && launchOperationID != "" && binding.LaunchOperationID == launchOperationID &&
-		binding.IdempotencyKey != "" && binding.IdempotencyKey == strings.TrimSpace(binding.IdempotencyKey) && len(binding.IdempotencyKey) <= 200 &&
-		validSHA256Hex(binding.TargetHash) && validSHA256Hex(binding.RequestHash)
-}
-
-func validSHA256Hex(value string) bool {
-	if len(value) != 64 {
-		return false
-	}
-	_, err := hex.DecodeString(value)
-	return err == nil && strings.ToLower(value) == value
-}
-
-func (s *Service) MonthlyPreflightReport(ctx context.Context, input MonthlyPreflightReportInput) (MonthlyPreflightReport, error) {
-	provider, ok := s.provider.(monthlyPreflightReportProvider)
-	if !ok {
-		return MonthlyPreflightReport{}, ErrMonthlyPreflightUnavailable
-	}
-	report, err := provider.MonthlyPreflightReport(ctx, input)
-	if err != nil {
-		return MonthlyPreflightReport{}, err
-	}
-	report.Sub2APIMutationCount = 0
-	report.TencentMutationCount = 0
-	report.KubernetesMutationCount = 0
-	return report, nil
-}
-
-func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID string) (MonthlyProviderTruth, error) {
-	computeID, storageID = strings.TrimSpace(computeID), strings.TrimSpace(storageID)
-	if computeID == "" || storageID == "" {
-		return MonthlyProviderTruth{ComputeState: "unknown", StorageState: "unknown"}, ErrInvalidMonthlyProviderTruth
-	}
-	s.mu.Lock()
-	compute, storage := cloneComputeAllocation(s.computes[computeID]), cloneStorageVolume(s.volumes[storageID])
-	s.mu.Unlock()
-	unknown := unknownMonthlyProviderTruth(compute, storage)
-	if !validMonthlyProviderTruthIdentity(compute, storage) {
-		return unknown, fmt.Errorf("%w: local_identity", ErrMonthlyProviderTruthUnavailable)
-	}
-	provider, ok := s.provider.(monthlyProviderTruthProvider)
-	if !ok {
-		return unknown, fmt.Errorf("%w: provider_unsupported", ErrMonthlyProviderTruthUnavailable)
-	}
-	result, err := provider.MonthlyProviderTruth(ctx, compute, storage)
-	if err != nil {
-		return unknown, fmt.Errorf("%w: %v", ErrMonthlyProviderTruthUnavailable, err)
-	}
-	if !validMonthlyProviderTruthResult(result, compute, storage) {
-		return unknown, fmt.Errorf("%w: provider_identity", ErrMonthlyProviderTruthUnavailable)
-	}
-	return result, nil
-}
-
-// ComputeProviderTruth reads only the Compute Claim provider proof. It is the
-// authoritative GET-only collector for the compute stage and deliberately
-// keeps a later Storage read failure out of the Compute result.
-func (s *Service) ComputeProviderTruth(ctx context.Context, input ComputeClaimRecoveryInput) (ComputeProviderTruth, error) {
-	input.AllowExistingStorageOperation = true
-	s.mu.Lock()
-	compute := cloneComputeAllocation(s.computes[strings.TrimSpace(input.ComputeAllocationID)])
-	s.mu.Unlock()
-	if compute.ID != strings.TrimSpace(input.ComputeAllocationID) {
-		_, persisted, _, _, _, persistedErr := s.computeClaimRecoveryLocalState(ctx, input)
-		if persistedErr == nil {
-			compute = cloneComputeAllocation(persisted)
-		}
-	}
-	truth := ComputeProviderTruth{
-		SchemaVersion: 1, State: "unknown", ComputeState: "unknown", StorageState: "unknown", Compute: compute,
-	}
-	proof, err := s.ComputeClaimRecoveryProof(ctx, input)
-	truth.Reason, truth.FailureStage, truth.ProviderErrorClass = proof.Reason, proof.FailureStage, proof.ProviderErrorClass
-	truth.NodeOwnershipState, truth.CVMOwnershipState, truth.Proof = proof.NodeOwnershipState, proof.CVMOwnershipState, &proof
-	truth.StorageState = normalizedComputeStorageState(proof.StorageState)
-	truth.ProviderRequestID = compute.ProviderRequestID
-	if err != nil {
-		return truth, err
-	}
-	if !proof.Eligible || proof.Reason != "none" {
-		return truth, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, firstNonEmpty(proof.Reason, "provider_describe"))
-	}
-	// The proof already binds the persisted Fabric operation, MachineOwnership,
-	// CVM, and Node. The process projection is optional output enrichment and
-	// must not become a second authorization gate after those authorities agree.
-	truth.Compute.ID, truth.Compute.AccountID, truth.Compute.WorkspaceID = proof.ComputeAllocationID, proof.AccountID, proof.WorkspaceID
-	truth.Compute.PackageID, truth.Compute.Provider = proof.PackageID, "tencent-tke"
-	truth.Compute.PoolID, truth.Compute.NodePoolID = proof.PoolID, proof.NodePoolID
-	truth.State, truth.ComputeState = "ready", "ready"
-	truth.Compute.Status = "ready"
-	truth.Compute.MachineName, truth.Compute.NodeName = proof.MachineName, proof.NodeName
-	truth.Compute.CVMInstanceID, truth.Compute.InstanceID = proof.CVMInstanceID, proof.CVMInstanceID
-	truth.Compute.PrivateIP, truth.Compute.InstanceType, truth.Compute.Zone = proof.PrivateIP, proof.InstanceType, proof.Zone
-	truth.Compute.ChargeType, truth.Compute.RenewFlag, truth.Compute.Deadline = proof.ChargeType, proof.RenewFlag, proof.Deadline
-	truth.Compute.ProviderResourceID = proof.CVMInstanceID
-	truth.Compute.ProviderRequestID = firstNonEmpty(truth.ProviderRequestID, compute.ProviderRequestID)
-	return truth, nil
-}
-
-func normalizedComputeStorageState(value string) string {
-	switch value {
-	case "storage_not_started", "absent":
-		return "absent"
-	case "storage_existing_exact", "ready":
-		return "ready"
-	default:
-		return "unknown"
-	}
-}
-
-func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeClaimRecoveryInput) (ComputeClaimRecoveryProof, error) {
-	proof := newComputeClaimRecoveryProof(input)
-	if !validComputeClaimRecoveryInput(input) {
-		proof.Reason = "local_identity"
-		return proof, ErrInvalidComputeClaimRecovery
-	}
-	operations, err := s.operations.List(ctx)
-	if err != nil {
-		proof.Reason = "local_identity"
-		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
-	}
-	computeOperations := make([]FabricOperation, 0, 1)
-	for _, operation := range operations {
-		if operation.Action == "create_compute_allocation" && (operation.ResourceID == input.ComputeAllocationID ||
-			operation.IdempotencyKey == input.LaunchOperationID+":compute" || operation.AccountID == input.AccountID && operation.WorkspaceID == input.WorkspaceID) {
-			computeOperations = append(computeOperations, operation)
-		}
-	}
-	if len(computeOperations) != 1 {
-		proof.Reason = "local_identity"
-		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
-	}
-	operation := computeOperations[0]
-	var allocation ComputeAllocation
-	plan, hasPlan := decodeComputeAllocationPlan(operation)
-	if operation.AccountID != input.AccountID || operation.WorkspaceID != input.WorkspaceID || operation.IdempotencyKey != input.LaunchOperationID+":compute" ||
-		(operation.Status != "failed" && operation.Status != "claim_pending" && operation.Status != "succeeded") || !decodeOperationResource(operation, &allocation) || !hasPlan ||
-		!validComputeClaimRecoveryLocalIdentity(input, allocation, plan) {
-		proof.Reason = "local_identity"
-		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
-	}
-	ownership, err := s.operations.MachineOwnership(ctx, input.ComputeAllocationID)
-	if err != nil || !validComputeClaimRecoveryOwnership(allocation, ownership) {
-		proof.Reason = "local_identity"
-		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
-	}
-	provider, ok := s.provider.(computeClaimRecoveryProvider)
-	if !ok {
-		proof.Reason = "provider_describe"
-		return proof, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
-	}
-	providerProof, err := provider.ProveComputeClaimRecovery(ctx, allocation, plan, ownership)
-	if err != nil {
-		proof.Reason = safeComputeClaimRecoveryReason(providerProof.Reason, "provider_describe")
-		if validComputeClaimProviderFailureEvidence(providerProof) {
-			proof.FailureStage = providerProof.FailureStage
-			proof.ProviderErrorClass = providerProof.ProviderErrorClass
-			proof.ProviderIdentityFailure = cloneComputeClaimProviderIdentityFailure(providerProof.ProviderIdentityFailure)
-		}
-		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
-	}
-	if !validComputeClaimProviderProof(providerProof, allocation, plan) {
-		proof.Reason = safeComputeClaimRecoveryReason(providerProof.Reason, "identity_mismatch")
-		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
-	}
-	// Compute ownership is authoritative for the first incomplete stage. Read
-	// CVM and Node before applying any later storage-operation disposition so an
-	// attempted or conflicting storage record cannot hide Node ownership truth.
-	applyComputeClaimRecoveryProviderProof(&proof, providerProof)
-	if confirmedNodeDrift(operation, ownership, input, proof) {
-		proof.RecoveryClassification = "confirmed_node_drift"
-	}
-	storageDisposition := computeClaimRecoveryStorageOperationDisposition(operations, input)
-	if storageDisposition == computeClaimStorageOperationUnknown && !input.AllowExistingStorageOperation {
-		proof.Reason = "storage_already_started"
-		return proof, fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
-	}
-	if storageDisposition == computeClaimStorageOperationConflict && !input.AllowExistingStorageOperation {
-		proof.Reason = "identity_mismatch"
-		return proof, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
-	}
-	if input.AllowExistingStorageOperation && storageDisposition != computeClaimStorageOperationAbsent {
-		// Storage is a later stage. Once the compute provider has proved the
-		// original CVM and Node identity, an attempted or conflicting storage
-		// record remains unknown and cannot block the safe Node-only continuation.
-		// The storage worker must reconcile it before any CBS mutation.
-		proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
-		return proof, nil
-	}
-	storageProvider, ok := s.provider.(storageRecoveryDiscoveryProvider)
-	if !ok {
-		if !input.AllowExistingStorageOperation {
-			proof.Reason = "provider_describe"
-			return proof, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
-		}
-		// A missing Storage readback capability is an unknown downstream stage;
-		// it must not erase an already authoritative Compute proof.
-		proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
-		return proof, nil
-	}
-	storageInput := StorageVolumeInput{
-		ID: input.StorageVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeAllocationID,
-		Zone: allocation.Zone, SizeGB: packagePlan(input.PackageID).DiskGB, IdempotencyKey: input.LaunchOperationID + ":storage",
-	}
-	storageOperation := newOperation(
-		"create_storage_volume", "storage_volume", storageInput.ID, storageInput.AccountID, storageInput.WorkspaceID,
-		storageInput.IdempotencyKey, hashInput(storageInput), s.now(),
-	)
-	storageInput.OperationID = storageOperation.OperationID
-	storageDiscovery, err := storageProvider.DiscoverStorageRecovery(ctx, storageInput)
-	if err != nil {
-		if input.AllowExistingStorageOperation && storageDiscovery.MutationCount == 0 {
-			// Storage readback is independent of the already-proved Compute
-			// ownership. Preserve the unknown stage and let the launch worker
-			// reconcile it before any storage mutation.
-			proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
-			return proof, nil
-		}
-		proof.Reason = safeComputeClaimRecoveryReason(storageDiscovery.Reason, "provider_describe")
-		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
-	}
-	if !validStorageRecoveryDiscovery(storageDiscovery) {
-		if input.AllowExistingStorageOperation && storageDiscovery.MutationCount == 0 {
-			proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
-			return proof, nil
-		}
-		proof.Reason = safeComputeClaimRecoveryReason(storageDiscovery.Reason, "identity_mismatch")
-		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
-	}
-	proof.Eligible, proof.Reason, proof.StorageState = true, "none", storageDiscovery.State
-	proof.StorageProviderResourceID = storageDiscovery.ProviderResourceID
-	return proof, nil
-}
-
-func confirmedNodeDrift(operation FabricOperation, ownership MachineOwnership, input ComputeClaimRecoveryInput, proof ComputeClaimRecoveryProof) bool {
-	persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
-	_, mutationPresent, _ := decodeComputeClaimRecoveryMutation(operation)
-	claimInput := ComputeClaimRecoveryClaimInput{ComputeClaimRecoveryInput: input}
-	claimInput.MachineName, claimInput.NodeName, claimInput.CVMInstanceID = proof.MachineName, proof.NodeName, proof.CVMInstanceID
-	claimInput.PrivateIP, claimInput.InstanceType, claimInput.Zone = proof.PrivateIP, proof.InstanceType, proof.Zone
-	claimInput.IdempotencyKey = input.LaunchOperationID + ":compute"
-	return !mutationPresent && bindingPresent && bindingValid && validConfirmedNodeDriftAuthority(operation, ownership, claimInput, persistedBinding) &&
-		proof.NodeOwnershipState == "unallocated" &&
-		(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned")
-}
-
-func applyComputeClaimRecoveryProviderProof(proof *ComputeClaimRecoveryProof, providerProof ComputeClaimProviderProof) {
-	proof.MachineName, proof.NodeName, proof.CVMInstanceID = providerProof.MachineName, providerProof.NodeName, providerProof.CVMInstanceID
-	proof.PrivateIP, proof.InstanceType, proof.Zone = providerProof.PrivateIP, providerProof.InstanceType, providerProof.Zone
-	proof.ChargeType, proof.PeriodMonths, proof.RenewFlag, proof.Deadline = providerProof.ChargeType, providerProof.PeriodMonths, providerProof.RenewFlag, providerProof.Deadline
-	proof.NodeOwnershipState, proof.CVMOwnershipState = providerProof.NodeOwnershipState, providerProof.CVMOwnershipState
-}
-
-type computeClaimStorageOperationDisposition string
-
-const (
-	computeClaimStorageOperationAbsent   computeClaimStorageOperationDisposition = "absent"
-	computeClaimStorageOperationExact    computeClaimStorageOperationDisposition = "exact"
-	computeClaimStorageOperationUnknown  computeClaimStorageOperationDisposition = "attempted_unknown"
-	computeClaimStorageOperationConflict computeClaimStorageOperationDisposition = "conflict"
-)
-
-func computeClaimRecoveryStorageOperationDisposition(operations []FabricOperation, input ComputeClaimRecoveryInput) computeClaimStorageOperationDisposition {
-	matches := make([]FabricOperation, 0, 1)
-	for _, operation := range operations {
-		if operation.Action == "create_storage_volume" &&
-			(operation.ResourceID == input.StorageVolumeID || operation.IdempotencyKey == input.LaunchOperationID+":storage" ||
-				operation.AccountID == input.AccountID && operation.WorkspaceID == input.WorkspaceID) {
-			matches = append(matches, operation)
-		}
-	}
-	if len(matches) == 0 {
-		return computeClaimStorageOperationAbsent
-	}
-	if len(matches) != 1 {
-		return computeClaimStorageOperationConflict
-	}
-	operation := matches[0]
-	if operation.ResourceKind != "storage_volume" || operation.ResourceID != input.StorageVolumeID ||
-		operation.IdempotencyKey != input.LaunchOperationID+":storage" || operation.AccountID != input.AccountID ||
-		operation.WorkspaceID != input.WorkspaceID {
-		return computeClaimStorageOperationConflict
-	}
-	switch operation.Status {
-	case "started", "failed", "succeeded":
-	default:
-		return computeClaimStorageOperationConflict
-	}
-	if operation.ID == "" || operation.OperationID == "" || operation.RequestHash == "" {
-		return computeClaimStorageOperationUnknown
-	}
-	var storage StorageVolume
-	if !decodeOperationResource(operation, &storage) || storage.ID != input.StorageVolumeID ||
-		storage.OperationID != input.LaunchOperationID+":storage" || storage.AccountID != input.AccountID || storage.WorkspaceID != input.WorkspaceID {
-		return computeClaimStorageOperationUnknown
-	}
-	return computeClaimStorageOperationExact
-}
-
-func (s *Service) ComputeClaimRecoveryIdentityEvidence(ctx context.Context, input ComputeClaimRecoveryClaimInput) (*ComputeClaimIdentityEvidence, error) {
-	if !validComputeClaimRecoveryClaimInput(input) {
-		return nil, ErrInvalidComputeClaimRecovery
-	}
-	operation, _, _, _, _, err := s.computeClaimRecoveryLocalState(ctx, input.ComputeClaimRecoveryInput)
-	if err != nil {
-		return nil, err
-	}
-	return computeClaimIdentityEvidence(operation, input), nil
-}
-
-func validStorageRecoveryDiscovery(discovery StorageRecoveryDiscovery) bool {
-	if discovery.MutationCount != 0 || strings.TrimSpace(discovery.ProviderRequestID) == "" {
-		return false
-	}
-	switch discovery.State {
-	case "storage_not_started":
-		return discovery.ProviderResourceID == "" && discovery.Reason == ""
-	case "storage_existing_exact":
-		return strings.HasPrefix(discovery.ProviderResourceID, "disk-") && discovery.Reason == ""
-	default:
-		return false
-	}
-}
-
-func newComputeClaimRecoveryProof(input ComputeClaimRecoveryInput) ComputeClaimRecoveryProof {
-	return ComputeClaimRecoveryProof{
-		SchemaVersion: 1, Reason: "local_identity", StorageState: "unknown", LaunchOperationID: input.LaunchOperationID,
-		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeAllocationID: input.ComputeAllocationID,
-		StorageVolumeID: input.StorageVolumeID, PackageID: input.PackageID, NodePoolID: input.NodePoolID,
-		PoolID: input.PoolID, Evidence: &ComputeClaimEvidence{},
-	}
-}
-
-func validComputeClaimRecoveryInput(input ComputeClaimRecoveryInput) bool {
-	values := []string{input.LaunchOperationID, input.AccountID, input.WorkspaceID, input.ComputeAllocationID, input.StorageVolumeID, input.PackageID, input.PoolID, input.NodePoolID}
-	for _, value := range values {
-		if value == "" || value != strings.TrimSpace(value) {
-			return false
-		}
-	}
-	return input.PackageID == "basic" || input.PackageID == "pro"
-}
-
-func validComputeClaimRecoveryLocalIdentity(input ComputeClaimRecoveryInput, allocation ComputeAllocation, plan ComputeAllocationPreparation) bool {
-	persistedPeriodMonths := strings.TrimSpace(allocation.ProviderData["periodMonths"])
-	if allocation.ID != input.ComputeAllocationID || allocation.AccountID != input.AccountID || allocation.WorkspaceID != input.WorkspaceID ||
-		allocation.PackageID != input.PackageID || allocation.Provider != "tencent-tke" || allocation.PoolID != input.PoolID || allocation.NodePoolID != input.NodePoolID ||
-		allocation.PoolID != plan.PoolID || plan.PackageID != input.PackageID || plan.NodePoolID != input.NodePoolID || plan.PoolID != packagePlan(input.PackageID).ID ||
-		plan.InstanceType != packagePlan(input.PackageID).InstanceType || plan.BeforeMachineNames == nil || plan.BaselineReplicas < 0 || plan.TargetReplicas != plan.BaselineReplicas+1 ||
-		int64(len(plan.BeforeMachineNames)) != plan.BaselineReplicas || allocation.MachineName == "" || allocation.InstanceType != plan.InstanceType ||
-		!strings.HasPrefix(firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), "ins-") || allocation.NodeName == "" || allocation.PrivateIP == "" ||
-		allocation.Zone == "" || allocation.ChargeType != "PREPAID" || allocation.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || allocation.Deadline == "" ||
-		allocation.ProviderData["instanceType"] != plan.InstanceType || allocation.ProviderData["zone"] != allocation.Zone ||
-		allocation.ProviderData["chargeType"] != "PREPAID" || (persistedPeriodMonths != "" && persistedPeriodMonths != "1") ||
-		allocation.ProviderData["renewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || allocation.ProviderData["deadline"] != allocation.Deadline ||
-		allocation.ProviderData["machineName"] != allocation.MachineName {
-		return false
-	}
-	seen := map[string]bool{}
-	for _, name := range plan.BeforeMachineNames {
-		if name == "" || seen[name] || name == allocation.MachineName {
-			return false
-		}
-		seen[name] = true
-	}
-	return true
-}
-
-func validComputeClaimRecoveryOwnership(allocation ComputeAllocation, ownership MachineOwnership) bool {
-	return ownership.ResourceID == allocation.ID && ownership.AccountID == allocation.AccountID && ownership.WorkspaceID == allocation.WorkspaceID &&
-		ownership.PackageID == allocation.PackageID && ownership.NodePoolID == allocation.NodePoolID && ownership.MachineID == allocation.MachineName &&
-		ownership.InstanceID == firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) && ownership.NodeName == allocation.NodeName &&
-		ownership.ReleasedAt == nil && (ownership.Status == "quarantined" || ownership.Status == "active")
-}
-
-func validComputeClaimProviderProof(proof ComputeClaimProviderProof, allocation ComputeAllocation, plan ComputeAllocationPreparation) bool {
-	deadline, deadlineErr := time.Parse(time.RFC3339, proof.Deadline)
-	return proof.Status == "proven" && (proof.NodeOwnershipState == "unallocated" || proof.NodeOwnershipState == "target_owned") &&
-		(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") &&
-		proof.MachineName == allocation.MachineName && proof.NodeName == allocation.NodeName && proof.CVMInstanceID == firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) &&
-		proof.PrivateIP == allocation.PrivateIP && proof.InstanceType == plan.InstanceType && proof.Zone == allocation.Zone && proof.ChargeType == "PREPAID" &&
-		proof.PeriodMonths == 1 && proof.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && proof.Deadline == allocation.Deadline && deadlineErr == nil && !deadline.IsZero() &&
-		proof.FailureStage == "" && proof.ProviderErrorClass == "" && proof.ProviderIdentityFailure == nil
-}
-
-func validComputeClaimProviderFailureEvidence(proof ComputeClaimProviderProof) bool {
-	return proof.Reason == "identity_mismatch" && proof.FailureStage != "" && validComputeClaimFailureStage(proof.FailureStage) &&
-		proof.ProviderErrorClass != "" && validComputeClaimProviderErrorClass(proof.ProviderErrorClass) &&
-		validComputeClaimProviderIdentityFailure(proof.ProviderIdentityFailure)
-}
-
-func validComputeClaimProviderIdentityFailure(value *ComputeClaimProviderIdentityFailure) bool {
-	if value == nil || !validComputeClaimProviderIdentityPredicate(value.Predicate) || value.ExpectedDigest == value.ActualDigest {
-		return false
-	}
-	for _, digest := range []string{value.ExpectedDigest, value.ActualDigest} {
-		if len(digest) != 64 {
-			return false
-		}
-		if _, err := hex.DecodeString(digest); err != nil || strings.ToLower(digest) != digest {
-			return false
-		}
-	}
-	return true
-}
-
-func validComputeClaimProviderIdentityPredicate(value string) bool {
-	switch value {
-	case "compute_claim.request_contract", "compute_claim.machine_selection", "compute_claim.node_pool_identity",
-		"compute_claim.machine_identity", "compute_claim.tke_instance_identity", "compute_claim.network_identity",
-		"compute_claim.cvm_identity", "compute_claim.cvm_billing", "compute_claim.cvm_ownership_shape",
-		"compute_claim.cvm_ownership.instance_name", "compute_claim.cvm_ownership.opl_account_id",
-		"compute_claim.cvm_ownership.opl_workspace_id", "compute_claim.cvm_ownership.opl_resource_id",
-		"compute_claim.cvm_ownership.opl_operation_id", "compute_claim.provider_response_identity",
-		"compute_claim.kubernetes_node_identity":
-		return true
-	default:
-		return false
-	}
-}
-
-func cloneComputeClaimProviderIdentityFailure(value *ComputeClaimProviderIdentityFailure) *ComputeClaimProviderIdentityFailure {
-	if !validComputeClaimProviderIdentityFailure(value) {
-		return nil
-	}
-	clone := *value
-	return &clone
-}
-
-func safeComputeClaimRecoveryReason(value, fallback string) string {
-	switch value {
-	case "local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started":
-		return value
-	default:
-		return fallback
-	}
-}
-
-func validComputeClaimFailureStage(value string) bool {
-	switch value {
-	case "", "cvm_pre_read", "cvm_conflict_check", "cvm_mutation_precondition", "cvm_rename_readback", "cvm_tag_readback", "cvm_final_readback",
-		"cvm_provisioner_transport", "cvm_mutation_evidence", "node_pre_cvm_read", "node_pre_read", "node_conflict_check", "node_patch_build",
-		"node_patch_readback", "node_final_readback", "claim_final_readback":
-		return true
-	default:
-		return false
-	}
-}
-
-func validComputeClaimProviderErrorClass(value string) bool {
-	switch value {
-	case "", "client_unavailable", "malformed_readback", "ownership_conflict", "readback_mismatch", "timeout", "iam_rbac", "provider_error",
-		"transport_error", "evidence_incomplete":
-		return true
-	default:
-		return false
-	}
-}
-
-func validComputeClaimMutationEvidence(evidence ComputeClaimMutationEvidence, count, maximum int, domain string) bool {
-	return validComputeClaimMutationEvidenceShape(evidence, count, maximum, domain) && evidence.Unknown == 0 &&
-		evidence.Confirmed == evidence.Attempted && len(evidence.Missing) == 0
-}
-
-func validComputeClaimMissingField(domain, field string) bool {
-	switch domain {
-	case "cvm":
-		switch field {
-		case "instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id":
-			return true
-		}
-	case "node":
-		return field == "node_ownership"
-	}
-	return false
-}
-
-func validComputeClaimMutationEvidenceShape(evidence ComputeClaimMutationEvidence, count, maximum int, domain string) bool {
-	if count < 0 || count > maximum || evidence.Attempted != count || evidence.Confirmed < 0 || evidence.Confirmed > evidence.Attempted ||
-		evidence.Unknown < 0 || evidence.Unknown > evidence.Attempted || evidence.Confirmed+evidence.Unknown > evidence.Attempted {
-		return false
-	}
-	seen := map[string]bool{}
-	for _, field := range evidence.Missing {
-		if !validComputeClaimMissingField(domain, field) || seen[field] {
-			return false
-		}
-		seen[field] = true
-	}
-	return true
-}
-
-func validComputeClaimEvidence(claim ComputeClaimProviderClaim) bool {
-	return claim.Evidence != nil && validComputeClaimFailureStage(claim.FailureStage) && validComputeClaimProviderErrorClass(claim.ProviderErrorClass) &&
-		validComputeClaimMutationEvidence(claim.Evidence.CVM, claim.TencentMutationCount, 5, "cvm") &&
-		validComputeClaimMutationEvidence(claim.Evidence.Node, claim.KubernetesMutationCount, 1, "node") &&
-		claim.FailureStage == "" && claim.ProviderErrorClass == ""
-}
-
-func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRecoveryClaimInput) (ComputeClaimRecoveryProof, error) {
-	result := newComputeClaimRecoveryProof(input.ComputeClaimRecoveryInput)
-	if !validComputeClaimRecoveryClaimInput(input) {
-		result.Reason = "local_identity"
-		return result, ErrInvalidComputeClaimRecovery
-	}
-	driftAttemptDigest, driftAttempt := confirmedNodeDriftAttemptDigest(input)
-	err := s.operations.WithPoolLock(ctx, workspaceLaunchResourceLockKey(input.LaunchOperationID), func(lockCtx context.Context) error {
-		operation, allocation, plan, ownership, localReason, err := s.computeClaimRecoveryLocalState(lockCtx, input.ComputeClaimRecoveryInput)
-		if err != nil {
-			result.Eligible, result.Reason = false, safeComputeClaimRecoveryReason(localReason, "local_identity")
-			return err
-		}
-		if driftAttempt {
-			result, err = s.claimApprovedConfirmedNodeDrift(lockCtx, input, operation, allocation, plan, ownership, driftAttemptDigest)
-			return err
-		}
-		binding := newComputeClaimRecoveryBinding(input)
-		persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
-		mutationLedger, mutationPresent, mutationValid := decodeComputeClaimRecoveryMutation(operation)
-		reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(operation)
-		clientRejection, clientRejectionPresent, clientRejectionValid := decodeComputeClaimNodeClientRejectionRecovery(operation)
-		historicalBinding := bindingPresent && bindingValid && persistedBinding != binding &&
-			persistedBinding == historicalComputeClaimRecoveryBinding(input)
-		reconciliationProvenance, requestHashBinding := isolatedRequestHashReconciliationProvenance(operation, input, persistedBinding, bindingPresent, bindingValid)
-		reconciliationCandidate := requestHashBinding && allocation.Status == "quarantined" && ownership.Status == "quarantined" &&
-			(operation.Status == "claim_pending" && reconciliationProvenance.SchemaVersion == 1 ||
-				operation.Status == "failed" && reconciliationProvenance.SchemaVersion == 2)
-		reconciliationReplay := requestHashBinding && reconciliationPresent && reconciliationValid &&
-			(reconciliation.SchemaVersion == 1 && mutationPresent && mutationValid || reconciliation.SchemaVersion == 2 && !mutationPresent) &&
-			computeClaimRecoveryReconciliationMatches(reconciliation, operation, input, persistedBinding, mutationLedger)
-		requestHashReconciliation := reconciliationCandidate || reconciliationReplay
-		historicalWithoutLedger := historicalBinding && !mutationPresent
-		historicalNodeContinuation := historicalBinding && mutationPresent && mutationValid && confirmedCVMOnlyObservedComputeClaimRecoveryMutation(mutationLedger)
-		historicalReservedReplay := historicalBinding && mutationPresent && mutationValid && validNodeReservedComputeClaimRecoveryMutation(mutationLedger)
-		historicalCompletedReplay := historicalBinding && mutationPresent && mutationValid && successfulNodeClaimRecoveryMutation(mutationLedger) && ownership.Status == "active"
-		if bindingPresent && (!bindingValid || persistedBinding != binding && !historicalWithoutLedger && !historicalNodeContinuation && !historicalReservedReplay && !historicalCompletedReplay &&
-			!requestHashReconciliation) {
-			result.Eligible, result.Reason = false, "identity_mismatch"
-			return ErrComputeClaimRecoveryIdempotencyConflict
-		}
-		if mutationPresent && (!mutationValid || !bindingPresent) || reconciliationPresent && (!reconciliationValid || !reconciliationReplay) ||
-			clientRejectionPresent && (!clientRejectionValid || !reconciliationPresent) {
-			result.Eligible, result.Reason = false, "identity_mismatch"
-			return ErrComputeClaimRecoveryIdempotencyConflict
-		}
-		proof, proofErr := s.ComputeClaimRecoveryProof(lockCtx, input.ComputeClaimRecoveryInput)
-		result = proof
-		if proofErr != nil {
-			if mutationPresent && result.Reason != "local_identity" && result.Reason != "storage_already_started" {
-				readbackReason := result.Reason
-				applyComputeClaimRecoveryReplayFailure(&result, mutationLedger, readbackReason)
-				return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
-			}
-			return proofErr
-		}
-		if input.MachineName != proof.MachineName || input.NodeName != proof.NodeName || input.CVMInstanceID != proof.CVMInstanceID || input.PrivateIP != proof.PrivateIP ||
-			input.InstanceType != proof.InstanceType || input.Zone != proof.Zone || input.PoolID != proof.PoolID {
-			result.Eligible, result.Reason = false, "identity_mismatch"
-			return fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
-		}
-		reconciledCVMOwnership := requestHashReconciliation &&
-			(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned")
-		if requestHashReconciliation {
-			if !reconciledCVMOwnership || (proof.NodeOwnershipState != "unallocated" && proof.NodeOwnershipState != "target_owned") {
-				result.Eligible, result.Reason = false, "identity_mismatch"
-				return fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
-			}
-			expectedReconciliation := newComputeClaimRecoveryReconciliation(operation, allocation, plan, ownership, input, proof, persistedBinding, mutationLedger)
-			if reconciliationPresent {
-				if reconciliation.AuthorityDigest != expectedReconciliation.AuthorityDigest {
-					result.Eligible, result.Reason = false, "identity_mismatch"
-					return ErrComputeClaimRecoveryIdempotencyConflict
-				}
-			} else {
-				verified := operation
-				if verified.Status == "failed" {
-					verified.Status, verified.ErrorCode, verified.FinishedAt = "claim_pending", "", time.Time{}
-				}
-				verified.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(verified.RedactedProviderPayload, expectedReconciliation)
-				if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, verified); err != nil {
-					result.Eligible, result.Reason = false, "local_identity"
-					return err
-				}
-				operation, reconciliation, reconciliationPresent = verified, expectedReconciliation, true
-			}
-		}
-		if !bindingPresent {
-			if operation.Status == "succeeded" {
-				result.Eligible, result.Reason = false, "identity_mismatch"
-				return ErrComputeClaimRecoveryIdempotencyConflict
-			}
-			pending := operation
-			pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
-			pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, binding)
-			if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, pending); err != nil {
-				result.Eligible, result.Reason = false, "local_identity"
-				return err
-			}
-			operation = pending
-			bindingPresent, bindingValid = true, true
-		}
-		activeHistoricalNodeContinuation := historicalWithoutLedger && input.NodeOnlyContinuation && operation.Status == "succeeded" &&
-			ownership.Status == "active" && (proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") &&
-			proof.NodeOwnershipState == "unallocated"
-		reserveHistoricalNodeClaim := historicalWithoutLedger && (ownership.Status != "active" &&
-			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated" || activeHistoricalNodeContinuation)
-		if historicalWithoutLedger && !reserveHistoricalNodeClaim {
-			result.Eligible, result.Reason = false, "identity_mismatch"
-			return ErrComputeClaimRecoveryIdempotencyConflict
-		}
-		if mutationPresent && mutationLedger.State == "reserved" {
-			applyComputeClaimRecoveryMutation(&result, mutationLedger)
-			return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
-		}
-		resumeObservedNodeClaim := mutationPresent &&
-			(recoverableObservedComputeClaimRecoveryMutation(mutationLedger) || historicalNodeContinuation) &&
-			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
-		legacyClientRejectedNodeCall := requestHashReconciliation && reconciliationPresent && !clientRejectionPresent &&
-			exactLegacyKubectlClientRejectedReconciliation(reconciliation) && reconciledCVMOwnership && proof.NodeOwnershipState == "unallocated"
-		reconciledNodeContinuation := requestHashReconciliation && reconciliationPresent &&
-			(reconciliation.State == "verified" || legacyClientRejectedNodeCall) &&
-			ownership.Status != "active" && reconciledCVMOwnership && proof.NodeOwnershipState == "unallocated"
-		requestedNodeContinuation := input.NodeOnlyContinuation && !mutationPresent &&
-			(operation.Status == "claim_pending" || operation.Status == "succeeded" && ownership.Status == "active" &&
-				bindingPresent && bindingValid && persistedBinding == binding) &&
-			(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") && proof.NodeOwnershipState == "unallocated"
-		activeNodeContinuation := ownership.Status == "active" && !mutationPresent && bindingPresent && bindingValid && persistedBinding == binding &&
-			proof.NodeOwnershipState == "unallocated" && (requestedNodeContinuation || proof.CVMOwnershipState == "target_owned")
-		activeNodeContinuation = activeNodeContinuation || activeHistoricalNodeContinuation
-		completedNodeOnlyReadback := ownership.Status == "active" && mutationPresent && mutationValid &&
-			successfulNodeClaimRecoveryMutation(mutationLedger) && mutationLedger.TencentMutationCount == 0 &&
-			reflect.DeepEqual(mutationLedger.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
-			(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") && proof.NodeOwnershipState == "target_owned"
-		createBudget, createPresent, createValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create")
-		cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm")
-		_, nodePresent, nodeValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_node")
-		currentNodeContinuation := operation.Status == "claim_pending" && !mutationPresent &&
-			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated" &&
-			createPresent && createValid && createBudget == confirmedNormalLaunchMutationBudget() &&
-			cvmPresent && cvmValid && cvmBudget == confirmedNormalLaunchMutationBudget() && !nodePresent && nodeValid
-		nodeOnlyContinuation := requestedNodeContinuation || resumeObservedNodeClaim || reserveHistoricalNodeClaim || activeNodeContinuation || reconciledNodeContinuation || currentNodeContinuation
-		resumeReservedNodeReadback := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
-			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
-		reconciledNodeReadback := requestHashReconciliation && reconciliationPresent &&
-			(reconciliation.State == "verified" || reconciliation.State == "node_reserved" || reconciliation.State == "observed") &&
-			reconciledCVMOwnership && proof.NodeOwnershipState == "target_owned"
-		reservedNodeOutcomeUnknown := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
-			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
-		if reservedNodeOutcomeUnknown {
-			applyComputeClaimRecoveryMutation(&result, mutationLedger)
-			return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
-		}
-		if mutationPresent && mutationLedger.State == "node_reserved" && !resumeReservedNodeReadback {
-			result.Eligible, result.Reason = false, "identity_mismatch"
-			return ErrComputeClaimRecoveryIdempotencyConflict
-		}
-		if requestHashReconciliation && reconciliationPresent && !legacyClientRejectedNodeCall &&
-			(reconciliation.State == "node_reserved" || reconciliation.State == "observed") && !reconciledNodeReadback {
-			result.Eligible, result.Reason = false, "provider_describe"
-			result.FailureStage, result.ProviderErrorClass = reconciliation.FailureStage, reconciliation.ProviderErrorClass
-			result.Evidence = &ComputeClaimEvidence{CVM: cloneComputeClaimMutationEvidence(mutationLedger.Evidence.CVM), Node: cloneComputeClaimMutationEvidence(reconciliation.Node)}
-			return fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
-		}
-		if ownership.Status == "active" && !activeNodeContinuation && !completedNodeOnlyReadback {
-			if proof.CVMOwnershipState != "target_owned" && !reconciledCVMOwnership || proof.NodeOwnershipState != "target_owned" {
-				result.Eligible, result.Reason = false, "identity_mismatch"
-				return fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
-			}
-		} else if !completedNodeOnlyReadback && !reconciledNodeReadback &&
-			(activeNodeContinuation || proof.CVMOwnershipState != "target_owned" || proof.NodeOwnershipState != "target_owned") {
-			provider, providerOK := s.provider.(computeClaimRecoveryClaimProvider)
-			nodeOnlyProvider, nodeOnlyProviderOK := s.provider.(computeClaimRecoveryNodeOnlyProvider)
-			if nodeOnlyContinuation && !nodeOnlyProviderOK || !nodeOnlyContinuation && !providerOK {
-				result.Eligible, result.Reason = false, "provider_describe"
-				return fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
-			}
-			if mutationPresent && !resumeObservedNodeClaim && !reconciledNodeContinuation {
-				applyComputeClaimRecoveryReplayFailure(&result, mutationLedger, proof.Reason)
-				return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
-			}
-			if nodeOnlyContinuation {
-				if reconciledNodeContinuation {
-					var rejectedCall computeClaimNodeClientRejectionRecovery
-					if legacyClientRejectedNodeCall {
-						rejectedCall = newComputeClaimNodeClientRejectionRecovery(reconciliation)
-						clientRejection, clientRejectionPresent = rejectedCall, true
-					}
-					reconciliation.State, reconciliation.FailureStage, reconciliation.ProviderErrorClass = "node_reserved", "node_patch_readback", "transport_error"
-					reconciliation.Node = ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}
-					reserved := operation
-					reserved.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(reserved.RedactedProviderPayload, reconciliation)
-					if legacyClientRejectedNodeCall {
-						reserved.RedactedProviderPayload = withComputeClaimNodeClientRejectionRecovery(reserved.RedactedProviderPayload, rejectedCall)
-					}
-					if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, reserved); err != nil {
-						result.Eligible, result.Reason = false, "local_identity"
-						return err
-					}
-					operation = reserved
-				} else if reserveHistoricalNodeClaim || activeNodeContinuation || currentNodeContinuation {
-					mutationLedger = legacyNodeReservedComputeClaimRecoveryMutation()
-				} else {
-					mutationLedger = nodeReservedComputeClaimRecoveryMutation(mutationLedger)
-				}
-				if !reconciledNodeContinuation {
-					reserved := operation
-					reserved.RedactedProviderPayload = withComputeClaimRecoveryMutation(reserved.RedactedProviderPayload, mutationLedger)
-					if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, reserved); err != nil {
-						result.Eligible, result.Reason = false, "local_identity"
-						return err
-					}
-					operation = reserved
-				}
-			}
-			if !nodeOnlyContinuation {
-				mutationLedger = reservedComputeClaimRecoveryMutation()
-				reserved := operation
-				reserved.RedactedProviderPayload = withComputeClaimRecoveryMutation(operation.RedactedProviderPayload, mutationLedger)
-				if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, reserved); err != nil {
-					result.Eligible, result.Reason = false, "local_identity"
-					return err
-				}
-				operation = reserved
-			}
-			if !reconciledNodeContinuation {
-				mutationPresent = true
-			}
-			var claimed ComputeClaimProviderClaim
-			var claimErr error
-			if nodeOnlyContinuation {
-				claimed, claimErr = nodeOnlyProvider.ClaimComputeRecoveryNodeOnly(lockCtx, allocation, plan, ownership)
-			} else {
-				claimed, claimErr = provider.ClaimComputeRecovery(lockCtx, allocation, plan, ownership)
-			}
-			result.TencentMutationCount = max(0, claimed.TencentMutationCount)
-			result.KubernetesMutationCount = max(0, claimed.KubernetesMutationCount)
-			result.FailureStage = claimed.FailureStage
-			result.ProviderErrorClass = claimed.ProviderErrorClass
-			if claimed.Evidence != nil {
-				result.Evidence = &ComputeClaimEvidence{
-					CVM:  cloneComputeClaimMutationEvidence(claimed.Evidence.CVM),
-					Node: cloneComputeClaimMutationEvidence(claimed.Evidence.Node),
-				}
-			}
-			claimedCVMOwnership := claimed.Proof.CVMOwnershipState == "target_owned" ||
-				nodeOnlyContinuation && claimed.Proof.CVMOwnershipState == "recoverable"
-			claimSucceeded := claimErr == nil && validComputeClaimProviderProof(claimed.Proof, allocation, plan) &&
-				claimedCVMOwnership && claimed.Proof.NodeOwnershipState == "target_owned" && validComputeClaimEvidence(claimed)
-			if nodeOnlyContinuation {
-				claimSucceeded = claimSucceeded && claimed.TencentMutationCount == 0 &&
-					reflect.DeepEqual(claimed.Evidence.CVM, ComputeClaimMutationEvidence{})
-			}
-			if !claimSucceeded {
-				result.Eligible = false
-				result.Reason = safeComputeClaimRecoveryReason(claimed.Proof.Reason, "identity_mismatch")
-				if claimErr != nil && claimed.Proof.Reason == "" {
-					result.Reason = "provider_describe"
-				}
-			} else {
-				result.MachineName, result.NodeName, result.CVMInstanceID = claimed.Proof.MachineName, claimed.Proof.NodeName, claimed.Proof.CVMInstanceID
-				result.PrivateIP, result.InstanceType, result.Zone = claimed.Proof.PrivateIP, claimed.Proof.InstanceType, claimed.Proof.Zone
-				result.ChargeType, result.PeriodMonths, result.RenewFlag, result.Deadline = claimed.Proof.ChargeType, claimed.Proof.PeriodMonths, claimed.Proof.RenewFlag, claimed.Proof.Deadline
-				result.NodeOwnershipState, result.CVMOwnershipState = claimed.Proof.NodeOwnershipState, claimed.Proof.CVMOwnershipState
-				result.Eligible, result.Reason = true, "none"
-			}
-			if reconciledNodeContinuation {
-				reconciliation.State = "observed"
-				reconciliation.FailureStage, reconciliation.ProviderErrorClass = result.FailureStage, result.ProviderErrorClass
-				if result.Evidence != nil && validComputeClaimMutationEvidenceShape(result.Evidence.Node, result.KubernetesMutationCount, 1, "node") {
-					reconciliation.Node = cloneComputeClaimMutationEvidence(result.Evidence.Node)
-				}
-				if claimSucceeded {
-					reconciliation.State, reconciliation.FailureStage, reconciliation.ProviderErrorClass = "succeeded", "", ""
-				}
-			} else if nodeOnlyContinuation {
-				mutationLedger = observedNodeClaimRecoveryMutation(mutationLedger, result)
-			} else {
-				mutationLedger = observedComputeClaimRecoveryMutation(result)
-			}
-			observed := operation
-			if reconciledNodeContinuation {
-				observed.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(operation.RedactedProviderPayload, reconciliation)
-			} else {
-				observed.RedactedProviderPayload = withComputeClaimRecoveryMutation(operation.RedactedProviderPayload, mutationLedger)
-			}
-			if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, observed); err != nil {
-				result.Eligible, result.Reason = false, "local_identity"
-				return err
-			}
-			operation = observed
-			if !claimSucceeded {
-				if !reconciledNodeContinuation {
-					applyComputeClaimRecoveryMutation(&result, mutationLedger)
-				}
-				return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
-			}
-		}
-		if mutationPresent && mutationLedger.State == "node_reserved" && proof.NodeOwnershipState == "target_owned" {
-			mutationLedger = observedNodeClaimReadbackMutation(mutationLedger)
-		}
-		if requestHashReconciliation && reconciliationPresent && reconciliation.State != "succeeded" && proof.NodeOwnershipState == "target_owned" {
-			reconciliation.State, reconciliation.FailureStage, reconciliation.ProviderErrorClass = "succeeded", "", ""
-			if reconciliation.Node.Attempted == 1 {
-				reconciliation.Node = ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
-			} else {
-				reconciliation.Node = ComputeClaimMutationEvidence{}
-			}
-		}
-		if requestHashReconciliation && reconciliationPresent && reconciliation.State == "succeeded" && proof.NodeOwnershipState == "target_owned" {
-			result.NodeOwnershipState, result.CVMOwnershipState, result.Eligible, result.Reason = "target_owned", "target_owned", true, "none"
-		}
-		allocation.Status = "ready"
-		allocation.CostTags = oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, ownership.ID)
-		allocation.NodeSelector = tkeNodeSelector(allocation.ProviderData, allocation.NodeName)
-		ownership.Status, ownership.ReleasedAt = "active", nil
-		if err := s.operations.ActivateComputeClaimRecoveryOwnership(lockCtx, ownership); err != nil {
-			result.Eligible, result.Reason = false, "local_identity"
-			return err
-		}
-		if operation.Status != "succeeded" {
-			recovered := operation
-			recovered.Status, recovered.ErrorCode, recovered.FinishedAt = "succeeded", "", s.now()
-			finalBinding := binding
-			if historicalBinding || requestHashReconciliation {
-				finalBinding = persistedBinding
-			}
-			recovered.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, plan), operation.RedactedProviderPayload)
-			recovered.RedactedProviderPayload = withComputeClaimRecoveryBinding(recovered.RedactedProviderPayload, finalBinding)
-			if terminal, present, valid := decodeComputeClaimTerminalEvidence(operation); present && valid {
-				recovered.RedactedProviderPayload = withComputeClaimTerminalEvidence(recovered.RedactedProviderPayload, terminal)
-			}
-			if mutationPresent {
-				recovered.RedactedProviderPayload = withComputeClaimRecoveryMutation(recovered.RedactedProviderPayload, mutationLedger)
-			}
-			if requestHashReconciliation && reconciliationPresent {
-				recovered.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(recovered.RedactedProviderPayload, reconciliation)
-			}
-			if clientRejectionPresent {
-				recovered.RedactedProviderPayload = withComputeClaimNodeClientRejectionRecovery(recovered.RedactedProviderPayload, clientRejection)
-			}
-			if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, recovered); err != nil {
-				result.Eligible, result.Reason = false, "local_identity"
-				return err
-			}
-		}
-		s.mu.Lock()
-		s.computes[allocation.ID] = allocation
-		s.mu.Unlock()
-		return nil
-	})
-	evidenceInput := input
-	if driftAttempt {
-		evidenceInput.IdempotencyKey = input.LaunchOperationID + ":compute"
-	}
-	if evidence, evidenceErr := s.ComputeClaimRecoveryIdentityEvidence(ctx, evidenceInput); evidenceErr == nil {
-		result.IdentityEvidence = evidence
-	}
-	return result, err
-}
-
-func (s *Service) claimApprovedConfirmedNodeDrift(
-	ctx context.Context,
-	input ComputeClaimRecoveryClaimInput,
-	operation FabricOperation,
-	allocation ComputeAllocation,
-	plan ComputeAllocationPreparation,
-	ownership MachineOwnership,
-	attemptDigest string,
-) (ComputeClaimRecoveryProof, error) {
-	result := newComputeClaimRecoveryProof(input.ComputeClaimRecoveryInput)
-	canonicalInput := input
-	canonicalInput.IdempotencyKey = input.LaunchOperationID + ":compute"
-	persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
-	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
-	if !bindingPresent || !bindingValid || !validConfirmedNodeDriftAuthority(operation, ownership, canonicalInput, persistedBinding) ||
-		ledgerPresent && (!ledgerValid || ledger.Generation != confirmedNodeDriftGeneration || ledger.AttemptDigest != attemptDigest) {
-		result.Reason = "identity_mismatch"
-		return result, ErrComputeClaimRecoveryIdempotencyConflict
-	}
-
-	proof, proofErr := s.ComputeClaimRecoveryProof(ctx, input.ComputeClaimRecoveryInput)
-	result = proof
-	if proofErr != nil {
-		if ledgerPresent {
-			applyComputeClaimRecoveryMutation(&result, ledger)
-		}
-		return result, proofErr
-	}
-	if input.MachineName != proof.MachineName || input.NodeName != proof.NodeName || input.CVMInstanceID != proof.CVMInstanceID ||
-		input.PrivateIP != proof.PrivateIP || input.InstanceType != proof.InstanceType || input.Zone != proof.Zone || input.PoolID != proof.PoolID ||
-		(proof.CVMOwnershipState != "recoverable" && proof.CVMOwnershipState != "target_owned") {
-		result.Eligible, result.Reason = false, "identity_mismatch"
-		return result, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
-	}
-	if proof.NodeOwnershipState == "target_owned" {
-		if ledgerPresent && ledger.State == "node_reserved" {
-			observedLedger := ledger
-			observedLedger.State, observedLedger.Reason = "observed", "confirmed_node_drift"
-			observedLedger.FailureStage, observedLedger.ProviderErrorClass = "", ""
-			observedLedger.Evidence.Node = ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
-			observed := operation
-			observed.RedactedProviderPayload = withComputeClaimRecoveryMutation(observed.RedactedProviderPayload, observedLedger)
-			if err := s.operations.SaveComputeClaimRecovery(ctx, operation, observed); err != nil {
-				result.Eligible, result.Reason = false, "local_identity"
-				return result, err
-			}
-		}
-		result.Eligible, result.Reason = true, "none"
-		result.TencentMutationCount, result.KubernetesMutationCount, result.Evidence = 0, 0, nil
-		return result, nil
-	}
-	if proof.NodeOwnershipState != "unallocated" {
-		result.Eligible, result.Reason = false, "identity_mismatch"
-		return result, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
-	}
-	if ledgerPresent {
-		applyComputeClaimRecoveryMutation(&result, ledger)
-		if ledger.State == "observed" {
-			result.Reason, result.FailureStage, result.ProviderErrorClass = "identity_mismatch", "claim_final_readback", "readback_mismatch"
-		}
-		return result, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
-	}
-	if proof.RecoveryClassification != "confirmed_node_drift" {
-		result.Eligible, result.Reason = false, "identity_mismatch"
-		return result, ErrComputeClaimRecoveryIdempotencyConflict
-	}
-	nodeOnlyProvider, ok := s.provider.(computeClaimRecoveryNodeOnlyProvider)
-	if !ok {
-		result.Eligible, result.Reason = false, "provider_describe"
-		return result, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
-	}
-
-	ledger = reservedConfirmedNodeDriftMutation(attemptDigest)
-	reserved := operation
-	reserved.RedactedProviderPayload = withComputeClaimRecoveryMutation(reserved.RedactedProviderPayload, ledger)
-	if err := s.operations.SaveComputeClaimRecovery(ctx, operation, reserved); err != nil {
-		result.Eligible, result.Reason = false, "local_identity"
-		return result, err
-	}
-	operation = reserved
-
-	claimed, claimErr := nodeOnlyProvider.ClaimComputeRecoveryNodeOnly(ctx, allocation, plan, ownership)
-	result.TencentMutationCount = max(0, claimed.TencentMutationCount)
-	result.KubernetesMutationCount = max(0, claimed.KubernetesMutationCount)
-	result.FailureStage, result.ProviderErrorClass = claimed.FailureStage, claimed.ProviderErrorClass
-	if claimed.Evidence != nil {
-		result.Evidence = &ComputeClaimEvidence{
-			CVM: cloneComputeClaimMutationEvidence(claimed.Evidence.CVM), Node: cloneComputeClaimMutationEvidence(claimed.Evidence.Node),
-		}
-	}
-	claimSucceeded := claimErr == nil && validComputeClaimProviderProof(claimed.Proof, allocation, plan) &&
-		(claimed.Proof.CVMOwnershipState == "recoverable" || claimed.Proof.CVMOwnershipState == "target_owned") &&
-		claimed.Proof.NodeOwnershipState == "target_owned" && claimed.TencentMutationCount == 0 && claimed.KubernetesMutationCount == 1 &&
-		claimed.Evidence != nil && reflect.DeepEqual(claimed.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
-		reflect.DeepEqual(claimed.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) && validComputeClaimEvidence(claimed)
-	if claimSucceeded {
-		applyComputeClaimRecoveryProviderProof(&result, claimed.Proof)
-		result.Eligible, result.Reason = true, "none"
-	} else {
-		result.Eligible = false
-		result.Reason = safeComputeClaimRecoveryReason(claimed.Proof.Reason, "identity_mismatch")
-		if claimErr != nil && claimed.Proof.Reason == "" {
-			result.Reason = "provider_describe"
-		}
-	}
-	recordableOutcome := result.Evidence != nil && result.TencentMutationCount == 0 && result.KubernetesMutationCount >= 0 && result.KubernetesMutationCount <= 1 &&
-		reflect.DeepEqual(result.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
-		validComputeClaimMutationEvidenceShape(result.Evidence.Node, result.KubernetesMutationCount, 1, "node")
-	if recordableOutcome {
-		observedLedger := observedConfirmedNodeDriftMutation(ledger, result)
-		observed := operation
-		observed.RedactedProviderPayload = withComputeClaimRecoveryMutation(observed.RedactedProviderPayload, observedLedger)
-		if err := s.operations.SaveComputeClaimRecovery(ctx, operation, observed); err != nil {
-			result.Eligible, result.Reason = false, "local_identity"
-			return result, err
-		}
-	}
-	if !claimSucceeded {
-		return result, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
-	}
-	return result, nil
-}
-
-func validComputeClaimRecoveryClaimInput(input ComputeClaimRecoveryClaimInput) bool {
-	if !validComputeClaimRecoveryInput(input.ComputeClaimRecoveryInput) {
-		return false
-	}
-	for _, value := range []string{input.MachineName, input.NodeName, input.CVMInstanceID, input.PrivateIP, input.InstanceType, input.Zone, input.IdempotencyKey} {
-		if value == "" || value != strings.TrimSpace(value) {
-			return false
-		}
-	}
-	_, driftAttempt := confirmedNodeDriftAttemptDigest(input)
-	return strings.HasPrefix(input.CVMInstanceID, "ins-") &&
-		(input.IdempotencyKey == input.LaunchOperationID+":compute" || driftAttempt)
-}
-
-func confirmedNodeDriftAttemptDigest(input ComputeClaimRecoveryClaimInput) (string, bool) {
-	digest, ok := strings.CutPrefix(input.IdempotencyKey, input.LaunchOperationID+":compute:confirmed-node-drift:")
-	return digest, ok && validComputeClaimRecoveryDigest(digest)
-}
-
-func validConfirmedNodeDriftAuthority(
-	operation FabricOperation,
-	ownership MachineOwnership,
-	input ComputeClaimRecoveryClaimInput,
-	persistedBinding computeClaimRecoveryBinding,
-) bool {
-	if operation.Status != "succeeded" || ownership.Status != "active" {
-		return false
-	}
-	reconciliation, present, valid := decodeComputeClaimRecoveryReconciliation(operation)
-	if !present || !valid || reconciliation.SchemaVersion != 2 || reconciliation.Consumer != "claim_compute_recovery" ||
-		reconciliation.Generation != "normal_launch_terminal_evidence_v1" || reconciliation.State != "succeeded" ||
-		!reflect.DeepEqual(reconciliation.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) {
-		return false
-	}
-	withoutAttempt := operation
-	withoutAttempt.RedactedProviderPayload = maps.Clone(operation.RedactedProviderPayload)
-	delete(withoutAttempt.RedactedProviderPayload, computeClaimRecoveryMutationPayloadKey)
-	return computeClaimRecoveryReconciliationMatches(
-		reconciliation, withoutAttempt, input, persistedBinding, computeClaimRecoveryMutationLedger{},
-	)
-}
-
-type computeClaimRecoveryBinding struct {
-	LaunchOperationID string `json:"launchOperationId"`
-	IdempotencyKey    string `json:"idempotencyKey"`
-	TargetHash        string `json:"targetHash"`
-	RequestHash       string `json:"requestHash"`
-}
-
-const (
-	computeClaimRecoveryMutationPayloadKey       = "computeClaimRecoveryMutation"
-	computeClaimRecoveryReconciliationPayloadKey = "computeClaimRecoveryReconciliation"
-	computeClaimTerminalEvidencePayloadKey       = "computeClaimTerminalEvidence"
-	computeClaimNodeClientRejectionPayloadKey    = "computeClaimNodeClientRejectionRecovery"
-)
-
-type computeClaimRecoveryReconciliation struct {
-	SchemaVersion              int                          `json:"schemaVersion"`
-	Consumer                   string                       `json:"consumer"`
-	Generation                 string                       `json:"generation"`
-	ProvenanceSource           string                       `json:"provenanceSource,omitempty"`
-	ProvenanceDigest           string                       `json:"provenanceDigest,omitempty"`
-	State                      string                       `json:"state"`
-	BindingDigest              string                       `json:"bindingDigest"`
-	ExpectedRequestHashDigest  string                       `json:"expectedRequestHashDigest"`
-	PersistedRequestHashDigest string                       `json:"persistedRequestHashDigest"`
-	MutationLedgerDigest       string                       `json:"mutationLedgerDigest"`
-	AuthorityDigest            string                       `json:"authorityDigest"`
-	FailureStage               string                       `json:"failureStage,omitempty"`
-	ProviderErrorClass         string                       `json:"providerErrorClass,omitempty"`
-	Node                       ComputeClaimMutationEvidence `json:"node"`
-}
-
-type computeClaimNodeClientRejectionRecovery struct {
-	SchemaVersion              int    `json:"schemaVersion"`
-	Classification             string `json:"classification"`
-	Invocation                 string `json:"invocation"`
-	RecordedCalls              int    `json:"recordedCalls"`
-	APIAcceptedMutations       int    `json:"apiAcceptedMutations"`
-	SourceReconciliationDigest string `json:"sourceReconciliationDigest"`
-}
-
-type computeClaimRecoveryReconciliationProvenance struct {
-	SchemaVersion int
-	Generation    string
-	Source        string
-	Digest        string
-}
-
-type computeClaimRecoveryMutationLedger struct {
-	Generation              string               `json:"generation,omitempty"`
-	AttemptDigest           string               `json:"attemptDigest,omitempty"`
-	State                   string               `json:"state"`
-	Reason                  string               `json:"reason"`
-	TencentMutationCount    int                  `json:"tencentMutationCount"`
-	KubernetesMutationCount int                  `json:"kubernetesMutationCount"`
-	FailureStage            string               `json:"failureStage,omitempty"`
-	ProviderErrorClass      string               `json:"providerErrorClass,omitempty"`
-	Evidence                ComputeClaimEvidence `json:"evidence"`
-}
-
-const confirmedNodeDriftGeneration = "normal_launch_confirmed_node_drift_v1"
-
-func reservedConfirmedNodeDriftMutation(attemptDigest string) computeClaimRecoveryMutationLedger {
-	return computeClaimRecoveryMutationLedger{
-		Generation: confirmedNodeDriftGeneration, AttemptDigest: attemptDigest,
-		State: "node_reserved", Reason: "confirmed_node_drift", TencentMutationCount: 0, KubernetesMutationCount: 1,
-		FailureStage: "node_patch_readback", ProviderErrorClass: "transport_error",
-		Evidence: ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{
-			Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"},
-		}},
-	}
-}
-
-func observedConfirmedNodeDriftMutation(reserved computeClaimRecoveryMutationLedger, result ComputeClaimRecoveryProof) computeClaimRecoveryMutationLedger {
-	ledger := reserved
-	ledger.State = "observed"
-	ledger.Reason = safeComputeClaimRecoveryReason(result.Reason, "provider_describe")
-	ledger.FailureStage = result.FailureStage
-	ledger.ProviderErrorClass = result.ProviderErrorClass
-	if result.Eligible && result.Reason == "none" {
-		ledger.Reason, ledger.FailureStage, ledger.ProviderErrorClass = "confirmed_node_drift", "", ""
-	}
-	if result.Evidence != nil && result.TencentMutationCount == 0 &&
-		reflect.DeepEqual(result.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
-		validComputeClaimMutationEvidenceShape(result.Evidence.Node, result.KubernetesMutationCount, 1, "node") {
-		ledger.KubernetesMutationCount = result.KubernetesMutationCount
-		ledger.Evidence.Node = cloneComputeClaimMutationEvidence(result.Evidence.Node)
-	}
-	return ledger
-}
-
-func reservedComputeClaimRecoveryMutation() computeClaimRecoveryMutationLedger {
-	return computeClaimRecoveryMutationLedger{
-		State: "reserved", Reason: "provider_describe", TencentMutationCount: 5, KubernetesMutationCount: 1,
-		FailureStage: "cvm_provisioner_transport", ProviderErrorClass: "transport_error",
-		Evidence: ComputeClaimEvidence{
-			CVM: ComputeClaimMutationEvidence{
-				Attempted: 5, Unknown: 5,
-				Missing: []string{"instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"},
-			},
-			Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
-		},
-	}
-}
-
-func nodeReservedComputeClaimRecoveryMutation(observed computeClaimRecoveryMutationLedger) computeClaimRecoveryMutationLedger {
-	return computeClaimRecoveryMutationLedger{
-		State: "node_reserved", Reason: "provider_describe", TencentMutationCount: observed.TencentMutationCount, KubernetesMutationCount: 1,
-		FailureStage: "node_patch_readback", ProviderErrorClass: "transport_error",
-		Evidence: ComputeClaimEvidence{
-			CVM: ComputeClaimMutationEvidence{
-				Attempted: observed.Evidence.CVM.Attempted, Confirmed: observed.Evidence.CVM.Attempted,
-			},
-			Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
-		},
-	}
-}
-
-func legacyNodeReservedComputeClaimRecoveryMutation() computeClaimRecoveryMutationLedger {
-	return nodeReservedComputeClaimRecoveryMutation(computeClaimRecoveryMutationLedger{
-		State: "observed", Reason: "none", Evidence: ComputeClaimEvidence{},
-	})
-}
-
-func validNodeReservedComputeClaimRecoveryMutation(ledger computeClaimRecoveryMutationLedger) bool {
-	return ledger.Generation == "" && ledger.AttemptDigest == "" && ledger.State == "node_reserved" && ledger.Reason == "provider_describe" && ledger.FailureStage == "node_patch_readback" &&
-		ledger.ProviderErrorClass == "transport_error" && ledger.TencentMutationCount >= 0 && ledger.TencentMutationCount <= 5 &&
-		ledger.KubernetesMutationCount == 1 && ledger.Evidence.CVM.Attempted == ledger.TencentMutationCount &&
-		ledger.Evidence.CVM.Confirmed == ledger.TencentMutationCount && ledger.Evidence.CVM.Unknown == 0 && len(ledger.Evidence.CVM.Missing) == 0 &&
-		reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}})
-}
-
-func successfulNodeClaimRecoveryMutation(ledger computeClaimRecoveryMutationLedger) bool {
-	return ledger.Generation == "" && ledger.AttemptDigest == "" && ledger.State == "observed" && ledger.Reason == "none" && ledger.TencentMutationCount >= 0 && ledger.TencentMutationCount <= 5 &&
-		ledger.KubernetesMutationCount == 1 && validComputeClaimMutationEvidence(ledger.Evidence.CVM, ledger.TencentMutationCount, 5, "cvm") &&
-		reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1})
-}
-
-func observedNodeClaimRecoveryMutation(reserved computeClaimRecoveryMutationLedger, result ComputeClaimRecoveryProof) computeClaimRecoveryMutationLedger {
-	ledger := reserved
-	ledger.State = "observed"
-	ledger.Reason = safeComputeClaimRecoveryReason(result.Reason, "provider_describe")
-	if result.Reason == "none" {
-		ledger.Reason = "none"
-	}
-	ledger.FailureStage = result.FailureStage
-	ledger.ProviderErrorClass = result.ProviderErrorClass
-	if result.Evidence != nil && result.TencentMutationCount == 0 && reflect.DeepEqual(result.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
-		validComputeClaimMutationEvidenceShape(result.Evidence.Node, result.KubernetesMutationCount, 1, "node") {
-		ledger.KubernetesMutationCount = result.KubernetesMutationCount
-		ledger.Evidence.Node = cloneComputeClaimMutationEvidence(result.Evidence.Node)
-	}
-	if ledger.Reason == "none" {
-		ledger.FailureStage, ledger.ProviderErrorClass = "", ""
-	}
-	return ledger
-}
-
-func observedNodeClaimReadbackMutation(reserved computeClaimRecoveryMutationLedger) computeClaimRecoveryMutationLedger {
-	ledger := reserved
-	ledger.State, ledger.Reason, ledger.FailureStage, ledger.ProviderErrorClass = "observed", "none", "", ""
-	ledger.Evidence.Node.Confirmed = ledger.Evidence.Node.Attempted
-	ledger.Evidence.Node.Unknown = 0
-	ledger.Evidence.Node.Missing = nil
-	return ledger
-}
-
-func observedComputeClaimRecoveryMutation(result ComputeClaimRecoveryProof) computeClaimRecoveryMutationLedger {
-	ledger := reservedComputeClaimRecoveryMutation()
-	ledger.State = "observed"
-	ledger.Reason = safeComputeClaimRecoveryReason(result.Reason, "identity_mismatch")
-	if result.Reason == "none" {
-		ledger.Reason = "none"
-	}
-	if validComputeClaimFailureStage(result.FailureStage) {
-		ledger.FailureStage = result.FailureStage
-	}
-	if validComputeClaimProviderErrorClass(result.ProviderErrorClass) {
-		ledger.ProviderErrorClass = result.ProviderErrorClass
-	}
-	if result.Evidence != nil &&
-		validComputeClaimMutationEvidenceShape(result.Evidence.CVM, result.TencentMutationCount, 5, "cvm") &&
-		validComputeClaimMutationEvidenceShape(result.Evidence.Node, result.KubernetesMutationCount, 1, "node") {
-		ledger.TencentMutationCount = result.TencentMutationCount
-		ledger.KubernetesMutationCount = result.KubernetesMutationCount
-		ledger.Evidence = ComputeClaimEvidence{
-			CVM:  cloneComputeClaimMutationEvidence(result.Evidence.CVM),
-			Node: cloneComputeClaimMutationEvidence(result.Evidence.Node),
-		}
-	}
-	if ledger.Reason == "none" {
-		ledger.FailureStage, ledger.ProviderErrorClass = "", ""
-	}
-	return ledger
-}
-
-func validComputeClaimRecoveryMutationLedger(ledger computeClaimRecoveryMutationLedger) bool {
-	if ledger.Generation != "" || ledger.AttemptDigest != "" {
-		return validConfirmedNodeDriftMutationLedger(ledger)
-	}
-	if ledger.State != "reserved" && ledger.State != "node_reserved" && ledger.State != "observed" {
-		return false
-	}
-	if ledger.Reason != "none" && safeComputeClaimRecoveryReason(ledger.Reason, "") != ledger.Reason {
-		return false
-	}
-	valid := validComputeClaimFailureStage(ledger.FailureStage) && validComputeClaimProviderErrorClass(ledger.ProviderErrorClass) &&
-		validComputeClaimMutationEvidenceShape(ledger.Evidence.CVM, ledger.TencentMutationCount, 5, "cvm") &&
-		validComputeClaimMutationEvidenceShape(ledger.Evidence.Node, ledger.KubernetesMutationCount, 1, "node")
-	if !valid {
-		return false
-	}
-	if ledger.State == "reserved" {
-		return reflect.DeepEqual(ledger, reservedComputeClaimRecoveryMutation())
-	}
-	if ledger.State == "node_reserved" {
-		return validNodeReservedComputeClaimRecoveryMutation(ledger)
-	}
-	if ledger.Reason == "none" {
-		return ledger.FailureStage == "" && ledger.ProviderErrorClass == "" &&
-			validComputeClaimMutationEvidence(ledger.Evidence.CVM, ledger.TencentMutationCount, 5, "cvm") &&
-			validComputeClaimMutationEvidence(ledger.Evidence.Node, ledger.KubernetesMutationCount, 1, "node")
-	}
-	return true
-}
-
-func validConfirmedNodeDriftMutationLedger(ledger computeClaimRecoveryMutationLedger) bool {
-	if ledger.Generation != confirmedNodeDriftGeneration || !validComputeClaimRecoveryDigest(ledger.AttemptDigest) ||
-		ledger.TencentMutationCount != 0 || ledger.KubernetesMutationCount < 0 || ledger.KubernetesMutationCount > 1 ||
-		!reflect.DeepEqual(ledger.Evidence.CVM, ComputeClaimMutationEvidence{}) ||
-		!validComputeClaimMutationEvidenceShape(ledger.Evidence.Node, ledger.KubernetesMutationCount, 1, "node") {
-		return false
-	}
-	if ledger.State == "node_reserved" {
-		return reflect.DeepEqual(ledger, reservedConfirmedNodeDriftMutation(ledger.AttemptDigest))
-	}
-	if ledger.State != "observed" {
-		return false
-	}
-	if ledger.Reason == "confirmed_node_drift" {
-		return ledger.FailureStage == "" && ledger.ProviderErrorClass == "" && ledger.KubernetesMutationCount == 1 &&
-			reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1})
-	}
-	return ledger.Reason != "none" && safeComputeClaimRecoveryReason(ledger.Reason, "") == ledger.Reason &&
-		validComputeClaimFailureStage(ledger.FailureStage) && validComputeClaimProviderErrorClass(ledger.ProviderErrorClass)
-}
-
-func recoverableObservedComputeClaimRecoveryMutation(ledger computeClaimRecoveryMutationLedger) bool {
-	if ledger.Generation != "" || ledger.AttemptDigest != "" || ledger.State != "observed" || ledger.Reason != "provider_describe" || ledger.FailureStage != "cvm_tag_readback" ||
-		ledger.TencentMutationCount < 1 || ledger.TencentMutationCount > 5 || ledger.KubernetesMutationCount != 0 ||
-		ledger.Evidence.CVM.Attempted != ledger.TencentMutationCount || ledger.Evidence.CVM.Confirmed != 0 || ledger.Evidence.CVM.Unknown != 0 ||
-		!reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{}) || len(ledger.Evidence.CVM.Missing) == 0 {
-		return false
-	}
-	for _, field := range ledger.Evidence.CVM.Missing {
-		switch field {
-		case "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id":
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func confirmedCVMOnlyObservedComputeClaimRecoveryMutation(ledger computeClaimRecoveryMutationLedger) bool {
-	return ledger.Generation == "" && ledger.AttemptDigest == "" && ledger.State == "observed" && ledger.Reason == "none" && ledger.FailureStage == "" && ledger.ProviderErrorClass == "" &&
-		ledger.TencentMutationCount >= 1 && ledger.TencentMutationCount <= 5 && ledger.KubernetesMutationCount == 0 &&
-		validComputeClaimMutationEvidence(ledger.Evidence.CVM, ledger.TencentMutationCount, 5, "cvm") &&
-		reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{})
-}
-
-func decodeComputeClaimRecoveryMutation(operation FabricOperation) (computeClaimRecoveryMutationLedger, bool, bool) {
-	value, ok := operation.RedactedProviderPayload[computeClaimRecoveryMutationPayloadKey]
-	if !ok {
-		return computeClaimRecoveryMutationLedger{}, false, false
-	}
-	body, err := json.Marshal(value)
-	if err != nil {
-		return computeClaimRecoveryMutationLedger{}, true, false
-	}
-	var ledger computeClaimRecoveryMutationLedger
-	if json.Unmarshal(body, &ledger) != nil || !validComputeClaimRecoveryMutationLedger(ledger) {
-		return computeClaimRecoveryMutationLedger{}, true, false
-	}
-	return ledger, true, true
-}
-
-func withComputeClaimRecoveryMutation(payload map[string]any, ledger computeClaimRecoveryMutationLedger) map[string]any {
-	result := maps.Clone(payload)
-	if result == nil {
-		result = map[string]any{}
-	}
-	value := map[string]any{
-		"state": ledger.State, "reason": ledger.Reason,
-		"tencentMutationCount": ledger.TencentMutationCount, "kubernetesMutationCount": ledger.KubernetesMutationCount,
-		"failureStage": ledger.FailureStage, "providerErrorClass": ledger.ProviderErrorClass,
-		"evidence": map[string]any{
-			"cvm": map[string]any{
-				"attempted": ledger.Evidence.CVM.Attempted, "confirmed": ledger.Evidence.CVM.Confirmed,
-				"unknown": ledger.Evidence.CVM.Unknown, "missing": append([]string(nil), ledger.Evidence.CVM.Missing...),
-			},
-			"node": map[string]any{
-				"attempted": ledger.Evidence.Node.Attempted, "confirmed": ledger.Evidence.Node.Confirmed,
-				"unknown": ledger.Evidence.Node.Unknown, "missing": append([]string(nil), ledger.Evidence.Node.Missing...),
-			},
-		},
-	}
-	if ledger.Generation != "" {
-		value["generation"] = ledger.Generation
-	}
-	if ledger.AttemptDigest != "" {
-		value["attemptDigest"] = ledger.AttemptDigest
-	}
-	result[computeClaimRecoveryMutationPayloadKey] = value
-	return result
-}
-
-func applyComputeClaimRecoveryMutation(result *ComputeClaimRecoveryProof, ledger computeClaimRecoveryMutationLedger) {
-	result.Eligible = false
-	result.Reason = ledger.Reason
-	result.TencentMutationCount = ledger.TencentMutationCount
-	result.KubernetesMutationCount = ledger.KubernetesMutationCount
-	result.FailureStage = ledger.FailureStage
-	result.ProviderErrorClass = ledger.ProviderErrorClass
-	result.Evidence = &ComputeClaimEvidence{
-		CVM:  cloneComputeClaimMutationEvidence(ledger.Evidence.CVM),
-		Node: cloneComputeClaimMutationEvidence(ledger.Evidence.Node),
-	}
-}
-
-func applyComputeClaimRecoveryReplayFailure(result *ComputeClaimRecoveryProof, ledger computeClaimRecoveryMutationLedger, readbackReason string) {
-	applyComputeClaimRecoveryMutation(result, ledger)
-	if ledger.State != "observed" || ledger.Reason != "none" {
-		return
-	}
-	result.Reason = safeComputeClaimRecoveryReason(readbackReason, "identity_mismatch")
-	if result.Reason == "none" {
-		result.Reason = "identity_mismatch"
-	}
-	result.FailureStage = "claim_final_readback"
-	result.ProviderErrorClass = "readback_mismatch"
-}
-
-func validComputeClaimRecoveryMutationTransition(current, next FabricOperation) bool {
-	currentLedger, currentPresent, currentValid := decodeComputeClaimRecoveryMutation(current)
-	nextLedger, nextPresent, nextValid := decodeComputeClaimRecoveryMutation(next)
-	if currentPresent && !currentValid || nextPresent && !nextValid {
-		return false
-	}
-	if currentPresent && currentLedger.Generation == confirmedNodeDriftGeneration ||
-		nextPresent && nextLedger.Generation == confirmedNodeDriftGeneration {
-		if !nextPresent || nextLedger.Generation != confirmedNodeDriftGeneration {
-			return false
-		}
-		if !currentPresent {
-			return nextLedger.State == "node_reserved" && validConfirmedNodeDriftReservationTransition(current, next, nextLedger)
-		}
-		if currentLedger.Generation != confirmedNodeDriftGeneration || currentLedger.AttemptDigest != nextLedger.AttemptDigest {
-			return false
-		}
-		return reflect.DeepEqual(currentLedger, nextLedger) || currentLedger.State == "node_reserved" && nextLedger.State == "observed"
-	}
-	if !currentPresent {
-		return !nextPresent || nextLedger.State == "reserved" || validLegacyNodeReservationTransition(current, next, nextLedger)
-	}
-	if !nextPresent {
-		return false
-	}
-	if (nextLedger.State == "reserved" || nextLedger.State == "node_reserved") && next.Status == "succeeded" {
-		return false
-	}
-	switch currentLedger.State {
-	case "reserved":
-		return nextLedger.State == "observed" || reflect.DeepEqual(currentLedger, nextLedger)
-	case "observed":
-		return reflect.DeepEqual(currentLedger, nextLedger) ||
-			(recoverableObservedComputeClaimRecoveryMutation(currentLedger) || confirmedCVMOnlyObservedComputeClaimRecoveryMutation(currentLedger)) &&
-				reflect.DeepEqual(nextLedger, nodeReservedComputeClaimRecoveryMutation(currentLedger))
-	case "node_reserved":
-		return nextLedger.State == "observed" || reflect.DeepEqual(currentLedger, nextLedger)
-	default:
-		return false
-	}
-}
-
-func validConfirmedNodeDriftReservationTransition(current, next FabricOperation, nextLedger computeClaimRecoveryMutationLedger) bool {
-	if current.Status != "succeeded" || next.Status != "succeeded" || !validConfirmedNodeDriftMutationLedger(nextLedger) || nextLedger.State != "node_reserved" {
-		return false
-	}
-	currentBinding, currentBindingPresent, currentBindingValid := decodeComputeClaimRecoveryBinding(current)
-	nextBinding, nextBindingPresent, nextBindingValid := decodeComputeClaimRecoveryBinding(next)
-	currentReconciliation, currentReconciliationPresent, currentReconciliationValid := decodeComputeClaimRecoveryReconciliation(current)
-	nextReconciliation, nextReconciliationPresent, nextReconciliationValid := decodeComputeClaimRecoveryReconciliation(next)
-	return currentBindingPresent && currentBindingValid && nextBindingPresent && nextBindingValid && currentBinding == nextBinding &&
-		currentReconciliationPresent && currentReconciliationValid && nextReconciliationPresent && nextReconciliationValid &&
-		reflect.DeepEqual(currentReconciliation, nextReconciliation) && currentReconciliation.SchemaVersion == 2 &&
-		currentReconciliation.Generation == "normal_launch_terminal_evidence_v1" && currentReconciliation.State == "succeeded" &&
-		reflect.DeepEqual(currentReconciliation.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1})
-}
-
-func validLegacyNodeReservationTransition(current, next FabricOperation, nextLedger computeClaimRecoveryMutationLedger) bool {
-	currentBinding, currentPresent, currentValid := decodeComputeClaimRecoveryBinding(current)
-	nextBinding, nextPresent, nextValid := decodeComputeClaimRecoveryBinding(next)
-	return currentPresent && currentValid && nextPresent && nextValid && currentBinding == nextBinding &&
-		(currentBinding.IdempotencyKey == currentBinding.LaunchOperationID+":compute-claim" ||
-			currentBinding.IdempotencyKey == currentBinding.LaunchOperationID+":compute") &&
-		current.IdempotencyKey == currentBinding.LaunchOperationID+":compute" &&
-		reflect.DeepEqual(nextLedger, legacyNodeReservedComputeClaimRecoveryMutation())
-}
-
-func newComputeClaimRecoveryBinding(input ComputeClaimRecoveryClaimInput) computeClaimRecoveryBinding {
-	target := struct {
-		MachineName   string `json:"machineName"`
-		NodeName      string `json:"nodeName"`
-		CVMInstanceID string `json:"cvmInstanceId"`
-		PrivateIP     string `json:"privateIp"`
-		InstanceType  string `json:"instanceType"`
-		Zone          string `json:"zone"`
-	}{input.MachineName, input.NodeName, input.CVMInstanceID, input.PrivateIP, input.InstanceType, input.Zone}
-	bindingInput := input
-	bindingInput.AllowExistingStorageOperation = false
-	// The execution selector is an authorization command, not part of the
-	// stable resource binding. Replays must retain the original operation
-	// identity while the service independently enforces the Node-only write set.
-	bindingInput.NodeOnlyContinuation = false
-	return computeClaimRecoveryBinding{
-		LaunchOperationID: input.LaunchOperationID,
-		IdempotencyKey:    input.IdempotencyKey,
-		TargetHash:        hashInput(target),
-		RequestHash:       hashInput(bindingInput),
-	}
-}
-
-func historicalComputeClaimRecoveryBinding(input ComputeClaimRecoveryClaimInput) computeClaimRecoveryBinding {
-	legacy := input
-	legacy.IdempotencyKey = input.LaunchOperationID + ":compute-claim"
-	return newComputeClaimRecoveryBinding(legacy)
-}
-
-func expectedComputeClaimRecoveryOperation(input ComputeClaimRecoveryInput) FabricOperation {
-	expectedInput := ComputeAllocationInput{
-		ID: input.ComputeAllocationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
-		PackageID: input.PackageID, NodePoolID: input.NodePoolID, IdempotencyKey: input.LaunchOperationID + ":compute",
-	}
-	expected := newOperation(
-		"create_compute_allocation", "compute_allocation", expectedInput.ID, expectedInput.AccountID,
-		expectedInput.WorkspaceID, expectedInput.IdempotencyKey, hashInput(expectedInput), time.Time{},
-	)
-	return expected
-}
-
-func canonicalComputeClaimRecoveryOperation(operation FabricOperation, input ComputeClaimRecoveryInput) bool {
-	expected := expectedComputeClaimRecoveryOperation(input)
-	return operation.OperationID == expected.OperationID && operation.CallerService == expected.CallerService &&
-		operation.Action == expected.Action && operation.ResourceKind == expected.ResourceKind && operation.ResourceID == expected.ResourceID &&
-		operation.AccountID == expected.AccountID && operation.WorkspaceID == expected.WorkspaceID &&
-		operation.IdempotencyKey == expected.IdempotencyKey && operation.RequestHash == expected.RequestHash
-}
-
-func computeClaimRecoveryBindingDigest(binding computeClaimRecoveryBinding) string {
-	body, err := json.Marshal(binding)
-	if err != nil {
-		return ""
-	}
-	return computeClaimIdentityDigest(string(body))
-}
-
-func computeClaimRecoveryMutationDigest(ledger computeClaimRecoveryMutationLedger) string {
-	body, err := json.Marshal(ledger)
-	if err != nil {
-		return ""
-	}
-	return computeClaimIdentityDigest(string(body))
-}
-
-func validComputeClaimRecoveryDigest(value string) bool {
-	if len(value) != 64 {
-		return false
-	}
-	for _, character := range value {
-		if character < '0' || character > '9' {
-			if character < 'a' || character > 'f' {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func validDigest(value string) bool {
-	decoded, err := hex.DecodeString(value)
-	return err == nil && len(decoded) == sha256.Size
-}
-
-func isolatedRequestHashReconciliationLedger(ledger computeClaimRecoveryMutationLedger) bool {
-	if ledger.State != "observed" || ledger.Reason != "provider_describe" || ledger.FailureStage != "cvm_tag_readback" ||
-		ledger.ProviderErrorClass != "provider_error" ||
-		ledger.TencentMutationCount != 1 || ledger.KubernetesMutationCount != 0 ||
-		!reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{}) ||
-		ledger.Evidence.CVM.Attempted != 1 || ledger.Evidence.CVM.Confirmed != 0 || ledger.Evidence.CVM.Unknown != 1 ||
-		!reflect.DeepEqual(ledger.Evidence.CVM.Missing, []string{"opl_account_id"}) {
-		return false
-	}
-	return true
-}
-
-func normalLaunchTerminalRequestHashReconciliationEvidence(
-	operation FabricOperation,
-	input ComputeClaimRecoveryClaimInput,
-	binding computeClaimRecoveryBinding,
-) (string, bool) {
-	if _, present, _ := decodeComputeClaimRecoveryMutation(operation); present {
-		return "", false
-	}
-	createBudget, createPresent, createValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create")
-	cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm")
-	_, nodePresent, nodeValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_node")
-	terminal, terminalPresent, terminalValid := decodeComputeClaimTerminalEvidence(operation)
-	wantBindingDigest := computeClaimIdentityDigest(binding.LaunchOperationID + "|" + binding.IdempotencyKey + "|" + binding.TargetHash + "|" + binding.RequestHash)
-	if !createPresent || !createValid || createBudget != confirmedNormalLaunchMutationBudget() ||
-		!cvmPresent || !cvmValid || cvmBudget != reservedNormalLaunchMutationBudget() || nodePresent || !nodeValid ||
-		!terminalPresent || !terminalValid || terminal.Stage != "compute_claim_cvm" || terminal.Status != "terminal_unprovable" ||
-		terminal.AttemptCount != 1 || terminal.Attempted != 1 || terminal.Confirmed != 0 || terminal.Unknown != 1 || terminal.Max != 1 ||
-		terminal.FabricRecordID != operation.ID || terminal.OperationID != operation.OperationID || terminal.IdempotencyKey != operation.IdempotencyKey ||
-		terminal.RequestHash != operation.RequestHash || terminal.LaunchOperationID != input.LaunchOperationID || terminal.AccountID != input.AccountID ||
-		terminal.WorkspaceID != input.WorkspaceID || terminal.ComputeAllocationID != input.ComputeAllocationID || terminal.StorageVolumeID != input.StorageVolumeID ||
-		terminal.PackageID != input.PackageID || terminal.PoolID != input.PoolID || terminal.NodePoolID != input.NodePoolID ||
-		terminal.MachineName != input.MachineName || terminal.NodeName != input.NodeName || terminal.CVMInstanceID != input.CVMInstanceID ||
-		terminal.BindingDigest != wantBindingDigest || terminal.OperatorApprovalID != "" || terminal.OperatorApprovalDigest != "" ||
-		terminal.OperatorIdempotencyKey != "" || terminal.ManualRecoveryLedgerDigest != "" || terminal.Evidence != nil || len(terminal.StageBudgets) != 1 ||
-		terminal.StageBudgets["compute_claim_cvm"] != (ComputeClaimStageBudget{Attempted: 1, Confirmed: 0, Unknown: 1, Max: 1}) {
-		return "", false
-	}
-	return hashInput(struct {
-		ComputeCreate normalLaunchMutationBudget
-		ComputeClaim  normalLaunchMutationBudget
-		Terminal      ComputeClaimTerminalEvidence
-	}{createBudget, cvmBudget, terminal}), true
-}
-
-func isolatedRequestHashReconciliationProvenance(
-	operation FabricOperation,
-	input ComputeClaimRecoveryClaimInput,
-	persisted computeClaimRecoveryBinding,
-	present, valid bool,
-) (computeClaimRecoveryReconciliationProvenance, bool) {
-	if !present || !valid || !canonicalComputeClaimRecoveryOperation(operation, input.ComputeClaimRecoveryInput) {
-		return computeClaimRecoveryReconciliationProvenance{}, false
-	}
-	want := newComputeClaimRecoveryBinding(input)
-	if persisted.LaunchOperationID != want.LaunchOperationID || persisted.IdempotencyKey != want.IdempotencyKey ||
-		persisted.TargetHash != want.TargetHash || persisted.RequestHash == want.RequestHash {
-		return computeClaimRecoveryReconciliationProvenance{}, false
-	}
-	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
-	if ledgerPresent {
-		if !ledgerValid || !isolatedRequestHashReconciliationLedger(ledger) {
-			return computeClaimRecoveryReconciliationProvenance{}, false
-		}
-		return computeClaimRecoveryReconciliationProvenance{
-			SchemaVersion: 1, Generation: "isolated_request_hash_v1", Source: "manual_recovery_ledger", Digest: computeClaimRecoveryMutationDigest(ledger),
-		}, true
-	}
-	digest, ok := normalLaunchTerminalRequestHashReconciliationEvidence(operation, input, persisted)
-	if !ok {
-		return computeClaimRecoveryReconciliationProvenance{}, false
-	}
-	return computeClaimRecoveryReconciliationProvenance{
-		SchemaVersion: 2, Generation: "normal_launch_terminal_evidence_v1", Source: "normal_launch_terminal_evidence", Digest: digest,
-	}, true
-}
-
-func isolatedRequestHashReconciliationBinding(operation FabricOperation, input ComputeClaimRecoveryClaimInput, persisted computeClaimRecoveryBinding, present, valid bool) bool {
-	_, ok := isolatedRequestHashReconciliationProvenance(operation, input, persisted, present, valid)
-	return ok
-}
-
-func computeClaimRecoveryAllocationIdentityDigest(allocation ComputeAllocation) string {
-	identity := struct {
-		ID, AccountID, WorkspaceID, PackageID, Provider, ProviderResourceID, ProviderRequestID string
-		PoolID, NodePoolID, MachineName, InstanceID, CVMInstanceID, NodeName, PrivateIP        string
-		InstanceType, Zone, ChargeType, RenewFlag, Deadline                                    string
-	}{
-		allocation.ID, allocation.AccountID, allocation.WorkspaceID, allocation.PackageID, allocation.Provider,
-		allocation.ProviderResourceID, allocation.ProviderRequestID, allocation.PoolID, allocation.NodePoolID,
-		allocation.MachineName, allocation.InstanceID, allocation.CVMInstanceID, allocation.NodeName, allocation.PrivateIP,
-		allocation.InstanceType, allocation.Zone, allocation.ChargeType, allocation.RenewFlag, allocation.Deadline,
-	}
-	return hashInput(identity)
-}
-
-func computeClaimRecoveryOwnershipIdentityDigest(ownership MachineOwnership) string {
-	identity := struct {
-		ID, ResourceID, AccountID, WorkspaceID, PackageID, NodePoolID string
-		MachineID, InstanceID, NodeName, ProviderRequestID            string
-		ReleasedAt                                                    *time.Time
-	}{
-		ownership.ID, ownership.ResourceID, ownership.AccountID, ownership.WorkspaceID, ownership.PackageID, ownership.NodePoolID,
-		ownership.MachineID, ownership.InstanceID, ownership.NodeName, ownership.ProviderRequestID, ownership.ReleasedAt,
-	}
-	return hashInput(identity)
-}
-
-func newComputeClaimRecoveryReconciliation(
-	operation FabricOperation,
-	allocation ComputeAllocation,
-	plan ComputeAllocationPreparation,
-	ownership MachineOwnership,
-	input ComputeClaimRecoveryClaimInput,
-	proof ComputeClaimRecoveryProof,
-	binding computeClaimRecoveryBinding,
-	ledger computeClaimRecoveryMutationLedger,
-) computeClaimRecoveryReconciliation {
-	want := newComputeClaimRecoveryBinding(input)
-	provenance, provenanceOK := isolatedRequestHashReconciliationProvenance(operation, input, binding, true, true)
-	if provenanceOK && provenance.SchemaVersion == 2 {
-		authority := struct {
-			FabricRecordID              string                         `json:"fabricRecordId"`
-			OperationID                 string                         `json:"operationId"`
-			OperationHash               string                         `json:"operationHash"`
-			AllocationID                string                         `json:"allocationId"`
-			AllocationProviderRequestID string                         `json:"allocationProviderRequestId"`
-			AllocationIdentityDigest    string                         `json:"allocationIdentityDigest"`
-			AdmittedAllocationStatus    string                         `json:"admittedAllocationStatus"`
-			Plan                        ComputeAllocationPreparation   `json:"plan"`
-			OwnershipID                 string                         `json:"ownershipId"`
-			OwnershipProviderRequestID  string                         `json:"ownershipProviderRequestId"`
-			OwnershipIdentityDigest     string                         `json:"ownershipIdentityDigest"`
-			AdmittedOwnershipStatus     string                         `json:"admittedOwnershipStatus"`
-			Input                       ComputeClaimRecoveryClaimInput `json:"input"`
-			ChargeType                  string                         `json:"chargeType"`
-			PeriodMonths                int                            `json:"periodMonths"`
-			RenewFlag                   string                         `json:"renewFlag"`
-			Deadline                    string                         `json:"deadline"`
-			StorageState                string                         `json:"storageState"`
-			Binding                     computeClaimRecoveryBinding    `json:"binding"`
-			ProvenanceSource            string                         `json:"provenanceSource"`
-			ProvenanceDigest            string                         `json:"provenanceDigest"`
-		}{
-			FabricRecordID: operation.ID, OperationID: operation.OperationID, OperationHash: operation.RequestHash,
-			AllocationID: allocation.ID, AllocationProviderRequestID: allocation.ProviderRequestID,
-			AllocationIdentityDigest: computeClaimRecoveryAllocationIdentityDigest(allocation), AdmittedAllocationStatus: "quarantined", Plan: plan,
-			OwnershipID: ownership.ID, OwnershipProviderRequestID: ownership.ProviderRequestID,
-			OwnershipIdentityDigest: computeClaimRecoveryOwnershipIdentityDigest(ownership), AdmittedOwnershipStatus: "quarantined", Input: input,
-			ChargeType: proof.ChargeType, PeriodMonths: proof.PeriodMonths, RenewFlag: proof.RenewFlag, Deadline: proof.Deadline,
-			StorageState: proof.StorageState, Binding: binding, ProvenanceSource: provenance.Source, ProvenanceDigest: provenance.Digest,
-		}
-		return computeClaimRecoveryReconciliation{
-			SchemaVersion: 2, Consumer: "claim_compute_recovery", Generation: provenance.Generation,
-			ProvenanceSource: provenance.Source, ProvenanceDigest: provenance.Digest, State: "verified",
-			BindingDigest: computeClaimRecoveryBindingDigest(binding), ExpectedRequestHashDigest: computeClaimIdentityDigest(want.RequestHash),
-			PersistedRequestHashDigest: computeClaimIdentityDigest(binding.RequestHash), AuthorityDigest: hashInput(authority),
-		}
-	}
-	authority := struct {
-		FabricRecordID              string                             `json:"fabricRecordId"`
-		OperationID                 string                             `json:"operationId"`
-		OperationHash               string                             `json:"operationHash"`
-		AllocationID                string                             `json:"allocationId"`
-		AllocationProviderRequestID string                             `json:"allocationProviderRequestId"`
-		AllocationIdentityDigest    string                             `json:"allocationIdentityDigest"`
-		AdmittedAllocationStatus    string                             `json:"admittedAllocationStatus"`
-		Plan                        ComputeAllocationPreparation       `json:"plan"`
-		OwnershipID                 string                             `json:"ownershipId"`
-		OwnershipProviderRequestID  string                             `json:"ownershipProviderRequestId"`
-		OwnershipIdentityDigest     string                             `json:"ownershipIdentityDigest"`
-		AdmittedOwnershipStatus     string                             `json:"admittedOwnershipStatus"`
-		Input                       ComputeClaimRecoveryClaimInput     `json:"input"`
-		ChargeType                  string                             `json:"chargeType"`
-		PeriodMonths                int                                `json:"periodMonths"`
-		RenewFlag                   string                             `json:"renewFlag"`
-		Deadline                    string                             `json:"deadline"`
-		StorageState                string                             `json:"storageState"`
-		Binding                     computeClaimRecoveryBinding        `json:"binding"`
-		Ledger                      computeClaimRecoveryMutationLedger `json:"ledger"`
-	}{
-		FabricRecordID: operation.ID, OperationID: operation.OperationID, OperationHash: operation.RequestHash,
-		AllocationID: allocation.ID, AllocationProviderRequestID: allocation.ProviderRequestID,
-		AllocationIdentityDigest: computeClaimRecoveryAllocationIdentityDigest(allocation), AdmittedAllocationStatus: "quarantined", Plan: plan,
-		OwnershipID: ownership.ID, OwnershipProviderRequestID: ownership.ProviderRequestID,
-		OwnershipIdentityDigest: computeClaimRecoveryOwnershipIdentityDigest(ownership), AdmittedOwnershipStatus: "quarantined", Input: input,
-		ChargeType: proof.ChargeType, PeriodMonths: proof.PeriodMonths, RenewFlag: proof.RenewFlag, Deadline: proof.Deadline,
-		StorageState: proof.StorageState, Binding: binding, Ledger: ledger,
-	}
-	return computeClaimRecoveryReconciliation{
-		SchemaVersion: 1, Consumer: "claim_compute_recovery", Generation: "isolated_request_hash_v1", State: "verified",
-		BindingDigest:              computeClaimRecoveryBindingDigest(binding),
-		ExpectedRequestHashDigest:  computeClaimIdentityDigest(want.RequestHash),
-		PersistedRequestHashDigest: computeClaimIdentityDigest(binding.RequestHash),
-		MutationLedgerDigest:       computeClaimRecoveryMutationDigest(ledger), AuthorityDigest: hashInput(authority),
-	}
-}
-
-func validComputeClaimRecoveryReconciliation(value computeClaimRecoveryReconciliation) bool {
-	if value.Consumer != "claim_compute_recovery" || !validComputeClaimRecoveryDigest(value.BindingDigest) || !validComputeClaimRecoveryDigest(value.ExpectedRequestHashDigest) ||
-		!validComputeClaimRecoveryDigest(value.PersistedRequestHashDigest) || value.ExpectedRequestHashDigest == value.PersistedRequestHashDigest ||
-		!validComputeClaimRecoveryDigest(value.AuthorityDigest) {
-		return false
-	}
-	switch value.SchemaVersion {
-	case 1:
-		if value.Generation != "isolated_request_hash_v1" || value.ProvenanceSource != "" || value.ProvenanceDigest != "" ||
-			!validComputeClaimRecoveryDigest(value.MutationLedgerDigest) {
-			return false
-		}
-	case 2:
-		if value.Generation != "normal_launch_terminal_evidence_v1" || value.ProvenanceSource != "normal_launch_terminal_evidence" ||
-			!validComputeClaimRecoveryDigest(value.ProvenanceDigest) || value.MutationLedgerDigest != "" {
-			return false
-		}
-	default:
-		return false
-	}
-	switch value.State {
-	case "verified":
-		return value.FailureStage == "" && value.ProviderErrorClass == "" && reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{})
-	case "node_reserved":
-		return value.FailureStage == "node_patch_readback" && value.ProviderErrorClass == "transport_error" &&
-			reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}})
-	case "observed":
-		return validComputeClaimFailureStage(value.FailureStage) && validComputeClaimProviderErrorClass(value.ProviderErrorClass) &&
-			validComputeClaimMutationEvidenceShape(value.Node, value.Node.Attempted, 1, "node")
-	case "succeeded":
-		return value.FailureStage == "" && value.ProviderErrorClass == "" &&
-			(reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{}) || reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}))
-	default:
-		return false
-	}
-}
-
-func exactLegacyKubectlClientRejectedReconciliation(value computeClaimRecoveryReconciliation) bool {
-	return value.SchemaVersion == 2 && value.Generation == "normal_launch_terminal_evidence_v1" &&
-		value.ProvenanceSource == "normal_launch_terminal_evidence" && value.State == "observed" &&
-		value.FailureStage == "node_patch_readback" && value.ProviderErrorClass == "provider_error" &&
-		reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"node_ownership"}})
-}
-
-func newComputeClaimNodeClientRejectionRecovery(source computeClaimRecoveryReconciliation) computeClaimNodeClientRejectionRecovery {
-	return computeClaimNodeClientRejectionRecovery{
-		SchemaVersion: 1, Classification: "kubectl_client_validation_rejected", Invocation: "patch_json_filename_stdin_v1",
-		RecordedCalls: 1, APIAcceptedMutations: 0, SourceReconciliationDigest: hashInput(source),
-	}
-}
-
-func validComputeClaimNodeClientRejectionRecovery(value computeClaimNodeClientRejectionRecovery) bool {
-	return value.SchemaVersion == 1 && value.Classification == "kubectl_client_validation_rejected" &&
-		value.Invocation == "patch_json_filename_stdin_v1" && value.RecordedCalls == 1 && value.APIAcceptedMutations == 0 &&
-		validComputeClaimRecoveryDigest(value.SourceReconciliationDigest)
-}
-
-func decodeComputeClaimNodeClientRejectionRecovery(operation FabricOperation) (computeClaimNodeClientRejectionRecovery, bool, bool) {
-	value, present := operation.RedactedProviderPayload[computeClaimNodeClientRejectionPayloadKey]
-	if !present {
-		return computeClaimNodeClientRejectionRecovery{}, false, false
-	}
-	body, err := json.Marshal(value)
-	if err != nil {
-		return computeClaimNodeClientRejectionRecovery{}, true, false
-	}
-	var recovery computeClaimNodeClientRejectionRecovery
-	if json.Unmarshal(body, &recovery) != nil || !validComputeClaimNodeClientRejectionRecovery(recovery) {
-		return computeClaimNodeClientRejectionRecovery{}, true, false
-	}
-	return recovery, true, true
-}
-
-func withComputeClaimNodeClientRejectionRecovery(payload map[string]any, value computeClaimNodeClientRejectionRecovery) map[string]any {
-	result := maps.Clone(payload)
-	if result == nil {
-		result = map[string]any{}
-	}
-	result[computeClaimNodeClientRejectionPayloadKey] = map[string]any{
-		"schemaVersion": value.SchemaVersion, "classification": value.Classification, "invocation": value.Invocation,
-		"recordedCalls": value.RecordedCalls, "apiAcceptedMutations": value.APIAcceptedMutations,
-		"sourceReconciliationDigest": value.SourceReconciliationDigest,
-	}
-	return result
-}
-
-func computeClaimRecoveryReconciliationMatches(
-	value computeClaimRecoveryReconciliation,
-	operation FabricOperation,
-	input ComputeClaimRecoveryClaimInput,
-	binding computeClaimRecoveryBinding,
-	ledger computeClaimRecoveryMutationLedger,
-) bool {
-	want := newComputeClaimRecoveryBinding(input)
-	if value.BindingDigest != computeClaimRecoveryBindingDigest(binding) {
-		return false
-	}
-	if value.ExpectedRequestHashDigest != computeClaimIdentityDigest(want.RequestHash) ||
-		value.PersistedRequestHashDigest != computeClaimIdentityDigest(binding.RequestHash) ||
-		!canonicalComputeClaimRecoveryOperation(operation, input.ComputeClaimRecoveryInput) {
-		return false
-	}
-	if value.SchemaVersion == 1 {
-		return value.MutationLedgerDigest == computeClaimRecoveryMutationDigest(ledger)
-	}
-	provenance, ok := isolatedRequestHashReconciliationProvenance(operation, input, binding, true, true)
-	return ok && provenance.SchemaVersion == 2 && value.ProvenanceSource == provenance.Source && value.ProvenanceDigest == provenance.Digest
-}
-
-func decodeComputeClaimRecoveryReconciliation(operation FabricOperation) (computeClaimRecoveryReconciliation, bool, bool) {
-	value, present := operation.RedactedProviderPayload[computeClaimRecoveryReconciliationPayloadKey]
-	if !present {
-		return computeClaimRecoveryReconciliation{}, false, false
-	}
-	body, err := json.Marshal(value)
-	if err != nil {
-		return computeClaimRecoveryReconciliation{}, true, false
-	}
-	var reconciliation computeClaimRecoveryReconciliation
-	if json.Unmarshal(body, &reconciliation) != nil || !validComputeClaimRecoveryReconciliation(reconciliation) {
-		return computeClaimRecoveryReconciliation{}, true, false
-	}
-	return reconciliation, true, true
-}
-
-func withComputeClaimRecoveryReconciliation(payload map[string]any, value computeClaimRecoveryReconciliation) map[string]any {
-	result := maps.Clone(payload)
-	if result == nil {
-		result = map[string]any{}
-	}
-	result[computeClaimRecoveryReconciliationPayloadKey] = map[string]any{
-		"schemaVersion": value.SchemaVersion, "consumer": value.Consumer, "generation": value.Generation, "state": value.State,
-		"provenanceSource": value.ProvenanceSource, "provenanceDigest": value.ProvenanceDigest,
-		"bindingDigest": value.BindingDigest, "expectedRequestHashDigest": value.ExpectedRequestHashDigest,
-		"persistedRequestHashDigest": value.PersistedRequestHashDigest, "mutationLedgerDigest": value.MutationLedgerDigest,
-		"authorityDigest": value.AuthorityDigest, "failureStage": value.FailureStage, "providerErrorClass": value.ProviderErrorClass,
-		"node": map[string]any{"attempted": value.Node.Attempted, "confirmed": value.Node.Confirmed, "unknown": value.Node.Unknown, "missing": append([]string(nil), value.Node.Missing...)},
-	}
-	return result
-}
-
-func validComputeClaimRecoveryReconciliationTransition(current, next FabricOperation) bool {
-	currentValue, currentPresent, currentValid := decodeComputeClaimRecoveryReconciliation(current)
-	nextValue, nextPresent, nextValid := decodeComputeClaimRecoveryReconciliation(next)
-	currentRejection, currentRejectionPresent, currentRejectionValid := decodeComputeClaimNodeClientRejectionRecovery(current)
-	nextRejection, nextRejectionPresent, nextRejectionValid := decodeComputeClaimNodeClientRejectionRecovery(next)
-	if currentPresent && !currentValid || nextPresent && !nextValid {
-		return false
-	}
-	if currentRejectionPresent && !currentRejectionValid || nextRejectionPresent && !nextRejectionValid {
-		return false
-	}
-	if !currentPresent {
-		return !currentRejectionPresent && !nextRejectionPresent && (!nextPresent || nextValue.State == "verified")
-	}
-	legacyClientRejectionReservation := !currentRejectionPresent && nextRejectionPresent &&
-		exactLegacyKubectlClientRejectedReconciliation(currentValue) && nextValue.State == "node_reserved" &&
-		nextRejection == newComputeClaimNodeClientRejectionRecovery(currentValue)
-	if currentRejectionPresent && (!nextRejectionPresent || currentRejection != nextRejection) ||
-		!currentRejectionPresent && nextRejectionPresent && !legacyClientRejectionReservation {
-		return false
-	}
-	if !nextPresent || currentValue.SchemaVersion != nextValue.SchemaVersion || currentValue.Consumer != nextValue.Consumer ||
-		currentValue.Generation != nextValue.Generation || currentValue.ProvenanceSource != nextValue.ProvenanceSource || currentValue.ProvenanceDigest != nextValue.ProvenanceDigest ||
-		currentValue.BindingDigest != nextValue.BindingDigest ||
-		currentValue.ExpectedRequestHashDigest != nextValue.ExpectedRequestHashDigest ||
-		currentValue.PersistedRequestHashDigest != nextValue.PersistedRequestHashDigest ||
-		currentValue.MutationLedgerDigest != nextValue.MutationLedgerDigest || currentValue.AuthorityDigest != nextValue.AuthorityDigest {
-		return false
-	}
-	switch currentValue.State {
-	case "verified":
-		return nextValue.State == "verified" || nextValue.State == "node_reserved" || nextValue.State == "succeeded"
-	case "node_reserved":
-		return nextValue.State == "node_reserved" || nextValue.State == "observed" || nextValue.State == "succeeded"
-	case "observed":
-		return nextValue.State == "observed" || nextValue.State == "succeeded" || legacyClientRejectionReservation
-	case "succeeded":
-		return nextValue.State == "succeeded" && reflect.DeepEqual(currentValue, nextValue)
-	default:
-		return false
-	}
-}
-
-func computeClaimIdentityDigest(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
-}
-
-func computeClaimIdentityEvidence(operation FabricOperation, input ComputeClaimRecoveryClaimInput) *ComputeClaimIdentityEvidence {
-	want := newComputeClaimRecoveryBinding(input)
-	historical := historicalComputeClaimRecoveryBinding(input)
-	expectedOperation := expectedComputeClaimRecoveryOperation(input.ComputeClaimRecoveryInput)
-	got, present, valid := decodeComputeClaimRecoveryBinding(operation)
-	bindingClassification, bindingDigest := classifyComputeClaimRecoveryBinding(operation, input, got, present, valid)
-	ledgerState, ledgerOutcome, ledgerDigest := computeClaimMutationLedgerEvidence(operation)
-	checks := []ComputeClaimIdentityCheck{
-		{Field: "fabric.operationId", Matches: operation.OperationID == expectedOperation.OperationID, Expected: expectedOperation.OperationID, Actual: operation.OperationID},
-		{Field: "fabric.operationIdempotencyKey", Matches: operation.IdempotencyKey == input.LaunchOperationID+":compute", Expected: input.LaunchOperationID + ":compute", Actual: operation.IdempotencyKey},
-		{Field: "fabric.operationRequestHash", Matches: operation.RequestHash == expectedOperation.RequestHash, ExpectedDigest: computeClaimIdentityDigest(expectedOperation.RequestHash), ActualDigest: computeClaimIdentityDigest(operation.RequestHash)},
-		{Field: "binding.present", Matches: present, Expected: "present", Actual: map[bool]string{true: "present", false: "absent"}[present]},
-		{Field: "binding.valid", Matches: valid, Expected: "valid", Actual: map[bool]string{true: "valid", false: "invalid"}[valid]},
-	}
-	if present && valid {
-		bindingKind := bindingClassification
-		expected := want
-		switch bindingClassification {
-		case "current":
-		case "compute-claim":
-			expected = historical
-		}
-		compatible := bindingClassification == "current" || bindingClassification == "compute-claim" || bindingClassification == "request-hash-reconciliation"
-		checks = append(checks,
-			ComputeClaimIdentityCheck{Field: "binding.compatibility", Matches: compatible, Expected: "current_compute_claim_or_request_hash_reconciliation", Actual: bindingKind},
-			ComputeClaimIdentityCheck{Field: "binding.launchOperationId", Matches: got.LaunchOperationID == expected.LaunchOperationID, Expected: expected.LaunchOperationID, Actual: got.LaunchOperationID},
-			ComputeClaimIdentityCheck{Field: "binding.idempotencyKey", Matches: got.IdempotencyKey == expected.IdempotencyKey, Expected: expected.IdempotencyKey, Actual: got.IdempotencyKey},
-			ComputeClaimIdentityCheck{Field: "binding.targetHash", Matches: got.TargetHash == expected.TargetHash, ExpectedDigest: computeClaimIdentityDigest(expected.TargetHash), ActualDigest: computeClaimIdentityDigest(got.TargetHash)},
-			ComputeClaimIdentityCheck{Field: "binding.requestHash", Matches: got.RequestHash == expected.RequestHash, ExpectedDigest: computeClaimIdentityDigest(expected.RequestHash), ActualDigest: computeClaimIdentityDigest(got.RequestHash)},
-		)
-	}
-	result := &ComputeClaimIdentityEvidence{
-		Checks: checks, BindingClassification: bindingClassification, BindingDigest: bindingDigest,
-		MutationLedger: ledgerState, MutationLedgerOutcome: ledgerOutcome, MutationLedgerDigest: ledgerDigest,
-	}
-	if ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation); ledgerPresent && ledgerValid {
-		result.MutationEvidence = &ComputeClaimEvidence{
-			CVM:  cloneComputeClaimMutationEvidence(ledger.Evidence.CVM),
-			Node: cloneComputeClaimMutationEvidence(ledger.Evidence.Node),
-		}
-		result.FailureStage = ledger.FailureStage
-		result.ProviderErrorClass = ledger.ProviderErrorClass
-	}
-	if reconciliation, present, valid := decodeComputeClaimRecoveryReconciliation(operation); present && valid {
-		result.Reconciliation = &ComputeClaimReconciliationEvidence{
-			SchemaVersion: reconciliation.SchemaVersion, Consumer: reconciliation.Consumer, Generation: reconciliation.Generation,
-			ProvenanceSource: reconciliation.ProvenanceSource, ProvenanceDigest: reconciliation.ProvenanceDigest, State: reconciliation.State,
-			ExpectedRequestHashDigest:  reconciliation.ExpectedRequestHashDigest,
-			PersistedRequestHashDigest: reconciliation.PersistedRequestHashDigest,
-			FailureStage:               reconciliation.FailureStage, ProviderErrorClass: reconciliation.ProviderErrorClass,
-			Node: cloneComputeClaimMutationEvidence(reconciliation.Node),
-		}
-	}
-	return result
-}
-
-func classifyComputeClaimRecoveryBinding(operation FabricOperation, input ComputeClaimRecoveryClaimInput, got computeClaimRecoveryBinding, present, valid bool) (string, string) {
-	value, rawPresent := operation.RedactedProviderPayload["computeClaimRecovery"]
-	if !rawPresent {
-		return "other", computeClaimIdentityDigest("absent")
-	}
-	body, err := json.Marshal(value)
-	if err != nil {
-		return "other", computeClaimIdentityDigest("invalid")
-	}
-	digest := computeClaimIdentityDigest(string(body))
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(body, &fields) != nil || len(fields) != 4 {
-		return "other", digest
-	}
-	for _, field := range []string{"launchOperationId", "idempotencyKey", "targetHash", "requestHash"} {
-		if _, ok := fields[field]; !ok {
-			return "other", digest
-		}
-	}
-	if !present || !valid {
-		return "other", digest
-	}
-	if got == newComputeClaimRecoveryBinding(input) {
-		return "current", digest
-	}
-	if got == historicalComputeClaimRecoveryBinding(input) {
-		return "compute-claim", digest
-	}
-	if isolatedRequestHashReconciliationBinding(operation, input, got, present, valid) {
-		return "request-hash-reconciliation", digest
-	}
-	if knownLegacyComputeClaimRecoveryIdempotencyKey(got.IdempotencyKey) {
-		legacy := input
-		legacy.IdempotencyKey = got.IdempotencyKey
-		if got == newComputeClaimRecoveryBinding(legacy) {
-			return "known-legacy", digest
-		}
-	}
-	return "other", digest
-}
-
-func knownLegacyComputeClaimRecoveryIdempotencyKey(value string) bool {
-	const prefix = "recovery-exec-"
-	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+20 {
-		return false
-	}
-	for _, character := range value[len(prefix):] {
-		if character < '0' || character > '9' {
-			if character < 'a' || character > 'f' {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func computeClaimMutationLedgerEvidence(operation FabricOperation) (string, string, string) {
-	value, present := operation.RedactedProviderPayload[computeClaimRecoveryMutationPayloadKey]
-	if !present {
-		return "absent", "confirmed_zero", computeClaimIdentityDigest("absent")
-	}
-	body, err := json.Marshal(value)
-	if err != nil {
-		return "invalid", "unknown", computeClaimIdentityDigest("invalid")
-	}
-	digest := computeClaimIdentityDigest(string(body))
-	ledger, _, valid := decodeComputeClaimRecoveryMutation(operation)
-	if !valid {
-		return "invalid", "unknown", digest
-	}
-	if ledger.State != "observed" {
-		return ledger.State, "unknown", digest
-	}
-	complete := validComputeClaimMutationEvidence(ledger.Evidence.CVM, ledger.TencentMutationCount, 5, "cvm") &&
-		validComputeClaimMutationEvidence(ledger.Evidence.Node, ledger.KubernetesMutationCount, 1, "node")
-	if !complete {
-		return ledger.State, "unknown", digest
-	}
-	if ledger.TencentMutationCount == 0 && ledger.KubernetesMutationCount == 0 {
-		return ledger.State, "confirmed_zero", digest
-	}
-	return ledger.State, "nonzero", digest
-}
-
-func decodeComputeClaimRecoveryBinding(operation FabricOperation) (computeClaimRecoveryBinding, bool, bool) {
-	value, ok := operation.RedactedProviderPayload["computeClaimRecovery"]
-	if !ok {
-		return computeClaimRecoveryBinding{}, false, false
-	}
-	body, err := json.Marshal(value)
-	if err != nil {
-		return computeClaimRecoveryBinding{}, true, false
-	}
-	var binding computeClaimRecoveryBinding
-	if json.Unmarshal(body, &binding) != nil || binding.LaunchOperationID == "" || binding.IdempotencyKey == "" || binding.TargetHash == "" || binding.RequestHash == "" {
-		return computeClaimRecoveryBinding{}, true, false
-	}
-	return binding, true, true
-}
-
-func withComputeClaimRecoveryBinding(payload map[string]any, binding computeClaimRecoveryBinding) map[string]any {
-	result := maps.Clone(payload)
-	if result == nil {
-		result = map[string]any{}
-	}
-	result["computeClaimRecovery"] = map[string]any{
-		"launchOperationId": binding.LaunchOperationID,
-		"idempotencyKey":    binding.IdempotencyKey,
-		"targetHash":        binding.TargetHash,
-		"requestHash":       binding.RequestHash,
-	}
-	return result
-}
-
-func decodeComputeClaimTerminalEvidence(operation FabricOperation) (ComputeClaimTerminalEvidence, bool, bool) {
-	value, ok := operation.RedactedProviderPayload[computeClaimTerminalEvidencePayloadKey]
-	if !ok {
-		return ComputeClaimTerminalEvidence{}, false, false
-	}
-	body, err := json.Marshal(value)
-	if err != nil {
-		return ComputeClaimTerminalEvidence{}, true, false
-	}
-	var evidence ComputeClaimTerminalEvidence
-	if json.Unmarshal(body, &evidence) != nil || !validComputeClaimTerminalEvidence(evidence) {
-		return ComputeClaimTerminalEvidence{}, true, false
-	}
-	return evidence, true, true
-}
-
-func withComputeClaimTerminalEvidence(payload map[string]any, evidence ComputeClaimTerminalEvidence) map[string]any {
-	result := maps.Clone(payload)
-	if result == nil {
-		result = map[string]any{}
-	}
-	result[computeClaimTerminalEvidencePayloadKey] = map[string]any{
-		"schemaVersion": evidence.SchemaVersion, "stage": evidence.Stage, "status": evidence.Status,
-		"errorCode": evidence.ErrorCode, "reason": evidence.Reason, "readbackStatus": evidence.ReadbackStatus,
-		"attemptCount": evidence.AttemptCount, "attempted": evidence.Attempted, "confirmed": evidence.Confirmed,
-		"unknown": evidence.Unknown, "max": evidence.Max, "startedAt": evidence.StartedAt, "finishedAt": evidence.FinishedAt,
-		"fabricRecordId": evidence.FabricRecordID, "operationId": evidence.OperationID, "idempotencyKey": evidence.IdempotencyKey, "requestHash": evidence.RequestHash,
-		"launchOperationId": evidence.LaunchOperationID, "accountId": evidence.AccountID, "workspaceId": evidence.WorkspaceID,
-		"computeAllocationId": evidence.ComputeAllocationID, "storageVolumeId": evidence.StorageVolumeID, "packageId": evidence.PackageID,
-		"poolId": evidence.PoolID, "nodePoolId": evidence.NodePoolID, "machineName": evidence.MachineName,
-		"nodeName": evidence.NodeName, "cvmInstanceId": evidence.CVMInstanceID, "cvmOwnershipState": evidence.CVMOwnershipState,
-		"nodeOwnershipState": evidence.NodeOwnershipState, "bindingDigest": evidence.BindingDigest,
-		"operatorApprovalId": evidence.OperatorApprovalID, "operatorApprovalDigest": evidence.OperatorApprovalDigest,
-		"operatorIdempotencyKey": evidence.OperatorIdempotencyKey, "manualRecoveryLedgerDigest": evidence.ManualRecoveryLedgerDigest,
-		"evidence": evidence.Evidence, "stageBudgets": evidence.StageBudgets,
-	}
-	return result
-}
-
-func validComputeClaimTerminalEvidence(evidence ComputeClaimTerminalEvidence) bool {
-	if evidence.SchemaVersion != 1 || evidence.Status != "terminal_unprovable" || evidence.Stage == "" || evidence.ErrorCode == "" ||
-		evidence.ReadbackStatus == "" || evidence.FabricRecordID == "" || evidence.OperationID == "" || evidence.IdempotencyKey == "" || evidence.RequestHash == "" ||
-		evidence.AccountID == "" || evidence.WorkspaceID == "" || evidence.ComputeAllocationID == "" || evidence.PackageID == "" || evidence.NodePoolID == "" ||
-		evidence.StartedAt == "" || evidence.FinishedAt == "" || evidence.AttemptCount < 0 || evidence.Attempted < 0 || evidence.Confirmed < 0 || evidence.Unknown < 0 || evidence.Max < 0 ||
-		!validComputeClaimTerminalStage(evidence.Stage) || !validComputeClaimTerminalReadback(evidence.ReadbackStatus) {
-		return false
-	}
-	if safeComputeClaimTerminalToken(evidence.ErrorCode) != evidence.ErrorCode || evidence.Reason != "" && safeComputeClaimTerminalToken(evidence.Reason) != evidence.Reason {
-		return false
-	}
-	operatorFields := []string{evidence.OperatorApprovalID, evidence.OperatorApprovalDigest, evidence.OperatorIdempotencyKey, evidence.ManualRecoveryLedgerDigest}
-	operatorFieldCount := 0
-	for _, field := range operatorFields {
-		if field != "" {
-			operatorFieldCount++
-		}
-	}
-	if operatorFieldCount != 0 && (operatorFieldCount != len(operatorFields) || !validComputePoolTerminalizationToken(evidence.OperatorApprovalID) ||
-		evidence.OperatorApprovalID != evidence.OperatorIdempotencyKey || !validSHA256Hex(evidence.OperatorApprovalDigest) || !validSHA256Hex(evidence.ManualRecoveryLedgerDigest)) {
-		return false
-	}
-	started, startedErr := time.Parse(time.RFC3339Nano, evidence.StartedAt)
-	finished, finishedErr := time.Parse(time.RFC3339Nano, evidence.FinishedAt)
-	if startedErr != nil || finishedErr != nil || finished.Before(started) || evidence.Attempted > evidence.Max || evidence.Confirmed > evidence.Attempted || evidence.Unknown > evidence.Attempted || evidence.Confirmed+evidence.Unknown > evidence.Attempted || evidence.AttemptCount != evidence.Attempted {
-		return false
-	}
-	if evidence.StageBudgets != nil {
-		for stage, budget := range evidence.StageBudgets {
-			if stage != "compute_claim_cvm" && stage != "compute_claim_node" || budget.Max != 1 || budget.Attempted != 1 || budget.Confirmed < 0 || budget.Confirmed > budget.Attempted || budget.Unknown < 0 || budget.Unknown > budget.Attempted || budget.Confirmed+budget.Unknown != budget.Attempted {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func validComputeClaimTerminalStage(stage string) bool {
-	switch stage {
-	case "compute_claim_cvm", "compute_claim_node", "compute_claim_finalization":
-		return true
-	default:
-		return false
-	}
-}
-
-func validComputeClaimTerminalReadback(status string) bool {
-	switch status {
-	case "not_attempted", "unavailable", "mismatch", "unallocated", "target_owned", "ownership_unavailable", "operator_terminalized":
-		return true
-	default:
-		return false
-	}
-}
-
-func terminalComputeClaimBinding(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation) computeClaimRecoveryBinding {
-	launchOperationID, ok := strings.CutSuffix(strings.TrimSpace(operation.IdempotencyKey), ":compute")
-	if !ok || launchOperationID == "" {
-		launchOperationID = strings.TrimSpace(operation.IdempotencyKey)
-	}
-	target := struct {
-		MachineName   string `json:"machineName"`
-		NodeName      string `json:"nodeName"`
-		CVMInstanceID string `json:"cvmInstanceId"`
-		PrivateIP     string `json:"privateIp"`
-		InstanceType  string `json:"instanceType"`
-		Zone          string `json:"zone"`
-	}{allocation.MachineName, allocation.NodeName, firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), allocation.PrivateIP, firstNonEmpty(plan.InstanceType, allocation.InstanceType), allocation.Zone}
-	return computeClaimRecoveryBinding{
-		LaunchOperationID: launchOperationID, IdempotencyKey: operation.IdempotencyKey,
-		TargetHash: hashInput(target), RequestHash: operation.RequestHash,
-	}
-}
-
-func terminalComputeClaimEvidence(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation, stage, readbackStatus string, cause error, cvmBudget, nodeBudget normalLaunchMutationBudget, now time.Time, binding computeClaimRecoveryBinding, proof *ComputeClaimProviderProof) ComputeClaimTerminalEvidence {
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	startedAt := operation.StartedAt
-	if startedAt.IsZero() {
-		startedAt = now
-	}
-	code := safeComputeClaimTerminalToken(errorCode(cause))
-	if code == "" || code == "provider_error" {
-		code = "unprovable"
-	}
-	code = "compute_claim_terminal_" + strings.TrimPrefix(stage, "compute_claim_") + "_" + code
-	if len(code) > 120 {
-		code = "compute_claim_terminal_unprovable"
-	}
-	reason := safeComputeClaimTerminalToken(errorCode(cause))
-	evidence := ComputeClaimTerminalEvidence{
-		SchemaVersion: 1, Stage: stage, Status: "terminal_unprovable", ErrorCode: code, Reason: reason,
-		ReadbackStatus: readbackStatus, Attempted: cvmBudget.Attempted + nodeBudget.Attempted,
-		Confirmed: cvmBudget.Confirmed + nodeBudget.Confirmed, Unknown: cvmBudget.Unknown + nodeBudget.Unknown,
-		Max: cvmBudget.Max + nodeBudget.Max, StartedAt: startedAt.UTC().Format(time.RFC3339Nano), FinishedAt: now.UTC().Format(time.RFC3339Nano),
-		FabricRecordID: operation.ID, OperationID: operation.OperationID, IdempotencyKey: operation.IdempotencyKey, RequestHash: operation.RequestHash,
-		AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, ComputeAllocationID: operation.ResourceID,
-		PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, MachineName: allocation.MachineName,
-		NodeName: allocation.NodeName, CVMInstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID),
-		BindingDigest: computeClaimIdentityDigest(binding.LaunchOperationID + "|" + binding.IdempotencyKey + "|" + binding.TargetHash + "|" + binding.RequestHash),
-		StageBudgets:  map[string]ComputeClaimStageBudget{},
-	}
-	if cvmBudget.Max > 0 {
-		evidence.StageBudgets["compute_claim_cvm"] = ComputeClaimStageBudget{Attempted: cvmBudget.Attempted, Confirmed: cvmBudget.Confirmed, Unknown: cvmBudget.Unknown, Max: cvmBudget.Max}
-	}
-	if nodeBudget.Max > 0 {
-		evidence.StageBudgets["compute_claim_node"] = ComputeClaimStageBudget{Attempted: nodeBudget.Attempted, Confirmed: nodeBudget.Confirmed, Unknown: nodeBudget.Unknown, Max: nodeBudget.Max}
-	}
-	evidence.AttemptCount = evidence.Attempted
-	if binding.LaunchOperationID != "" {
-		evidence.LaunchOperationID = binding.LaunchOperationID
-	}
-	if proof != nil {
-		evidence.CVMOwnershipState, evidence.NodeOwnershipState = proof.CVMOwnershipState, proof.NodeOwnershipState
-	}
-	return evidence
-}
-
-func safeComputeClaimTerminalToken(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if value == "" {
-		return ""
-	}
-	var builder strings.Builder
-	for _, char := range value {
-		if char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '_' {
-			builder.WriteRune(char)
-		} else {
-			return ""
-		}
-	}
-	return builder.String()
-}
-
-func (s *Service) computeClaimRecoveryLocalState(ctx context.Context, input ComputeClaimRecoveryInput) (FabricOperation, ComputeAllocation, ComputeAllocationPreparation, MachineOwnership, string, error) {
-	operations, err := s.operations.List(ctx)
-	if err != nil {
-		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "local_identity", err
-	}
-	var operation FabricOperation
-	computeCount := 0
-	for _, candidate := range operations {
-		if candidate.Action == "create_compute_allocation" && (candidate.ResourceID == input.ComputeAllocationID ||
-			candidate.IdempotencyKey == input.LaunchOperationID+":compute" || candidate.AccountID == input.AccountID && candidate.WorkspaceID == input.WorkspaceID) {
-			computeCount++
-			operation = candidate
-		}
-	}
-	storageDisposition := computeClaimRecoveryStorageOperationDisposition(operations, input)
-	if storageDisposition == computeClaimStorageOperationUnknown && !input.AllowExistingStorageOperation {
-		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "storage_already_started",
-			fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
-	}
-	if storageDisposition == computeClaimStorageOperationConflict && !input.AllowExistingStorageOperation {
-		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "identity_mismatch",
-			fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
-	}
-	if computeCount != 1 || operation.AccountID != input.AccountID || operation.WorkspaceID != input.WorkspaceID ||
-		operation.IdempotencyKey != input.LaunchOperationID+":compute" ||
-		(operation.Status != "failed" && operation.Status != "claim_pending" && operation.Status != "succeeded") {
-		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "local_identity",
-			fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
-	}
-	var allocation ComputeAllocation
-	plan, hasPlan := decodeComputeAllocationPlan(operation)
-	if !decodeOperationResource(operation, &allocation) || !hasPlan || !validComputeClaimRecoveryLocalIdentity(input, allocation, plan) {
-		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "local_identity",
-			fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
-	}
-	ownership, err := s.operations.MachineOwnership(ctx, input.ComputeAllocationID)
-	if err != nil || !validComputeClaimRecoveryOwnership(allocation, ownership) {
-		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "local_identity",
-			fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
-	}
-	return operation, allocation, plan, ownership, "", nil
-}
-
 func workspaceLaunchResourceLockKey(launchOperationID string) string {
 	return "workspace-launch-resources:" + strings.TrimSpace(launchOperationID)
-}
-
-func unknownMonthlyProviderTruth(compute ComputeAllocation, storage StorageVolume) MonthlyProviderTruth {
-	return MonthlyProviderTruth{ComputeState: "unknown", StorageState: "unknown", Compute: cloneComputeAllocation(compute), Storage: cloneStorageVolume(storage)}
-}
-
-func cloneComputeAllocation(value ComputeAllocation) ComputeAllocation {
-	value.ProviderData = maps.Clone(value.ProviderData)
-	value.CostTags = maps.Clone(value.CostTags)
-	value.NodeSelector = maps.Clone(value.NodeSelector)
-	return value
-}
-
-func cloneStorageVolume(value StorageVolume) StorageVolume {
-	value.ProviderData = maps.Clone(value.ProviderData)
-	value.CostTags = maps.Clone(value.CostTags)
-	return value
-}
-
-func validMonthlyProviderTruthIdentity(compute ComputeAllocation, storage StorageVolume) bool {
-	instanceID := firstNonEmpty(compute.InstanceID, compute.CVMInstanceID)
-	instanceType := firstNonEmpty(compute.InstanceType, compute.ProviderData["instanceType"])
-	computeZone := firstNonEmpty(compute.Zone, compute.ProviderData["zone"])
-	return compute.ID != "" && compute.AccountID != "" && compute.WorkspaceID != "" &&
-		(compute.PackageID == "basic" || compute.PackageID == "pro") && compute.Provider == "tencent-tke" && compute.ProviderResourceID != "" &&
-		compute.NodePoolID != "" && firstNonEmpty(compute.MachineName, compute.ProviderData["machineName"]) != "" && strings.HasPrefix(instanceID, "ins-") && compute.PrivateIP != "" &&
-		instanceType == packagePlan(compute.PackageID).InstanceType && computeZone != "" && validMonthlyTruthTags(compute.CostTags, compute.AccountID, compute.WorkspaceID, compute.ID) &&
-		storage.ID != "" && storage.AccountID == compute.AccountID && storage.WorkspaceID == compute.WorkspaceID && storage.Provider == "tencent-tke" &&
-		strings.HasPrefix(storage.ProviderResourceID, "disk-") && storage.SizeGB > 0 && storage.DiskType != "" && storage.Zone == computeZone &&
-		validMonthlyTruthTags(storage.CostTags, storage.AccountID, storage.WorkspaceID, storage.ID)
-}
-
-func validMonthlyTruthTags(tags map[string]string, accountID, workspaceID, resourceID string) bool {
-	return tags["opl_account_id"] == accountID && tags["opl_workspace_id"] == workspaceID && tags["opl_resource_id"] == resourceID && strings.TrimSpace(tags["opl_operation_id"]) != ""
-}
-
-func validMonthlyProviderTruthResult(result MonthlyProviderTruth, compute ComputeAllocation, storage StorageVolume) bool {
-	validState := func(value string) bool { return value == "ready" || value == "absent" || value == "unknown" }
-	return validState(result.ComputeState) && validState(result.StorageState) &&
-		result.Compute.ID == compute.ID && result.Compute.AccountID == compute.AccountID && result.Compute.WorkspaceID == compute.WorkspaceID &&
-		result.Storage.ID == storage.ID && result.Storage.AccountID == storage.AccountID && result.Storage.WorkspaceID == storage.WorkspaceID &&
-		validMonthlyProviderTruthIdentity(result.Compute, result.Storage)
-}
-
-func (s *Service) MachineOwnership(ctx context.Context, resourceID string) (MachineOwnership, error) {
-	return s.operations.MachineOwnership(ctx, strings.TrimSpace(resourceID))
 }
 
 func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocation, error) {
@@ -2820,6 +246,9 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 		return ComputeAllocation{}, fmt.Errorf("compute_idempotency_key_required")
 	}
 	requestHash := hashInput(input)
+	if input.LaunchBinding != nil {
+		requestHash = input.LaunchBinding.RequestHash
+	}
 	now := s.now()
 	id := firstNonEmpty(input.ID, "ca_"+stableSuffix("create_compute_allocation", input.IdempotencyKey)[:18])
 	input.ID = id
@@ -2841,7 +270,9 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 	operation.ComputePoolKey = allocation.NodePoolID
 	allocation.OperationID = operation.OperationID
 	fillOperationResource(&operation, allocation)
-	bindLaunchStageOperation(&operation, "compute", map[string]string{"compute": id})
+	if err := bindLaunchStageOperation(&operation, input.LaunchBinding); err != nil {
+		return ComputeAllocation{}, err
+	}
 	stored, claimed, err := s.operations.ClaimComputePoolRuntime(ctx, operation)
 	if err != nil {
 		return ComputeAllocation{}, err
@@ -2881,21 +312,30 @@ func (s *Service) startComputeAllocation(operation FabricOperation, allocation C
 }
 
 func automaticComputeClaimRecoveryInput(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation) (ComputeClaimRecoveryClaimInput, bool) {
-	launchOperationID, ok := strings.CutSuffix(strings.TrimSpace(operation.IdempotencyKey), ":compute")
-	if !ok || launchOperationID == "" || allocation.ID != operation.ResourceID {
+	launchBinding, ok := decodeLaunchStageBinding(operation)
+	if !ok || launchBinding.Stage != "ensure_compute_allocation" || allocation.ID != operation.ResourceID {
 		return ComputeClaimRecoveryClaimInput{}, false
 	}
 	claimInput := ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: ComputeClaimRecoveryInput{
-			LaunchOperationID: launchOperationID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
-			ComputeAllocationID: allocation.ID, StorageVolumeID: "vol_" + stableID("vol", allocation.AccountID, launchOperationID+":storage")[:18],
+			LaunchOperationID: launchBinding.LaunchOperationID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
+			ComputeAllocationID: allocation.ID, StorageVolumeID: "vol_" + stableID("vol", allocation.AccountID, launchBinding.LaunchOperationID, "storage")[:18],
 			PackageID: allocation.PackageID, PoolID: plan.PoolID, NodePoolID: plan.NodePoolID,
 		},
 		MachineName: allocation.MachineName, NodeName: allocation.NodeName,
 		CVMInstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), PrivateIP: allocation.PrivateIP,
 		InstanceType: plan.InstanceType, Zone: allocation.Zone, IdempotencyKey: operation.IdempotencyKey,
 	}
-	if !validComputeClaimRecoveryClaimInput(claimInput) {
+	if !validComputeClaimRecoveryInput(claimInput.ComputeClaimRecoveryInput) || claimInput.IdempotencyKey != launchBinding.IdempotencyKey ||
+		!strings.HasPrefix(claimInput.CVMInstanceID, "ins-") {
+		return ComputeClaimRecoveryClaimInput{}, false
+	}
+	for _, value := range []string{claimInput.MachineName, claimInput.NodeName, claimInput.CVMInstanceID, claimInput.PrivateIP, claimInput.InstanceType, claimInput.Zone, claimInput.IdempotencyKey} {
+		if value == "" || value != strings.TrimSpace(value) {
+			return ComputeClaimRecoveryClaimInput{}, false
+		}
+	}
+	if launchBinding.LaunchOperationID == "" || launchBinding.AccountID != allocation.AccountID || launchBinding.WorkspaceID != allocation.WorkspaceID {
 		return ComputeClaimRecoveryClaimInput{}, false
 	}
 	return claimInput, true
@@ -2910,268 +350,7 @@ func automaticComputeClaimRecoveryBinding(operation FabricOperation, allocation 
 }
 
 func (s *Service) finishCreateComputeAllocation(operation FabricOperation, allocation ComputeAllocation, dryRun bool) {
-	if !normalWorkspaceComputeBudgetEnabled(operation, s.provider) {
-		s.finishCreateComputeAllocationLegacy(operation, allocation, dryRun)
-		return
-	}
-	plan, planOK := providerPlan(s.provider, allocation.PackageID)
-	if !planOK {
-		_ = computeAllocationFailure(context.Background(), s, operation, allocation, ComputeAllocationPreparation{}, ErrUnsupportedComputePackage)
-		return
-	}
-	poolKey := allocation.NodePoolID
-	leaseOwner, err := newLeaseToken()
-	if err != nil {
-		return
-	}
-	claimLease := func(duration time.Duration) bool {
-		now := s.now()
-		current, claimed, claimErr := s.operations.TryClaimComputePoolHead(context.Background(), operation.ID, poolKey, leaseOwner, now, now.Add(duration))
-		if claimErr != nil || !claimed {
-			return false
-		}
-		operation = current
-		return true
-	}
-	pollLease := s.computeAllocationAttemptTimeout + 2*s.computeAllocationPollInterval
-	if !claimLease(pollLease) {
-		return
-	}
-	terminal := false
-	defer func() {
-		if !terminal {
-			_ = s.operations.ReleaseComputePoolHead(context.Background(), operation.ID, poolKey, leaseOwner)
-		}
-	}()
-
-	prepared, hasPlan := decodeComputeAllocationPlan(operation)
-	if !hasPlan {
-		prepareCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationAttemptTimeout)
-		prepared, err = s.provider.PrepareComputeAllocation(prepareCtx, ComputeAllocationInput{
-			ID: allocation.ID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
-			PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, DryRun: dryRun,
-		})
-		cancel()
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			return
-		}
-		if err != nil {
-			terminal = true
-			_ = computeAllocationFailure(context.Background(), s, operation, allocation, prepared, err)
-			return
-		}
-		if err := validateComputeAllocationPreparation(prepared, allocation, plan); err != nil {
-			terminal = true
-			_ = computeAllocationFailure(context.Background(), s, operation, allocation, prepared, err)
-			return
-		}
-		operation.RedactedProviderPayload = preserveLaunchStageBinding(computeAllocationOperationPayload(allocation, prepared), operation.RedactedProviderPayload)
-		if err := s.operations.SaveRuntime(context.Background(), operation); err != nil {
-			return
-		}
-	}
-
-	// The create reservation is durable and consumes the only external compute
-	// write. Once it exists, every replay uses Describe/readback; a second
-	// CreateComputeAllocation call is never safe after a lost response.
-	createBudget, createBudgetPresent, createBudgetValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create")
-	if !createBudgetValid {
-		terminal = true
-		_ = computeAllocationFailure(context.Background(), s, operation, allocation, prepared, fmt.Errorf("compute_create_budget_invalid"))
-		return
-	}
-	freshCreateReservation := !createBudgetPresent
-	if freshCreateReservation {
-		createBudget = reservedNormalLaunchMutationBudget()
-		operation.RedactedProviderPayload = preserveLaunchStageBinding(withNormalLaunchStageBudget(computeAllocationOperationPayload(allocation, prepared), "compute_create", createBudget), operation.RedactedProviderPayload)
-		if err := s.operations.SaveRuntime(context.Background(), operation); err != nil {
-			return
-		}
-		createBudgetPresent = true
-	}
-
-	var result ComputeAllocation
-	if createBudget.Confirmed == 1 {
-		if !decodeOperationResource(operation, &result) {
-			result = allocation
-		}
-		result = mergeComputeAllocation(result, allocation, prepared)
-	} else {
-		if !createBudgetPresent || createBudget.Attempted == 0 {
-			// Defensive branch: the reservation above should make this unreachable.
-			return
-		}
-		if createBudget.Unknown == 1 && createBudget.Confirmed == 0 && operation.RedactedProviderPayload != nil {
-			// Only the first owner of a fresh reservation may issue the create.
-			// A replay sees the same budget and jumps directly to readback below.
-			if freshCreateReservation {
-				if allocation.MachineName == "" && allocation.InstanceID == "" && allocation.NodeName == "" {
-					attemptCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationAttemptTimeout)
-					result, err = s.provider.CreateComputeAllocation(attemptCtx, ComputeAllocationExecution{Allocation: allocation, Plan: prepared, DryRun: dryRun})
-					cancel()
-					result = mergeComputeAllocation(result, allocation, prepared)
-					operation.ProviderRequestID = firstNonEmpty(result.ProviderRequestID, operation.ProviderRequestID)
-					operation.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload)
-					if err == nil && s.provider.ValidateComputeAllocation(result, prepared) == nil {
-						createBudget = confirmedNormalLaunchMutationBudget()
-						operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create", createBudget)
-						if saveErr := s.operations.SaveRuntime(context.Background(), operation); saveErr != nil {
-							return
-						}
-					} else if saveErr := s.operations.SaveRuntime(context.Background(), operation); saveErr != nil {
-						return
-					}
-				}
-			}
-		}
-	}
-
-	if createBudget.Confirmed != 1 {
-		pollDeadline := time.Now().Add(s.computeAllocationPollWindow)
-		for {
-			if !claimLease(pollLease) {
-				return
-			}
-			readCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationAttemptTimeout)
-			readback, readErr := s.readComputeAllocationAfterReservation(readCtx, allocation, prepared, dryRun)
-			cancel()
-			readback = mergeComputeAllocation(readback, allocation, prepared)
-			if readErr == nil && s.provider.ValidateComputeAllocation(readback, prepared) == nil && isReadyResourceStatus(readback.Status) {
-				result = readback
-				createBudget = confirmedNormalLaunchMutationBudget()
-				operation.ProviderRequestID = firstNonEmpty(result.ProviderRequestID, operation.ProviderRequestID)
-				operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload), "compute_create", createBudget)
-				if saveErr := s.operations.SaveRuntime(context.Background(), operation); saveErr != nil {
-					return
-				}
-				break
-			}
-			if time.Now().After(pollDeadline) {
-				terminal = true
-				_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, ErrComputeAllocationPending)
-				return
-			}
-			wait := min(s.computeAllocationPollInterval, time.Until(pollDeadline))
-			if wait <= 0 {
-				return
-			}
-			timer := time.NewTimer(wait)
-			<-timer.C
-		}
-	}
-	if result.ID == "" {
-		if !decodeOperationResource(operation, &result) {
-			result = allocation
-		}
-		result = mergeComputeAllocation(result, allocation, prepared)
-	}
-
-	if !claimLease(s.computeAllocationFinalizeTimeout + s.computeAllocationPollInterval) {
-		return
-	}
-	finalizeCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationFinalizeTimeout)
-	defer cancel()
-	if err := s.provider.ValidateComputeAllocation(result, prepared); err != nil {
-		terminal = true
-		_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, err)
-		return
-	}
-	machine := ProviderMachine{
-		MachineID: result.MachineName, InstanceID: firstNonEmpty(result.InstanceID, result.CVMInstanceID), NodeName: result.NodeName,
-		PrivateIP: result.PrivateIP, PublicIP: result.PublicIP, InstanceType: result.InstanceType, Zone: result.Zone,
-		ChargeType: result.ChargeType, RenewFlag: result.RenewFlag, Deadline: result.Deadline, Ready: true,
-	}
-	ownership := MachineOwnership{
-		ID: "owner_" + stableSuffix(result.ID, result.MachineName)[:16], ResourceID: result.ID, AccountID: result.AccountID,
-		WorkspaceID: result.WorkspaceID, PackageID: result.PackageID, NodePoolID: result.NodePoolID, MachineID: result.MachineName,
-		InstanceID: firstNonEmpty(result.InstanceID, result.CVMInstanceID), NodeName: result.NodeName, Status: "claimed",
-		ProviderRequestID: result.ProviderRequestID, ClaimedAt: s.now(),
-	}
-	claimed, _, claimErr := s.operations.ClaimMachine(finalizeCtx, ownership)
-	if claimErr != nil {
-		terminal = true
-		_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, claimErr)
-		return
-	}
-	result.CostTags = oplCostTags(result.AccountID, result.WorkspaceID, result.ID, claimed.ID)
-	claimErr = fmt.Errorf("compute_claim_stage_provider_unavailable")
-	if split, ok := s.provider.(normalComputeClaimStageProvider); ok {
-		claimErr = s.convergeNormalComputeClaimStages(finalizeCtx, &operation, result, prepared, machine, claimed, split)
-	}
-	if claimErr == nil {
-		claimErr = errors.New("compute_claim_control_plane_decision_required")
-	}
-	claimed.Status = "quarantined"
-	_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
-	terminal = true
-	_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, claimErr)
-}
-
-func normalWorkspaceComputeBudgetEnabled(operation FabricOperation, provider Provider) bool {
-	if !strings.HasSuffix(strings.TrimSpace(operation.IdempotencyKey), ":compute") {
-		return false
-	}
-	_, readbackOK := provider.(computeAllocationReadbackProvider)
-	_, claimOK := provider.(normalComputeClaimStageProvider)
-	return readbackOK && claimOK
-}
-
-func (s *Service) convergeNormalComputeClaimStages(ctx context.Context, operation *FabricOperation, allocation ComputeAllocation, prepared ComputeAllocationPreparation, machine ProviderMachine, ownership MachineOwnership, provider normalComputeClaimStageProvider) error {
-	reader, ok := s.provider.(computeClaimRecoveryProvider)
-	if !ok {
-		return fmt.Errorf("compute_claim_readback_unavailable")
-	}
-	type claimStage struct {
-		name   string
-		mutate func() error
-		proved func(ComputeClaimProviderProof) bool
-	}
-	stages := []claimStage{
-		{
-			name: "compute_claim_cvm",
-			mutate: func() error {
-				return provider.TagComputeMachineCVM(ctx, machine, ownership)
-			},
-			proved: func(proof ComputeClaimProviderProof) bool { return proof.CVMOwnershipState == "target_owned" },
-		},
-	}
-	for _, stage := range stages {
-		budget, present, valid := normalLaunchStageBudget(operation.RedactedProviderPayload, stage.name)
-		if !valid {
-			return fmt.Errorf("%s_budget_invalid", stage.name)
-		}
-		fresh := !present
-		if fresh {
-			budget = reservedNormalLaunchMutationBudget()
-			operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, prepared), operation.RedactedProviderPayload), stage.name, budget)
-			if err := s.operations.SaveRuntime(ctx, *operation); err != nil {
-				return err
-			}
-		}
-		if budget.Confirmed == 1 {
-			continue
-		}
-		var mutationErr error
-		if fresh {
-			mutationErr = stage.mutate()
-		}
-		proof, readErr := reader.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
-		if readErr != nil || !validComputeClaimProviderProof(proof, allocation, prepared) || !stage.proved(proof) {
-			if readErr != nil {
-				return readErr
-			}
-			if mutationErr != nil {
-				return mutationErr
-			}
-			return fmt.Errorf("%s_readback_mismatch", stage.name)
-		}
-		budget = confirmedNormalLaunchMutationBudget()
-		operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, prepared), operation.RedactedProviderPayload), stage.name, budget)
-		if err := s.operations.SaveRuntime(ctx, *operation); err != nil {
-			return err
-		}
-	}
-	return errors.New("compute_claim_control_plane_decision_required")
+	s.finishCreateComputeAllocationLegacy(operation, allocation, dryRun)
 }
 
 // finishCreateComputeAllocationLegacy preserves the established compute
@@ -3247,7 +426,7 @@ func (s *Service) finishCreateComputeAllocationLegacy(operation FabricOperation,
 			return
 		}
 		attemptCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationAttemptTimeout)
-		result, err = s.provider.CreateComputeAllocation(attemptCtx, ComputeAllocationExecution{Allocation: allocation, Plan: prepared, DryRun: dryRun})
+		result, err = s.provider.CreateComputeAllocation(s.providerMutationContext(attemptCtx, operation), ComputeAllocationExecution{Allocation: allocation, Plan: prepared, DryRun: dryRun})
 		cancel()
 		attempted = true
 		result = mergeComputeAllocation(result, allocation, prepared)
@@ -3287,15 +466,16 @@ func (s *Service) finishCreateComputeAllocationLegacy(operation FabricOperation,
 		_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, err)
 		return
 	}
+	providerIdentity := firstNonEmpty(result.ProviderResourceID, result.ID)
 	machine := ProviderMachine{
-		MachineID: result.MachineName, InstanceID: firstNonEmpty(result.InstanceID, result.CVMInstanceID), NodeName: result.NodeName,
+		MachineID: firstNonEmpty(result.MachineName, providerIdentity), InstanceID: firstNonEmpty(result.InstanceID, result.CVMInstanceID, providerIdentity), NodeName: firstNonEmpty(result.NodeName, providerIdentity),
 		PrivateIP: result.PrivateIP, PublicIP: result.PublicIP, InstanceType: result.InstanceType, Zone: result.Zone,
 		ChargeType: result.ChargeType, RenewFlag: result.RenewFlag, Deadline: result.Deadline, Ready: true,
 	}
 	ownership := MachineOwnership{
 		ID: "owner_" + stableSuffix(result.ID, result.MachineName)[:16], ResourceID: result.ID, AccountID: result.AccountID,
-		WorkspaceID: result.WorkspaceID, PackageID: result.PackageID, NodePoolID: result.NodePoolID, MachineID: result.MachineName,
-		InstanceID: firstNonEmpty(result.InstanceID, result.CVMInstanceID), NodeName: result.NodeName, Status: "claimed",
+		WorkspaceID: result.WorkspaceID, PackageID: result.PackageID, NodePoolID: result.NodePoolID, MachineID: machine.MachineID,
+		InstanceID: machine.InstanceID, NodeName: machine.NodeName, Status: "claimed",
 		ProviderRequestID: result.ProviderRequestID, ClaimedAt: s.now(),
 	}
 	claimed, _, claimErr := s.operations.ClaimMachine(finalizeCtx, ownership)
@@ -3305,7 +485,7 @@ func (s *Service) finishCreateComputeAllocationLegacy(operation FabricOperation,
 		return
 	}
 	result.CostTags = oplCostTags(result.AccountID, result.WorkspaceID, result.ID, claimed.ID)
-	if tagErr := s.provider.TagComputeMachine(finalizeCtx, machine, claimed); tagErr != nil {
+	if tagErr := s.provider.TagComputeMachine(s.providerMutationContext(finalizeCtx, operation), machine, claimed); tagErr != nil {
 		claimed.Status = "quarantined"
 		_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
 		terminal = true
@@ -3875,12 +1055,6 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 	if !validStorageRecoveryExpectation(input.ExpectedRecoveryState, input.ExpectedProviderResourceID) {
 		return StorageVolume{}, fmt.Errorf("storage_recovery_expectation_invalid")
 	}
-	// The staged boundary belongs to the Workspace launch orchestrator. Keep
-	// other monthly storage callers on their established provider contract until
-	// they explicitly carry the launch storage identity.
-	if staged, ok := s.provider.(stagedStorageProvider); ok && strings.HasSuffix(strings.TrimSpace(input.IdempotencyKey), ":storage") {
-		return s.createStorageVolumeStaged(ctx, input, staged)
-	}
 	if input.ID == "" {
 		if strings.TrimSpace(input.IdempotencyKey) == "" {
 			return StorageVolume{}, fmt.Errorf("storage_idempotency_key_required")
@@ -3890,43 +1064,86 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 	s.mu.Lock()
 	compute := s.computes[input.ComputeID]
 	s.mu.Unlock()
-	computeZone := strings.TrimSpace(compute.ProviderData["zone"])
+	computeZone := strings.TrimSpace(compute.Zone)
+	if input.LaunchBinding == nil && computeZone == "" {
+		computeZone = strings.TrimSpace(compute.ProviderData["zone"])
+	}
 	if compute.ID == "" || compute.AccountID != input.AccountID || compute.WorkspaceID != input.WorkspaceID ||
 		!isReadyResourceStatus(compute.Status) || computeZone == "" || strings.TrimSpace(input.Zone) != computeZone {
 		return StorageVolume{}, fmt.Errorf("storage_compute_zone_mismatch")
 	}
 	requestHash := hashInput(input)
+	if input.LaunchBinding != nil {
+		requestHash = input.LaunchBinding.RequestHash
+	}
 	var volume StorageVolume
 	lockKey := "storage-create:" + firstNonEmpty(input.IdempotencyKey, input.ID)
-	if strings.HasSuffix(input.IdempotencyKey, ":storage") {
-		lockKey = workspaceLaunchResourceLockKey(strings.TrimSuffix(input.IdempotencyKey, ":storage"))
+	if input.LaunchBinding != nil {
+		lockKey = workspaceLaunchResourceLockKey(input.LaunchBinding.LaunchOperationID)
 	}
 	err := s.operations.WithPoolLock(ctx, lockKey, func(lockCtx context.Context) error {
-		operations, err := s.operations.List(lockCtx)
-		if err != nil {
-			return err
-		}
-		for index := len(operations) - 1; index >= 0; index-- {
-			candidate := operations[index]
-			if candidate.Action != "create_storage_volume" || candidate.IdempotencyKey != input.IdempotencyKey || candidate.ResourceID != input.ID {
-				continue
-			}
-			if candidate.RequestHash != requestHash {
-				return fmt.Errorf("storage_create_idempotency_conflict")
-			}
-			if candidate.Status == "succeeded" && decodeOperationResource(candidate, &volume) {
-				return nil
-			}
-			input.AllowExistingExactReplay = true
-			break
-		}
+		var err error
 		operation := newOperation("create_storage_volume", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, s.now())
-		bindLaunchStageOperation(&operation, "storage", map[string]string{"compute": input.ComputeID, "storage": input.ID})
-		input.OperationID = operation.OperationID
-		if err := s.recordOperation(lockCtx, operation, "started", StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: s.provider.Descriptor().Name, ProviderRequestID: providerRequestID("storage", input.IdempotencyKey)}, nil); err != nil {
+		if err := bindLaunchStageOperation(&operation, input.LaunchBinding); err != nil {
 			return err
 		}
-		volume, err = s.provider.CreateStorageVolume(lockCtx, input)
+		typedLaunch := input.LaunchBinding != nil
+		if typedLaunch {
+			stored, getErr := s.operations.Get(lockCtx, operation.ID)
+			switch {
+			case getErr == nil:
+				persisted, ok := decodeLaunchStageBinding(stored)
+				if !ok || persisted != *input.LaunchBinding || stored.Action != operation.Action || stored.ResourceKind != operation.ResourceKind ||
+					stored.ResourceID != operation.ResourceID || stored.RequestHash != requestHash {
+					return ErrLaunchStageBindingConflict
+				}
+				if stored.Status == "succeeded" && decodeOperationResource(stored, &volume) {
+					return nil
+				}
+				if stored.Status != "started" && stored.Status != "failed" {
+					return ErrLaunchStageBindingConflict
+				}
+				operation = stored
+				input.AllowExistingExactReplay = true
+			case errors.Is(getErr, ErrOperationNotFound):
+				operation.Status, operation.CreatedAt = "started", s.now()
+				fillOperationResource(&operation, StorageVolume{
+					ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+					Provider: s.provider.Descriptor().Name, ProviderRequestID: providerRequestID("storage", input.IdempotencyKey),
+				})
+				if err := s.operations.Append(lockCtx, operation); err != nil {
+					return err
+				}
+			default:
+				return getErr
+			}
+		} else {
+			operations, err := s.operations.List(lockCtx)
+			if err != nil {
+				return err
+			}
+			for index := len(operations) - 1; index >= 0; index-- {
+				candidate := operations[index]
+				if candidate.Action != "create_storage_volume" || candidate.IdempotencyKey != input.IdempotencyKey || candidate.ResourceID != input.ID {
+					continue
+				}
+				if candidate.RequestHash != requestHash {
+					return fmt.Errorf("storage_create_idempotency_conflict")
+				}
+				if candidate.Status == "succeeded" && decodeOperationResource(candidate, &volume) {
+					return nil
+				}
+				input.AllowExistingExactReplay = true
+				break
+			}
+		}
+		input.OperationID = operation.OperationID
+		if !typedLaunch {
+			if err := s.recordOperation(lockCtx, operation, "started", StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: s.provider.Descriptor().Name, ProviderRequestID: providerRequestID("storage", input.IdempotencyKey)}, nil); err != nil {
+				return err
+			}
+		}
+		volume, err = s.provider.CreateStorageVolume(s.providerMutationContext(lockCtx, operation), input)
 		volume.ID = input.ID
 		volume.OperationID = input.IdempotencyKey
 		volume.AccountID = firstNonEmpty(volume.AccountID, input.AccountID)
@@ -3941,7 +1158,16 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 			if knownCBS {
 				volume.Status = "quarantined"
 			}
-			if recordErr := s.recordOperation(lockCtx, operation, "failed", volume, err); recordErr != nil {
+			if typedLaunch {
+				if operation.Status == "started" {
+					next := operation
+					next.Status, next.ErrorCode, next.FinishedAt = "failed", errorCode(err), s.now()
+					fillOperationResource(&next, volume)
+					if saveErr := s.operations.SaveRuntime(lockCtx, next); saveErr != nil {
+						return saveErr
+					}
+				}
+			} else if recordErr := s.recordOperation(lockCtx, operation, "failed", volume, err); recordErr != nil {
 				return recordErr
 			}
 			if knownCBS {
@@ -3951,7 +1177,24 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 			}
 			return err
 		}
-		if err := s.recordOperation(lockCtx, operation, "succeeded", volume, nil); err != nil {
+		if typedLaunch {
+			next := operation
+			next.Status, next.ErrorCode, next.FinishedAt = "succeeded", "", s.now()
+			fillOperationResource(&next, volume)
+			if operation.Status == "started" {
+				if err := s.operations.SaveRuntime(lockCtx, next); err != nil {
+					return err
+				}
+			} else {
+				converger, ok := s.operations.(runtimeReadbackConverger)
+				if !ok {
+					return ErrRuntimeOperationNotCurrent
+				}
+				if err := converger.ConvergeRuntimeReadback(lockCtx, operation, next); err != nil {
+					return err
+				}
+			}
+		} else if err := s.recordOperation(lockCtx, operation, "succeeded", volume, nil); err != nil {
 			return err
 		}
 		s.mu.Lock()
@@ -3960,236 +1203,6 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 		return nil
 	})
 	return volume, err
-}
-
-func (s *Service) createStorageVolumeStaged(ctx context.Context, input StorageVolumeInput, provider stagedStorageProvider) (StorageVolume, error) {
-	if input.ID == "" {
-		input.ID = "vol_" + stableSuffix("create_storage_volume", input.IdempotencyKey)[:16]
-	}
-	s.mu.Lock()
-	compute := s.computes[input.ComputeID]
-	s.mu.Unlock()
-	computeZone := strings.TrimSpace(compute.ProviderData["zone"])
-	if compute.ID == "" || compute.AccountID != input.AccountID || compute.WorkspaceID != input.WorkspaceID ||
-		!isReadyResourceStatus(compute.Status) || computeZone == "" || strings.TrimSpace(input.Zone) != computeZone {
-		return StorageVolume{}, fmt.Errorf("storage_compute_zone_mismatch")
-	}
-	requestHash := hashInput(input)
-	now := s.now()
-	parent := newOperation("create_storage_volume", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
-	parent.ID = "fop_storage_create_" + stableSuffix(input.IdempotencyKey)[:18]
-	parent.Status = "started"
-	parent.CreatedAt = now
-	parentResource := StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", SizeGB: input.SizeGB, Zone: input.Zone, CreatedAt: now}
-	fillOperationResource(&parent, parentResource)
-	storedParent, claimedParent, err := s.operations.ClaimRuntime(ctx, parent)
-	if err != nil {
-		return StorageVolume{}, err
-	}
-	if storedParent.RequestHash != requestHash {
-		return StorageVolume{}, fmt.Errorf("storage_create_idempotency_conflict")
-	}
-	if !claimedParent && storedParent.Status == "succeeded" {
-		var replayed StorageVolume
-		if decodeOperationResource(storedParent, &replayed) {
-			return replayed, nil
-		}
-		return StorageVolume{}, fmt.Errorf("storage_operation_corrupt")
-	}
-	parent = storedParent
-	input.OperationID = parent.OperationID
-
-	volume, err := s.runStorageCBSStage(ctx, input, parent, provider)
-	if err != nil {
-		return volume, err
-	}
-	volume, err = s.runStorageStaticBindingStage(ctx, input, parent, volume, provider)
-	if err != nil {
-		return volume, err
-	}
-	parent.Status = "succeeded"
-	parent.FinishedAt = s.now()
-	fillOperationResource(&parent, volume)
-	parent.RedactedProviderPayload = withNormalLaunchStageBudget(parent.RedactedProviderPayload, "cbs_create", confirmedNormalLaunchMutationBudget())
-	parent.RedactedProviderPayload = withNormalLaunchStageBudget(parent.RedactedProviderPayload, "static_binding_apply", confirmedNormalLaunchMutationBudget())
-	if err := s.operations.SaveRuntime(ctx, parent); err != nil {
-		return volume, err
-	}
-	s.mu.Lock()
-	s.volumes[volume.ID] = volume
-	s.mu.Unlock()
-	return volume, nil
-}
-
-func (s *Service) runStorageCBSStage(ctx context.Context, input StorageVolumeInput, parent FabricOperation, provider stagedStorageProvider) (StorageVolume, error) {
-	stageKey := input.IdempotencyKey + ":cbs_create"
-	stageHash := hashInput(map[string]any{"input": input, "stage": "cbs_create", "parentOperationId": parent.OperationID})
-	now := s.now()
-	stage := newOperation("cbs_create", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, stageKey, stageHash, now)
-	stage.ID = "fop_cbs_create_" + stableSuffix(stageKey)[:18]
-	stage.Status = "started"
-	stage.CreatedAt = now
-	initial := StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", Status: "pending", SizeGB: input.SizeGB, Zone: input.Zone, CostTags: oplCostTags(input.AccountID, input.WorkspaceID, input.ID, parent.OperationID), CreatedAt: now}
-	fillOperationResource(&stage, initial)
-	budget, present, valid := normalLaunchStageBudget(stage.RedactedProviderPayload, "cbs_create")
-	if !present {
-		budget = reservedNormalLaunchMutationBudget()
-		stage.RedactedProviderPayload = withNormalLaunchStageBudget(stage.RedactedProviderPayload, "cbs_create", budget)
-	}
-	if !valid {
-		return initial, fmt.Errorf("cbs_create_budget_invalid")
-	}
-	stored, claimed, err := s.operations.ClaimRuntime(ctx, stage)
-	if err != nil {
-		return initial, err
-	}
-	if stored.RequestHash != stageHash {
-		return initial, fmt.Errorf("cbs_create_idempotency_conflict")
-	}
-	if !claimed {
-		var persisted StorageVolume
-		_ = decodeOperationResource(stored, &persisted)
-		if stored.Status == "succeeded" && validStorageStageVolume(persisted, input) {
-			return persisted, nil
-		}
-		readback, readErr := provider.ReadCBSVolume(ctx, input, persisted)
-		readback = normalizeStorageStageVolume(readback, input, parent.OperationID)
-		if readErr != nil || !validStorageStageVolume(readback, input) {
-			if readErr == nil {
-				readErr = fmt.Errorf("cbs_create_readback_mismatch")
-			}
-			return readback, readErr
-		}
-		budget = confirmedNormalLaunchMutationBudget()
-		if _, convergeErr := s.convergeRuntimeOperationReadback(ctx, stored, readback, map[string]any{"normalLaunchMutationBudget": map[string]any{"cbs_create": map[string]any{"attempted": budget.Attempted, "confirmed": budget.Confirmed, "unknown": budget.Unknown, "max": budget.Max}}}); convergeErr != nil {
-			return readback, convergeErr
-		}
-		return readback, nil
-	}
-	// Reservation is saved by ClaimRuntime before the provider call.
-	created, providerErr := provider.CreateCBSVolume(ctx, input)
-	created = normalizeStorageStageVolume(created, input, parent.OperationID)
-	if providerErr != nil {
-		stored.Status = "failed"
-		stored.FinishedAt = s.now()
-		stored.ErrorCode = errorCode(providerErr)
-		fillOperationResource(&stored, created)
-		stored.RedactedProviderPayload = withNormalLaunchStageBudget(stored.RedactedProviderPayload, "cbs_create", budget)
-		_ = s.operations.SaveRuntime(ctx, stored)
-		return created, providerErr
-	}
-	if !validStorageStageVolume(created, input) {
-		providerErr = fmt.Errorf("cbs_create_readback_mismatch")
-		stored.Status = "failed"
-		stored.FinishedAt = s.now()
-		stored.ErrorCode = errorCode(providerErr)
-		fillOperationResource(&stored, created)
-		stored.RedactedProviderPayload = withNormalLaunchStageBudget(stored.RedactedProviderPayload, "cbs_create", budget)
-		_ = s.operations.SaveRuntime(ctx, stored)
-		return created, providerErr
-	}
-	budget = confirmedNormalLaunchMutationBudget()
-	stored.Status = "succeeded"
-	stored.FinishedAt = s.now()
-	fillOperationResource(&stored, created)
-	stored.RedactedProviderPayload = withNormalLaunchStageBudget(stored.RedactedProviderPayload, "cbs_create", budget)
-	if err := s.operations.SaveRuntime(ctx, stored); err != nil {
-		return created, err
-	}
-	return created, nil
-}
-
-func (s *Service) runStorageStaticBindingStage(ctx context.Context, input StorageVolumeInput, parent FabricOperation, volume StorageVolume, provider stagedStorageProvider) (StorageVolume, error) {
-	stageKey := input.IdempotencyKey + ":static_binding_apply"
-	stageHash := hashInput(map[string]any{"input": input, "stage": "static_binding_apply", "parentOperationId": parent.OperationID, "providerResourceId": volume.ProviderResourceID})
-	now := s.now()
-	stage := newOperation("static_binding_apply", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, stageKey, stageHash, now)
-	stage.ID = "fop_static_binding_" + stableSuffix(stageKey)[:18]
-	stage.Status = "started"
-	stage.CreatedAt = now
-	fillOperationResource(&stage, volume)
-	budget := reservedNormalLaunchMutationBudget()
-	stage.RedactedProviderPayload = withNormalLaunchStageBudget(stage.RedactedProviderPayload, "static_binding_apply", budget)
-	stored, claimed, err := s.operations.ClaimRuntime(ctx, stage)
-	if err != nil {
-		return volume, err
-	}
-	if stored.RequestHash != stageHash {
-		return volume, fmt.Errorf("static_binding_apply_idempotency_conflict")
-	}
-	if !claimed {
-		var persisted StorageVolume
-		_ = decodeOperationResource(stored, &persisted)
-		if persisted.ProviderResourceID != volume.ProviderResourceID || !validStorageStageVolume(persisted, input) {
-			return volume, fmt.Errorf("static_binding_apply_identity_mismatch")
-		}
-		readback, readErr := provider.ReadStaticStorageBinding(ctx, persisted)
-		readback = normalizeStorageStageVolume(readback, input, parent.OperationID)
-		if readErr != nil || !validStorageStageVolume(readback, input) || readback.Status != "ready" {
-			if readErr == nil {
-				readErr = fmt.Errorf("static_binding_apply_readback_mismatch")
-			}
-			return readback, readErr
-		}
-		budget = confirmedNormalLaunchMutationBudget()
-		if _, convergeErr := s.convergeRuntimeOperationReadback(ctx, stored, readback, map[string]any{"normalLaunchMutationBudget": map[string]any{"static_binding_apply": map[string]any{"attempted": budget.Attempted, "confirmed": budget.Confirmed, "unknown": budget.Unknown, "max": budget.Max}}}); convergeErr != nil {
-			return readback, convergeErr
-		}
-		return readback, nil
-	}
-	bound, providerErr := provider.ApplyStaticStorageBinding(ctx, volume)
-	bound = normalizeStorageStageVolume(bound, input, parent.OperationID)
-	if providerErr != nil || !validStorageStageVolume(bound, input) || bound.Status != "ready" {
-		if providerErr == nil {
-			providerErr = fmt.Errorf("static_binding_apply_readback_mismatch")
-		}
-		stored.Status = "failed"
-		stored.FinishedAt = s.now()
-		stored.ErrorCode = errorCode(providerErr)
-		fillOperationResource(&stored, bound)
-		stored.RedactedProviderPayload = withNormalLaunchStageBudget(stored.RedactedProviderPayload, "static_binding_apply", budget)
-		_ = s.operations.SaveRuntime(ctx, stored)
-		return bound, providerErr
-	}
-	budget = confirmedNormalLaunchMutationBudget()
-	stored.Status = "succeeded"
-	stored.FinishedAt = s.now()
-	fillOperationResource(&stored, bound)
-	stored.RedactedProviderPayload = withNormalLaunchStageBudget(stored.RedactedProviderPayload, "static_binding_apply", budget)
-	if err := s.operations.SaveRuntime(ctx, stored); err != nil {
-		return bound, err
-	}
-	return bound, nil
-}
-
-func normalizeStorageStageVolume(volume StorageVolume, input StorageVolumeInput, operationID string) StorageVolume {
-	volume.ID = firstNonEmpty(volume.ID, input.ID)
-	volume.OperationID = firstNonEmpty(volume.OperationID, input.IdempotencyKey)
-	volume.AccountID = firstNonEmpty(volume.AccountID, input.AccountID)
-	volume.WorkspaceID = firstNonEmpty(volume.WorkspaceID, input.WorkspaceID)
-	volume.Provider = firstNonEmpty(volume.Provider, "tencent-tke")
-	volume.SizeGB = firstInt(volume.SizeGB, input.SizeGB)
-	volume.Zone = firstNonEmpty(volume.Zone, input.Zone)
-	volume.CostTags = firstStringMap(volume.CostTags, oplCostTags(input.AccountID, input.WorkspaceID, input.ID, operationID))
-	return volume
-}
-
-func validStorageStageVolume(volume StorageVolume, input StorageVolumeInput) bool {
-	return volume.ID == input.ID && volume.AccountID == input.AccountID && volume.WorkspaceID == input.WorkspaceID && volume.SizeGB == input.SizeGB && volume.Zone == input.Zone && strings.HasPrefix(volume.ProviderResourceID, "disk-") && volume.Provider == "tencent-tke" && volume.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && volume.DiskType != "" && volume.Deadline != ""
-}
-
-func firstInt(value, fallback int) int {
-	if value != 0 {
-		return value
-	}
-	return fallback
-}
-
-func firstStringMap(value, fallback map[string]string) map[string]string {
-	if len(value) != 0 {
-		return value
-	}
-	return fallback
 }
 
 func validStorageRecoveryExpectation(state, providerResourceID string) bool {
@@ -4549,7 +1562,9 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 	operation.Status = "started"
 	operation.CreatedAt = now
 	fillOperationResource(&operation, StorageAttachment{ID: attachmentID, OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: s.provider.Descriptor().Name, ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)})
-	bindLaunchStageOperation(&operation, "attachment", map[string]string{"compute": input.ComputeID, "storage": input.VolumeID, "attachment": attachmentID})
+	if err := bindLaunchStageOperation(&operation, input.LaunchBinding); err != nil {
+		return StorageAttachment{}, err
+	}
 	input.OperationID = input.IdempotencyKey
 	stored, claimed, err := s.claimRuntimeOperation(ctx, operation)
 	if err != nil {
@@ -4582,7 +1597,7 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 		}
 		return replayStorageAttachmentOperation(stored, requestHash)
 	}
-	attachment, err := s.provider.CreateStorageAttachment(ctx, input, compute, volume)
+	attachment, err := s.provider.CreateStorageAttachment(s.providerMutationContext(ctx, operation), input, compute, volume)
 	attachment.OperationID = input.IdempotencyKey
 	if err != nil {
 		_ = s.saveStorageAttachmentOperation(ctx, stored, "failed", attachment, err)
@@ -4672,13 +1687,18 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 		action = "update_workspace_runtime"
 	}
 	requestHash := hashInput(input)
+	if input.LaunchBinding != nil {
+		requestHash = input.LaunchBinding.RequestHash
+	}
 	now := s.now()
 	operation := newOperation(action, "workspace_runtime", input.WorkspaceID, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
 	operation.ID = "fop_runtime_claim_" + stableSuffix(action, input.IdempotencyKey)
 	operation.Status = "started"
 	operation.CreatedAt = now
 	fillOperationResource(&operation, WorkspaceRuntime{ID: original.ID, OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)})
-	bindLaunchStageOperation(&operation, "runtime", map[string]string{"compute": input.ComputeID, "storage": input.VolumeID, "attachment": input.AttachmentID, "runtime": input.WorkspaceID})
+	if err := bindLaunchStageOperation(&operation, input.LaunchBinding); err != nil {
+		return WorkspaceRuntime{}, err
+	}
 	input.OperationID = input.IdempotencyKey
 	stored, claimed, err := s.claimRuntimeOperation(ctx, operation)
 	if err != nil {
@@ -4711,7 +1731,7 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 		_ = s.saveRuntimeOperation(ctx, stored, "failed", WorkspaceRuntime{WorkspaceID: input.WorkspaceID, ProviderRequestID: stored.ProviderRequestID}, err)
 		return WorkspaceRuntime{}, err
 	}
-	runtime, err := s.provider.CreateWorkspaceRuntime(ctx, input, compute, volume)
+	runtime, err := s.provider.CreateWorkspaceRuntime(s.providerMutationContext(ctx, operation), input, compute, volume)
 	runtime.OperationID = input.RuntimeOperationID
 	runtime.Access.Password = ""
 	if err == nil && runtime.ImageID != input.ImageID {
@@ -4854,6 +1874,9 @@ func (s *Service) UpsertGatewaySecret(ctx context.Context, input GatewaySecretIn
 		return GatewaySecret{}, fmt.Errorf("gateway_secret_fingerprint_mismatch")
 	}
 	requestHash := hashInput(map[string]any{"accountId": input.AccountID, "workspaceId": input.WorkspaceID, "workspaceApiKeyId": input.WorkspaceAPIKeyID, "fingerprint": input.Fingerprint})
+	if input.LaunchBinding != nil {
+		requestHash = input.LaunchBinding.RequestHash
+	}
 	now := s.now()
 	secretRef := gatewaySecretName(input.WorkspaceID)
 	operation := newOperation("upsert_gateway_secret", "gateway_secret", secretRef, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
@@ -4862,7 +1885,9 @@ func (s *Service) UpsertGatewaySecret(ctx context.Context, input GatewaySecretIn
 	operation.CreatedAt = now
 	operation.ProviderRequestID = providerRequestID("gateway-secret", input.IdempotencyKey)
 	operation.RedactedProviderPayload = map[string]any{"resource": GatewaySecret{SecretRef: secretRef}, "keyDigest": keyDigest}
-	bindLaunchStageOperation(&operation, "secret", map[string]string{"secret": secretRef})
+	if err := bindLaunchStageOperation(&operation, input.LaunchBinding); err != nil {
+		return GatewaySecret{}, err
+	}
 	stored, claimed, err := s.claimRuntimeOperation(ctx, operation)
 	if err != nil {
 		return GatewaySecret{}, err
@@ -4903,7 +1928,7 @@ func (s *Service) UpsertGatewaySecret(ctx context.Context, input GatewaySecretIn
 		}
 		return GatewaySecret{}, fmt.Errorf("gateway_secret_operation_%s", stored.Status)
 	}
-	secret, providerErr := s.provider.UpsertGatewaySecret(ctx, input)
+	secret, providerErr := s.provider.UpsertGatewaySecret(s.providerMutationContext(ctx, operation), input)
 	stored.Status = operationStatus(providerErr)
 	stored.FinishedAt = s.now()
 	stored.ErrorCode = errorCode(providerErr)
@@ -5497,7 +2522,9 @@ func (s *Service) recordOperation(ctx context.Context, base FabricOperation, sta
 }
 
 func fillOperationResource(operation *FabricOperation, resource any) {
-	binding := operation.RedactedProviderPayload[launchStageBindingPayloadKey]
+	launchBinding := operation.RedactedProviderPayload[launchStageBindingPayloadKey]
+	providerBinding := operation.RedactedProviderPayload[providerMutationBindingPayloadKey]
+	providerState := operation.RedactedProviderPayload[providerMutationStatePayloadKey]
 	switch value := resource.(type) {
 	case ComputeAllocation:
 		operation.ResourceID = firstNonEmpty(value.ID, operation.ResourceID)
@@ -5549,8 +2576,14 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 		operation.ProviderRequestID = firstNonEmpty(operation.ProviderRequestID, value.JobID)
 		operation.RedactedProviderPayload = map[string]any{"resource": redacted, "leaseTokenHash": value.leaseTokenHash}
 	}
-	if binding != nil {
-		operation.RedactedProviderPayload[launchStageBindingPayloadKey] = binding
+	if launchBinding != nil {
+		operation.RedactedProviderPayload[launchStageBindingPayloadKey] = launchBinding
+	}
+	if providerBinding != nil {
+		operation.RedactedProviderPayload[providerMutationBindingPayloadKey] = providerBinding
+	}
+	if providerState != nil {
+		operation.RedactedProviderPayload[providerMutationStatePayloadKey] = providerState
 	}
 }
 

@@ -496,39 +496,34 @@ func (p *TencentProvider) UpsertGatewaySecret(ctx context.Context, input Gateway
 		},
 		"stringData": map[string]any{"opl_gateway_api_key": input.GatewayAPIKey},
 	})
+	mutation, err := beginProviderMutation(ctx, "tencent_gateway_secret_apply", "gateway_secret", secret.SecretRef, secret.Version)
+	if err != nil {
+		return GatewaySecret{}, err
+	}
+	if mutation != nil && !mutation.Fresh {
+		readback, readErr := p.ReadGatewaySecret(ctx, input)
+		if readErr != nil {
+			_ = mutation.complete(ctx, "", secret, readErr)
+			return GatewaySecret{}, readErr
+		}
+		if completeErr := mutation.complete(ctx, providerRequestID("gateway-secret", input.IdempotencyKey), readback, nil); completeErr != nil {
+			return GatewaySecret{}, completeErr
+		}
+		return readback, nil
+	}
 	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, manifest, protectedresource.Target{}); err != nil {
+		_ = mutation.complete(ctx, "", secret, err)
 		return GatewaySecret{}, err
 	}
-	readback, err := p.callKubectl(ctx, []string{"get", "secret/" + secret.SecretRef, "-o", "json"}, nil, protectedresource.Target{})
+	readback, err := p.ReadGatewaySecret(ctx, input)
 	if err != nil {
+		_ = mutation.complete(ctx, "", secret, err)
 		return GatewaySecret{}, err
 	}
-	var actual struct {
-		Kind     string `json:"kind"`
-		Type     string `json:"type"`
-		Metadata struct {
-			Name        string            `json:"name"`
-			Labels      map[string]string `json:"labels"`
-			Annotations map[string]string `json:"annotations"`
-		} `json:"metadata"`
-		Data map[string]string `json:"data"`
+	if err := mutation.complete(ctx, providerRequestID("gateway-secret", input.IdempotencyKey), readback, nil); err != nil {
+		return GatewaySecret{}, err
 	}
-	if json.Unmarshal(readback, &actual) != nil {
-		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
-	}
-	rawKey, err := base64.StdEncoding.DecodeString(actual.Data["opl_gateway_api_key"])
-	if err != nil {
-		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
-	}
-	actualDigest := fmt.Sprintf("%x", sha256.Sum256(rawKey))
-	if actual.Kind != "Secret" || actual.Type != "Opaque" || actual.Metadata.Name != secret.SecretRef ||
-		actual.Metadata.Labels["app.kubernetes.io/name"] != "opl-gateway-secret" || actual.Metadata.Annotations["oplcloud.cn/account-id"] != input.AccountID ||
-		actual.Metadata.Annotations["oplcloud.cn/workspace-id"] != input.WorkspaceID || actual.Metadata.Annotations["oplcloud.cn/workspace-api-key-id"] != strconv.FormatInt(input.WorkspaceAPIKeyID, 10) ||
-		actual.Metadata.Annotations["oplcloud.cn/secret-version"] != secret.Version || actual.Metadata.Annotations["oplcloud.cn/secret-fingerprint"] != secret.Fingerprint ||
-		"sha256:"+actualDigest != secret.Fingerprint {
-		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
-	}
-	return secret, nil
+	return readback, nil
 }
 
 func (p *TencentProvider) ReadGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
@@ -761,9 +756,39 @@ func (p *TencentProvider) PrepareComputeAllocation(ctx context.Context, input Co
 	return prepared, nil
 }
 
+type tencentComputeMutationState struct {
+	Allocation ComputeAllocation            `json:"allocation"`
+	Plan       ComputeAllocationPreparation `json:"plan"`
+}
+
 func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
 	allocation, prepared := input.Allocation, input.Plan
 	packagePlan := packagePlan(prepared.PackageID)
+	var mutation *providerMutationAttempt
+	var err error
+	if !input.DryRun {
+		mutation, err = beginProviderMutationWithState(ctx, "tencent_compute_allocation_create", "compute_allocation", allocation.ID, prepared.NodePoolID, tencentComputeMutationState{Allocation: allocation, Plan: prepared})
+		if err != nil {
+			return allocation, err
+		}
+		if mutation != nil && !mutation.Fresh {
+			var persisted tencentComputeMutationState
+			if !mutation.state(&persisted) || persisted.Allocation.ID != allocation.ID || !reflect.DeepEqual(persisted.Plan, prepared) {
+				return allocation, ErrLaunchStageBindingConflict
+			}
+			allocation = persisted.Allocation
+			_ = mutation.resource(&allocation)
+			readback, readErr := p.DiscoverComputeAllocation(ctx, allocation, prepared)
+			if readErr != nil {
+				_ = mutation.complete(ctx, readback.ProviderRequestID, readback, readErr)
+				return readback, readErr
+			}
+			if completeErr := mutation.complete(ctx, readback.ProviderRequestID, readback, nil); completeErr != nil {
+				return readback, completeErr
+			}
+			return readback, nil
+		}
+	}
 	response, err := p.provision(ctx, provisionerRequest{
 		Action: "create_compute_allocation", DryRun: input.DryRun, AccountID: allocation.AccountID, PackageID: allocation.PackageID,
 		Tags: oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, allocation.ProviderRequestID),
@@ -775,6 +800,7 @@ func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input Com
 		Allocation: provisionerAllocation{ID: allocation.ID},
 	})
 	if err != nil {
+		_ = mutation.complete(ctx, allocation.ProviderRequestID, allocation, err)
 		return allocation, err
 	}
 	allocation.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, allocation.ProviderRequestID)
@@ -796,9 +822,15 @@ func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input Com
 	allocation.ProviderResourceID = firstNonEmpty(response.InstanceID, allocation.ProviderResourceID)
 	if !response.OK {
 		if response.Retryable {
+			_ = mutation.complete(ctx, allocation.ProviderRequestID, allocation, ErrComputeAllocationPending)
 			return allocation, ErrComputeAllocationPending
 		}
-		return allocation, provisionerError(response)
+		err := provisionerError(response)
+		_ = mutation.complete(ctx, allocation.ProviderRequestID, allocation, err)
+		return allocation, err
+	}
+	if err := mutation.complete(ctx, allocation.ProviderRequestID, allocation, nil); err != nil {
+		return allocation, err
 	}
 	return allocation, nil
 }
@@ -1369,14 +1401,68 @@ func computeClaimNodeOwnershipState(raw []byte, allocation ComputeAllocation, ow
 }
 
 func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {
-	if err := p.TagComputeMachineCVM(ctx, machine, ownership); err != nil {
+	cvmMutation, err := beginProviderMutation(ctx, "tencent_cvm_ownership_tag", "compute_binding", ownership.ResourceID, machine.InstanceID)
+	if err != nil {
 		return err
 	}
-	return p.ClaimComputeNode(ctx, ComputeAllocation{
+	if cvmMutation == nil || cvmMutation.Fresh {
+		err = p.TagComputeMachineCVM(ctx, machine, ownership)
+	} else {
+		err = p.readComputeMachineOwnership(ctx, machine, ownership, false)
+	}
+	if err != nil {
+		_ = cvmMutation.complete(ctx, ownership.ProviderRequestID, ownership, err)
+		return err
+	}
+	if err := cvmMutation.complete(ctx, ownership.ProviderRequestID, ownership, nil); err != nil {
+		return err
+	}
+	allocation := ComputeAllocation{
 		ID: ownership.ResourceID, AccountID: ownership.AccountID, WorkspaceID: ownership.WorkspaceID,
 		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineName: machine.MachineID,
 		InstanceID: machine.InstanceID, CVMInstanceID: machine.InstanceID, NodeName: machine.NodeName, PrivateIP: machine.PrivateIP,
-	}, ownership)
+	}
+	nodeMutation, err := beginProviderMutation(ctx, "tencent_kubernetes_node_claim", "compute_binding", ownership.ResourceID, machine.NodeName)
+	if err != nil {
+		return err
+	}
+	if nodeMutation == nil || nodeMutation.Fresh {
+		err = p.ClaimComputeNode(ctx, allocation, ownership)
+	} else {
+		err = p.readComputeMachineOwnership(ctx, machine, ownership, true)
+	}
+	if err != nil {
+		_ = nodeMutation.complete(ctx, ownership.ProviderRequestID, ownership, err)
+		return err
+	}
+	return nodeMutation.complete(ctx, ownership.ProviderRequestID, ownership, nil)
+}
+
+func (p *TencentProvider) readComputeMachineOwnership(ctx context.Context, machine ProviderMachine, ownership MachineOwnership, requireNode bool) error {
+	journal := providerMutationJournalFromContext(ctx)
+	if journal == nil {
+		return fmt.Errorf("compute_machine_parent_binding_required")
+	}
+	prepared, ok := decodeComputeAllocationPlan(journal.parentOperation)
+	if !ok {
+		return fmt.Errorf("compute_machine_parent_plan_required")
+	}
+	allocation := ComputeAllocation{
+		ID: ownership.ResourceID, AccountID: ownership.AccountID, WorkspaceID: ownership.WorkspaceID,
+		PackageID: ownership.PackageID, PoolID: prepared.PoolID, NodePoolID: ownership.NodePoolID,
+		MachineName: machine.MachineID, InstanceID: machine.InstanceID, CVMInstanceID: machine.InstanceID,
+		NodeName: machine.NodeName, PrivateIP: machine.PrivateIP, PublicIP: machine.PublicIP,
+		InstanceType: machine.InstanceType, Zone: machine.Zone, ChargeType: machine.ChargeType,
+		RenewFlag: machine.RenewFlag, Deadline: machine.Deadline,
+	}
+	proof, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
+	if err != nil {
+		return err
+	}
+	if proof.CVMOwnershipState != "target_owned" || requireNode && proof.NodeOwnershipState != "target_owned" {
+		return fmt.Errorf("compute_machine_ownership_readback_mismatch")
+	}
+	return nil
 }
 
 func (p *TencentProvider) TagComputeMachineCVM(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {
@@ -1581,39 +1667,53 @@ func (p *TencentProvider) DestroyComputeAllocation(ctx context.Context, allocati
 }
 
 func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
-	now := time.Now().UTC()
-	id := firstNonEmpty(input.ID, fabricID("vol", input.WorkspaceID, now))
-	name := k8sName(id)
-	tags := oplCostTags(input.AccountID, input.WorkspaceID, id, input.OperationID)
-	diskType := firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")
-	volume := StorageVolume{
-		ID: id, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "pending", Provider: "tencent-tke",
-		SizeGB: input.SizeGB, DiskType: diskType, Zone: input.Zone, CostTags: tags, CreatedAt: now,
-		ProviderData: map[string]string{"pvName": name + "-pv", "pvcName": name + "-data"},
+	if providerMutationJournalFromContext(ctx) == nil {
+		volume, err := p.CreateCBSVolume(ctx, input)
+		if err != nil {
+			return volume, err
+		}
+		if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume), protectedresource.Target{}); err != nil {
+			return volume, err
+		}
+		return volume, nil
 	}
-	response, err := p.provision(ctx, provisionerRequest{
-		Action: "create_storage_volume", AccountID: input.AccountID, Tags: tags,
-		Storage: provisionerStorage{
-			ID: id, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType,
-			ExpectedState: input.ExpectedRecoveryState, ExpectedProviderResourceID: input.ExpectedProviderResourceID,
-			AllowExistingExactReplay: input.AllowExistingExactReplay,
-		},
-	})
+	volume := StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", SizeGB: input.SizeGB, Zone: input.Zone}
+	cbsAttempt, err := beginProviderMutation(ctx, "tencent_cbs_create", "storage_volume", input.ID, input.ExpectedProviderResourceID)
 	if err != nil {
 		return volume, err
 	}
-	volume.ProviderRequestID = response.ProviderRequestID
-	if strings.HasPrefix(response.StorageVolumeID, "disk-") {
-		volume.ProviderResourceID = response.StorageVolumeID
+	if cbsAttempt != nil && !cbsAttempt.Fresh {
+		_ = cbsAttempt.resource(&volume)
+		volume, err = p.ReadCBSVolume(ctx, input, volume)
+	} else {
+		volume, err = p.CreateCBSVolume(ctx, input)
+		if err == nil {
+			volume, err = p.ReadCBSVolume(ctx, input, volume)
+		}
 	}
-	applyStorageReadback(&volume, response)
-	if !response.OK {
-		return volume, provisionerError(response)
+	if err != nil {
+		_ = cbsAttempt.complete(ctx, volume.ProviderRequestID, volume, err)
+		return volume, err
 	}
-	if volume.ProviderResourceID == "" {
-		return volume, fmt.Errorf("storage_cbs_identity_required")
+	if err := cbsAttempt.complete(ctx, volume.ProviderRequestID, volume, nil); err != nil {
+		return volume, err
 	}
-	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume), protectedresource.Target{}); err != nil {
+
+	staticAttempt, err := beginProviderMutation(ctx, "tencent_static_storage_binding_apply", "storage_binding", input.ID, volume.ProviderResourceID)
+	if err != nil {
+		return volume, err
+	}
+	if staticAttempt != nil && !staticAttempt.Fresh {
+		_ = staticAttempt.resource(&volume)
+		volume, err = p.ReadStaticStorageBinding(ctx, volume)
+	} else {
+		volume, err = p.ApplyStaticStorageBinding(ctx, volume)
+	}
+	if err != nil {
+		_ = staticAttempt.complete(ctx, volume.ProviderRequestID, volume, err)
+		return volume, err
+	}
+	if err := staticAttempt.complete(ctx, volume.ProviderRequestID, volume, nil); err != nil {
 		return volume, err
 	}
 	return volume, nil
@@ -1783,7 +1883,9 @@ func (p *TencentProvider) ReadStaticStorageBinding(ctx context.Context, volume S
 		!reflect.DeepEqual(pvSpec["nodeAffinity"], expectedNodeAffinity) {
 		return volume, fmt.Errorf("storage_static_binding_identity_mismatch")
 	}
-	volume.ProviderData = firstStringMap(volume.ProviderData, map[string]string{})
+	if volume.ProviderData == nil {
+		volume.ProviderData = map[string]string{}
+	}
 	volume.ProviderData["pvName"], volume.ProviderData["pvcName"] = pvName, pvcName
 	if stringValue(nested(pvc, "status", "phase")) == "Bound" {
 		volume.Status = "ready"
@@ -2168,11 +2270,29 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 	runtimeID := "rt_" + stableSuffix(input.WorkspaceID, runtimeOperationID)[:18]
 	tags := oplCostTags(compute.AccountID, input.WorkspaceID, runtimeID, runtimeOperationID)
 	runtimeTarget := protectedresource.Target{PackageID: compute.PackageID, NodePoolID: compute.NodePoolID, MachineID: compute.MachineName, NodeName: compute.NodeName, CVMID: firstNonEmpty(compute.InstanceID, compute.CVMInstanceID)}
+	mutation, err := beginProviderMutation(ctx, "tencent_workspace_runtime_apply", "workspace_runtime", runtimeID, serviceName)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	if mutation != nil && !mutation.Fresh {
+		runtime, readErr := p.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
+		if readErr != nil || runtime.ID != runtimeID {
+			readErr = firstNonNil(readErr, fmt.Errorf("workspace_runtime_readback_mismatch"))
+			_ = mutation.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, readErr)
+			return WorkspaceRuntime{}, readErr
+		}
+		if completeErr := mutation.complete(ctx, runtime.ProviderRequestID, runtime, nil); completeErr != nil {
+			return WorkspaceRuntime{}, completeErr
+		}
+		return runtime, nil
+	}
 	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifest(input, input.WorkspaceID, credentialSeed, runtimeID, serviceName, compute, volume, tags), runtimeTarget); err != nil {
+		_ = mutation.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, err)
 		return WorkspaceRuntime{}, err
 	}
 	runtime, err := p.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
 	if err != nil {
+		_ = mutation.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, err)
 		return WorkspaceRuntime{}, err
 	}
 	runtime.ID = runtimeID
@@ -2183,6 +2303,9 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 	runtime.ProviderRequestID = providerRequestID("runtime", input.IdempotencyKey)
 	runtime.CostTags = tags
 	runtime.CreatedAt = now
+	if err := mutation.complete(ctx, runtime.ProviderRequestID, runtime, nil); err != nil {
+		return WorkspaceRuntime{}, err
+	}
 	return runtime, nil
 }
 
@@ -2650,15 +2773,20 @@ func exactWorkspaceRuntimeDiscoveryResource(items []any, kind, workspaceID strin
 }
 
 func exactWorkspaceRuntimeStatusResource(items []any, kind, name string) (map[string]any, error) {
-	resource, state := exactActivationResource(items, kind, name)
-	switch state {
-	case "one":
-		return resource, nil
-	case "multiple":
+	matches := []map[string]any{}
+	for _, item := range items {
+		resource, ok := item.(map[string]any)
+		if ok && stringValue(resource["kind"]) == kind {
+			matches = append(matches, resource)
+		}
+	}
+	if len(matches) > 1 || len(matches) == 1 && stringValue(nested(matches[0], "metadata", "name")) != name {
 		return nil, workspaceRuntimeStatusError("ownership_conflict")
-	default:
+	}
+	if len(matches) != 1 {
 		return nil, workspaceRuntimeStatusError("readback_mismatch")
 	}
+	return matches[0], nil
 }
 
 func singleWorkspaceRuntimePVCClaimName(deployment map[string]any) (string, bool) {

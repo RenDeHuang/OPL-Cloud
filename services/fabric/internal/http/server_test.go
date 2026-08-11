@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -34,101 +33,6 @@ func TestMain(m *testing.M) {
 type runtimeHealthSummaryHTTPProvider struct {
 	testProvider
 	calls int
-}
-
-type workspaceLaunchStageReadbackHTTPProvider struct {
-	testProvider
-	secret fabric.GatewaySecret
-	reads  int
-}
-
-func (p *workspaceLaunchStageReadbackHTTPProvider) UpsertGatewaySecret(_ context.Context, input fabric.GatewaySecretInput) (fabric.GatewaySecret, error) {
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
-	p.secret = fabric.GatewaySecret{Version: digest[:16], Fingerprint: "sha256:" + digest}
-	return p.secret, nil
-}
-
-func (p *workspaceLaunchStageReadbackHTTPProvider) ReadGatewaySecretByDigest(_ context.Context, input fabric.GatewaySecretReadbackInput) (fabric.GatewaySecret, error) {
-	p.reads++
-	if input.SecretRef != p.secret.SecretRef || input.Fingerprint != p.secret.Fingerprint || "sha256:"+input.KeyDigest != p.secret.Fingerprint {
-		return fabric.GatewaySecret{}, errors.New("gateway_secret_readback_mismatch")
-	}
-	return p.secret, nil
-}
-
-type failWorkspaceLaunchStageHTTPStore struct {
-	fabric.OperationStore
-	failed bool
-}
-
-func (s *failWorkspaceLaunchStageHTTPStore) SaveRuntime(ctx context.Context, operation fabric.FabricOperation) error {
-	if !s.failed {
-		s.failed = true
-		return errors.New("injected runtime save failure")
-	}
-	return s.OperationStore.SaveRuntime(ctx, operation)
-}
-
-func (s *failWorkspaceLaunchStageHTTPStore) ConvergeRuntimeReadback(ctx context.Context, expected, next fabric.FabricOperation) error {
-	converger, ok := s.OperationStore.(interface {
-		ConvergeRuntimeReadback(context.Context, fabric.FabricOperation, fabric.FabricOperation) error
-	})
-	if !ok {
-		return errors.New("runtime readback convergence unavailable")
-	}
-	return converger.ConvergeRuntimeReadback(ctx, expected, next)
-}
-
-func TestWorkspaceLaunchStageReadbackHTTPSeparatesProofAndCAS(t *testing.T) {
-	provider := &workspaceLaunchStageReadbackHTTPProvider{}
-	store := fabric.NewMemoryOperationStore()
-	service := fabric.NewServiceWithOperationStore(provider, &failWorkspaceLaunchStageHTTPStore{OperationStore: store})
-	key := "gateway-key-http"
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
-	input := fabric.GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, Fingerprint: "sha256:" + digest, GatewayAPIKey: key, IdempotencyKey: "launch-alpha:secret:gateway-secret"}
-	if _, err := service.UpsertGatewaySecret(context.Background(), input); err == nil {
-		t.Fatal("injected final SaveRuntime failure was not observed")
-	}
-	operations, err := store.List(context.Background())
-	if err != nil || len(operations) != 1 || operations[0].Status != "started" {
-		t.Fatalf("interrupted operation=%#v err=%v", operations, err)
-	}
-	provider.secret.SecretRef = operations[0].ResourceID
-	request := fabric.WorkspaceLaunchStageReadbackInput{
-		Stage: "secret", FabricRecordID: operations[0].ID, FabricOperationID: operations[0].OperationID,
-		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, IdempotencyKey: input.IdempotencyKey,
-		RequestHash: operations[0].RequestHash, GatewaySecretRef: provider.secret.SecretRef,
-		GatewaySecretFingerprint: provider.secret.Fingerprint, WorkspaceAPIKeyID: input.WorkspaceAPIKeyID,
-	}
-	server := NewServer(service, "internal-secret")
-	proofBody, _ := json.Marshal(request)
-	proofResponse := httptest.NewRecorder()
-	server.ServeHTTP(proofResponse, testRequest(http.MethodPost, "/fabric/workspace-launch-stage-readback/proof", bytes.NewReader(proofBody)))
-	if proofResponse.Code != http.StatusOK {
-		t.Fatalf("proof status=%d body=%s", proofResponse.Code, proofResponse.Body.String())
-	}
-	var proof fabric.WorkspaceLaunchStageReadbackProof
-	if json.Unmarshal(proofResponse.Body.Bytes(), &proof) != nil || !proof.Eligible || proof.BindingDigest == "" || proof.FabricOperationMutationCount != 0 || provider.reads != 1 {
-		t.Fatalf("proof=%#v reads=%d", proof, provider.reads)
-	}
-	if strings.Contains(proofResponse.Body.String(), key) || strings.Contains(proofResponse.Body.String(), "keyDigest") {
-		t.Fatalf("proof leaked Secret material: %s", proofResponse.Body.String())
-	}
-	afterProof, _ := store.List(context.Background())
-	if !reflect.DeepEqual(afterProof, operations) {
-		t.Fatalf("proof mutated operation: before=%#v after=%#v", operations, afterProof)
-	}
-	request.ExpectedBindingDigest = proof.BindingDigest
-	convergeBody, _ := json.Marshal(request)
-	convergeResponse := httptest.NewRecorder()
-	server.ServeHTTP(convergeResponse, testRequest(http.MethodPost, "/fabric/workspace-launch-stage-readback/converge", bytes.NewReader(convergeBody)))
-	if convergeResponse.Code != http.StatusOK {
-		t.Fatalf("converge status=%d body=%s", convergeResponse.Code, convergeResponse.Body.String())
-	}
-	var converged fabric.WorkspaceLaunchStageReadbackProof
-	if json.Unmarshal(convergeResponse.Body.Bytes(), &converged) != nil || converged.FabricOperationMutationCount != 1 || provider.reads != 2 {
-		t.Fatalf("converged=%#v reads=%d", converged, provider.reads)
-	}
 }
 
 func (p *runtimeHealthSummaryHTTPProvider) RuntimeHealthSummary(context.Context) (fabric.RuntimeHealthSummary, error) {
@@ -164,6 +68,82 @@ func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *testing.T) {
+	service := fabric.NewServiceWithOperationStore(testProvider{}, fabric.NewMemoryOperationStore())
+	imageDigest := "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	launchRequestHash := strings.Repeat("b", 64)
+	preflight, err := service.PreflightWorkspaceLaunch(context.Background(), fabric.WorkspaceLaunchPreflightInput{
+		SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest, RequestHash: launchRequestHash,
+	})
+	if err != nil || !preflight.Available {
+		t.Fatalf("preflight=%#v err=%v", preflight, err)
+	}
+	binding := fabric.WorkspaceLaunchStageBinding{
+		SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		Stage: "ensure_compute_allocation", Action: "ensure_compute_allocation", FabricOperationID: "launch-alpha:ensure_compute_allocation",
+		IdempotencyKey: "launch-alpha:ensure_compute_allocation",
+	}
+	input := fabric.WorkspaceLaunchStageInput{
+		Binding: binding, ProviderProfileRef: "tencent-tke", PreflightBindingRef: preflight.BindingRef,
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest,
+	}
+	input.Binding.RequestHash = workspaceLaunchStageHTTPHash(input, launchRequestHash)
+	binding = input.Binding
+	server := NewServer(service, "internal-secret")
+	body, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missingHeader := httptest.NewRecorder()
+	server.ServeHTTP(missingHeader, testRequest(http.MethodPost, "/fabric/workspace-launches/stages/ensure", bytes.NewReader(body)))
+	if missingHeader.Code != http.StatusBadRequest {
+		t.Fatalf("missing header status=%d body=%s", missingHeader.Code, missingHeader.Body.String())
+	}
+
+	request := testRequest(http.MethodPost, "/fabric/workspace-launches/stages/ensure", bytes.NewReader(body))
+	request.Header.Set("Idempotency-Key", binding.IdempotencyKey)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("ensure status=%d body=%s", response.Code, response.Body.String())
+	}
+	var result fabric.WorkspaceLaunchStageResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.State != "ready" || result.Binding != binding || result.Resources.ComputeBindingRef != binding.FabricOperationID {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	for _, forbidden := range []string{"machineName", "nodeName", "cvmInstanceId", "cvmStatus", "nodePoolId", "cbsStatus", "tencentMutationCount", "kubernetesMutationCount", "providerData", "costTags", "tencent-tke"} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatalf("typed response leaked legacy provider fact %q: %s", forbidden, response.Body.String())
+		}
+	}
+}
+
+func workspaceLaunchStageHTTPHash(input fabric.WorkspaceLaunchStageInput, launchRequestHash string) string {
+	payload, _ := json.Marshal(struct {
+		LaunchRequestHash string                          `json:"launchRequestHash"`
+		Action            string                          `json:"action"`
+		PackageID         string                          `json:"packageId"`
+		SizeGB            int                             `json:"sizeGb"`
+		ImageDigest       string                          `json:"imageDigest"`
+		Resources         fabric.WorkspaceLaunchResources `json:"resources"`
+	}{launchRequestHash, input.Binding.Action, input.PackageID, input.SizeGB, input.WorkspaceImageDigest, input.Resources})
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("%x", digest)
+}
+
+func (testProvider) EnsureWorkspaceLaunchStage(_ context.Context, request fabric.WorkspaceLaunchProviderRequest) (fabric.WorkspaceLaunchProviderResult, error) {
+	resources := request.Input.Resources
+	resources.ComputeAllocationID = "ca-http-alpha"
+	resources.ComputeBindingRef = request.Input.Binding.FabricOperationID
+	return fabric.WorkspaceLaunchProviderResult{Resources: resources}, nil
+}
+
+func (testProvider) ReadWorkspaceLaunchStage(ctx context.Context, request fabric.WorkspaceLaunchProviderRequest) (fabric.WorkspaceLaunchProviderResult, error) {
+	return testProvider{}.EnsureWorkspaceLaunchStage(ctx, request)
 }
 
 func TestRuntimeHealthSummaryHTTPIsAuthenticatedAndReadOnly(t *testing.T) {
@@ -243,6 +223,34 @@ func TestMachineOwnershipHTTPIsAuthenticatedExactAndNotFound(t *testing.T) {
 	server.ServeHTTP(missing, testRequest(http.MethodGet, "/fabric/machine-ownerships/compute-missing", nil))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("missing status=%d body=%s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestTencentOperatorIdentityEvidenceRouteIsRetainedWithoutLegacyMutationRoutes(t *testing.T) {
+	server := NewServer(fabric.NewServiceWithOperationStore(testProvider{}, fabric.NewMemoryOperationStore()), "internal-secret")
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/fabric/compute-claim-recovery/identity-evidence", bytes.NewBufferString("{}")))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status=%d", unauthorized.Code)
+	}
+
+	retained := httptest.NewRecorder()
+	server.ServeHTTP(retained, testRequest(http.MethodPost, "/fabric/compute-claim-recovery/identity-evidence", bytes.NewBufferString("{}")))
+	if retained.Code != http.StatusConflict {
+		t.Fatalf("retained route status=%d body=%s", retained.Code, retained.Body.String())
+	}
+	for _, path := range []string{
+		"/fabric/compute-claim-recovery/proof",
+		"/fabric/compute-claim-recovery/claim",
+		"/fabric/workspace-launch-stage-readback/proof",
+		"/fabric/workspace-launch-stage-readback/converge",
+		"/fabric/workspace-activation-truth",
+	} {
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, testRequest(http.MethodPost, path, bytes.NewBufferString("{}")))
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("hard-cut route %s status=%d body=%s", path, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 
@@ -403,210 +411,6 @@ func TestServerMonthlyPreflightReportIsInternalReadOnlyAndStrictJSON(t *testing.
 	}
 }
 
-type monthlyTruthHTTPProvider struct {
-	testProvider
-	calls  int
-	result fabric.MonthlyProviderTruth
-}
-
-func (p *monthlyTruthHTTPProvider) MonthlyProviderTruth(_ context.Context, compute fabric.ComputeAllocation, storage fabric.StorageVolume) (fabric.MonthlyProviderTruth, error) {
-	p.calls++
-	result := p.result
-	result.Compute.ID, result.Compute.AccountID, result.Compute.WorkspaceID = compute.ID, compute.AccountID, compute.WorkspaceID
-	result.Storage.ID, result.Storage.AccountID, result.Storage.WorkspaceID = storage.ID, storage.AccountID, storage.WorkspaceID
-	return result, nil
-}
-
-func monthlyTruthHTTPFixture(t *testing.T, provider *monthlyTruthHTTPProvider) (*fabric.Service, *fabric.MemoryOperationStore) {
-	t.Helper()
-	tags := func(accountID, workspaceID, resourceID, operationID string) map[string]string {
-		return map[string]string{"opl_account_id": accountID, "opl_workspace_id": workspaceID, "opl_resource_id": resourceID, "opl_operation_id": operationID}
-	}
-	compute := fabric.ComputeAllocation{
-		ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", Status: "running",
-		Provider: "tencent-tke", ProviderResourceID: "machine/node-basic-1", ProviderRequestID: "req-compute",
-		NodePoolID: "np-basic", InstanceID: "ins-basic-1", CVMInstanceID: "ins-basic-1", MachineName: "node-basic-1", PrivateIP: "10.0.0.11",
-		InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z",
-		ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4", "zone": "ap-guangzhou-3"}, CostTags: tags("acct-alpha", "ws-alpha", "compute-alpha", "owner-compute-alpha"),
-	}
-	storage := fabric.StorageVolume{
-		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", Provider: "tencent-tke",
-		ProviderResourceID: "disk-storage-alpha", ProviderRequestID: "req-storage", SizeGB: 10, CBSStatus: "ATTACHED", DiskType: "CLOUD_BSSD",
-		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", Zone: "ap-guangzhou-3", CostTags: tags("acct-alpha", "ws-alpha", "storage-alpha", "owner-storage-alpha"),
-	}
-	provider.result = fabric.MonthlyProviderTruth{
-		ComputeState: "ready", StorageState: "absent", ProviderRequestID: "req-provider-truth",
-		Compute: compute,
-		Storage: fabric.StorageVolume{
-			ID: storage.ID, AccountID: storage.AccountID, WorkspaceID: storage.WorkspaceID, Status: "external_deleted", Provider: storage.Provider,
-			ProviderResourceID: storage.ProviderResourceID, ProviderRequestID: "req-provider-truth", SizeGB: storage.SizeGB, CBSStatus: "NOT_FOUND",
-			DiskType: storage.DiskType, RenewFlag: storage.RenewFlag, Deadline: storage.Deadline, Zone: storage.Zone, CostTags: storage.CostTags,
-		},
-	}
-	store := fabric.NewMemoryOperationStore()
-	now := time.Now().UTC()
-	for _, operation := range []fabric.FabricOperation{
-		{ID: "fop-compute", Action: "create_compute_allocation", ResourceKind: "compute_allocation", ResourceID: compute.ID, Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": compute}, CreatedAt: now},
-		{ID: "fop-storage", Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: storage.ID, Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": storage}, CreatedAt: now},
-	} {
-		if err := store.Append(context.Background(), operation); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return fabric.NewServiceWithOperationStore(provider, store), store
-}
-
-func TestMonthlyProviderTruthHTTPIsAuthenticatedReadOnlyAndValidatesQuery(t *testing.T) {
-	provider := &monthlyTruthHTTPProvider{}
-	service, store := monthlyTruthHTTPFixture(t, provider)
-	server := NewServer(service, "internal-secret")
-	path := "/fabric/monthly-provider-truth?computeAllocationId=compute-alpha&storageVolumeId=storage-alpha"
-
-	unauthorized := httptest.NewRecorder()
-	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, path, nil))
-	if unauthorized.Code != http.StatusUnauthorized || provider.calls != 0 {
-		t.Fatalf("unauthorized status=%d calls=%d", unauthorized.Code, provider.calls)
-	}
-
-	recorder := httptest.NewRecorder()
-	server.ServeHTTP(recorder, testRequest(http.MethodGet, path, nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("truth status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var truth fabric.MonthlyProviderTruth
-	if err := json.NewDecoder(recorder.Body).Decode(&truth); err != nil || truth.ComputeState != "ready" || truth.StorageState != "absent" || truth.Compute.ID != "compute-alpha" || truth.Storage.ID != "storage-alpha" || provider.calls != 1 {
-		t.Fatalf("truth=%#v err=%v calls=%d", truth, err, provider.calls)
-	}
-	operations, err := store.List(context.Background())
-	if err != nil || len(operations) != 2 {
-		t.Fatalf("read-only truth operations=%#v err=%v", operations, err)
-	}
-
-	for _, invalidPath := range []string{
-		"/fabric/monthly-provider-truth?storageVolumeId=storage-alpha",
-		"/fabric/monthly-provider-truth?computeAllocationId=compute-alpha",
-		"/fabric/monthly-provider-truth?computeAllocationId=compute-alpha&computeAllocationId=compute-other&storageVolumeId=storage-alpha",
-		"/fabric/monthly-provider-truth?computeAllocationId=compute-alpha&storageVolumeId=storage-missing",
-	} {
-		t.Run(invalidPath, func(t *testing.T) {
-			invalid := httptest.NewRecorder()
-			server.ServeHTTP(invalid, testRequest(http.MethodGet, invalidPath, nil))
-			if (strings.Contains(invalidPath, "storage-missing") && invalid.Code != http.StatusServiceUnavailable) || (!strings.Contains(invalidPath, "storage-missing") && invalid.Code != http.StatusBadRequest) {
-				t.Fatalf("invalid query status=%d body=%s", invalid.Code, invalid.Body.String())
-			}
-		})
-	}
-	if provider.calls != 1 {
-		t.Fatalf("invalid query or local identity reached provider: calls=%d", provider.calls)
-	}
-}
-
-type workspaceActivationTruthHTTPProvider struct {
-	testProvider
-	calls int
-}
-
-func (p *workspaceActivationTruthHTTPProvider) WorkspaceActivationTruth(_ context.Context, input fabric.WorkspaceActivationTruthInput, compute fabric.ComputeAllocation, storage fabric.StorageVolume, attachment fabric.StorageAttachment) (fabric.WorkspaceActivationTruth, error) {
-	p.calls++
-	return fabric.WorkspaceActivationTruth{
-		SchemaVersion: 1, Ready: true, Reason: "none", ComputeState: "ready", StorageState: "ready",
-		Compute: compute, Storage: storage, Attachment: attachment,
-		Runtime: fabric.WorkspaceActivationRuntimeTruth{
-			ID: input.RuntimeID, OperationID: input.RuntimeOperationID, ServiceName: input.ServiceName,
-			DeploymentName: input.ServiceName, GatewaySecretRef: input.GatewaySecretRef,
-		},
-		Checks: []fabric.Check{},
-	}, nil
-}
-
-func workspaceActivationTruthHTTPFixture(t *testing.T, provider *workspaceActivationTruthHTTPProvider) (*fabric.Service, *fabric.MemoryOperationStore, fabric.WorkspaceActivationTruthInput) {
-	t.Helper()
-	launchID := "workspace-launch-alpha"
-	compute := fabric.ComputeAllocation{
-		ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", Status: "running", Provider: "tencent-tke",
-		ProviderResourceID: "machine/node-alpha", ProviderRequestID: "req-compute", NodePoolID: "np-basic", InstanceID: "ins-alpha", CVMInstanceID: "ins-alpha",
-		MachineName: "node-alpha", NodeName: "10.0.0.8", PrivateIP: "10.0.0.8", InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3",
-		CostTags: map[string]string{"opl_operation_id": "owner-alpha"},
-	}
-	storage := fabric.StorageVolume{
-		ID: "storage-alpha", AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID, Status: "ready", Provider: "tencent-tke",
-		ProviderResourceID: "disk-alpha", ProviderRequestID: "req-storage", SizeGB: 10, DiskType: "CLOUD_BSSD", Zone: compute.Zone,
-	}
-	attachment := fabric.StorageAttachment{
-		ID: "att-alpha", WorkspaceID: compute.WorkspaceID, ComputeID: compute.ID, VolumeID: storage.ID, Status: "attached", Provider: "tencent-tke",
-		ProviderAttachmentID: "pv/opl-storage-alpha-pv:pvc/opl-storage-alpha-data", ProviderRequestID: "req-attachment",
-	}
-	runtime := fabric.WorkspaceRuntime{ID: "rt-alpha", WorkspaceID: compute.WorkspaceID, Status: "running", ServiceName: "opl-compute-alpha", Ready: true, ProviderRequestID: "req-runtime"}
-	store := fabric.NewMemoryOperationStore()
-	now := time.Now().UTC()
-	for _, operation := range []fabric.FabricOperation{
-		{ID: "fop-compute", OperationID: "op-internal-compute", Action: "create_compute_allocation", ResourceKind: "compute_allocation", ResourceID: compute.ID, AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID, IdempotencyKey: launchID + ":compute", Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": compute}, CreatedAt: now},
-		{ID: "fop-storage", OperationID: "op-internal-storage", Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: storage.ID, AccountID: storage.AccountID, WorkspaceID: storage.WorkspaceID, IdempotencyKey: launchID + ":storage", Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": storage}, CreatedAt: now.Add(time.Second)},
-		{ID: "fop-attachment", OperationID: "op-internal-attachment", Action: "create_storage_attachment", ResourceKind: "storage_attachment", ResourceID: attachment.ID, AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID, IdempotencyKey: launchID + ":attachment", Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": attachment}, CreatedAt: now.Add(2 * time.Second)},
-		{ID: "fop-runtime", OperationID: "op-internal-runtime", Action: "create_workspace_runtime", ResourceKind: "workspace_runtime", ResourceID: compute.WorkspaceID, AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID, IdempotencyKey: launchID + ":workspace:runtime", Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": runtime}, CreatedAt: now.Add(3 * time.Second)},
-	} {
-		if err := store.Append(context.Background(), operation); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, created, err := store.ClaimMachine(context.Background(), fabric.MachineOwnership{
-		ID: "owner-alpha", ResourceID: compute.ID, AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID,
-		PackageID: compute.PackageID, NodePoolID: compute.NodePoolID, MachineID: compute.MachineName,
-		InstanceID: compute.CVMInstanceID, NodeName: compute.NodeName, Status: "active", ClaimedAt: now,
-	}); err != nil || !created {
-		t.Fatalf("seed machine ownership: created=%v err=%v", created, err)
-	}
-	input := fabric.WorkspaceActivationTruthInput{
-		LaunchOperationID: launchID, AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID,
-		ComputeAllocationID: compute.ID, ComputeOperationID: launchID + ":compute",
-		StorageVolumeID: storage.ID, StorageOperationID: launchID + ":storage",
-		AttachmentID: attachment.ID, AttachmentOperationID: launchID + ":attachment",
-		RuntimeID: runtime.ID, RuntimeOperationID: launchID + ":workspace:runtime", ServiceName: runtime.ServiceName,
-		WorkspaceImageDigest: "registry.example/one-person-lab-app@sha256:" + strings.Repeat("f", 64),
-		GatewaySecretRef:     "opl-gateway-alpha", WorkspaceAPIKeyID: 42, GatewaySecretFingerprint: "sha256:" + strings.Repeat("e", 64),
-	}
-	return fabric.NewServiceWithOperationStore(provider, store), store, input
-}
-
-func TestWorkspaceActivationTruthHTTPIsAuthenticatedStructuredAndReadOnly(t *testing.T) {
-	provider := &workspaceActivationTruthHTTPProvider{}
-	service, store, input := workspaceActivationTruthHTTPFixture(t, provider)
-	server := NewServer(service, "internal-secret")
-	body, _ := json.Marshal(input)
-
-	unauthorized := httptest.NewRecorder()
-	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/fabric/workspace-activation-truth", bytes.NewReader(body)))
-	if unauthorized.Code != http.StatusUnauthorized || provider.calls != 0 {
-		t.Fatalf("unauthorized status=%d calls=%d", unauthorized.Code, provider.calls)
-	}
-
-	recorder := httptest.NewRecorder()
-	server.ServeHTTP(recorder, testRequest(http.MethodPost, "/fabric/workspace-activation-truth", bytes.NewReader(body)))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("truth status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var truth fabric.WorkspaceActivationTruth
-	if err := json.NewDecoder(recorder.Body).Decode(&truth); err != nil || !truth.Ready || truth.Runtime.ID != input.RuntimeID || provider.calls != 1 {
-		t.Fatalf("truth=%#v err=%v calls=%d", truth, err, provider.calls)
-	}
-	operations, err := store.List(context.Background())
-	if err != nil || len(operations) != 4 {
-		t.Fatalf("read-only truth operations=%#v err=%v", operations, err)
-	}
-
-	input.RuntimeOperationID = input.LaunchOperationID + ":workspace:runtime-other"
-	invalidBody, _ := json.Marshal(input)
-	invalid := httptest.NewRecorder()
-	server.ServeHTTP(invalid, testRequest(http.MethodPost, "/fabric/workspace-activation-truth", bytes.NewReader(invalidBody)))
-	if invalid.Code != http.StatusBadRequest || provider.calls != 1 {
-		t.Fatalf("invalid status=%d body=%s calls=%d", invalid.Code, invalid.Body.String(), provider.calls)
-	}
-	var blocked fabric.WorkspaceActivationTruth
-	if err := json.NewDecoder(invalid.Body).Decode(&blocked); err != nil || blocked.Ready || blocked.Reason == "" || blocked.ErrorClass == "" {
-		t.Fatalf("blocked=%#v err=%v", blocked, err)
-	}
-}
-
 type computeClaimHTTPProvider struct {
 	testProvider
 	proof      fabric.ComputeClaimProviderProof
@@ -689,148 +493,6 @@ func computeClaimHTTPFixture(t *testing.T) (*fabric.Service, *fabric.MemoryOpera
 	provider.claim.Proof.NodeOwnershipState = "target_owned"
 	provider.claim.Proof.CVMOwnershipState = "target_owned"
 	return fabric.NewServiceWithOperationStore(provider, store), store, provider, input
-}
-
-func TestComputeClaimRecoveryHTTPSeparatesReadOnlyProofAndIdempotentClaim(t *testing.T) {
-	service, store, provider, input := computeClaimHTTPFixture(t)
-	server := NewServer(service, "internal-secret")
-	proofBody, _ := json.Marshal(input)
-
-	unauthorized := httptest.NewRecorder()
-	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/fabric/compute-claim-recovery/proof", bytes.NewReader(proofBody)))
-	if unauthorized.Code != http.StatusUnauthorized || provider.proofCalls != 0 || provider.claimCalls != 0 {
-		t.Fatalf("unauthorized status=%d proofCalls=%d claimCalls=%d", unauthorized.Code, provider.proofCalls, provider.claimCalls)
-	}
-
-	proofRecorder := httptest.NewRecorder()
-	server.ServeHTTP(proofRecorder, testRequest(http.MethodPost, "/fabric/compute-claim-recovery/proof", bytes.NewReader(proofBody)))
-	var proof fabric.ComputeClaimRecoveryProof
-	if proofRecorder.Code != http.StatusOK || json.NewDecoder(proofRecorder.Body).Decode(&proof) != nil || !proof.Eligible || proof.Reason != "none" ||
-		proof.StorageState != "storage_not_started" || proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 ||
-		provider.proofCalls != 1 || provider.claimCalls != 0 {
-		t.Fatalf("proof status=%d proof=%#v calls=%d/%d body=%s", proofRecorder.Code, proof, provider.proofCalls, provider.claimCalls, proofRecorder.Body.String())
-	}
-	operations, _ := store.List(context.Background())
-	ownership, _ := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
-	if len(operations) != 1 || operations[0].Status != "failed" || ownership.Status != "quarantined" {
-		t.Fatalf("read-only proof mutated state: operations=%#v ownership=%#v", operations, ownership)
-	}
-
-	claimInput := fabric.ComputeClaimRecoveryClaimInput{
-		ComputeClaimRecoveryInput: input, MachineName: proof.MachineName, NodeName: proof.NodeName, CVMInstanceID: proof.CVMInstanceID,
-		PrivateIP: proof.PrivateIP, InstanceType: proof.InstanceType, Zone: proof.Zone,
-	}
-	claimBody, _ := json.Marshal(claimInput)
-	missingKey := httptest.NewRecorder()
-	server.ServeHTTP(missingKey, testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody)))
-	if missingKey.Code != http.StatusBadRequest || provider.proofCalls != 1 || provider.claimCalls != 0 {
-		t.Fatalf("missing key status=%d calls=%d/%d body=%s", missingKey.Code, provider.proofCalls, provider.claimCalls, missingKey.Body.String())
-	}
-
-	claimRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody))
-	claimRequest.Header.Set("Idempotency-Key", "launch-fixture:compute")
-	claimRecorder := httptest.NewRecorder()
-	server.ServeHTTP(claimRecorder, claimRequest)
-	claimPayload := append([]byte(nil), claimRecorder.Body.Bytes()...)
-	var claimed fabric.ComputeClaimRecoveryProof
-	if claimRecorder.Code != http.StatusAccepted || json.NewDecoder(claimRecorder.Body).Decode(&claimed) != nil || !claimed.Eligible ||
-		claimed.NodeOwnershipState != "target_owned" || claimed.TencentMutationCount != 1 || claimed.KubernetesMutationCount != 1 ||
-		provider.proofCalls != 2 || provider.claimCalls != 1 {
-		t.Fatalf("claim status=%d claim=%#v calls=%d/%d body=%s", claimRecorder.Code, claimed, provider.proofCalls, provider.claimCalls, claimRecorder.Body.String())
-	}
-	var wire map[string]any
-	if err := json.Unmarshal(claimPayload, &wire); err != nil {
-		t.Fatal(err)
-	}
-	evidence, _ := wire["evidence"].(map[string]any)
-	for _, kind := range []string{"cvm", "node"} {
-		item, _ := evidence[kind].(map[string]any)
-		if _, present := item["missing"]; present {
-			t.Fatalf("successful Go HTTP evidence must exercise the omitempty wire shape: %s", claimPayload)
-		}
-	}
-	operations, _ = store.List(context.Background())
-	binding, _ := operations[0].RedactedProviderPayload["computeClaimRecovery"].(map[string]any)
-	if len(operations) != 1 || binding["launchOperationId"] != input.LaunchOperationID ||
-		binding["idempotencyKey"] != "launch-fixture:compute" || binding["targetHash"] == "" || binding["requestHash"] == "" {
-		t.Fatalf("claim binding was not persisted on original operation: operations=%#v binding=%#v", operations, binding)
-	}
-
-	provider.proof.NodeOwnershipState = "target_owned"
-	provider.proof.CVMOwnershipState = "target_owned"
-	replayRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody))
-	replayRequest.Header.Set("Idempotency-Key", "launch-fixture:compute")
-	replayRecorder := httptest.NewRecorder()
-	server.ServeHTTP(replayRecorder, replayRequest)
-	var replayed fabric.ComputeClaimRecoveryProof
-	if replayRecorder.Code != http.StatusAccepted || json.NewDecoder(replayRecorder.Body).Decode(&replayed) != nil || !replayed.Eligible ||
-		replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 1 {
-		t.Fatalf("claim replay status=%d proof=%#v calls=%d/%d body=%s", replayRecorder.Code, replayed, provider.proofCalls, provider.claimCalls, replayRecorder.Body.String())
-	}
-
-	conflictRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody))
-	conflictRequest.Header.Set("Idempotency-Key", "launch-fixture:recovery-key")
-	conflictRecorder := httptest.NewRecorder()
-	proofCallsBeforeConflict := provider.proofCalls
-	claimCallsBeforeConflict := provider.claimCalls
-	server.ServeHTTP(conflictRecorder, conflictRequest)
-	if conflictRecorder.Code != http.StatusBadRequest || provider.proofCalls != proofCallsBeforeConflict || provider.claimCalls != claimCallsBeforeConflict {
-		t.Fatalf("different claim key status=%d calls=%d/%d body=%s", conflictRecorder.Code, provider.proofCalls, provider.claimCalls, conflictRecorder.Body.String())
-	}
-
-	driftedInput := claimInput
-	driftedInput.PrivateIP = "10.0.0.99"
-	driftedBody, _ := json.Marshal(driftedInput)
-	driftedRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(driftedBody))
-	driftedRequest.Header.Set("Idempotency-Key", "launch-fixture:compute")
-	driftedRecorder := httptest.NewRecorder()
-	server.ServeHTTP(driftedRecorder, driftedRequest)
-	if driftedRecorder.Code != http.StatusConflict || provider.claimCalls != 1 {
-		t.Fatalf("claim target drift status=%d calls=%d/%d body=%s", driftedRecorder.Code, provider.proofCalls, provider.claimCalls, driftedRecorder.Body.String())
-	}
-}
-
-func TestComputeProviderTruthHTTPIsAuthenticatedStrictAndReadOnly(t *testing.T) {
-	service, store, provider, input := computeClaimHTTPFixture(t)
-	server := NewServer(service, "internal-secret")
-	path := "/fabric/compute-provider-truth?launchOperationId=" + input.LaunchOperationID +
-		"&accountId=" + input.AccountID + "&workspaceId=" + input.WorkspaceID +
-		"&computeAllocationId=" + input.ComputeAllocationID + "&storageVolumeId=" + input.StorageVolumeID +
-		"&packageId=" + input.PackageID + "&poolId=" + input.PoolID + "&nodePoolId=" + input.NodePoolID
-
-	unauthorized := httptest.NewRecorder()
-	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, path, nil))
-	if unauthorized.Code != http.StatusUnauthorized || provider.proofCalls != 0 || provider.claimCalls != 0 {
-		t.Fatalf("unauthorized status=%d calls=%d/%d", unauthorized.Code, provider.proofCalls, provider.claimCalls)
-	}
-
-	recorder := httptest.NewRecorder()
-	server.ServeHTTP(recorder, testRequest(http.MethodGet, path, nil))
-	var truth fabric.ComputeProviderTruth
-	if recorder.Code != http.StatusOK || json.NewDecoder(recorder.Body).Decode(&truth) != nil || truth.State != "ready" ||
-		truth.ComputeState != "ready" || truth.NodeOwnershipState != "unallocated" || truth.CVMOwnershipState != "recoverable" ||
-		provider.proofCalls != 1 || provider.claimCalls != 0 {
-		t.Fatalf("truth status=%d truth=%#v calls=%d/%d body=%s", recorder.Code, truth, provider.proofCalls, provider.claimCalls, recorder.Body.String())
-	}
-	operations, err := store.List(context.Background())
-	if err != nil || len(operations) != 1 || operations[0].Status != "failed" {
-		t.Fatalf("GET-only truth mutated operations=%#v err=%v", operations, err)
-	}
-
-	for _, invalidPath := range []string{
-		path + "&extra=value",
-		path + "&nodePoolId=duplicate",
-		strings.Replace(path, "packageId=basic", "packageId=%20basic", 1),
-	} {
-		invalid := httptest.NewRecorder()
-		server.ServeHTTP(invalid, testRequest(http.MethodGet, invalidPath, nil))
-		if invalid.Code != http.StatusBadRequest {
-			t.Fatalf("invalid query status=%d body=%s path=%s", invalid.Code, invalid.Body.String(), invalidPath)
-		}
-	}
-	if provider.proofCalls != 1 || provider.claimCalls != 0 {
-		t.Fatalf("invalid query reached provider calls=%d/%d", provider.proofCalls, provider.claimCalls)
-	}
 }
 
 func TestComputePoolHeadTerminalizationHTTPUsesOneExactCASAndReadOnlyReplay(t *testing.T) {
@@ -924,38 +586,6 @@ func TestComputePoolHeadTerminalizationHTTPUsesOneExactCASAndReadOnlyReplay(t *t
 	server.ServeHTTP(conflictRecorder, conflictRequest)
 	if conflictRecorder.Code != http.StatusConflict || provider.proofCalls != 1 || provider.claimCalls != 1 {
 		t.Fatalf("conflict status=%d body=%s calls=%d/%d", conflictRecorder.Code, conflictRecorder.Body.String(), provider.proofCalls, provider.claimCalls)
-	}
-}
-
-func TestComputeClaimRecoveryHTTPNeverReturnsUnallowlistedMutationEvidence(t *testing.T) {
-	service, _, provider, input := computeClaimHTTPFixture(t)
-	const marker = "ghp_secret"
-	provider.claim.Proof.Reason = "provider_describe"
-	provider.claim.TencentMutationCount = 1
-	provider.claim.KubernetesMutationCount = 0
-	provider.claim.FailureStage = "cvm_final_readback"
-	provider.claim.ProviderErrorClass = "readback_mismatch"
-	provider.claim.Evidence = &fabric.ComputeClaimEvidence{
-		CVM:  fabric.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{marker}},
-		Node: fabric.ComputeClaimMutationEvidence{},
-	}
-	claimInput := fabric.ComputeClaimRecoveryClaimInput{
-		ComputeClaimRecoveryInput: input, MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
-		CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP,
-		InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
-	}
-	body, err := json.Marshal(claimInput)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(body))
-	request.Header.Set("Idempotency-Key", "launch-fixture:compute")
-	recorder := httptest.NewRecorder()
-
-	NewServer(service, "internal-secret").ServeHTTP(recorder, request)
-
-	if recorder.Code < 400 || provider.proofCalls != 1 || provider.claimCalls != 1 || strings.Contains(recorder.Body.String(), marker) {
-		t.Fatalf("status=%d calls=%d/%d body=%s", recorder.Code, provider.proofCalls, provider.claimCalls, recorder.Body.String())
 	}
 }
 

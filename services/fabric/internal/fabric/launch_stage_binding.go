@@ -4,113 +4,112 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"maps"
 	"strings"
 )
 
 const launchStageBindingPayloadKey = "launchStageBinding"
 
 var (
+	ErrLaunchStageBindingInvalid  = errors.New("launch_stage_binding_invalid")
 	ErrLaunchStageBindingNotFound = errors.New("launch_stage_binding_not_found")
 	ErrLaunchStageBindingConflict = errors.New("launch_stage_binding_conflict")
 )
 
-type LaunchStageBinding struct {
-	SchemaVersion       int               `json:"schemaVersion"`
-	LaunchOperationID   string            `json:"launchOperationId"`
-	AccountID           string            `json:"accountId"`
-	WorkspaceID         string            `json:"workspaceId"`
-	Stage               string            `json:"stage"`
-	Action              string            `json:"action"`
-	StageOperationID    string            `json:"stageOperationId"`
-	IdempotencyKey      string            `json:"idempotencyKey"`
-	RequestHash         string            `json:"requestHash"`
-	ExpectedResourceIDs map[string]string `json:"expectedResourceIds"`
-	Digest              string            `json:"digest"`
+// WorkspaceLaunchStageBinding mirrors the real Control Plane caller. It is
+// provider-neutral and is persisted unchanged before a provider mutation.
+type WorkspaceLaunchStageBinding struct {
+	SchemaVersion           int    `json:"schemaVersion"`
+	LaunchOperationID       string `json:"launchOperationId"`
+	AccountID               string `json:"accountId"`
+	WorkspaceID             string `json:"workspaceId"`
+	Stage                   string `json:"stage"`
+	Action                  string `json:"action"`
+	FabricOperationID       string `json:"fabricOperationId"`
+	IdempotencyKey          string `json:"idempotencyKey"`
+	RequestHash             string `json:"requestHash"`
+	ExpectedResourceBinding string `json:"expectedResourceBinding"`
+}
+
+type persistedLaunchStageBinding struct {
+	Binding WorkspaceLaunchStageBinding `json:"binding"`
+	Digest  string                      `json:"digest"`
 }
 
 type LaunchStageBindingReadback struct {
-	Available bool               `json:"available"`
-	Status    string             `json:"status"`
-	Binding   LaunchStageBinding `json:"binding"`
-	Operation FabricOperation    `json:"operation"`
+	Available bool                        `json:"available"`
+	Status    string                      `json:"status"`
+	Binding   WorkspaceLaunchStageBinding `json:"binding"`
+	Operation FabricOperation             `json:"operation"`
 }
 
-func launchOperationID(idempotencyKey, stage string) (string, bool) {
-	suffixes := map[string][]string{
-		"compute":    {":compute"},
-		"storage":    {":storage"},
-		"attachment": {":attachment"},
-		"secret":     {":secret", ":gateway-secret"},
-		"runtime":    {":runtime", ":workspace:runtime"},
+func workspaceLaunchStageAction(stage string) (string, bool) {
+	action, ok := map[string]string{
+		"ensure_compute_allocation": "ensure_compute_allocation",
+		"storage":                   "ensure_storage",
+		"attachment":                "ensure_attachment",
+		"secret":                    "ensure_gateway_secret",
+		"runtime":                   "ensure_runtime",
+	}[stage]
+	return action, ok
+}
+
+func validWorkspaceLaunchStageBinding(binding WorkspaceLaunchStageBinding) bool {
+	action, ok := workspaceLaunchStageAction(binding.Stage)
+	if !ok || binding.SchemaVersion != 1 || binding.Action != action {
+		return false
 	}
-	key := strings.TrimSpace(idempotencyKey)
-	for _, suffix := range suffixes[stage] {
-		if launchID, ok := strings.CutSuffix(key, suffix); ok && launchID != "" {
-			return launchID, true
+	for _, value := range []string{
+		binding.LaunchOperationID, binding.AccountID, binding.WorkspaceID, binding.Stage,
+		binding.Action, binding.FabricOperationID, binding.IdempotencyKey, binding.RequestHash,
+	} {
+		if value == "" || value != strings.TrimSpace(value) {
+			return false
 		}
 	}
-	return "", false
+	return binding.ExpectedResourceBinding == strings.TrimSpace(binding.ExpectedResourceBinding)
 }
 
-func bindLaunchStageOperation(operation *FabricOperation, stage string, expectedResourceIDs map[string]string) {
-	launchID, ok := launchOperationID(operation.IdempotencyKey, stage)
-	if !ok {
-		return
+func bindLaunchStageOperation(operation *FabricOperation, binding *WorkspaceLaunchStageBinding) error {
+	if binding == nil {
+		return nil
 	}
-	binding := LaunchStageBinding{
-		SchemaVersion: 1, LaunchOperationID: launchID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
-		Stage: stage, Action: operation.Action, StageOperationID: operation.OperationID,
-		IdempotencyKey: operation.IdempotencyKey, RequestHash: operation.RequestHash,
-		ExpectedResourceIDs: maps.Clone(expectedResourceIDs),
+	if !validWorkspaceLaunchStageBinding(*binding) || operation.AccountID != binding.AccountID ||
+		operation.WorkspaceID != binding.WorkspaceID || operation.IdempotencyKey != binding.IdempotencyKey {
+		return ErrLaunchStageBindingInvalid
 	}
-	binding.Digest = hashInput(struct {
-		SchemaVersion       int
-		LaunchOperationID   string
-		AccountID           string
-		WorkspaceID         string
-		Stage               string
-		Action              string
-		StageOperationID    string
-		IdempotencyKey      string
-		RequestHash         string
-		ExpectedResourceIDs map[string]string
-	}{binding.SchemaVersion, binding.LaunchOperationID, binding.AccountID, binding.WorkspaceID, binding.Stage, binding.Action, binding.StageOperationID, binding.IdempotencyKey, binding.RequestHash, binding.ExpectedResourceIDs})
+	operation.ID = binding.FabricOperationID
+	operation.RequestHash = binding.RequestHash
 	if operation.RedactedProviderPayload == nil {
 		operation.RedactedProviderPayload = map[string]any{}
 	}
-	operation.RedactedProviderPayload[launchStageBindingPayloadKey] = binding
+	operation.RedactedProviderPayload[launchStageBindingPayloadKey] = persistedLaunchStageBinding{
+		Binding: *binding,
+		Digest:  hashInput(*binding),
+	}
+	return nil
 }
 
-func decodeLaunchStageBinding(operation FabricOperation) (LaunchStageBinding, bool) {
+func decodeLaunchStageBinding(operation FabricOperation) (WorkspaceLaunchStageBinding, bool) {
 	value, ok := operation.RedactedProviderPayload[launchStageBindingPayloadKey]
 	if !ok {
-		return LaunchStageBinding{}, false
+		return WorkspaceLaunchStageBinding{}, false
 	}
 	body, err := json.Marshal(value)
 	if err != nil {
-		return LaunchStageBinding{}, false
+		return WorkspaceLaunchStageBinding{}, false
 	}
-	var binding LaunchStageBinding
-	if json.Unmarshal(body, &binding) != nil || binding.SchemaVersion != 1 || binding.Digest == "" {
-		return LaunchStageBinding{}, false
+	var persisted persistedLaunchStageBinding
+	if json.Unmarshal(body, &persisted) != nil || !validWorkspaceLaunchStageBinding(persisted.Binding) ||
+		persisted.Digest == "" || persisted.Digest != hashInput(persisted.Binding) {
+		return WorkspaceLaunchStageBinding{}, false
 	}
-	copy := binding
-	copy.Digest = ""
-	expected := hashInput(struct {
-		SchemaVersion       int
-		LaunchOperationID   string
-		AccountID           string
-		WorkspaceID         string
-		Stage               string
-		Action              string
-		StageOperationID    string
-		IdempotencyKey      string
-		RequestHash         string
-		ExpectedResourceIDs map[string]string
-	}{copy.SchemaVersion, copy.LaunchOperationID, copy.AccountID, copy.WorkspaceID, copy.Stage, copy.Action, copy.StageOperationID, copy.IdempotencyKey, copy.RequestHash, copy.ExpectedResourceIDs})
-	return binding, expected == binding.Digest
+	binding := persisted.Binding
+	if operation.ID != binding.FabricOperationID || operation.AccountID != binding.AccountID ||
+		operation.WorkspaceID != binding.WorkspaceID || operation.IdempotencyKey != binding.IdempotencyKey ||
+		operation.RequestHash != binding.RequestHash {
+		return WorkspaceLaunchStageBinding{}, false
+	}
+	return binding, true
 }
 
 func preserveLaunchStageBinding(next, current map[string]any) map[string]any {
@@ -123,32 +122,22 @@ func preserveLaunchStageBinding(next, current map[string]any) map[string]any {
 	return next
 }
 
-func (s *Service) LaunchStageBindingReadback(ctx context.Context, launchOperationID, stage string) (LaunchStageBindingReadback, error) {
-	if strings.TrimSpace(launchOperationID) == "" || strings.TrimSpace(stage) == "" {
+func (s *Service) LaunchStageBindingReadback(ctx context.Context, expected WorkspaceLaunchStageBinding) (LaunchStageBindingReadback, error) {
+	if !validWorkspaceLaunchStageBinding(expected) {
+		return LaunchStageBindingReadback{}, ErrLaunchStageBindingInvalid
+	}
+	operation, err := s.operations.Get(ctx, expected.FabricOperationID)
+	if errors.Is(err, ErrOperationNotFound) {
 		return LaunchStageBindingReadback{}, ErrLaunchStageBindingNotFound
 	}
-	operations, err := s.operations.List(ctx)
 	if err != nil {
 		return LaunchStageBindingReadback{}, err
 	}
-	var selected FabricOperation
-	var selectedBinding LaunchStageBinding
-	for _, operation := range operations {
-		binding, ok := decodeLaunchStageBinding(operation)
-		if !ok || binding.LaunchOperationID != launchOperationID || binding.Stage != stage {
-			continue
-		}
-		if binding.AccountID != operation.AccountID || binding.WorkspaceID != operation.WorkspaceID || binding.Action != operation.Action ||
-			binding.StageOperationID != operation.OperationID || binding.IdempotencyKey != operation.IdempotencyKey || binding.RequestHash != operation.RequestHash {
-			return LaunchStageBindingReadback{}, ErrLaunchStageBindingConflict
-		}
-		if selectedBinding.Digest != "" && selectedBinding.Digest != binding.Digest {
-			return LaunchStageBindingReadback{}, ErrLaunchStageBindingConflict
-		}
-		selected, selectedBinding = operation, binding
+	binding, ok := decodeLaunchStageBinding(operation)
+	if !ok || binding != expected {
+		return LaunchStageBindingReadback{}, ErrLaunchStageBindingConflict
 	}
-	if selectedBinding.Digest == "" {
-		return LaunchStageBindingReadback{}, fmt.Errorf("%w: %s", ErrLaunchStageBindingNotFound, stage)
-	}
-	return LaunchStageBindingReadback{Available: selected.Status == "succeeded", Status: selected.Status, Binding: selectedBinding, Operation: selected}, nil
+	return LaunchStageBindingReadback{
+		Available: operation.Status == "succeeded", Status: operation.Status, Binding: binding, Operation: operation,
+	}, nil
 }

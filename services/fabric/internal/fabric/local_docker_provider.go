@@ -102,15 +102,9 @@ func (*LocalDockerProvider) ValidateWorkspaceImageReference(value string) bool {
 
 func (*LocalDockerProvider) ValidateComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {
 	if allocation.Provider != "local-docker" || allocation.PoolID != prepared.PoolID || allocation.NodePoolID != prepared.NodePoolID ||
-		allocation.PackageID != prepared.PackageID || allocation.InstanceType != prepared.InstanceType || allocation.MachineName == "" ||
-		!strings.HasPrefix(allocation.ProviderResourceID, "network/") || !strings.HasPrefix(allocation.InstanceID, "docker-network-") ||
-		allocation.NodeName == "" || allocation.PrivateIP == "" || allocation.Zone != "local" || allocation.ChargeType != "LOCAL" {
+		allocation.PackageID != prepared.PackageID || allocation.InstanceType != prepared.InstanceType ||
+		!strings.HasPrefix(allocation.ProviderResourceID, "network/") || allocation.Zone != "local" || allocation.ChargeType != "LOCAL" {
 		return fmt.Errorf("compute_provider_readback_mismatch")
-	}
-	for _, existing := range prepared.BeforeMachineNames {
-		if existing == allocation.MachineName {
-			return fmt.Errorf("compute_allocation_machine_not_new")
-		}
 	}
 	return nil
 }
@@ -142,7 +136,7 @@ func (p *LocalDockerProvider) PrepareComputeAllocation(ctx context.Context, inpu
 	}
 	return ComputeAllocationPreparation{
 		PoolID: plan.ID, PackageID: input.PackageID, NodePoolID: input.NodePoolID, InstanceType: plan.InstanceType,
-		MaxReplicas: 1024, BaselineReplicas: 0, TargetReplicas: 1, BeforeMachineNames: []string{}, ProviderRequestID: providerRequestID("docker-prepare", input.ID),
+		MaxReplicas: 1024, BaselineReplicas: 0, TargetReplicas: 1, ProviderRequestID: providerRequestID("docker-prepare", input.ID),
 	}, nil
 }
 
@@ -236,41 +230,55 @@ func (p *LocalDockerProvider) CreateComputeAllocation(ctx context.Context, input
 	name := localDockerName("opl-compute", allocation.ID)
 	labels := localDockerLabels(allocation.AccountID, allocation.WorkspaceID, allocation.ID, allocation.OperationID, "compute")
 	if input.DryRun {
-		return p.localComputeAllocation(allocation, prepared, name, "dry-run", labels), nil
+		return p.localComputeAllocation(allocation, prepared, "dry-run"), nil
+	}
+	attempt, err := beginProviderMutation(ctx, "local_docker_network_create", "compute_allocation", allocation.ID, name)
+	if err != nil {
+		return ComputeAllocation{}, err
 	}
 	readback, exists, err := p.inspectNetwork(ctx, name)
 	if err != nil {
 		return ComputeAllocation{}, err
 	}
 	if !exists {
+		if attempt != nil && !attempt.Fresh {
+			err := fmt.Errorf("local_docker_compute_mutation_readback_pending")
+			_ = attempt.complete(ctx, "", allocation, err)
+			return ComputeAllocation{}, err
+		}
 		args := append([]string{"network", "create", "--driver", "bridge"}, dockerLabelArgs(labels)...)
 		args = append(args, name)
 		if _, err := p.runner.Run(ctx, nil, args...); err != nil {
+			_ = attempt.complete(ctx, "", allocation, err)
 			return ComputeAllocation{}, err
 		}
 		readback, exists, err = p.inspectNetwork(ctx, name)
 	}
 	if err != nil || !exists || !exactDockerLabels(readback.Labels, labels) {
-		return ComputeAllocation{}, fmt.Errorf("local_docker_compute_readback_mismatch")
+		readErr := fmt.Errorf("local_docker_compute_readback_mismatch")
+		_ = attempt.complete(ctx, "", allocation, readErr)
+		return ComputeAllocation{}, readErr
 	}
-	return p.localComputeAllocation(allocation, prepared, readback.Name, readback.ID, labels), nil
+	resource := p.localComputeAllocation(allocation, prepared, readback.ID)
+	if completeErr := attempt.complete(ctx, resource.ProviderRequestID, resource, nil); completeErr != nil {
+		return ComputeAllocation{}, completeErr
+	}
+	return resource, nil
 }
 
-func (p *LocalDockerProvider) localComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation, name, networkID string, labels map[string]string) ComputeAllocation {
+func (p *LocalDockerProvider) localComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation, networkID string) ComputeAllocation {
 	deadline := p.now().AddDate(0, 1, 0).Format(time.RFC3339)
 	return ComputeAllocation{
 		ID: allocation.ID, OperationID: allocation.OperationID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
 		PackageID: allocation.PackageID, Status: "running", Provider: "local-docker", ProviderResourceID: "network/" + networkID,
 		ProviderRequestID: providerRequestID("docker-compute", allocation.ID), PoolID: prepared.PoolID, NodePoolID: prepared.NodePoolID,
-		InstanceID: "docker-network-" + networkID, MachineName: name, NodeName: "local-docker", PrivateIP: "127.0.0.1",
 		InstanceType: prepared.InstanceType, Zone: "local", ChargeType: "LOCAL", RenewFlag: "NOT_APPLICABLE", Deadline: deadline,
-		ProviderData: map[string]string{"networkName": name, "networkId": networkID, "instanceType": prepared.InstanceType, "zone": "local"},
-		CostTags:     labels, CreatedAt: p.now(),
+		CreatedAt: p.now(),
 	}
 }
 
-func (p *LocalDockerProvider) TagComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {
-	readback, exists, err := p.inspectNetwork(ctx, machine.MachineID)
+func (p *LocalDockerProvider) TagComputeMachine(ctx context.Context, _ ProviderMachine, ownership MachineOwnership) error {
+	readback, exists, err := p.inspectNetwork(ctx, localDockerName("opl-compute", ownership.ResourceID))
 	if err != nil || !exists {
 		return firstNonNil(err, fmt.Errorf("local_docker_compute_not_found"))
 	}
@@ -291,7 +299,7 @@ func firstNonNil(values ...error) error {
 }
 
 func (p *LocalDockerProvider) ReadComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
-	name := firstNonEmpty(allocation.ProviderData["networkName"], allocation.MachineName)
+	name := localDockerName("opl-compute", allocation.ID)
 	readback, exists, err := p.inspectNetwork(ctx, name)
 	if err != nil {
 		return allocation, err
@@ -305,8 +313,8 @@ func (p *LocalDockerProvider) ReadComputeAllocation(ctx context.Context, allocat
 		return allocation, fmt.Errorf("local_docker_compute_ownership_mismatch")
 	}
 	allocation.Status, allocation.Provider, allocation.ProviderResourceID = "running", "local-docker", "network/"+readback.ID
-	allocation.InstanceID, allocation.MachineName, allocation.NodeName, allocation.PrivateIP = "docker-network-"+readback.ID, readback.Name, "local-docker", "127.0.0.1"
 	allocation.ProviderRequestID = providerRequestID("docker-compute-read", allocation.ID)
+	allocation.Zone = "local"
 	return allocation, nil
 }
 
@@ -324,7 +332,7 @@ func (p *LocalDockerProvider) RenewComputeAllocation(ctx context.Context, alloca
 }
 
 func (p *LocalDockerProvider) DestroyComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
-	name := firstNonEmpty(allocation.ProviderData["networkName"], allocation.MachineName)
+	name := localDockerName("opl-compute", allocation.ID)
 	if _, exists, err := p.inspectNetwork(ctx, name); err != nil {
 		return allocation, err
 	} else if exists {
@@ -339,33 +347,48 @@ func (p *LocalDockerProvider) DestroyComputeAllocation(ctx context.Context, allo
 func (p *LocalDockerProvider) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
 	name := localDockerName("opl-storage", input.ID)
 	labels := localDockerLabels(input.AccountID, input.WorkspaceID, input.ID, input.OperationID, "storage")
+	attempt, err := beginProviderMutation(ctx, "local_docker_volume_create", "storage_volume", input.ID, name)
+	if err != nil {
+		return StorageVolume{}, err
+	}
 	readback, exists, err := p.inspectVolume(ctx, name)
 	if err != nil {
 		return StorageVolume{}, err
 	}
 	if !exists {
+		if attempt != nil && !attempt.Fresh {
+			err := fmt.Errorf("local_docker_storage_mutation_readback_pending")
+			_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, err)
+			return StorageVolume{}, err
+		}
 		args := append([]string{"volume", "create"}, dockerLabelArgs(labels)...)
 		args = append(args, name)
 		if _, err := p.runner.Run(ctx, nil, args...); err != nil {
+			_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, err)
 			return StorageVolume{}, err
 		}
 		readback, exists, err = p.inspectVolume(ctx, name)
 	}
 	if err != nil || !exists || !exactDockerLabels(readback.Labels, labels) {
-		return StorageVolume{}, fmt.Errorf("local_docker_storage_readback_mismatch")
+		readErr := fmt.Errorf("local_docker_storage_readback_mismatch")
+		_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, readErr)
+		return StorageVolume{}, readErr
 	}
 	deadline := p.now().AddDate(0, 1, 0).Format(time.RFC3339)
-	return StorageVolume{
+	resource := StorageVolume{
 		ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready",
 		Provider: "local-docker", ProviderResourceID: "volume/" + readback.Name, ProviderRequestID: providerRequestID("docker-storage", input.ID),
-		SizeGB: input.SizeGB, StorageClass: "docker-volume", CBSStatus: "NOT_APPLICABLE", DiskType: "local-volume",
-		RenewFlag: "NOT_APPLICABLE", Deadline: deadline, Zone: "local", ProviderData: map[string]string{"volumeName": readback.Name, "zone": "local"},
-		CostTags: labels, CreatedAt: p.now(),
-	}, nil
+		SizeGB: input.SizeGB, StorageClass: "docker-volume", DiskType: "local-volume",
+		RenewFlag: "NOT_APPLICABLE", Deadline: deadline, Zone: "local", CreatedAt: p.now(),
+	}
+	if completeErr := attempt.complete(ctx, resource.ProviderRequestID, resource, nil); completeErr != nil {
+		return StorageVolume{}, completeErr
+	}
+	return resource, nil
 }
 
 func (p *LocalDockerProvider) ReadStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
-	name := firstNonEmpty(volume.ProviderData["volumeName"], strings.TrimPrefix(volume.ProviderResourceID, "volume/"))
+	name := localDockerName("opl-storage", volume.ID)
 	readback, exists, err := p.inspectVolume(ctx, name)
 	if err != nil {
 		return volume, err
@@ -401,7 +424,7 @@ func (p *LocalDockerProvider) RenewStorageVolume(ctx context.Context, volume Sto
 }
 
 func (p *LocalDockerProvider) DestroyStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
-	name := firstNonEmpty(volume.ProviderData["volumeName"], strings.TrimPrefix(volume.ProviderResourceID, "volume/"))
+	name := localDockerName("opl-storage", volume.ID)
 	if _, exists, err := p.inspectVolume(ctx, name); err != nil {
 		return volume, err
 	} else if exists {
@@ -423,9 +446,8 @@ func (p *LocalDockerProvider) CreateStorageAttachment(ctx context.Context, input
 	id := "att_" + stableSuffix(input.IdempotencyKey)[:18]
 	return StorageAttachment{
 		ID: id, OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
-		Status: "attached", Provider: "local-docker", ProviderAttachmentID: "docker/" + compute.MachineName + "/" + strings.TrimPrefix(volume.ProviderResourceID, "volume/"),
-		ProviderRequestID: providerRequestID("docker-attachment", input.IdempotencyKey),
-		CostTags:          localDockerLabels(compute.AccountID, input.WorkspaceID, id, input.IdempotencyKey, "attachment"), CreatedAt: p.now(),
+		Status: "attached", Provider: "local-docker", ProviderAttachmentID: "docker/" + localDockerName("opl-compute", compute.ID) + "/" + localDockerName("opl-storage", volume.ID),
+		ProviderRequestID: providerRequestID("docker-attachment", input.IdempotencyKey), CreatedAt: p.now(),
 	}, nil
 }
 
@@ -437,7 +459,7 @@ func (p *LocalDockerProvider) ReadStorageAttachment(ctx context.Context, attachm
 		return attachment, err
 	}
 	attachment.Status, attachment.Provider = "attached", "local-docker"
-	attachment.ProviderAttachmentID = "docker/" + compute.MachineName + "/" + strings.TrimPrefix(volume.ProviderResourceID, "volume/")
+	attachment.ProviderAttachmentID = "docker/" + localDockerName("opl-compute", compute.ID) + "/" + localDockerName("opl-storage", volume.ID)
 	attachment.ProviderRequestID = providerRequestID("docker-attachment-read", attachment.OperationID)
 	return attachment, nil
 }

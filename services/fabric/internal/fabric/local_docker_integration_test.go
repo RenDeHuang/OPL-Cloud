@@ -39,45 +39,47 @@ func waitForLocalRuntime(ctx context.Context, url string) error {
 }
 
 type bindingCheckingDockerRunner struct {
-	base     dockerRunner
-	store    OperationStore
-	launchID string
-	t        *testing.T
+	base        dockerRunner
+	store       OperationStore
+	parents     map[string]WorkspaceLaunchStageBinding
+	mutationIDs map[string]string
+	t           *testing.T
 }
 
 func (r bindingCheckingDockerRunner) Run(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
-	stage := ""
+	stage, mutation := "", ""
 	if len(args) >= 2 && args[0] == "network" && args[1] == "create" {
-		stage = "compute"
+		stage, mutation = "ensure_compute_allocation", "local_docker_network_create"
 	}
 	if len(args) >= 2 && args[0] == "volume" && args[1] == "create" {
-		stage = "storage"
+		stage, mutation = "storage", "local_docker_volume_create"
 		if strings.Contains(args[len(args)-1], "gateway") {
-			stage = "secret"
+			stage, mutation = "secret", "local_docker_secret_volume_create"
 		}
 	}
 	if len(args) > 0 && args[0] == "run" {
 		for _, value := range args {
 			if value == "-d" {
-				stage = "runtime"
+				stage, mutation = "runtime", "local_docker_runtime_create"
 			}
 			if value == "tar" {
-				stage = "secret"
+				stage, mutation = "secret", "local_docker_secret_write"
 			}
 		}
 	}
 	if stage != "" {
-		operations, err := r.store.List(ctx)
-		if err != nil {
-			return nil, err
+		binding := r.parents[stage]
+		parent, err := r.store.Get(ctx, binding.FabricOperationID)
+		if err != nil || parent.Status != "started" {
+			return nil, fmt.Errorf("local_docker_%s_mutation_before_parent_binding", stage)
 		}
-		found := false
-		for _, operation := range operations {
-			binding, ok := decodeLaunchStageBinding(operation)
-			found = found || ok && binding.LaunchOperationID == r.launchID && binding.Stage == stage && operation.Status == "started"
+		persisted, ok := decodeLaunchStageBinding(parent)
+		if !ok || persisted != binding {
+			return nil, fmt.Errorf("local_docker_%s_parent_binding_mismatch", stage)
 		}
-		if !found {
-			return nil, fmt.Errorf("local_docker_%s_mutation_before_binding", stage)
+		child, err := r.store.Get(ctx, r.mutationIDs[mutation])
+		if err != nil || child.Status != "started" || child.Action != mutation {
+			return nil, fmt.Errorf("local_docker_%s_mutation_before_child_binding", mutation)
 		}
 	}
 	output, err := r.base.Run(ctx, stdin, args...)
@@ -85,6 +87,28 @@ func (r bindingCheckingDockerRunner) Run(ctx context.Context, stdin []byte, args
 		r.t.Logf("docker args=%q error=%v", args, err)
 	}
 	return output, err
+}
+
+func localLaunchBinding(launchID, accountID, workspaceID, stage, action, idempotencyKey string) WorkspaceLaunchStageBinding {
+	return WorkspaceLaunchStageBinding{
+		SchemaVersion: 1, LaunchOperationID: launchID, AccountID: accountID, WorkspaceID: workspaceID,
+		Stage: stage, Action: action, FabricOperationID: launchID + ":" + stage, IdempotencyKey: idempotencyKey,
+	}
+}
+
+func waitForWorkspaceStage(ctx context.Context, service *Service, input WorkspaceLaunchStageInput) (WorkspaceLaunchStageResult, error) {
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		result, err := service.ReadWorkspaceLaunchStage(ctx, input)
+		if err != nil {
+			return result, err
+		}
+		if result.State == "ready" {
+			return result, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return WorkspaceLaunchStageResult{}, fmt.Errorf("workspace_launch_stage_timeout")
 }
 
 func TestLocalDockerWorkspaceCorePath(t *testing.T) {
@@ -115,87 +139,104 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	imageID := strings.TrimSpace(string(imageOutput))
 
 	launchID := "local-launch-" + stableSuffix(time.Now().String())[:12]
-	store := NewMemoryOperationStore()
-	runner := bindingCheckingDockerRunner{base: execDockerRunner{binary: "docker"}, store: store, launchID: launchID, t: t}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{HelperImage: imageID, RuntimeHost: "127.0.0.1"}, runner)
-	service := NewServiceWithOperationStore(provider, store)
-
-	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{
-		AccountID: "acct-local", WorkspaceID: "ws-" + stableSuffix(launchID)[:10], PackageID: "basic", IdempotencyKey: launchID + ":compute",
-	})
-	if err != nil {
-		t.Fatal(err)
+	accountID, workspaceID := "acct-local", "ws-"+stableSuffix(launchID)[:10]
+	bindings := map[string]WorkspaceLaunchStageBinding{
+		"ensure_compute_allocation": localLaunchBinding(launchID, accountID, workspaceID, "ensure_compute_allocation", "ensure_compute_allocation", launchID+":ensure-compute-allocation"),
+		"storage":                   localLaunchBinding(launchID, accountID, workspaceID, "storage", "ensure_storage", launchID+":storage"),
+		"attachment":                localLaunchBinding(launchID, accountID, workspaceID, "attachment", "ensure_attachment", launchID+":attachment"),
+		"secret":                    localLaunchBinding(launchID, accountID, workspaceID, "secret", "ensure_gateway_secret", launchID+":secret"),
+		"runtime":                   localLaunchBinding(launchID, accountID, workspaceID, "runtime", "ensure_runtime", launchID+":runtime"),
 	}
-	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
-		current, ok := service.GetComputeAllocation(ctx, compute.ID)
-		if ok && current.Status == "running" {
-			compute = current
-			break
-		}
-		if ok && current.Status == "quarantined" {
-			operations, _ := store.List(ctx)
-			t.Fatalf("compute quarantined: %#v operations=%#v", current, operations)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if compute.Status != "running" {
-		t.Fatalf("compute did not become ready: %#v", compute)
-	}
-
-	volume, err := service.CreateStorageVolume(ctx, StorageVolumeInput{
-		AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID, ComputeID: compute.ID, Zone: "local", SizeGB: 10, IdempotencyKey: launchID + ":storage",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	attachment, err := service.CreateStorageAttachment(ctx, StorageAttachmentInput{
-		WorkspaceID: compute.WorkspaceID, ComputeID: compute.ID, VolumeID: volume.ID, IdempotencyKey: launchID + ":attachment",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	computeID := "ca_" + stableSuffix("create_compute_allocation", bindings["ensure_compute_allocation"].IdempotencyKey)[:18]
+	storageID := "vol_" + stableSuffix("create_storage_volume", bindings["storage"].IdempotencyKey)[:16]
+	secretRef := gatewaySecretName(workspaceID)
 	key := "local-key-" + stableSuffix(launchID)
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
-	secret, err := service.UpsertGatewaySecret(ctx, GatewaySecretInput{
-		AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID, WorkspaceAPIKeyID: 1, Fingerprint: "sha256:" + digest,
-		GatewayAPIKey: key, IdempotencyKey: launchID + ":secret",
+	mutationIDs := map[string]string{}
+	store := NewMemoryOperationStore()
+	runner := bindingCheckingDockerRunner{base: execDockerRunner{binary: "docker"}, store: store, parents: bindings, mutationIDs: mutationIDs, t: t}
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{HelperImage: imageID, RuntimeHost: "127.0.0.1"}, runner)
+	service := NewServiceWithOperationStore(provider, store)
+	launchRequestHash := stableSuffix("workspace-launch", launchID, accountID, workspaceID, imageID)
+	preflight, err := service.PreflightWorkspaceLaunch(ctx, WorkspaceLaunchPreflightInput{
+		SchemaVersion: 1, LaunchOperationID: launchID, AccountID: accountID, WorkspaceID: workspaceID,
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageID, RequestHash: launchRequestHash,
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || !preflight.Available {
+		t.Fatalf("preflight=%#v err=%v", preflight, err)
 	}
-	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{
-		WorkspaceID: compute.WorkspaceID, ComputeID: compute.ID, VolumeID: volume.ID, AttachmentID: attachment.ID,
-		AttachmentOperationID: attachment.OperationID, RuntimeOperationID: launchID + ":runtime", ImageID: imageID,
-		GatewaySecretRef: secret.SecretRef, IdempotencyKey: launchID + ":runtime",
-	})
-	if err != nil {
-		t.Fatal(err)
+	base := WorkspaceLaunchStageInput{
+		ProviderProfileRef: "local-docker", PreflightBindingRef: preflight.BindingRef, PackageID: "basic",
+		SizeGB: 10, WorkspaceImageDigest: imageID,
 	}
-	t.Cleanup(func() {
-		_, _ = service.DestroyWorkspaceRuntime(context.Background(), compute.WorkspaceID, launchID+":runtime-destroy")
-		_, _ = service.DestroyStorageVolume(context.Background(), volume.ID)
-		_, _ = service.DestroyComputeAllocation(context.Background(), compute.ID)
-		_ = provider.RemoveGatewaySecret(context.Background(), compute.WorkspaceID)
-	})
-	if err := waitForLocalRuntime(ctx, runtime.URL); err != nil {
-		t.Fatal(err)
-	}
-	var status WorkspaceRuntime
-	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
-		status, err = service.WorkspaceRuntimeStatus(ctx, compute.WorkspaceID)
-		if err == nil && status.Ready {
-			break
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	if err != nil || !status.Ready || status.URL == "" || status.ImageID != imageID {
-		t.Fatalf("runtime status = %#v, %v", status, err)
+	bindInput := func(input *WorkspaceLaunchStageInput) {
+		input.Binding.RequestHash = workspaceLaunchStageRequestHash(*input, launchRequestHash)
+		bindings[input.Binding.Stage] = input.Binding
 	}
 
-	for _, stage := range []string{"compute", "storage", "attachment", "secret", "runtime"} {
-		readback, err := service.LaunchStageBindingReadback(ctx, launchID, stage)
-		if err != nil || !readback.Available || readback.Binding.Digest == "" || readback.Binding.RequestHash == "" {
-			t.Fatalf("%s binding readback = %#v, %v", stage, readback, err)
+	computeInput := base
+	computeInput.Binding = bindings["ensure_compute_allocation"]
+	bindInput(&computeInput)
+	mutationIDs["local_docker_network_create"] = providerMutationOperationID(computeInput.Binding, "local_docker_network_create", "compute_allocation", computeID, localDockerName("opl-compute", computeID))
+	if _, err := service.EnsureWorkspaceLaunchStage(ctx, computeInput); err != nil {
+		t.Fatal(err)
+	}
+	compute, err := waitForWorkspaceStage(ctx, service, computeInput)
+	if err != nil || compute.Resources.ComputeAllocationID != computeID || compute.Resources.ComputeBindingRef != computeInput.Binding.FabricOperationID {
+		t.Fatalf("compute=%#v err=%v", compute, err)
+	}
+
+	storageInput := base
+	storageInput.Binding, storageInput.Resources = bindings["storage"], compute.Resources
+	bindInput(&storageInput)
+	mutationIDs["local_docker_volume_create"] = providerMutationOperationID(storageInput.Binding, "local_docker_volume_create", "storage_volume", storageID, localDockerName("opl-storage", storageID))
+	storage, err := service.EnsureWorkspaceLaunchStage(ctx, storageInput)
+	if err != nil || storage.State != "ready" {
+		t.Fatalf("storage=%#v err=%v", storage, err)
+	}
+
+	attachmentInput := base
+	attachmentInput.Binding, attachmentInput.Resources = bindings["attachment"], storage.Resources
+	bindInput(&attachmentInput)
+	attachment, err := service.EnsureWorkspaceLaunchStage(ctx, attachmentInput)
+	if err != nil || attachment.State != "ready" {
+		t.Fatalf("attachment=%#v err=%v", attachment, err)
+	}
+
+	secretInput := base
+	secretInput.Binding, secretInput.Resources = bindings["secret"], attachment.Resources
+	secretInput.Resources.GatewaySecretFingerprint = "sha256:" + digest
+	secretInput.GatewayCredential = &WorkspaceLaunchGatewayCredential{KeyID: 1, Value: key}
+	bindInput(&secretInput)
+	mutationIDs["local_docker_secret_volume_create"] = providerMutationOperationID(secretInput.Binding, "local_docker_secret_volume_create", "gateway_secret", secretRef, secretRef)
+	mutationIDs["local_docker_secret_write"] = providerMutationOperationID(secretInput.Binding, "local_docker_secret_write", "gateway_secret", secretRef, digest[:16])
+	secret, err := service.EnsureWorkspaceLaunchStage(ctx, secretInput)
+	if err != nil || secret.State != "ready" {
+		t.Fatalf("secret=%#v err=%v", secret, err)
+	}
+
+	runtimeInput := base
+	runtimeInput.Binding, runtimeInput.Resources = bindings["runtime"], secret.Resources
+	bindInput(&runtimeInput)
+	mutationIDs["local_docker_runtime_create"] = providerMutationOperationID(runtimeInput.Binding, "local_docker_runtime_create", "workspace_runtime", localRuntimeID(workspaceID), localRuntimeName(workspaceID))
+	runtime, err := service.EnsureWorkspaceLaunchStage(ctx, runtimeInput)
+	if err != nil || runtime.State != "ready" || runtime.Resources.RuntimeURL == "" {
+		t.Fatalf("runtime=%#v err=%v", runtime, err)
+	}
+	t.Cleanup(func() {
+		_, _ = provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
+		_ = provider.RemoveGatewaySecret(context.Background(), workspaceID)
+		_, _ = provider.DestroyStorageVolume(context.Background(), StorageVolume{ID: storage.Resources.StorageID})
+		_, _ = provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{ID: compute.Resources.ComputeAllocationID})
+	})
+	if err := waitForLocalRuntime(ctx, runtime.Resources.RuntimeURL); err != nil {
+		t.Fatal(err)
+	}
+
+	for action, operationID := range mutationIDs {
+		operation, err := store.Get(ctx, operationID)
+		if err != nil || operation.Status != "succeeded" || operation.Action != action {
+			t.Fatalf("provider mutation %s=%#v err=%v", action, operation, err)
 		}
 	}
 }

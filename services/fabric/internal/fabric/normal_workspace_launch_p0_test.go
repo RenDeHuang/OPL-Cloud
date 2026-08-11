@@ -33,6 +33,35 @@ type normalLaunchComputeProvider struct {
 	nodeClaimGate              *normalLaunchProviderWriteGate
 }
 
+type journaledNormalLaunchComputeProvider struct {
+	*normalLaunchComputeProvider
+}
+
+func (p *journaledNormalLaunchComputeProvider) CreateComputeAllocation(ctx context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
+	attempt, err := beginProviderMutation(ctx, "test_compute_allocation_create", "compute_allocation", input.Allocation.ID, input.Plan.PoolID)
+	if err != nil {
+		return ComputeAllocation{}, err
+	}
+	if attempt != nil && !attempt.Fresh {
+		var persisted ComputeAllocation
+		if !attempt.resource(&persisted) {
+			return ComputeAllocation{}, errors.New("test_compute_allocation_readback_unavailable")
+		}
+		return persisted, ErrComputeAllocationPending
+	}
+	allocation, providerErr := p.normalLaunchComputeProvider.CreateComputeAllocation(ctx, input)
+	mutationErr := providerErr
+	if errors.Is(providerErr, ErrComputeAllocationPending) {
+		mutationErr = nil
+	}
+	if attempt != nil {
+		if err := attempt.complete(ctx, allocation.ProviderRequestID, allocation, mutationErr); err != nil {
+			return allocation, err
+		}
+	}
+	return allocation, providerErr
+}
+
 func (p *normalLaunchComputeProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
 	p.mu.Lock()
 	p.prepareCalls++
@@ -167,6 +196,23 @@ func (p *normalLaunchComputeProvider) counts() (create, readback, discovery, cvm
 	return p.createCalls, p.readbackCalls, p.discoveryCalls, p.cvmClaimCalls, p.nodeClaimCalls, p.legacyClaimCalls
 }
 
+func normalWorkspaceComputeBinding(input ComputeAllocationInput, launchOperationID string) *WorkspaceLaunchStageBinding {
+	return &WorkspaceLaunchStageBinding{
+		SchemaVersion: 1, LaunchOperationID: launchOperationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		Stage: "ensure_compute_allocation", Action: "ensure_compute_allocation",
+		FabricOperationID: launchOperationID + ":ensure_compute_allocation",
+		IdempotencyKey:    input.IdempotencyKey, RequestHash: hashInput(input),
+	}
+}
+
+func normalWorkspaceStorageBinding(input StorageVolumeInput, launchOperationID string) *WorkspaceLaunchStageBinding {
+	return &WorkspaceLaunchStageBinding{
+		SchemaVersion: 1, LaunchOperationID: launchOperationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		Stage: "storage", Action: "ensure_storage", FabricOperationID: launchOperationID + ":storage",
+		IdempotencyKey: input.IdempotencyKey, RequestHash: hashInput(input),
+	}
+}
+
 func seedNormalWorkspaceComputeClaimPending(t *testing.T, store OperationStore, provider *normalLaunchComputeProvider, suffix string) (ComputeAllocationInput, ComputeAllocation) {
 	t.Helper()
 	launchOperationID := "workspace-launch-" + suffix
@@ -203,6 +249,15 @@ func seedNormalWorkspaceComputeClaimPending(t *testing.T, store OperationStore, 
 	operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, plan)
 	operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create", confirmedNormalLaunchMutationBudget())
 	operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm", reservedNormalLaunchMutationBudget())
+	launchBinding := WorkspaceLaunchStageBinding{
+		SchemaVersion: 1, LaunchOperationID: launchOperationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		Stage: "ensure_compute_allocation", Action: "ensure_compute_allocation", FabricOperationID: operation.ID,
+		IdempotencyKey: input.IdempotencyKey, RequestHash: operation.RequestHash,
+	}
+	if err := bindLaunchStageOperation(&operation, &launchBinding); err != nil {
+		t.Fatal(err)
+	}
+	input.LaunchBinding = &launchBinding
 	if err := store.Append(context.Background(), operation); err != nil {
 		t.Fatal(err)
 	}
@@ -240,15 +295,16 @@ func TestNormalWorkspaceClaimPendingReplayWaitsForControlPlaneDecision(t *testin
 	}
 }
 
-func TestNormalWorkspaceComputeCreateResponseLossStopsForControlPlaneNodeDecisionAfterRestart(t *testing.T) {
+func TestNormalWorkspaceComputeExplicitBindingSurvivesResponseLossWithoutRepeatingCreate(t *testing.T) {
 	for _, packageID := range []string{"basic", "pro"} {
 		t.Run(packageID, func(t *testing.T) {
 			store := NewMemoryOperationStore()
-			provider := &normalLaunchComputeProvider{createResultErr: ErrComputeAllocationPending}
+			provider := &journaledNormalLaunchComputeProvider{normalLaunchComputeProvider: &normalLaunchComputeProvider{createResultErr: ErrComputeAllocationPending}}
 			input := ComputeAllocationInput{
 				AccountID: "acct-" + packageID, WorkspaceID: "workspace-" + packageID, PackageID: packageID,
 				NodePoolID: "np-" + packageID, IdempotencyKey: "workspace-launch-" + packageID + ":compute",
 			}
+			input.LaunchBinding = normalWorkspaceComputeBinding(input, "workspace-launch-"+packageID)
 			first := NewServiceWithOperationStore(provider, store)
 			configureFastComputeAllocationPolling(first, time.Millisecond)
 			allocation, err := first.CreateComputeAllocation(context.Background(), input)
@@ -267,6 +323,11 @@ func TestNormalWorkspaceComputeCreateResponseLossStopsForControlPlaneNodeDecisio
 				t.Fatalf("initial provider create calls=%d, want 1", createCalls)
 			}
 			waitForComputeReconcileIdle(t, first, allocation.ID)
+			persisted, getErr := store.Get(context.Background(), input.LaunchBinding.FabricOperationID)
+			persistedBinding, bindingOK := decodeLaunchStageBinding(persisted)
+			if getErr != nil || !bindingOK || persistedBinding != *input.LaunchBinding {
+				t.Fatalf("explicit binding=%#v/%v operation=%#v err=%v", persistedBinding, bindingOK, persisted, getErr)
+			}
 
 			restarted := NewServiceWithOperationStore(provider, store)
 			configureFastComputeAllocationPolling(restarted, 100*time.Millisecond)
@@ -274,50 +335,10 @@ func TestNormalWorkspaceComputeCreateResponseLossStopsForControlPlaneNodeDecisio
 				t.Fatal(err)
 			}
 			waitForComputeReconcileIdle(t, restarted, allocation.ID)
-			assertNormalLaunchOperationStatus(t, store, "create_compute_allocation", allocation.ID, "claim_pending")
-			createCalls, readbackCalls, discoveryCalls, cvmClaimCalls, nodeClaimCalls, legacyClaimCalls := provider.counts()
-			if createCalls != 1 || readbackCalls != 0 || discoveryCalls == 0 || cvmClaimCalls != 1 || nodeClaimCalls != 0 || legacyClaimCalls != 0 {
-				t.Fatalf("provider calls create=%d readback=%d discovery=%d cvmClaim=%d nodeClaim=%d legacyClaim=%d, want 1/0/>0/1/0/0", createCalls, readbackCalls, discoveryCalls, cvmClaimCalls, nodeClaimCalls, legacyClaimCalls)
+			createCalls, _, _, _, _, _ := provider.counts()
+			if createCalls != 1 {
+				t.Fatalf("provider create calls=%d, want 1", createCalls)
 			}
-			assertNormalLaunchStageBudget(t, store, "create_compute_allocation", "compute_create", 1, 1, 0)
-			assertNormalLaunchStageBudget(t, store, "create_compute_allocation", "compute_claim_cvm", 1, 1, 0)
-			assertNormalLaunchStageBudgetAbsent(t, store, "create_compute_allocation", "compute_claim_node")
-		})
-	}
-}
-
-func TestNormalWorkspaceCVMClaimResponseLossConvergesWithoutRepeatingWriteAndWaitsForControlPlane(t *testing.T) {
-	for _, packageID := range []string{"basic", "pro"} {
-		t.Run(packageID, func(t *testing.T) {
-			store := NewMemoryOperationStore()
-			provider := &normalLaunchComputeProvider{createResultErr: ErrComputeAllocationPending, cvmClaimResponseLost: true}
-			input := ComputeAllocationInput{
-				AccountID: "acct-" + packageID, WorkspaceID: "workspace-" + packageID, PackageID: packageID,
-				NodePoolID: "np-" + packageID, IdempotencyKey: "workspace-launch-cvm-loss-" + packageID + ":compute",
-			}
-			first := NewServiceWithOperationStore(provider, store)
-			configureFastComputeAllocationPolling(first, time.Millisecond)
-			allocation, err := first.CreateComputeAllocation(context.Background(), input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			waitForComputeReconcileIdle(t, first, allocation.ID)
-
-			provider.cvmClaimResponseLost = false
-			restarted := NewServiceWithOperationStore(provider, store)
-			configureFastComputeAllocationPolling(restarted, time.Millisecond)
-			if _, err := restarted.CreateComputeAllocation(context.Background(), input); err != nil {
-				t.Fatal(err)
-			}
-			waitForComputeReconcileIdle(t, restarted, allocation.ID)
-			assertNormalLaunchOperationStatus(t, store, "create_compute_allocation", allocation.ID, "claim_pending")
-
-			_, _, _, cvmCalls, nodeCalls, legacyCalls := provider.counts()
-			if cvmCalls != 1 || nodeCalls != 0 || legacyCalls != 0 {
-				t.Fatalf("claim writes cvm=%d node=%d legacy=%d, want 1/0/0", cvmCalls, nodeCalls, legacyCalls)
-			}
-			assertNormalLaunchStageBudget(t, store, "create_compute_allocation", "compute_claim_cvm", 1, 1, 0)
-			assertNormalLaunchStageBudgetAbsent(t, store, "create_compute_allocation", "compute_claim_node")
 		})
 	}
 }
@@ -333,6 +354,46 @@ type normalLaunchStorageProvider struct {
 	bindingApplied       bool
 	failBindingResponse  bool
 	cbsCreateGate        *normalLaunchProviderWriteGate
+}
+
+func (p *normalLaunchStorageProvider) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
+	volume := StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Zone: input.Zone}
+	cbs, err := beginProviderMutation(ctx, "cbs_create", "storage_volume", input.ID, input.ExpectedProviderResourceID)
+	if err != nil {
+		return volume, err
+	}
+	if cbs != nil && !cbs.Fresh {
+		_ = cbs.resource(&volume)
+		volume, err = p.ReadCBSVolume(ctx, input, volume)
+	} else {
+		volume, err = p.CreateCBSVolume(ctx, input)
+	}
+	if err != nil {
+		_ = cbs.complete(ctx, volume.ProviderRequestID, volume, err)
+		return volume, err
+	}
+	if err := cbs.complete(ctx, volume.ProviderRequestID, volume, nil); err != nil {
+		return volume, err
+	}
+
+	binding, err := beginProviderMutation(ctx, "static_binding_apply", "storage_binding", input.ID, volume.ProviderResourceID)
+	if err != nil {
+		return volume, err
+	}
+	if binding != nil && !binding.Fresh {
+		_ = binding.resource(&volume)
+		volume, err = p.ReadStaticStorageBinding(ctx, volume)
+	} else {
+		volume, err = p.ApplyStaticStorageBinding(ctx, volume)
+	}
+	if err != nil {
+		_ = binding.complete(ctx, volume.ProviderRequestID, volume, err)
+		return volume, err
+	}
+	if err := binding.complete(ctx, volume.ProviderRequestID, volume, nil); err != nil {
+		return volume, err
+	}
+	return volume, nil
 }
 
 func (p *normalLaunchStorageProvider) CreateCBSVolume(_ context.Context, input StorageVolumeInput) (StorageVolume, error) {
@@ -415,10 +476,11 @@ func TestNormalWorkspaceStoragePersistsCBSAndStaticBindingStagesAcrossRestart(t 
 				ComputeID: computeID, Zone: "ap-guangzhou-3", SizeGB: test.sizeGB,
 				IdempotencyKey: "workspace-launch-" + test.packageID + ":storage",
 			}
+			input.LaunchBinding = normalWorkspaceStorageBinding(input, "workspace-launch-"+test.packageID)
 			first := NewServiceWithOperationStore(provider, store)
 			first.computes[computeID] = ComputeAllocation{
 				ID: computeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: test.packageID,
-				Status: "running", ProviderData: map[string]string{"zone": input.Zone},
+				Status: "running", Zone: input.Zone, ProviderData: map[string]string{"zone": input.Zone},
 			}
 			if _, err := first.CreateStorageVolume(context.Background(), input); err == nil {
 				t.Fatal("lost static-binding response must leave the request unresolved")
@@ -432,7 +494,7 @@ func TestNormalWorkspaceStoragePersistsCBSAndStaticBindingStagesAcrossRestart(t 
 				t.Fatalf("restarted storage=%#v err=%v", volume, err)
 			}
 			cbsCreate, cbsReadback, bindingApply, bindingReadback := provider.storageCounts()
-			if cbsCreate != 1 || cbsReadback != 0 || bindingApply != 1 || bindingReadback != 1 {
+			if cbsCreate != 1 || cbsReadback != 1 || bindingApply != 1 || bindingReadback != 1 {
 				t.Fatalf("provider calls cbsCreate=%d cbsReadback=%d bindingApply=%d bindingReadback=%d", cbsCreate, cbsReadback, bindingApply, bindingReadback)
 			}
 			assertNormalLaunchStageOperation(t, store, "cbs_create", input, volume, "succeeded")
