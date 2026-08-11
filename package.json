@@ -16,6 +16,7 @@
     "typecheck": "tsc -p apps/console-ui/tsconfig.json --noEmit",
     "lint": "tsc -p apps/console-ui/tsconfig.json --noEmit --noUnusedLocals --noUnusedParameters",
     "build": "vite build",
+    "build:whitepaper": "node --experimental-strip-types scripts/build-opl-cloud-whitepaper.ts",
     "verify:production": "node tools/production-verifier.ts",
     "validate:production-manifest": "node tools/validate-production-manifest.ts"
   },

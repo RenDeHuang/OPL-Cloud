@@ -127,7 +127,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 29);
+  assert.equal(freeze.schemaVersion, 30);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
@@ -1248,7 +1248,7 @@ test("Current Console binds delegated Gateway credentials to process-local Conso
 test("Current human truth preserves public entry points and evidence levels", async () => {
   const [invariants, architecture, status, consoleProduct, runbook, readme, devGuide, decisions, project] = await Promise.all([
     text("docs/invariants.md"),
-    text("docs/architecture.md"),
+    text("docs/implementation-architecture.md"),
     text("docs/status.md"),
     text("docs/product/console-workspace-v1.md"),
     text("docs/runtime/production-runbook.md"),

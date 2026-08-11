@@ -1,0 +1,61 @@
+{
+  "active_truth_owner": "docs/roadmap.md",
+  "canonical_docs": [
+    {
+      "path": "README.md",
+      "role": "root_entry"
+    },
+    {
+      "path": "AGENTS.md",
+      "role": "repo_agent_working_rules"
+    },
+    {
+      "path": "docs/README.md",
+      "role": "docs_entry"
+    },
+    {
+      "path": "docs/architecture.md",
+      "role": "architecture_boundary"
+    }
+  ],
+  "doc_profile": "generic_repo",
+  "flow_profile": "generic_repo",
+  "machine_truth_surfaces": [
+    "contracts",
+    "packages/contracts",
+    "apps",
+    "services",
+    "deploy",
+    ".github/workflows"
+  ],
+  "owned_by_repo": [
+    "apps/**",
+    "assets/**",
+    "contracts/**",
+    "deploy/**",
+    "docs/**",
+    "packages/contracts/**",
+    "services/**",
+    "tests/**",
+    "tools/**"
+  ],
+  "plugin_native_status": "profile_declared",
+  "repo_id": "one-person-lab-cloud",
+  "repo_profile": "generic_repo",
+  "schema": "opl_native_profile.v1",
+  "taxonomy_dirs": [
+    "docs/delivery",
+    "docs/history"
+  ],
+  "verification_commands": [
+    "node --experimental-strip-types scripts/build-opl-cloud-whitepaper.ts",
+    "npm test",
+    "npm run typecheck",
+    "npm run lint",
+    "npm run build",
+    "go test ./... in services/control-plane with isolated PostgreSQL",
+    "go test ./... in services/fabric",
+    "go test ./... in services/ledger",
+    "git diff --check"
+  ]
+}

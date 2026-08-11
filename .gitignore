@@ -10,3 +10,5 @@ output/
 npm-debug.log*
 .gstack/
 .codegraph/
+/tmp/
+docs/site/latest/

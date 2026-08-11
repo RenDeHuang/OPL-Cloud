@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 29,
+  "schemaVersion": 30,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -28,8 +28,10 @@
   "architectureAuthority": {
     "repository": "https://github.com/gaofeng21cn/one-person-lab-cloud",
     "branch": "main",
-    "reviewedRevision": "43830f7bd209be293a1ce6445202a429b6996cda",
-    "rule": "The upstream repository owns target product boundaries; this contract owns current implementation choices, exact prices, and delivery gaps."
+    "targetPath": "docs/architecture.md",
+    "implementationPath": "docs/implementation-architecture.md",
+    "binding": "same_repository_revision",
+    "rule": "Target product boundaries and current implementation choices are versioned in the same repository revision; exact prices and delivery gaps remain machine and runtime facts."
   },
   "productSurfaces": {
     "gateway": {

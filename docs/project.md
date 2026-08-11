@@ -1,8 +1,8 @@
 # Project Scope
 
-This repository is the target `opl-cloud` implementation of the OPL Cloud
-product defined by `one-person-lab-cloud` and follows the development framework
-from `one-person-lab`.
+This repository is the `one-person-lab-cloud` product and implementation owner.
+It follows the development framework from `one-person-lab`. The short
+`opl-cloud` identifier remains internal to packages and runtime artifacts.
 
 ## Owned Here
 
@@ -45,3 +45,4 @@ deepening that coupling.
 - compatibility code for the deleted commercial model;
 - speculative route, catalog, or business-object entries in current product contracts.
 - a second current Console, Fabric, or Ledger implementation repository.
+- a second OPL Cloud product, documentation, planning, or implementation repository.

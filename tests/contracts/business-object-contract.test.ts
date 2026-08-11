@@ -11,10 +11,10 @@ async function readJson(path) {
 test("business object contract defines the current commercial object boundary", async () => {
   const contract = await readJson(businessObjectContractPath);
 
-  assert.equal(contract.schemaVersion, 6);
+  assert.equal(contract.schemaVersion, 7);
   assert.equal(contract.owner, "OPL Console");
   assert.equal(contract.purpose, "Machine-readable requirements for current commercial Console objects.");
-  assert.deepEqual(contract.repositoryBoundaries, ["opl-cloud"]);
+  assert.deepEqual(contract.repositoryBoundaries, ["one-person-lab-cloud"]);
   assert.deepEqual(contract.serviceBoundaries, {
     console: "apps/console-ui",
     controlPlane: "services/control-plane",
@@ -23,7 +23,7 @@ test("business object contract defines the current commercial object boundary", 
   });
   assert.deepEqual(contract.routeKinds, ["read_model", "business_object", "external_integration"]);
   assert.ok(contract.principles.includes("Active business object contract contains only current commercial objects."));
-  assert.ok(contract.repoBoundaryRules.includes("opl-cloud is the single current implementation repository; standalone Console, Fabric, and Ledger repositories are prototypes only."));
+  assert.ok(contract.repoBoundaryRules.includes("one-person-lab-cloud is the single current product and implementation repository; opl-cloud is an internal artifact and service identifier only."));
   assert.ok(contract.repoBoundaryRules.includes("Console owns UI and product presentation through Control Plane APIs only; Sub2API authenticates customer credentials."));
   assert.ok(contract.repoBoundaryRules.includes("Fabric owns compute, storage, attachment, Workspace runtime, and provider execution boundaries."));
   assert.ok(contract.repoBoundaryRules.includes("Ledger owns evidence, audit, reconciliation, and review policy boundaries."));
@@ -71,7 +71,7 @@ test("business object contract contains only current OPL Cloud business facts", 
     "Workspace"
   ].sort());
   for (const object of kinds.values()) {
-    assert.equal(object.ownerRepo, "opl-cloud", `${object.kind} must use the single implementation repository`);
+    assert.equal(object.ownerRepo, "one-person-lab-cloud", `${object.kind} must use the single product and implementation repository`);
   }
   for (const kind of ["Account", "User", "Session", "Workspace", "Balance", "AdminAuditEvent", "SupportTicketMapping", "Announcement"]) {
     assert.equal(kinds.get(kind).ownerService, "control-plane", `${kind} must be owned by Control Plane`);

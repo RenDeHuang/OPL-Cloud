@@ -1,228 +1,251 @@
-# Architecture
+# OPL Cloud Architecture
 
-## Request Path
+Owner: `one-person-lab-cloud`
+Purpose: `architecture_boundary`
+State: `active_target_reference`
+Machine boundary: Canonical human-readable target product and authority split.
+It does not prove that any listed service, contract, runtime, billing path, or
+release is implemented or ready.
+
+OPL Cloud is the target product architecture and implementation-family
+navigation surface for extending OPL work from a local App into online
+workspaces, account-managed resources and remote execution. This document
+defines responsibility boundaries; it does not claim that every service is
+currently deployed.
 
 ```text
-Browser Console
-  -> Control Plane product API
-       -> Sub2API management API: live balance, account Key/usage, idempotent debit/refund
-       -> Fabric API: CVM, CBS, attachment, runtime, provider facts
-       -> Ledger API: receipts and review evidence
+OPL Cloud
+├─ OPL Gateway       user-visible AI access, routing and usage
+├─ OPL Workspace     user-visible cloud workbench
+├─ OPL Serve         Agent API, Embed and Hosted UI publishing
+├─ OPL Console       account policy, approval, quota and billing
+├─ OPL Fabric        Connect, Compute, Storage, Environments and adapters
+└─ OPL Ledger        receipt and provenance refs
+
+Package owners       identity, capabilities, entrypoints and publication revisions
+Native carriers      install, update, remove and installed/callable readback
+
+OPL Framework
+├─ OPL Packages      discovery, carrier delegation and state aggregation
+└─ OPL Runway       invocation, session and execution-provider lifecycle
+
+Domain agents        domain strategy, quality verdict and delivery authority
 ```
 
-Sub2API is external and remains the only spendable-balance, API-key, routing,
-and request-usage owner. The repository reads those records on demand and does
-not mirror them. Its code, image, database, configuration, and deployment remain
-outside this repository's mutation boundary.
+## Repository And Instance Topology
 
-## Repository And Instance Boundary
+```text
+one-person-lab-cloud
+  product architecture, whitepaper, roadmap
+  Console + Control Plane + Fabric + Ledger implementation
+  reusable contracts, images and release mechanisms
+        |
+        v
+opl-instance-medopl
+  medopl instance profile, IaC, secret refs, promotion and deployment evidence
+```
 
-`one-person-lab-cloud` owns product architecture and the whitepaper.
-`opl-cloud` owns this reusable Console, Control Plane, Fabric, and Ledger
-implementation. These names are logical service boundaries inside one
-repository, not authorization for separate current implementation repos.
+`one-person-lab-cloud` is the single product and implementation repository.
+Console, Control Plane, Fabric, and Ledger remain logical service owners inside
+it; similarly named prototype repositories are historical inputs, not parallel
+current writers. The short identifier `opl-cloud` remains valid for packages,
+images, binaries, services, namespaces, environment variables and runner
+labels, but it is not a repository boundary.
 
-`opl-instance-medopl` owns one concrete installation: domain names, provider
-profile, region and resource ids, enabled plans and prices, image pins, secret
-references, promotion policy, and deployment receipts. Instance repositories
-consume immutable `opl-cloud` releases and never copy runtime code, product
-contracts, or spendable-balance state.
+An instance repository materializes one installation without copying product or
+runtime code. It owns non-secret domains, provider selection, region and
+resource profile, enabled plans and prices, image pins, secret references, and
+deployment receipts. An instance may run on a hosted cloud, a local server, or
+a Mac. Secrets remain in the selected secret owner, never in the instance
+repository.
 
-## Console Source Truth
+```mermaid
+flowchart TB
+  User[User] --> App[OPL App]
+  User --> Workspace[OPL Workspace]
+  Consumer[External consumer] --> Serve[OPL Serve]
+  Admin[Admin / Operator] --> Console[OPL Console]
+  Domain[Domain Agent] --> App
+  Domain --> Workspace
 
-| Console area | Authority | Control Plane projection |
+  App --> Gateway[OPL Gateway]
+  Workspace --> Gateway
+  Owners[Package owners] --> Packages[OPL Packages aggregation]
+  Carriers[Native carriers] --> Packages
+  App --> Packages
+  Workspace --> Packages
+  Console -. account availability policy .-> Packages
+
+  App --> Serve
+  Workspace --> Serve
+  Console -. service policy, quota and billing .-> Serve
+  Serve -. exact publication revision refs .-> Owners
+  Serve --> Runway[OPL Runway]
+
+  App --> Fabric[OPL Fabric]
+  Workspace --> Fabric
+  Console -. resource policy and approval .-> Fabric
+  Packages -. package refs and requirements .-> Fabric
+  Runway --> Fabric
+  Runway --> Gateway
+
+  Fabric --> Connect[OPL Connect]
+  Fabric --> Compute[OPL Compute]
+  Fabric --> Environments[OPL Environments]
+  Fabric --> Storage[Workspace Storage]
+  Fabric --> Ledger[OPL Ledger]
+  Runway --> Ledger
+  Serve --> Ledger
+  Domain --> Ledger
+```
+
+## Surface Roles
+
+| Surface | Owner responsibility | Explicit non-owner boundary |
 | --- | --- | --- |
-| Signed-in identity | Sub2API identity plus local Session mapping | `/api/auth/me` |
-| Public model endpoint | configured Sub2API origin projected as `/v1` | `/api/gateway/endpoint` |
-| Wallet, owned Keys, per-Key Usage, account aggregate, balance history | live Sub2API JSON APIs | granular `/api/gateway/*` source DTOs |
-| Workspace and renewal state | Control Plane Workspace row | `/api/workspaces` and launch/renewal DTOs |
-| Runtime readiness | live Fabric/Kubernetes readback | `/api/workspaces/{workspaceId}/runtime-status` |
-| `/data` and `/projects` release persistence | direct Runtime Pod SHA256 markers | rollout/rollback validation only; metadata/statfs product APIs are paused |
-| Billing receipts | live Ledger readback | `/api/billing/receipts` |
+| OPL Gateway | AI access, routing, provider policy and usage signals | Package state and domain quality |
+| OPL Workspace | Cloud workbench, project state, artifacts and user-visible status | Package lifecycle and resource truth |
+| OPL Serve | Agent Service, immutable Revision, Deployment, endpoint, traffic and Hosted UI projection | Package lifecycle, sandbox internals and domain verdicts |
+| OPL Console | Account onboarding, Workspace lifecycle, quota, approval, account-total billing view and managed-resource policy | Spendable wallet, package install/update/repair and resource execution |
+| OPL Fabric | Provider-neutral connector, compute, storage and environment capabilities; resource binding and execution adapters | Customer balance, package identity, carrier state and domain verdicts |
+| OPL Ledger | Receipt, provenance, review and continuation refs | Source data, package truth and domain verdicts |
+| Package owner | Stable identity, capabilities, entrypoints and exact publication revisions | Physical carrier state, Cloud policy and domain verdicts |
+| Native carrier | Physical install, update, remove and fresh installed/callable readback | Package identity, Cloud policy and domain verdicts |
+| OPL Packages | Carrier-neutral discovery, descriptor projection, configured-carrier delegation and fresh state aggregation | Parallel resolver/lock/currentness, account policy and domain truth |
+| OPL Runway | Invocation/session lifecycle and execution-provider routing | Service identity, package lifecycle and domain verdicts |
+| Domain agent | Domain strategy, evidence judgment, quality verdict and delivery authority | Cloud infrastructure truth |
 
-Each source returns `source`, `status`, `available`, and `fetchedAt`. A successful
-zero-row read is `empty`; dependency failure is `unavailable` and carries no
-invented zero, empty collection, success state, or stale data. `sourceUpdatedAt`
-is omitted unless the authority supplies it. Browser identity parameters never
-override the current Session mapping, and raw downstream DTOs never cross the
-Control Plane boundary.
+## Workspace Identity Boundary
 
-Console displays and copies `https://gflabtoken.cn/v1` as the public model
-endpoint. It is never a link or redirect target, iframe, HTML source, or direct
-browser call to Sub2API management APIs. `OPL_SUB2API_BASE_URL` remains
-server-only, and Cloud does not inject a second Runtime Gateway base URL.
+Each user account may own zero or more independent OPL Workspaces. Every
+Workspace has its own stable identity, URL, runtime, storage, provider binding,
+billing period, credentials, lifecycle, and receipts. OPL Cloud sets no fixed
+product-level count limit; balance, provider capacity, quota, and account
+policy still govern each creation. Projects, tasks, files, artifacts, and
+continuation entries remain inside their selected Workspace and do not become
+Workspace identity.
 
-`code-complete` means the local contracts, code, PostgreSQL, browser, and
-structure gates pass on one revision. `pilot-ready` additionally requires
-approved real service/resource evidence. `production-proven` requires the same
-immutable revision deployed and authoritatively read back in production.
+The OPL App active shell provides the browser carrier. External multi-user SaaS
+experiments are not Cloud implementation owners or maintenance targets. The
+full decision and excluded repositories are recorded in
+[Workspace Identity And External SaaS Boundary](workspace-identity-and-external-saas-boundary.md).
 
-## Service Ownership
+Agent Services do not change this identity. Workspaces and Services can both be
+zero-to-many per account, but Services remain deployment resources for external
+consumers rather than workbench instances.
 
-`apps/console-ui` owns presentation only. It has no persistence and never calls
-Fabric, Ledger, Tencent, Kubernetes, or Sub2API directly.
+## Service Publication Boundary
 
-`services/control-plane` owns local sessions, one-to-one Account-to-Sub2API
-mappings, N Workspace entitlements per Account, Workspace-level monthly
-operations, provider references/current pointers, recovery state, and strict
-customer DTOs. It does not own live Compute, Storage, Attachment, or Runtime
-provider status. Sub2API authenticates customer credentials. Organization and
-Membership rows remain internal one-to-one compatibility records only; they are
-not shared-account or customer-authorization surfaces.
-
-`services/fabric` owns compute, storage, attachments, Workspace runtimes,
-provider operations, and provider readback. The current production adapter owns
-Tencent TKE/CVM/CBS and Kubernetes calls. Provider callbacks may update resource
-facts but cannot overwrite Control Plane entitlement state.
-
-`services/ledger` owns EvidenceReceipt, ReviewPolicy, ReconciliationReport,
-Artifact, Continuation, retention, audit, and idempotency records. It never
-changes Sub2API balance.
-
-`packages/contracts` is machine-readable current truth, not a runtime service.
-Speculative route and object entries remain outside the active contracts.
-
-## Provider Port
-
-Fabric already exposes a Go `Provider` interface, but portability is not yet
-complete: process startup instantiates `TencentProvider`, Control Plane still
-emits `tencent-tke`, and current launch/recovery facts include Tencent, CVM, CBS,
-and NodePool terminology. Therefore the only production adapter is
-`tencent-tke`; an interface alone is not multi-provider evidence.
-
-The target port exposes provider-neutral compute, storage, attachment, runtime,
-preflight, readback, renewal, and recovery facts. The selected instance profile
-chooses an adapter. Provider-specific identities, diagnostics, retry rules, and
-mutation sequences remain inside that adapter. The first additional adapter is
-`local-docker`; generic `kubernetes` follows when the common contract is proven
-by both real paths. Control Plane keeps one launch/recovery reducer and persists
-the exact provider binding per Workspace.
-
-## Persistence
-
-Control Plane, Fabric, and Ledger each own their PostgreSQL schema. Cross-service
-writes go through typed HTTP clients; no service writes another service's tables.
-Sub2API data remains in Sub2API.
-
-All three services serialize startup migrations with one database-wide PostgreSQL
-advisory lock. A migration is journaled in `opl_schema_migrations` by service and
-version only after it succeeds. Completed hard cuts, backfills, Ent schema changes,
-and embedded SQL are skipped on every later start; a failed migration has no success
-record and is retried on the next start.
-
-Production upgrades run the journaled migrations against the existing database.
-Legacy identity collisions fail closed; migrations never merge or delete those
-records automatically. The identity cutover requires the same migrations to pass
-against an isolated PostgreSQL copy before production deployment.
-
-## Resource And Billing State
-
-The deployed Sub2API has no generic hold/capture API. The launch path validates
-the account and quote, runs read-only provider preflight, confirms balance, and
-debits the exact monthly amount before Fabric mutates provider resources. It then
-claims every PREPAID CVM/CBS fact and activates the Workspace only after
-readback. A confirmed zero-resource result permits one idempotent refund;
-partial or unknown provider results enter manual review without refund or
-repurchase. Ledger receipt failure retries only the receipt. This behavior is
-code-complete; live Sub2API and Tencent evidence remains pending.
-
-Each Workspace operation owns renewal intent and one combined monthly debit.
-Compute and storage rows are provider/compatibility facts, not independent
-customer renewal controls. At unpaid expiry, access is denied and auto-renew is
-disabled, but Control Plane performs no Fabric/Tencent stop, renew, destroy, or
-delete mutation; Tencent expiry policy owns eventual provider reclamation.
-
-## Current Medopl Workspace Access Path
-
-The current Workspace data path is:
+OPL Serve publishes an exact package revision through a dedicated Agent Edge:
 
 ```text
-Browser
-  -> workspace.medopl.cn shared CLB / TKE Ingress
-  -> Control Plane reverse proxy
-  -> Fabric-created per-Workspace ClusterIP Service :3000
-  -> Workspace runtime
+Agent Package exact digest
+-> Service Entrypoint Contract
+-> Agent Service
+-> immutable Agent Revision
+-> Deployment and traffic policy
+-> API / Embed / Hosted UI
+-> Invocation or Session
 ```
 
-`/w/<workspaceId>/` selects a Workspace from the URL. Root `/api/`, `/ws`, and
-other Workspace-host requests select it from the `opl_ws_active` cookie or a
-Workspace referrer. The proxy writes `opl_ws_active` as routing context when a
-clean Workspace URL is opened; the cookie is not an authentication credential.
-It forwards traffic only after Fabric reports the Runtime ready and the
-persisted Workspace state becomes `running`.
+The Agent Edge owns public authentication, request validation, rate limits,
+quota, routing, event streaming and signed Webhooks. Public traffic does not
+terminate at a Workspace, sandbox, container or external provider session.
 
-Fabric runs the Workspace image in `cloud` deployment mode with `password`
-authentication. Fabric derives the runtime password and session secret from a
-stable per-Workspace credential seed and stores them in a Kubernetes Secret.
-Control Plane resolves the target Workspace's persisted `workspaceApiKeyId` and
-hands the Key transiently to Fabric. Fabric writes or rotates a deterministic
-Workspace-scoped Kubernetes Secret bound to account, Workspace, Key ID, and
-fingerprint, and records only its ref, version, and fingerprint. Existing
-account-scoped Secrets remain read-compatible until that Workspace's first Key
-rotation; ordinary reads never infer scope from Workspace count or Key name.
-Ordinary runtime status is non-secret. Dedicated owner-only POST commands reveal
-or rotate the password transiently; Control Plane never persists it, and Console
-retains it only in Workspace detail component memory. A Workspace image candidate
-combines exact `one-person-lab-app`, `opl-aion-shell`, and `one-person-lab` Framework
-commits; all must be full 40-character SHAs already merged into their respective `main`.
-The fixed candidates are App `6b334ef7f239eb01c40578159e6df9ed2e7f97dc`, shell
-`dbd9d68115604673df85033d7a0ab323d65a79a2`, and Framework
-`51d16f0e93aebf3fd5ccf96082490395fcbb8711`. The release workflow checks out all three detached, runs the existing
-`ensure:shell`, builds the active shell context into TCR, and reads back the immutable
-digest. Production manifests accept only the resulting target `repository@sha256`.
-The immutable Workspace image is pinned for deployment, but a customer
-Workspace Ready-Pod `imageID` readback remains pending. No configured digest,
-placeholder, or local timestamp substitutes for that Pod evidence.
+Runway owns the OPL Invocation and Session lifecycle and routes each exact
+revision to an approved execution-provider adapter. The OPL-native Runway/Fabric
+path and any external managed-Agent runtime remain adapters; their identifiers
+are refs, not OPL Service or Deployment truth.
 
-This is a real exception to the Control Plane product-command boundary: it
-carries Workspace HTML, API, and WebSocket data-plane traffic. The available
-evidence does not prove an unauthenticated data disclosure; the inspected
-runtime source retains password authentication. Until the published digest and
-Ready-Pod `imageID` exist, that source finding cannot be extended to an
-exact deployed revision.
-Control Plane availability is coupled to every Workspace connection, and a
-2xx/non-empty-page check can pass on the login page without proving an
-authenticated Workspace session.
+Hosted UI and Embed clients consume the same Serve API. They may project an
+Agent's schemas, events, artifacts and publisher branding, but cannot bypass
+Serve authentication, policy, quota or receipts.
 
-Keeping the shared proxy avoids per-Workspace CLB rules and is the current
-topology for administrator-provisioned accounts. Control Plane selects the Runtime
-Service; the Runtime owns password validation, its authenticated session, and
-WebSocket access. Routing every Workspace Service directly with native TKE
-Ingress removes Control Plane from the data path, but does not replace Runtime
-authentication and adds per-Workspace rule quota, creation, deletion, retry,
-and orphan reconciliation responsibilities. Do not add those routes until live
-CLB limits justify the extra ownership.
+## Execution Boundary
 
-The current decision is to retain the single shared entry and explicitly accept
-Control Plane availability coupling for the operator-provisioned Pilot. A dedicated
-Workspace Router remains a later ownership and scaling decision; no router or
-security-model change is authorized by this document.
+OPL App and OPL Workspace use the same resource execution pattern:
 
-## Current Medopl Production
+```text
+plan -> approve -> execute -> monitor -> collect -> receipt
+```
 
-Production runs Control Plane, Fabric, and Ledger as separate Kubernetes
-Deployments. Secrets are Kubernetes Secret references, configuration is a shared
-ConfigMap, and the deploy workflow waits for all three rollouts. The production
-Fabric catalog exposes both Basic and Pro; availability means product access,
-while Tencent MonthlyPreflight remains the capacity authority before debit.
-Separately approved provider verification remains paused and does not gate
-ordinary deploy.
+Console applies account or explicit shared policy when a workspace, connector
+or resource is Cloud-hosted or managed. Fabric performs the approved resource
+binding and execution. User-provided local, SSH or HPC resources can use the
+same pattern without becoming Console-billed resources by default.
 
-The Cloud services have ordinary rollout and deployment readback evidence. That
-evidence does not complete the Basic canary, customer Workspace imageID, or model
-Usage checks, and it does not imply a real Pro purchase.
+Fabric exposes a provider-neutral capability interface. An instance selects an
+approved provider profile, such as `tencent-tke`, `local-docker`, or generic
+`kubernetes`. Provider identifiers, diagnostics, retries, and recovery
+mutations stay inside the adapter. The Control Plane persists a provider
+binding per Workspace and uses one launch/recovery state machine; it does not
+hard-code Tencent resource names into product identity.
 
-Image publication accepts a full 40-character Cloud commit only. The release
-workflow reads back the exact checked-out HEAD and official Cloud `origin/main`,
-then requires the candidate to be contained in that main history before building.
+## Balance And Billing Boundary
 
-Control Plane remains one Pod. Existing load evidence covers request concurrency
-and replay, but its historical per-resource renewal scan is not proof of the
-current Workspace renewal saga. The current gates must run against an isolated
-PostgreSQL database. Additional replicas remain out of scope unless
-production measurements justify the ownership and locking changes.
+Gateway is the only spendable account-balance owner. Console owns the
+account-total billing projection, pricing and settlement policy, and initiates
+one monthly settlement per Workspace and billing period. Fabric reports
+resource/provider facts and owns no wallet or balance. Ledger records
+append-only charge, refund, resource, and reconciliation receipts without
+becoming a second balance store.
 
-Infrastructure alarms remain in Tencent Cloud Monitor. Business alarms are a
-projection of Workspace renewal operations plus compute/storage compatibility
-facts; there is no alert table. Stable, redacted transition codes drive CLS
-alerting.
+## Package Lifecycle Boundary
+
+There is no Cloud-owned Agent Registry. Package identity, capabilities,
+entrypoints and exact publication revisions come from the Package owner.
+Physical install/update/remove and installed/callable state come from fresh
+readback of the configured native carrier. Framework `opl packages` discovers
+descriptors, delegates carrier actions and aggregates those owner/carrier
+projections; it is not a second resolver, lock or currentness authority.
+
+Legacy Framework lock, payload, lifecycle-receipt or rollback projections may
+remain during migration. Cloud target contracts must not make them a new
+consumer or use them as ordinary Package identity, dependency or readiness
+gates.
+
+Cloud surfaces consume those refs without redefining them:
+
+- Console projects whether account policy permits a package ref and which
+  quotas or managed resources may use it.
+- Fabric reads package requirements and binds compute, storage, environments
+  and connectors for a run.
+- App and Workspace display owner identity plus fresh carrier state and actions
+  aggregated by Framework.
+- Ledger may record exact publication, carrier-action and carrier-readback refs
+  for later review.
+
+None of these projections can install, update, remove, repair or create a
+second package or carrier truth. Mutations route to the configured carrier.
+
+## Connector And Domain Boundary
+
+OPL Connect owns stable connector access, normalized source refs, credential
+boundaries, errors, retries and rate limits. Domain-specific adapters and
+domain agents own retrieval strategy, evidence selection, synthesis and quality
+judgment. Ledger records refs only.
+
+The current OPL connector surface and any domain-specific adapter must be read
+from fresh Framework/domain contracts and runtime readback. A target connector
+described in Cloud docs is not a readiness claim.
+
+## Data Boundary
+
+Cloud stores refs, metadata, lineage, receipts, usage and policy records.
+Sensitive source data remains in user workspaces, institutional storage or
+private buckets by default. A Cloud receipt points back to the owning source; it
+does not become a second source of truth.
+
+External service traffic adds a consumer identity, data classification,
+retention, deletion and egress boundary. Serve and Console must resolve those
+policies before Runway selects a provider or Fabric binds resources.
+
+## Currentness Boundary
+
+This repository explains the target product split. Service availability comes
+from the corresponding implementation repo, API contract, runtime health and
+owner receipt. Package currentness comes from the owning publication surface and
+fresh native-carrier readback, exposed through Framework aggregation where
+available.
+Contract presence, documentation, a successful build or an empty queue does not
+prove Cloud, package, domain or production readiness.
