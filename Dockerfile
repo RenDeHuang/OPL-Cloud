@@ -1,4 +1,4 @@
-FROM golang:1.22-bookworm AS provisioner-build
+FROM golang:1.25-bookworm AS provisioner-build
 
 WORKDIR /src/services/fabric
 COPY services/internal/postgresmigrate /src/services/internal/postgresmigrate
@@ -24,7 +24,7 @@ RUN go mod download
 COPY services/ledger ./
 RUN go build -o /out/opl-ledger ./cmd/ledger
 
-FROM golang:1.22-bookworm AS fabric-build
+FROM golang:1.25-bookworm AS fabric-build
 
 WORKDIR /src/services/fabric
 COPY services/internal/postgresmigrate /src/services/internal/postgresmigrate

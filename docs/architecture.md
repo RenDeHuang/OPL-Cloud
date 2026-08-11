@@ -115,6 +115,32 @@ flowchart TB
 | OPL Runway | Invocation/session lifecycle and execution-provider routing | Service identity, package lifecycle and domain verdicts |
 | Domain agent | Domain strategy, evidence judgment, quality verdict and delivery authority | Cloud infrastructure truth |
 
+## Modularity And Simplification Boundary
+
+Each implementation module is paid for by a current product responsibility,
+real caller, public contract, persisted-state obligation, or independently
+deployable owner boundary. Repository co-location does not permit cross-service
+imports or shared domain state, while a future possibility does not by itself
+justify a route, schema, store, worker, facade, workflow or compatibility layer.
+Code that exists without one of those payers is implementation evidence only,
+not target architecture, and enters the roadmap as a keep, shrink or delete
+candidate.
+
+Modules stay cohesive around their owned capability and communicate through
+typed product or service contracts. Internal file splits may reduce change
+collisions, but must not create cross-module packages, mirror another owner's
+truth, or duplicate one launch/recovery, wallet, provider or receipt authority.
+Once real callers have moved to a successor, the old route, DTO, facade, schema
+and test path are retired as one bounded cut rather than retained as a permanent
+fallback.
+
+Physical deployment isolation, product feature development and internal
+cohesion are independent lanes. They may proceed concurrently and converge at a
+shared contract, canonical integration or exact deployment qualification. An
+unfinished isolation or refactor lane is not a global development prerequisite.
+The ranked current work and candidate admission decisions are owned only by
+[the roadmap](roadmap.md).
+
 ## Workspace Identity Boundary
 
 Each user account may own zero or more independent OPL Workspaces. Every

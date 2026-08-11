@@ -1,0 +1,650 @@
+name: Production Basic Acceptance B Operations
+
+on:
+  workflow_call:
+    inputs:
+      merged_sha:
+        required: true
+        type: string
+      approval_id:
+        required: true
+        type: string
+      operation_mode:
+        required: true
+        type: string
+      confirm_account_provision:
+        required: true
+        type: boolean
+      confirm_wallet_recharge:
+        required: true
+        type: boolean
+      confirm_workspace_purchase:
+        required: true
+        type: boolean
+      confirm_single_model_request:
+        required: true
+        type: boolean
+      confirm_recovery_plan_execute:
+        required: true
+        type: boolean
+      resume_run_id:
+        required: true
+        type: string
+      customer_email:
+        required: true
+        type: string
+      workspace_identity_account_id:
+        required: true
+        type: string
+      workspace_identity_workspace_id:
+        required: true
+        type: string
+      recovery_plan_launch_operation_id:
+        required: true
+        type: string
+      recovery_plan_id:
+        required: true
+        type: string
+      recovery_plan_digest:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  acceptance-b-account-reconcile:
+    name: Read back one Acceptance B account without mutation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'acceptance_b_account_reconcile' && inputs.approval_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id == '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 20
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full merged main SHA is required." >&2
+            exit 1
+          fi
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            echo "Production source authority requires exactly one remote head." >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
+            echo "Account reconciliation requires the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Reconcile Acceptance B account with authoritative readback
+        id: reconcile
+        continue-on-error: true
+        shell: bash
+        env:
+          OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+          OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL }}
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD }}
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_ARTIFACT_PATH: ${{ runner.temp }}/production-basic-acceptance-b-reconcile/evidence.json
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-basic-acceptance-b-reconcile"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          node tools/production-basic-acceptance-b-reconcile.ts --reconcile-account
+
+      - name: Validate redacted Acceptance B reconciliation evidence
+        if: always()
+        shell: bash
+        env:
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_ARTIFACT_PATH: ${{ runner.temp }}/production-basic-acceptance-b-reconcile/evidence.json
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import { validateProductionBasicAcceptanceBReconcileReadback } from "./tools/production-basic-acceptance-b-reconcile.ts";
+          const evidence = JSON.parse(await readFile(process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_ARTIFACT_PATH, "utf8"));
+          validateProductionBasicAcceptanceBReconcileReadback(evidence, { mergedSha: process.env.OPL_MERGED_SHA });
+          if (evidence.status !== "prepared") throw new Error("Acceptance B account reconciliation is not safe to continue.");
+          NODE
+
+      - name: Upload redacted Acceptance B reconciliation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-basic-acceptance-b-reconcile
+          path: ${{ runner.temp }}/production-basic-acceptance-b-reconcile
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require Acceptance B reconciliation success
+        if: ${{ steps.reconcile.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Acceptance B account reconciliation stopped; inspect the redacted artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
+
+  acceptance-b-account-prepare:
+    name: Prepare one independent Acceptance B account and wallet in TKE VPC
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'acceptance_b_account_prepare' && inputs.approval_id == '' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id == '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 20
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full merged main SHA is required." >&2
+            exit 1
+          fi
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            echo "Production source authority requires exactly one remote head." >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
+            echo "Account preparation requires the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Prepare account and wallet with authoritative readback
+        id: prepare
+        continue-on-error: true
+        shell: bash
+        env:
+          OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+          OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL }}
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD }}
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_PREPARE_ARTIFACT_PATH: ${{ runner.temp }}/production-basic-acceptance-b-prepare/evidence.json
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-basic-acceptance-b-prepare"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          node tools/production-basic-acceptance-b.ts --prepare-account
+
+      - name: Validate redacted account preparation evidence
+        if: always()
+        shell: bash
+        env:
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_PREPARE_ARTIFACT_PATH: ${{ runner.temp }}/production-basic-acceptance-b-prepare/evidence.json
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import { validateProductionBasicAcceptanceBPrepareReadback } from "./tools/production-basic-acceptance-b.ts";
+          const evidence = JSON.parse(await readFile(process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_PREPARE_ARTIFACT_PATH, "utf8"));
+          if (evidence.status !== "succeeded") throw new Error("Acceptance B account preparation did not produce succeeded evidence.");
+          validateProductionBasicAcceptanceBPrepareReadback(evidence, { mergedSha: process.env.OPL_MERGED_SHA });
+          NODE
+
+      - name: Upload redacted account preparation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-basic-acceptance-b-prepare
+          path: ${{ runner.temp }}/production-basic-acceptance-b-prepare
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require account preparation success
+        if: ${{ steps.prepare.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Acceptance B account preparation stopped; inspect the redacted artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
+
+  acceptance-b-fresh-order:
+    name: Run or read back one independently approved fresh Basic order in TKE VPC
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && ((inputs.operation_mode == 'acceptance_b_fresh_order' && inputs.confirm_workspace_purchase && inputs.resume_run_id == '') || (inputs.operation_mode == 'acceptance_b_fresh_readback' && !inputs.confirm_workspace_purchase && inputs.resume_run_id != '')) && !inputs.confirm_single_model_request && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 40
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON }}
+      OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CONFIRMATION: RUN_ONE_INDEPENDENT_FRESH_BASIC_ORDER_FOR_ACCEPTANCE_B
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      OPL_VERIFY_LAUNCH_POLL_ATTEMPTS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || '180' }}
+      OPL_VERIFY_LAUNCH_POLL_DELAY_MS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || '10000' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            echo "Production source authority requires exactly one remote head." >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            echo "Production source must be the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Verify exact Acceptance B source
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full merged main SHA is required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if [ "$(git rev-parse HEAD)" != "$OPL_MERGED_SHA" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then
+            echo "Acceptance B is not running against the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Download prepared Acceptance B baseline
+        if: ${{ inputs.operation_mode == 'acceptance_b_fresh_readback' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: production-basic-acceptance-b-reconcile
+          path: ${{ runner.temp }}/production-basic-acceptance-b-baseline
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.resume_run_id }}
+
+      - name: Verify readback release is still deployed
+        if: ${{ inputs.operation_mode == 'acceptance_b_fresh_readback' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          approval_release="$(node --input-type=module -e 'import { parseProductionBasicAcceptanceBApproval } from "./tools/production-basic-acceptance-b.ts"; const value=parseProductionBasicAcceptanceBApproval(process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON,{approvalId:process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_ID}); process.stdout.write(value.release.mergedMainSha)')"
+          deployed_release="$(kubectl --kubeconfig "$TENCENT_DEPLOY_KUBECONFIG_PATH" -n "$OPL_K8S_NAMESPACE" get configmap opl-cloud-config -o jsonpath='{.data.OPL_RELEASE_SHA}')"
+          if [ -z "$approval_release" ] || [ "$deployed_release" != "$approval_release" ]; then
+            echo "Acceptance B readback release is not the exact deployed release." >&2
+            exit 1
+          fi
+
+      - name: Run one fresh Basic order with authoritative readback
+        id: acceptance
+        continue-on-error: true
+        shell: bash
+        env:
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH: ${{ runner.temp }}/production-basic-acceptance-b/evidence.json
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_BASELINE_ARTIFACT_PATH: ${{ runner.temp }}/production-basic-acceptance-b-baseline/evidence.json
+          OPL_ACCEPTANCE_B_OPERATION_MODE: ${{ inputs.operation_mode }}
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-basic-acceptance-b"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          fabric_pods="$(kubectl --kubeconfig "$TENCENT_DEPLOY_KUBECONFIG_PATH" -n "$OPL_K8S_NAMESPACE" get pods -l app.kubernetes.io/name=opl-cloud,app.kubernetes.io/component=fabric -o json)"
+          fabric_pod="$(node --input-type=module -e 'const v=JSON.parse(process.argv[1]); const p=(v.items||[]).filter((x)=>!x.metadata?.deletionTimestamp && x.status?.phase === "Running"); if (p.length !== 1) process.exit(1); process.stdout.write(p[0].metadata.name)' "$fabric_pods")"
+          internal_token="$(kubectl --kubeconfig "$TENCENT_DEPLOY_KUBECONFIG_PATH" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}' | base64 --decode)"
+          if [ -z "$internal_token" ]; then
+            echo "Current Fabric internal token is unavailable." >&2
+            exit 1
+          fi
+          echo "::add-mask::$internal_token"
+          port_forward_log="$artifact_dir/fabric-port-forward.log"
+          kubectl --kubeconfig "$TENCENT_DEPLOY_KUBECONFIG_PATH" -n "$OPL_K8S_NAMESPACE" port-forward "pod/$fabric_pod" 18082:8082 > "$port_forward_log" 2>&1 &
+          port_forward_pid=$!
+          trap 'kill "$port_forward_pid" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail --max-time 1 http://127.0.0.1:18082/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          if [ "$OPL_ACCEPTANCE_B_OPERATION_MODE" = "acceptance_b_fresh_readback" ]; then
+            OPL_FABRIC_INTERNAL_ORIGIN=http://127.0.0.1:18082 OPL_INTERNAL_SERVICE_TOKEN="$internal_token" node tools/production-basic-acceptance-b.ts --readback
+          else
+            OPL_FABRIC_INTERNAL_ORIGIN=http://127.0.0.1:18082 OPL_INTERNAL_SERVICE_TOKEN="$internal_token" node tools/production-basic-acceptance-b.ts --run
+          fi
+
+      - name: Validate redacted Acceptance B evidence and exact counts
+        if: always()
+        shell: bash
+        env:
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH: ${{ runner.temp }}/production-basic-acceptance-b/evidence.json
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import { parseProductionBasicAcceptanceBApproval, validateProductionBasicAcceptanceBArtifact } from "./tools/production-basic-acceptance-b.ts";
+          const evidence = JSON.parse(await readFile(process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH, "utf8"));
+          const approval = parseProductionBasicAcceptanceBApproval(process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON, {
+            approvalId: process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_ID
+          });
+          validateProductionBasicAcceptanceBArtifact(evidence, approval);
+          if (evidence.status !== "succeeded") throw new Error("Acceptance B did not produce succeeded evidence.");
+          if (!String(evidence.runtime?.podImageId || "").endsWith(approval.release.workspaceImageDigest) || evidence.workspaceUrl?.statusCode !== 200) throw new Error("Acceptance B terminal evidence mismatch.");
+          NODE
+
+      - name: Upload redacted Acceptance B evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-basic-acceptance-b
+          path: ${{ runner.temp }}/production-basic-acceptance-b
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require Acceptance B success
+        if: ${{ steps.acceptance.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Acceptance B stopped; inspect the redacted artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
+
+  controlled-pilot-closed-validate:
+    name: Prove disabled controlled Basic Pilot fails closed without mutation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'controlled_pilot_closed_validate' && inputs.approval_id == '' && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            echo "Production source authority requires exactly one remote head." >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ]; then
+            echo "Production source must be the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Prove one disabled admission rejection
+        id: validate
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/controlled-pilot-closed-validation"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_CONTROLLED_PILOT_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          node tools/production-live-qa.ts --controlled-pilot-closed-validate \
+            --run-identity "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            > "$artifact_dir/evidence.json"
+
+      - name: Require exact zero-mutation evidence
+        if: ${{ steps.validate.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const evidence = JSON.parse(fs.readFileSync(`${process.env.OPL_CONTROLLED_PILOT_ARTIFACT_DIR}/evidence.json`, "utf8"));
+          const zero = { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 };
+          const digestNames = ["launches", "wallet", "keys", "workspaces", "receipts"];
+          if (evidence?.schemaVersion !== 1 || evidence?.operationMode !== "controlled_basic_pilot_closed_validate" ||
+            evidence?.status !== "proven" || evidence?.errorCode !== "none" ||
+            evidence?.rejection?.statusCode !== 409 || evidence?.rejection?.reasonCode !== "workspace_launch_admission_disabled" ||
+            evidence?.rejection?.attempts !== 1 || evidence?.pilot?.enabled !== false || evidence?.pilot?.configured !== true ||
+            evidence?.pilot?.accountAllowlistCount !== 0 || evidence?.pilot?.packageId !== "basic" || evidence?.pilot?.maxInFlight !== 1 ||
+            JSON.stringify(evidence?.mutationCounts) !== JSON.stringify(zero) ||
+            digestNames.some((name) => !/^[a-f0-9]{64}$/.test(String(evidence?.authorityDigests?.[name]?.before || "")) ||
+              evidence.authorityDigests[name].before !== evidence.authorityDigests[name].after || evidence.authorityDigests[name].match !== true) ||
+            /password|secret|token|cookie|csrf|accountId|workspaceId|operationId|balanceUsdMicros/i.test(JSON.stringify(evidence))) {
+            throw new Error("controlled Pilot closed validation evidence invalid");
+          }
+          NODE
+
+      - name: Upload redacted disabled Pilot evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-controlled-pilot-closed-validation
+          path: ${{ runner.temp }}/controlled-pilot-closed-validation
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require disabled Pilot validation success
+        if: ${{ steps.validate.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Controlled Pilot closed validation stopped; inspect the redacted artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi

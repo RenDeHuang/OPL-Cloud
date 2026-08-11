@@ -854,14 +854,14 @@ test("deployment machine contract registers the local-only Acceptance B integrat
 });
 
 test("Acceptance B reads only its independent customer password secret", async () => {
-  const workflow = await readFile(new URL("../../.github/workflows/production-basic-customer-operation.yml", import.meta.url), "utf8");
+  const workflow = await readFile(new URL("../../.github/workflows/production-basic-acceptance.yml", import.meta.url), "utf8");
   const acceptanceB = workflow.slice(workflow.indexOf("  acceptance-b-fresh-order:"), workflow.indexOf("  controlled-pilot-closed-validate:"));
   assert.match(acceptanceB, /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD:\s*\$\{\{ secrets\.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD \}\}/);
   assert.doesNotMatch(acceptanceB, /OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
 });
 
 test("Acceptance B timeout continuation reuses a prepared baseline artifact and has no purchase confirmation", async () => {
-  const workflow = await readFile(new URL("../../.github/workflows/production-basic-customer-operation.yml", import.meta.url), "utf8");
+  const workflow = await readFile(new URL("../../.github/workflows/production-basic-acceptance.yml", import.meta.url), "utf8");
   assert.match(workflow, /acceptance_b_fresh_readback/);
   assert.match(workflow, /inputs\.operation_mode == 'acceptance_b_fresh_readback'/);
   assert.match(workflow, /inputs\.resume_run_id != ''/);

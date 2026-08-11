@@ -12,6 +12,11 @@ import { renderTkeManifest } from "../../tools/render-tke-manifest.ts";
 
 const repoFile = (path) => new URL(`../../${path}`, import.meta.url);
 const deploymentContractPath = repoFile("packages/contracts/opl-cloud-deployment-contract.json");
+const immutableGithubDependencies = JSON.parse(await readFile(deploymentContractPath, "utf8")).immutableGithubDependencies;
+const checkoutActionRef = immutableGithubDependencies["actions/checkout"].ref;
+const setupNodeActionRef = immutableGithubDependencies["actions/setup-node"].ref;
+const uploadArtifactActionRef = immutableGithubDependencies["actions/upload-artifact"].ref;
+const downloadArtifactActionRef = immutableGithubDependencies["actions/download-artifact"].ref;
 const digestA = `sha256:${"a".repeat(64)}`;
 const digestB = `sha256:${"b".repeat(64)}`;
 const cloudCandidateSha = "c".repeat(40);
@@ -52,8 +57,32 @@ async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
-async function readWorkflow(path) {
+async function readRawWorkflow(path) {
   return parse(await readFile(repoFile(path), "utf8"));
+}
+
+async function readWorkflow(path) {
+  const workflow = await readRawWorkflow(path);
+  const reusableCalls = Object.values(workflow.jobs || {})
+    .filter((job) => typeof job.uses === "string" && job.uses.startsWith("./.github/workflows/"));
+  if (reusableCalls.length === 0) return workflow;
+
+  const jobs = {};
+  for (const call of reusableCalls) {
+    const child = await readRawWorkflow(call.uses.slice(2));
+    Object.assign(jobs, child.jobs || {});
+  }
+  return { ...workflow, jobs };
+}
+
+async function readWorkflowSource(path) {
+  const source = await readFile(repoFile(path), "utf8");
+  const workflow = parse(source);
+  const reusablePaths = Object.values(workflow.jobs || {})
+    .map((job) => job.uses)
+    .filter((uses) => typeof uses === "string" && uses.startsWith("./.github/workflows/"))
+    .map((uses) => uses.slice(2));
+  return [source, ...await Promise.all(reusablePaths.map((current) => readFile(repoFile(current), "utf8")))].join("\n");
 }
 
 function workflowJob(workflow, name) {
@@ -587,19 +616,27 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "capture-rollout-failure",
       "rollback-live-qa"
     ]],
-    [".github/workflows/production-basic-customer-operation.yml", [
+    [".github/workflows/production-basic-customer-canary.yml", [
       "prepare-basic-customer-operation",
-      "workspace-identity-diagnose",
+      "workspace-identity-diagnose"
+    ]],
+    [".github/workflows/production-basic-acceptance.yml", [
       "acceptance-b-account-reconcile",
       "acceptance-b-account-prepare",
       "acceptance-b-fresh-order",
-      "controlled-pilot-closed-validate",
+      "controlled-pilot-closed-validate"
+    ]],
+    [".github/workflows/production-fabric-operations.yml", [
       "compute-pool-head-terminalization",
-      "fabric-ledger-readback",
+      "fabric-ledger-readback"
+    ]],
+    [".github/workflows/production-recovery-acceptance.yml", [
       "recovery-acceptance-funding-prepare",
       "recovery-acceptance-extra-funding-prepare",
       "recovery-acceptance-original-launch",
-      "recovery-acceptance-canary",
+      "recovery-acceptance-canary"
+    ]],
+    [".github/workflows/production-recovery-operations.yml", [
       "recovery-plan-operation",
       "compute-claim-readback"
     ]],
@@ -611,14 +648,14 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
     const workflow = await readWorkflow(path);
     const actualJobs = Object.entries(workflow.jobs || {})
       .filter(([, currentJob]) => JSON.stringify(currentJob["runs-on"]).includes("self-hosted"))
-      .filter(([, currentJob]) => (currentJob.steps || []).some((step) => step.uses === "actions/checkout@v4"))
+      .filter(([, currentJob]) => (currentJob.steps || []).some((step) => step.uses === checkoutActionRef))
       .map(([name]) => name);
     assert.deepEqual(actualJobs, expectedJobs, `${path} isolated checkout coverage drifted`);
 
     for (const name of expectedJobs) {
       const currentJob = workflowJob(workflow, name);
       const steps = currentJob.steps || [];
-      const checkoutIndex = steps.findIndex((step) => step.uses === "actions/checkout@v4");
+      const checkoutIndex = steps.findIndex((step) => step.uses === checkoutActionRef);
       const checkout = steps[checkoutIndex];
       const prepare = steps[checkoutIndex - 1];
       const branchAuthority = steps[checkoutIndex + 1];
@@ -662,7 +699,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
         if (step.run) {
           assert.equal(step["working-directory"], isolatedSourceCheckoutDirectory, `${path}:${name}:${step.name} working directory`);
         }
-        if (["actions/upload-artifact@v4", "actions/download-artifact@v4"].includes(step.uses)) {
+        if ([uploadArtifactActionRef, downloadArtifactActionRef].includes(step.uses)) {
           assert.match(String(step.with?.path || ""), /^\$\{\{ (?:runner\.temp|env\.[A-Z0-9_]+) \}\}/, `${path}:${name}:${step.name} artifact path`);
         }
       }
@@ -688,6 +725,55 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       remoteMutation: 0
     }
   });
+});
+
+test("production customer operations keep one dispatcher and five typed reusable families", async () => {
+  const contract = (await readJson(deploymentContractPath)).productionCustomerOperationDispatcher;
+  const dispatcher = await readRawWorkflow(contract.file);
+  const dispatchInputs = dispatcher.on.workflow_dispatch.inputs;
+  const coveredModes = [];
+  const coveredJobs = [];
+
+  assert.deepEqual(Object.keys(dispatcher.on), ["workflow_dispatch"]);
+  assert.deepEqual(dispatcher.permissions, contract.permissions);
+  assert.deepEqual(dispatcher.concurrency, {
+    group: contract.concurrency.group,
+    "cancel-in-progress": contract.concurrency.cancelInProgress
+  });
+  assert.deepEqual(Object.keys(dispatcher.jobs), contract.operationFamilies.map((family) => family.callerJob));
+  assert.ok((await readFile(repoFile(contract.file), "utf8")).split("\n").length < 350);
+
+  for (const family of contract.operationFamilies) {
+    const caller = workflowJob(dispatcher, family.callerJob);
+    const reusable = await readRawWorkflow(family.workflow);
+    const reusableInputs = reusable.on.workflow_call.inputs;
+    const callerInputs = Object.keys(caller.with || {});
+
+    assert.equal(caller.uses, `./${family.workflow}`);
+    assert.equal(caller.secrets, "inherit");
+    assert.equal(caller.environment, undefined);
+    assert.equal(caller.steps, undefined);
+    assert.ok(String(caller.if).includes(JSON.stringify(family.modes)));
+    assert.deepEqual(Object.keys(reusable.on), ["workflow_call"]);
+    assert.deepEqual(reusable.permissions, contract.permissions);
+    assert.equal(reusable.concurrency, undefined);
+    assert.deepEqual(Object.keys(reusable.jobs), family.jobs);
+    assert.deepEqual(callerInputs.sort(), Object.keys(reusableInputs).sort());
+    assert.ok((await readFile(repoFile(family.workflow), "utf8")).split("\n").length < 1000);
+
+    for (const name of callerInputs) {
+      assert.equal(caller.with[name], `\${{ inputs.${name} }}`);
+      assert.equal(reusableInputs[name].required, true);
+      assert.equal(reusableInputs[name].type, dispatchInputs[name].type === "choice" ? "string" : dispatchInputs[name].type);
+    }
+    for (const job of Object.values(reusable.jobs)) assert.equal(job.environment, "production");
+    coveredModes.push(...family.modes);
+    coveredJobs.push(...family.jobs);
+  }
+
+  assert.equal(new Set(coveredModes).size, coveredModes.length);
+  assert.deepEqual(coveredModes.toSorted(), dispatchInputs.operation_mode.options.toSorted());
+  assert.equal(new Set(coveredJobs).size, 16);
 });
 
 test("Workspace image promotion is an explicit main-only ConfigMap CAS with rollback", async () => {
@@ -723,7 +809,7 @@ test("Workspace image promotion is an explicit main-only ConfigMap CAS with roll
   assert.deepEqual(rollback.needs, ["promote-workspace-image"]);
   assert.match(String(rollback.if), /always\(\)/);
   assert.match(String(rollback.if), /needs\.promote-workspace-image\.result != 'success'/);
-  assert.equal(stepsByName(rollback).get("Download Workspace image promotion rollback snapshot")?.uses, "actions/download-artifact@v4");
+  assert.equal(stepsByName(rollback).get("Download Workspace image promotion rollback snapshot")?.uses, downloadArtifactActionRef);
   const rollbackText = serializedRuns(rollback);
   assert.match(rollbackText, /restore|replace -f "\$restore"/);
   assert.doesNotMatch(rollbackText, /set image|rollout restart|CreateCvm|CreateDisks/);
@@ -764,7 +850,7 @@ test("Fabric MonthlyPreflight diagnostics runs inside the Ready Pod and is read 
   assert.match(runs, /packageId[^\n]+basic/);
   assert.match(runs, /packageId[^\n]+pro/);
   assert.match(runs, /OPL_INTERNAL_SERVICE_TOKEN/);
-  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  assert.ok(JSON.stringify(job.steps).includes(uploadArtifactActionRef));
   for (const forbidden of [" apply ", " patch ", " delete ", " scale ", " create ", "/api/workspace-launches", "control-plane"]) {
     assert.equal(runs.includes(forbidden), false, forbidden);
   }
@@ -868,7 +954,8 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.match(inputs.taint_migration_confirmation.description, /MIGRATE_BASIC_PRO_NODEPOOL_PACKAGE_TAINTS/);
   assert.equal(job.env.RUN_TENCENT_NODE_POOL_BOOTSTRAP_CONFIRMATION, "${{ inputs.mutation_confirmation }}");
   assert.doesNotMatch(runs, /get node "\$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json|providerID|kubectl[^\n]+(?:patch|apply|label|taint|annotate|delete|create|replace)/);
-  assert.match(runs, /actions\/upload-artifact@v4|bootstrap-nodepool-report/);
+  assert.ok(JSON.stringify(job.steps).includes(uploadArtifactActionRef));
+  assert.match(runs, /bootstrap-nodepool-report/);
   assert.doesNotMatch(String(stepsByName(job).get("Upload bootstrap report")?.with?.path), /OPL_BOOTSTRAP_SECRET_DIR/);
   assert.match(runs, /workspace_sku_inventory/);
   assert.match(runs, /requiredCapacity[^\n]+1/);
@@ -1353,9 +1440,9 @@ test("manual production Basic customer operation supports full and recovered pre
   assert.match(completeRuns, /--funding-mode "\$OPL_BASIC_CANARY_FUNDING_MODE"/);
   assert.match(prepareRuns, /--approval-id "\$OPL_BASIC_CANARY_APPROVAL_ID"/);
   assert.match(prepareRuns, /OPL_BASIC_CANARY_CHECKPOINT_PATH/);
-  assert.match(JSON.stringify(prepareJob.steps), /actions\/upload-artifact@v4/);
-  assert.match(JSON.stringify(completeJob.steps), /actions\/download-artifact@v4/);
-  assert.match(JSON.stringify(completeJob.steps), /actions\/upload-artifact@v4/);
+  assert.ok(JSON.stringify(prepareJob.steps).includes(uploadArtifactActionRef));
+  assert.ok(JSON.stringify(completeJob.steps).includes(downloadArtifactActionRef));
+  assert.ok(JSON.stringify(completeJob.steps).includes(uploadArtifactActionRef));
   for (const job of [prepareJob, completeJob]) {
     assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_ID, "${{ inputs.approval_id }}");
     assert.equal(job.env.OPL_BASIC_CANARY_FUNDING_MODE, "${{ inputs.funding_mode }}");
@@ -1421,7 +1508,7 @@ test("Workspace identity diagnosis is a main-only production runner readback wit
   assert.equal(job.env.OPL_WORKSPACE_IDENTITY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
   assert.match(runs, /production-live-qa\.ts --workspace-identity-diagnose/);
   assert.match(runs, /workspace-identity-diagnosis\.json/);
-  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  assert.ok(JSON.stringify(job.steps).includes(uploadArtifactActionRef));
   assert.doesNotMatch(JSON.stringify(job), /KUBECONFIG|TENCENT_|OPL_INTERNAL_SERVICE_TOKEN/);
   assert.doesNotMatch(runs, /kubectl|--basic-customer-canary|--compute-claim-recover|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|allow-model-write|create_storage_volume|CreateComputeAllocation|scale|debit|refund/i);
 });
@@ -1469,7 +1556,7 @@ test("Acceptance B fresh order is a separately approved exact-count production c
   assert.doesNotMatch(runs, /Acceptance B write count mismatch/);
   assert.match(runs, /podImageId/);
   assert.match(runs, /statusCode.*200|statusCode === 200/);
-  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  assert.ok(JSON.stringify(job.steps).includes(uploadArtifactActionRef));
   assert.match(runs, /redacted|forbiddenFields|password|token|secret/);
   for (const forbidden of [
     /--basic-customer-canary/,
@@ -1531,7 +1618,7 @@ test("Acceptance B account preparation is a production-only prepare gate with is
   assert.match(runs, /git ls-remote --heads origin/);
   assert.match(runs, /node tools\/production-basic-acceptance-b\.ts --prepare-account/);
   assert.match(runs, /validateProductionBasicAcceptanceBPrepareReadback/);
-  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  assert.ok(JSON.stringify(job.steps).includes(uploadArtifactActionRef));
   assert.doesNotMatch(runs, /workspace-launches|model_request|send_model_request|kubectl|port-forward|debit|cvm|cbs|runtime|receipt/i);
   assert.doesNotMatch(JSON.stringify(job), /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON|OPL_BASIC_CANARY_CUSTOMER_PASSWORD|TENCENT_DEPLOY_KUBECONFIG|OPL_INTERNAL_SERVICE_TOKEN/);
 });
@@ -1712,7 +1799,7 @@ test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot r
   const inputs = workflow.on.workflow_dispatch.inputs;
   const job = workflowJob(workflow, "fabric-ledger-readback");
   const runs = serializedRuns(job);
-  const downloads = (job.steps || []).filter((step) => step.uses === "actions/download-artifact@v4");
+  const downloads = (job.steps || []).filter((step) => step.uses === downloadArtifactActionRef);
 
   assert.ok(inputs.operation_mode.options.includes("fabric_ledger_readback"));
   for (const name of ["recovery_evidence_run_id", "recovery_evidence_artifact_id", "recovery_evidence_artifact_digest"]) {
@@ -1830,7 +1917,7 @@ test("Recovery Acceptance canary is default-off, allowlisted, original-launch-on
   assert.match(runs, /recovery-acceptance-canary\.json/);
   assert.match(runs, /controlPlaneMutationCounts/);
   assert.match(runs, /runnerDirectMutationCounts/);
-  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  assert.ok(JSON.stringify(job.steps).includes(uploadArtifactActionRef));
   assert.doesNotMatch(runs, /kubectl|port-forward|--basic-customer-canary|allow-workspace-purchase|allow-model-write|debit|create_cvm|create_cbs|send_model_request/i);
   assert.doesNotMatch(JSON.stringify(job), /OPL_BASIC_CANARY_CUSTOMER_PASSWORD|TENCENT_DEPLOY_KUBECONFIG|OPL_INTERNAL_SERVICE_TOKEN/);
   assert.deepEqual(deployment.productionRecoveryAcceptanceCanary, {
@@ -1943,7 +2030,7 @@ test("operator terminalizes only one exact blocked compute pool head with one CA
 
 test("legacy target-based Recovery workflow surfaces are removed", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
-  const source = await readFile(repoFile(".github/workflows/production-basic-customer-operation.yml"), "utf8");
+  const source = await readWorkflowSource(".github/workflows/production-basic-customer-operation.yml");
   for (const input of [
     "diagnose_target_json", "compute_claim_target_json", "compute_claim_cloud_digest",
     "workspace_launch_target_json", "workspace_launch_cloud_digest",
@@ -2006,7 +2093,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
   assert.equal(job.env.OPL_RECOVERED_WORKSPACE_CUSTOMER_EMAIL, "${{ inputs.customer_email }}");
   assert.equal(job.env.OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_JSON, undefined);
   assert.equal(job.env.OPL_RECOVERED_WORKSPACE_EXPECTED_MODEL, "${{ vars.OPL_CODEX_MODEL || 'gpt-5.5' }}");
-  assert.doesNotMatch(JSON.stringify(job.steps), /actions\/download-artifact@v4/);
+  assert.equal(JSON.stringify(job.steps).includes(downloadArtifactActionRef), false);
   assert.match(runs, /production-live-qa\.ts --recovered-workspace-e2e/);
   assert.match(runs, /--approval-id "\$OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_ID"/);
   assert.match(runs, /--launch-operation-id "\$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID"/);
@@ -2016,7 +2103,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
   assert.doesNotMatch(JSON.stringify(job), /KUBECONFIG|TENCENT_|OPL_INTERNAL_SERVICE_TOKEN|kubectl|port-forward/);
   assert.doesNotMatch(runs, /--basic-customer-canary|--compute-claim-recover|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|create_storage_volume|CreateComputeAllocation|scale|debit|refund/i);
 
-  const source = await readFile(repoFile(".github/workflows/production-basic-customer-operation.yml"), "utf8");
+  const source = await readWorkflowSource(".github/workflows/production-basic-customer-operation.yml");
   assert.doesNotMatch(source, /huangrende@fenggaolab\.org/i);
 });
 
@@ -2261,7 +2348,7 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.equal(bootstrap.needs, "deploy");
   assert.equal(bootstrap.if, "${{ inputs.bootstrap_mode && needs.deploy.result == 'success' }}");
   assert.equal(bootstrap.environment, "production");
-  assert.equal(stepsByName(bootstrap).get("Set up Node")?.uses, "actions/setup-node@v4");
+  assert.equal(stepsByName(bootstrap).get("Set up Node")?.uses, setupNodeActionRef);
   assert.equal(stepsByName(bootstrap).get("Set up Node")?.with?.["node-version"], "22");
   assert.match(bootstrapRun, /\/api\/production\/readiness/);
   assert.match(bootstrapRun, /cloudImagesReady/);
@@ -2351,7 +2438,7 @@ test("image release builds Workspace from exact merged-main App, active-shell, a
   assert.match(metadata, /\^\[0-9a-fA-F\]\{40\}\$/);
   assert.match(metadata, /tr '\[:upper:\]' '\[:lower:\]'/);
   assert.match(metadata, /workspace_image_tag="\$\{workspace_app_sha:0:12\}-\$\{workspace_shell_sha:0:12\}-\$\{workspace_framework_sha:0:12\}"/);
-  assert.equal(setupNode?.uses, "actions/setup-node@v4");
+  assert.equal(setupNode?.uses, setupNodeActionRef);
   assert.equal(setupNode?.with?.["node-version"], "22");
   assert.match(String(setupNode?.if), /publish_workspace_image/);
   assert.match(prepare, /git clone --filter=blob:none --single-branch --branch main/);
@@ -2697,7 +2784,7 @@ test("TKE deploy preflights node storage and creates one candidate revision per 
   assert.match(rolloutHelper, /26843545600/);
   assert.ok(stepNames.indexOf("Capture rollback image set") < stepNames.indexOf("Upload rollback image set"));
   assert.ok(stepNames.indexOf("Upload rollback image set") < stepNames.indexOf("Render and apply manifest"));
-  assert.equal(upload?.uses, "actions/upload-artifact@v4");
+  assert.equal(upload?.uses, uploadArtifactActionRef);
   assert.match(String(upload?.with?.name), /production-rollback-images/);
   assert.match(String(upload?.with?.path), /previous-images/);
   for (const deployment of ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"]) {
@@ -2891,16 +2978,16 @@ test("TKE failure uploads complete diagnostics before the only rollback job", as
   for (const token of ["deployments.json", "replicasets.json", "pods.json", "nodes.json", "events.json", "stats-summary", "ownerReferences", "deletionTimestamp", "previous"]) {
     assert.match(`${capture}\n${await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8")}`, new RegExp(token));
   }
-  assert.equal(upload?.uses, "actions/upload-artifact@v4");
+  assert.equal(upload?.uses, uploadArtifactActionRef);
   assert.match(String(upload?.with?.name), /production-rollout-diagnostics/);
   assert.ok([...diagnosticSteps.keys()].indexOf("Capture failed rollout diagnostics") < [...diagnosticSteps.keys()].indexOf("Upload failed rollout diagnostics"));
   assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only", "capture-rollout-failure"]);
   assert.match(String(rollback.if), /needs\.capture-rollout-failure\.result == 'success'/);
   assert.deepEqual(rollback["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(rollback.env.TENCENT_DEPLOY_KUBECONFIG_PATH, deploy.env.TENCENT_DEPLOY_KUBECONFIG_PATH);
-  assert.equal(steps.get("Set up Node")?.uses, "actions/setup-node@v4");
+  assert.equal(steps.get("Set up Node")?.uses, setupNodeActionRef);
   assert.equal(steps.get("Set up Node")?.with?.["node-version"], "22");
-  assert.equal(steps.get("Download rollback image set")?.uses, "actions/download-artifact@v4");
+  assert.equal(steps.get("Download rollback image set")?.uses, downloadArtifactActionRef);
   assert.equal(Object.hasOwn(rollback.env, "OPL_CLOUD_IMAGE"), false);
   assert.match(restore, /source tools\/tke-image-rollout\.sh/);
   assert.match(restore, /restore_previous_images/);

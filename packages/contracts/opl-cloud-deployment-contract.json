@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 43,
+  "schemaVersion": 46,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -12,6 +12,43 @@
     "releaseVerificationCodeComplete": true,
     "identityDeploymentCutover": "code_complete_local_verification",
     "productionEvidence": "pending"
+  },
+  "immutableGithubDependencies": {
+    "actions/checkout": {
+      "kind": "action",
+      "version": "v7.0.1",
+      "ref": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    },
+    "actions/setup-node": {
+      "kind": "action",
+      "version": "v7.0.0",
+      "ref": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
+    },
+    "actions/setup-go": {
+      "kind": "action",
+      "version": "v7.0.0",
+      "ref": "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+    },
+    "actions/upload-artifact": {
+      "kind": "action",
+      "version": "v7.0.1",
+      "ref": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    },
+    "actions/download-artifact": {
+      "kind": "action",
+      "version": "v8.0.1",
+      "ref": "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+    },
+    "docker/setup-buildx-action": {
+      "kind": "action",
+      "version": "v4.2.0",
+      "ref": "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c"
+    },
+    "gaofeng21cn/one-person-lab/.github/workflows/reusable-whitepaper.yml": {
+      "kind": "reusable_workflow",
+      "version": "4fc18d2634212c28c3a1c4ada8b406e6e2e9f267",
+      "ref": "gaofeng21cn/one-person-lab/.github/workflows/reusable-whitepaper.yml@4fc18d2634212c28c3a1c4ada8b406e6e2e9f267"
+    }
   },
   "identityDeploymentCutover": {
     "retiredInput": "OPL_CONSOLE_USERS_JSON",
@@ -94,6 +131,47 @@
     "tke-vpc"
   ],
   "environment": "production",
+  "productionCustomerOperationDispatcher": {
+    "file": ".github/workflows/production-basic-customer-operation.yml",
+    "trigger": "workflow_dispatch_only",
+    "inputOwner": "dispatcher_only_reusable_inputs_are_typed_projections",
+    "permissions": {"actions": "read", "contents": "read"},
+    "concurrency": {"group": "production-resource-verification", "cancelInProgress": false},
+    "secretForwarding": "inherit_to_selected_local_reusable_family_only",
+    "environmentOwner": "each_selected_reusable_job_uses_production",
+    "operationFamilies": [
+      {
+        "callerJob": "customer-canary",
+        "workflow": ".github/workflows/production-basic-customer-canary.yml",
+        "modes": ["customer_operation", "workspace_identity_diagnose"],
+        "jobs": ["prepare-basic-customer-operation", "complete-basic-customer-operation", "workspace-identity-diagnose"]
+      },
+      {
+        "callerJob": "acceptance-b",
+        "workflow": ".github/workflows/production-basic-acceptance.yml",
+        "modes": ["acceptance_b_account_reconcile", "acceptance_b_account_prepare", "acceptance_b_fresh_order", "acceptance_b_fresh_readback", "controlled_pilot_closed_validate"],
+        "jobs": ["acceptance-b-account-reconcile", "acceptance-b-account-prepare", "acceptance-b-fresh-order", "controlled-pilot-closed-validate"]
+      },
+      {
+        "callerJob": "fabric-operations",
+        "workflow": ".github/workflows/production-fabric-operations.yml",
+        "modes": ["compute_pool_head_terminalize", "fabric_ledger_readback"],
+        "jobs": ["compute-pool-head-terminalization", "fabric-ledger-readback"]
+      },
+      {
+        "callerJob": "recovery-acceptance",
+        "workflow": ".github/workflows/production-recovery-acceptance.yml",
+        "modes": ["recovery_acceptance_canary", "recovery_acceptance_funding_prepare", "recovery_acceptance_extra_funding_prepare", "recovery_acceptance_original_launch"],
+        "jobs": ["recovery-acceptance-funding-prepare", "recovery-acceptance-extra-funding-prepare", "recovery-acceptance-original-launch", "recovery-acceptance-canary"]
+      },
+      {
+        "callerJob": "recovery-operations",
+        "workflow": ".github/workflows/production-recovery-operations.yml",
+        "modes": ["recovery_plan_diagnose", "compute_claim_validate", "recovery_plan_execute", "compute_claim_readback", "recovered_workspace_e2e"],
+        "jobs": ["recovery-plan-operation", "compute-claim-readback", "recovered-workspace-e2e"]
+      }
+    ]
+  },
   "selfHostedSourceCheckoutIsolation": {
     "workflows": {
       ".github/workflows/deploy-tke-production.yml": [
@@ -103,19 +181,27 @@
         "capture-rollout-failure",
         "rollback-live-qa"
       ],
-      ".github/workflows/production-basic-customer-operation.yml": [
+      ".github/workflows/production-basic-customer-canary.yml": [
         "prepare-basic-customer-operation",
-        "workspace-identity-diagnose",
+        "workspace-identity-diagnose"
+      ],
+      ".github/workflows/production-basic-acceptance.yml": [
         "acceptance-b-account-reconcile",
         "acceptance-b-account-prepare",
         "acceptance-b-fresh-order",
-        "controlled-pilot-closed-validate",
+        "controlled-pilot-closed-validate"
+      ],
+      ".github/workflows/production-fabric-operations.yml": [
         "compute-pool-head-terminalization",
-        "fabric-ledger-readback",
+        "fabric-ledger-readback"
+      ],
+      ".github/workflows/production-recovery-acceptance.yml": [
         "recovery-acceptance-funding-prepare",
         "recovery-acceptance-extra-funding-prepare",
         "recovery-acceptance-original-launch",
-        "recovery-acceptance-canary",
+        "recovery-acceptance-canary"
+      ],
+      ".github/workflows/production-recovery-operations.yml": [
         "recovery-plan-operation",
         "compute-claim-readback"
       ],
@@ -433,7 +519,7 @@
         "node-storage-preflight.json"
       ],
       "Upload rollback image set": [
-        "actions/upload-artifact@v4",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
         "production-rollback-images",
         "previous-images"
       ],
@@ -1485,7 +1571,7 @@
         "production-rollout-diagnostics"
       ],
       "Upload failed rollout diagnostics": [
-        "actions/upload-artifact@v4",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
         "production-rollout-diagnostics",
         "retention-days"
       ],
@@ -1541,7 +1627,7 @@
         "TENCENT_DEPLOY_KUBECONFIG"
       ],
       "Download rollback image set": [
-        "actions/download-artifact@v4",
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
         "production-rollback-images"
       ],
       "Restore previous Cloud images and ConfigMap": [
@@ -1610,7 +1696,7 @@
         "workspace_image_tag=\"${workspace_app_sha:0:12}-${workspace_shell_sha:0:12}-${workspace_framework_sha:0:12}\""
       ],
       "Set up Node": [
-        "actions/setup-node@v4",
+        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
         "node-version"
       ],
       "Prepare Workspace App source": [
@@ -1663,7 +1749,8 @@
     "file": "Dockerfile",
     "baseImage": "node:22-bookworm-slim",
     "requiredInstructions": [
-      "FROM golang:1.22-bookworm AS provisioner-build",
+      "FROM golang:1.25-bookworm AS provisioner-build",
+      "FROM golang:1.25-bookworm AS fabric-build",
       "go build -o /out/opl-tencent-provisioner ./cmd/opl-tencent-provisioner",
       "go build -o /out/opl-control-plane ./cmd/control-plane",
       "npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000",
