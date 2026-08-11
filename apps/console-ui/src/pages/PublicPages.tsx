@@ -108,7 +108,7 @@ export function NotFoundPage({ controller }: { controller: ConsoleController }) 
     <main className="message-page">
       <Cloud aria-hidden size={28} />
       <h1>页面不存在</h1>
-      <p>这个路由不属于已冻结的 Console 展示合同。</p>
+      <p>你访问的页面不存在或暂未开放。</p>
       <Button onClick={() => controller.navigate(controller.session ? "/console/overview" : "/")} variant="outline">返回</Button>
     </main>
   );

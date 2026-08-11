@@ -139,7 +139,7 @@ test("a late login response cannot restore an account or cancel logout", async (
     await page.getByRole("button", { name: "登录", exact: true }).click();
 
     await page.getByRole("button", { name: "返回", exact: true }).click();
-    await page.getByRole("button", { name: "Console 登录", exact: true }).click();
+    await page.getByRole("button", { name: "登录", exact: true }).click();
     await page.getByLabel("邮箱").fill(CONSOLE_DEMO_CREDENTIALS.admin.email);
     await page.getByLabel("密码").fill(CONSOLE_DEMO_CREDENTIALS.admin.password);
     await page.getByRole("button", { name: "登录", exact: true }).click();
@@ -154,7 +154,7 @@ test("a late login response cannot restore an account or cancel logout", async (
     assert.equal(page.url(), `${demo.origin}/`);
     assert.equal(await page.getByText("late@example.com", { exact: true }).count(), 0);
     assert.equal(await page.getByText(CONSOLE_DEMO_CREDENTIALS.admin.email, { exact: true }).count(), 0);
-    await page.getByRole("button", { name: "Console 登录", exact: true }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "登录", exact: true }).waitFor({ state: "visible" });
   } finally {
     await browser.close();
     await demo.close();
