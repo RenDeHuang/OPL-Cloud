@@ -30,9 +30,10 @@ deployment environment variable. Existing account-scoped Secrets are read-only
 compatibility until the target Workspace's first Key rotation. Never place
 credentials in the manifest, command arguments, logs, or verifier artifacts.
 
-Console exposes no Gateway base-address API or card. Never expose
-`OPL_SUB2API_BASE_URL` or link ordinary users to the Sub2API backend. Cloud does
-not inject `OPL_CODEX_BASE_URL` into Runtime.
+Console may project the configured public `/v1` model endpoint through Control
+Plane. Never expose `OPL_SUB2API_BASE_URL`, link ordinary users to the Sub2API
+management backend, or allow the browser to call it directly. Cloud does not
+inject `OPL_CODEX_BASE_URL` into Runtime.
 
 `OPL_CONSOLE_USERS_JSON` is retired and any non-empty value makes Control Plane
 startup fail closed. The deploy workflow and manifest no longer install that

@@ -1,9 +1,9 @@
 # OPL Console Workspace Product V2
 
-The frozen customer and operator page/slide inventory is defined in
-[`console-display-contract-v1.md`](console-display-contract-v1.md). This product
-document defines the business boundary; the display contract defines what each
-Console page must show and which source owns each fact.
+This document owns the Workspace product capability boundary. The
+[Console experience guide](console-experience-guide.md) describes durable user
+outcomes without freezing navigation or visual implementation; APIs and domain
+contracts own field-level facts and permissions.
 
 ## User Job
 
@@ -14,8 +14,8 @@ sign in -> list Workspaces -> select Basic or Pro -> confirm one Workspace total
 
 The operator-provisioned Pilot allows multiple independent Workspaces per account. Each
 Workspace has its own launch identity, resources, Key, Secret, entitlement,
-Runtime, and Receipt. Home, Login, and Logo/brand entry points remain unchanged;
-the product does not redesign public Home or Login surfaces.
+Runtime, and Receipt. Public Home and Login may evolve with the generic OPL
+Cloud experience without changing this Workspace capability boundary.
 
 ## Owner Surface
 

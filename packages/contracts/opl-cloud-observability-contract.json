@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "owner": "OPL Control Plane",
   "purpose": "Current identifier-free observability and stop conditions for the controlled Basic Pilot purchase gate.",
   "state": "current",
@@ -25,7 +25,6 @@
     "logFormat": "event=opl_controlled_pilot_state code=<stable-code> state=<active|recovered>",
     "logDeduplication": "one_active_and_one_recovered_transition_per_process_state_change",
     "customerSupportPath": ["Diagnose", "Plan", "Validate", "Confirm"],
-    "customerSuppliedResourceIds": false,
-    "productionEvidence": "pending"
+    "customerSuppliedResourceIds": false
   }
 }

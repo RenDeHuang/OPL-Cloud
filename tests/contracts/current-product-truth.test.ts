@@ -51,10 +51,8 @@ test("public entry and current contracts preserve the operator-provisioned paid 
     storageUsdMicros: 25800000,
     totalUsdMicros: 240080000
   });
-  assert.match(invariants, /administrator-provisioned customer accounts/i);
+  assert.match(status, /administrator-provisioned accounts/i);
   assert.match(invariants, /one Console User.*one OPL Account.*one Sub2API User\/Wallet/is);
-  assert.match(invariants, /verification-slot-basic-01/);
-  assert.match(invariants, /verification-slot-pro-01/);
   assert.match(runbook, /normal Console\s+Basic canary.*separately once.*read-only.*never buy a second Workspace package/is);
   assert.match(tke, /separate Control Plane, Fabric, and Ledger Kubernetes Deployments/is);
   assert.match(status, /code-complete/i);
@@ -107,70 +105,21 @@ test("identity contracts expose operator-provisioned owners and keep Organizatio
 });
 
 test("current contracts expose only authoritative Pilot sources and controls", async () => {
-  const [freeze, sourceTruth, product, boundary] = await Promise.all([
-    json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
+  const [management, sourceTruth, product, boundary] = await Promise.all([
+    json("packages/contracts/opl-cloud-management-contract.json"),
     json("packages/contracts/opl-cloud-console-source-truth-contract.json"),
     json("packages/contracts/opl-cloud-product-contract.json"),
     json("packages/contracts/opl-cloud-service-boundary-contract.json")
   ]);
 
-  assert.deepEqual(freeze.pilotCohort, {
+  assert.deepEqual(management.pilotCohort, {
     mode: "operator_provisioned",
     publicRegistration: false
   });
-  assert.equal(freeze.deliveryPhases, undefined);
-  assert.doesNotMatch(freeze.machineBoundary, /delivery phases/i);
-  assert.deepEqual(freeze.customerFunding, {
-    authority: "sub2api",
-    mode: "manual_operator_prefund",
-    customerPaymentUi: false,
-    paymentOrderApi: false
-  });
-  assert.equal(freeze.gateway.summaryApi, undefined);
-  assert.equal(freeze.gateway.customerReadContract, "opl-cloud-console-source-truth-contract.json");
   assert.equal(sourceTruth.sources.gateway.wallet.usdMicrosEncoding, "non_negative_int64_decimal_string");
   assert.equal(sourceTruth.sources.gateway.wallet.balanceProjection.meaning, "conservative_spendable_lower_bound");
   assert.equal(sourceTruth.sources.gateway.wallet.balanceProjection.exactRawBalanceCopy, false);
-  assert.equal(freeze.gateway.liveBalanceProjection.meaning, sourceTruth.sources.gateway.wallet.balanceProjection.meaning);
-  assert.equal(freeze.gateway.liveBalanceProjection.conversion, sourceTruth.sources.gateway.wallet.balanceProjection.conversion);
   assert.equal(sourceTruth.sources.gateway.balanceHistory.valueUsdMicrosEncoding, "signed_int64_decimal_string");
-  assert.equal(freeze.gateway.adminKeyListEndpoint, undefined);
-  assert.equal(freeze.gateway.keyListPaginationRule, undefined);
-  assert.deepEqual(freeze.gateway.balanceHistoryReads, {
-    display: {
-      method: "BalanceHistoryPage",
-      route: "GET /api/gateway/balance-history?page={page}&pageSize={pageSize}",
-      pageDefault: 1,
-      pageSizeDefault: 20,
-      pageSizeMax: 100,
-      upstreamPagesPerRequest: 1
-    },
-    financialVerification: {
-      method: "FinancialBalanceHistoryByCodes",
-      allowedCallers: ["charge_confirmation", "refund_confirmation", "wallet_adjustment_recovery", "reconciliation"],
-      pageSize: 100,
-      lookup: "target_redeem_codes_only",
-      stopWhen: "all_targets_found",
-      missingTarget: "scan_to_authoritative_last_page",
-      materialization: "matched_entries_only",
-      totalHistoryLimit: null
-    }
-  });
-  assert.deepEqual(freeze.gateway.workspaceKeyConvergenceRead, {
-    methods: ["WorkspaceKeysForConvergence", "WorkspaceUserKeysForConvergence"],
-    scope: "workspace_reserved_key_convergence_only",
-    completePaginationRequired: true,
-    statisticsReuse: false
-  });
-  assert.deepEqual(freeze.gateway.customerMutationApis, [
-    "create_general_key",
-    "update_general_key",
-    "delete_general_key",
-    "reveal_owned_key",
-    "change_group",
-    "reset_quota",
-    "reset_rate_limit_usage"
-  ]);
   assert.equal(sourceTruth.sources.gateway.keys.revealRoute, "POST /api/gateway/keys/{keyId}/reveal");
   assert.deepEqual(Object.keys(sourceTruth.sources.gateway), [
     "endpoint", "wallet", "groups", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
@@ -183,17 +132,8 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   assert.deepEqual(product.pilotBoundary.unsupportedCustomerCapabilities, ["backup", "recovery", "sync", "transfer"]);
   assert.equal(product.pilotBoundary.autoRenewCustomerControl, "hidden_until_real_renewal_evidence");
   assert.equal(boundary.browserBoundary.onlyCalls, "control_plane_product_apis");
-  assert.deepEqual(boundary.browserBoundary.forbidden, ["sub2api_direct", "gflabtoken_link", "iframe", "html_scraping", "raw_admin_dto"]);
+  assert.deepEqual(boundary.browserBoundary.forbidden, ["sub2api_management_direct", "sub2api_management_redirect", "sub2api_management_iframe", "html_scraping", "raw_admin_dto"]);
   assert.deepEqual(boundary.customerMutationBoundary, { payment: false, topUp: false, keyCreate: true, keyRevoke: true });
-  assert.equal(freeze.workspaceRuntime.ordinaryCloudDeploy.reason, "cloud_only_release_preserves_workspace_runtime_revision");
-  const accessStage = freeze.launchStages.find((stage) => stage.id === "workspace_access");
-  assert.match(accessStage.business, /Workspace-scoped Gateway Secret/);
-  assert.match(accessStage.currentState, /Workspace Secret/);
-  const usageStage = freeze.launchStages.find((stage) => stage.id === "gateway_usage");
-  assert.match(usageStage.business, /Workspace's reserved Key/);
-  const renewalStage = freeze.launchStages.find((stage) => stage.id === "renewal_expiry_recovery");
-  assert.ok(renewalStage.requiredDeliverables.includes("unpaid expiry access denial and provider-owned reclamation policy"));
-  assert.equal(renewalStage.requiredDeliverables.includes("expiry and retained-storage policy"), false);
 });
 
 test("current truth hard-cuts invitation and stage vocabulary", async () => {
@@ -231,13 +171,11 @@ test("current truth hard-cuts invitation and stage vocabulary", async () => {
   }
 });
 
-test("Workspace owns renewal while resource and general execution contracts are non-Pilot compatibility", async () => {
-  const [billing, business, evidence, shared, packageBoundary] = await Promise.all([
+test("Workspace owns renewal while retired machine contracts stay absent", async () => {
+  const [billing, business, evidence] = await Promise.all([
     json("packages/contracts/opl-cloud-billing-ledger-contract.json"),
     json("packages/contracts/opl-cloud-business-object-contract.json"),
-    json("packages/contracts/opl-cloud-evidence-ledger-contract.json"),
-    json("packages/contracts/opl-cloud-shared-execution-contract.json"),
-    json("packages/contracts/opl-cloud-package-boundary-contract.json")
+    json("packages/contracts/opl-cloud-evidence-ledger-contract.json")
   ]);
 
   assert.equal(billing.entitlementPolicy.customerRenewalAuthority, "workspace");
@@ -278,39 +216,17 @@ test("Workspace owns renewal while resource and general execution contracts are 
   });
   assert.equal(evidence.receiptTypes.includes("workspace.storage_backup_created"), false);
   assert.equal(evidence.receiptTypes.includes("workspace.storage_restored"), false);
-  assert.equal(shared.state, "superseded");
-  assert.equal(packageBoundary.state, "superseded");
+  const contracts = await filesUnder("packages/contracts", (path) => path.endsWith(".json"));
+  assert.equal(contracts.includes("packages/contracts/opl-cloud-shared-execution-contract.json"), false);
+  assert.equal(contracts.includes("packages/contracts/opl-cloud-package-boundary-contract.json"), false);
 });
 
-test("release contracts keep Acceptance and fixed-slot verification paused outside ordinary deploy", async () => {
-  const [freeze, deployment] = await Promise.all([
-    json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
-    json("packages/contracts/opl-cloud-deployment-contract.json")
-  ]);
+test("deployment contract keeps Acceptance outside ordinary deploy", async () => {
+  const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
 
-  assert.deepEqual(freeze.verification.slots.map((slot) => slot.id), ["verification-slot-basic-01", "verification-slot-pro-01"]);
-  assert.deepEqual(freeze.verification.releaseLiveQa, {
-    launchStatus: "paused",
-    ordinaryDeployGate: false,
-    slotId: "verification-slot-basic-01",
-    reservedAccountCount: 1,
-    dedicatedKeyCount: 1,
-    modelRequestCount: 1,
-    providerMutationCount: 0
-  });
-  assert.deepEqual(freeze.deliveryEvidence, {
-    required: true,
-    codeComplete: false,
-    pilotReady: false,
-    productionProven: false,
-    saleable: false
-  });
   assert.equal(deployment.productionLiveQaJob, undefined);
-  assert.equal(deployment.providerAcceptanceWorkflow.launchStatus, "paused");
   assert.equal(deployment.providerAcceptanceWorkflow.releaseGate, false);
-  assert.deepEqual(deployment.deliveryEvidence, {
-    releaseVerificationCodeComplete: true,
-    identityDeploymentCutover: "code_complete_local_verification",
-    productionEvidence: "pending"
-  });
+  assert.equal(deployment.state, "migration");
+  assert.equal(deployment.lifecycle.type, "migration_guard");
+  assert.equal(deployment.deliveryEvidence, undefined);
 });

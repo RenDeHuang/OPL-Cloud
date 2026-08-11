@@ -53,7 +53,7 @@ test("current contracts name Sub2API as the only spendable balance", async () =>
 test("management contract hard-cuts customer identity to Sub2API and one atomic owner graph", async () => {
   const management = await readJson("opl-cloud-management-contract.json");
 
-  assert.equal(management.schemaVersion, 17);
+  assert.equal(management.schemaVersion, 18);
   assert.deepEqual(management.entities.account.requiredFields, ["id", "ownerUserId", "status", "sub2apiUserId", "createdAt", "updatedAt"]);
   assert.deepEqual(management.entities.user, {
     requiredFields: ["id", "email", "accountId", "role", "status", "createdAt", "updatedAt"],
@@ -114,23 +114,7 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
   assert.equal(management.api.managementState, "GET /api/management/state");
   assert.deepEqual(management.api.managementStateExcludedFields, ["organization", "organizations", "memberships"]);
   assert.equal(management.bootstrapLifecycle.legacyLocalUsersEnv, "retired_nonempty_value_fails_startup");
-  assert.deepEqual(management.identityDelivery, {
-    controlPlane: "canonical_provisioning_integrated_local_verified",
-    deploymentCutover: "canonical_route_deployment_pending",
-    authenticatedRuntimeEvidence: "pending"
-  });
-});
-
-test("offer identity reports local integrated verification without claiming runtime evidence", async () => {
-  const launch = await readJson("opl-cloud-launch-freeze-contract.json");
-  const stage = launch.launchStages.find(({ id }) => id === "offer_identity");
-
-  assert.equal(
-    stage.currentState,
-    "Canonical POST /api/operator/accounts provisioning and the strict one-to-one mapped-owner graph have integrated local evidence; deployment and authenticated production runtime evidence remain pending, while self-registration and SSO are outside the Pilot."
-  );
-  assert.doesNotMatch(stage.currentState, /CI-verified/);
-  assert.doesNotMatch(stage.currentState, /operator password reset/);
+  assert.equal(management.identityDelivery, undefined);
 });
 
 test("pricing contract fixes exact integer monthly charges", async () => {
@@ -228,7 +212,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.deepEqual(evidence.reconciliationReportV1.exceptions.resourceTypes, ["compute", "storage", "workspace"]);
 	assert.deepEqual(evidence.reconciliationReportV1.workspaceRenewalAuthority, billing.reconciliationPolicy.workspaceRenewalAuthority);
 	const management = await readJson("opl-cloud-management-contract.json");
-	assert.equal(management.schemaVersion, 17);
+	assert.equal(management.schemaVersion, 18);
 	assert.deepEqual(management.operatorBillingReviewProjection.included, [
 		"workspace.launch.v2_manual_review",
 		"workspace.renewal_manual_review",

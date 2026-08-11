@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "owner": "OPL Control Plane",
   "purpose": "Versioned fixed USD monthly prices for the paid OPL Workspace Pilot.",
   "state": "current",
@@ -48,8 +48,7 @@
     "totalAuthority": "server_price_snapshot",
     "components": "explanatory_fulfillment_only",
     "catalogAvailabilityMeaning": "product_open_not_tencent_capacity",
-    "capacityAuthority": "Tencent MonthlyPreflight immediately before first debit",
-    "implementation": "non_review_price_and_charge_contract_local_tests_manual_review_recovery_pending_integration"
+    "capacityAuthority": "Tencent MonthlyPreflight immediately before first debit"
   },
   "internalProviderCostEvidence": {
     "currency": "CNY",

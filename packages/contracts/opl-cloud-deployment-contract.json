@@ -1,17 +1,12 @@
 {
-  "schemaVersion": 46,
+  "schemaVersion": 47,
   "owner": "OPL Fabric",
-  "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
-  "state": "current",
-  "machineBoundary": "GitHub workflow structure, cluster/public verifier runner isolation, deploy-time env sources, secret handling, immutable image release, explicit Workspace digest promotion, node-storage preflight, single-revision Cloud rollout, default-off Recovery Acceptance canary wiring, diagnostics-before-rollback, real read-only ordinary-rollout verification, existing Workspace preservation, and paused standalone verification.",
+  "purpose": "Migration guard for existing medopl-oriented TKE workflows, immutable images, diagnostics, and production safety.",
+  "state": "migration",
+  "machineBoundary": "Temporary aggregate guard for existing medopl-oriented TKE workflow safety while reusable workflow rules move to focused executable owners and provider-specific deployment moves to the instance owner. It is not a reusable Cloud MVP or local-docker acceptance contract.",
   "lifecycle": {
-    "type": "long_term_contract",
-    "removalCondition": "Replace only with a newer current contract for the same boundary."
-  },
-  "deliveryEvidence": {
-    "releaseVerificationCodeComplete": true,
-    "identityDeploymentCutover": "code_complete_local_verification",
-    "productionEvidence": "pending"
+    "type": "migration_guard",
+    "removalCondition": "For each deployment, release, verification, recovery, and rollback workflow family, move reusable safety to its workflow and focused tests and move Tencent/TKE instance detail to the medopl instance owner while retaining authorization, identity, secret, immutable-image, mutation-bound, readback, diagnostics, rollback, and protected-resource gates; then delete this aggregate contract."
   },
   "immutableGithubDependencies": {
     "actions/checkout": {
@@ -52,9 +47,7 @@
   },
   "identityDeploymentCutover": {
     "retiredInput": "OPL_CONSOLE_USERS_JSON",
-    "controlPlaneBehavior": "non_empty_value_fails_closed",
-    "workflowStatus": "removed_and_locally_tested",
-    "productionEvidence": "pending"
+    "controlPlaneBehavior": "non_empty_value_fails_closed"
   },
   "controlPlaneSessionCredentialVault": {
     "replicas": 1,
@@ -74,8 +67,7 @@
     "invalidConfiguration": "deployment_and_runtime_fail_closed",
     "disable": "set_enabled_0_and_run_ordinary_main_deploy",
     "disableEffect": "new_purchase_only_original_operations_continue",
-    "rollback": "keep_enabled_0_restore_full_previous_configmap_only_for_whole_release_rollback",
-    "productionEvidence": "pending"
+    "rollback": "keep_enabled_0_restore_full_previous_configmap_only_for_whole_release_rollback"
   },
   "recoveryAcceptanceCanaryRuntime": {
     "manifest": "deploy/tke/opl-cloud.k8s.json#ConfigMap/opl-cloud-config",
@@ -744,8 +736,7 @@
     "checkpointAuthority": false,
     "modelResultUnknown": "attempted_or_ready_without_authoritative_request_identity_never_resend",
     "attemptAccounting": "http_attempts_separate_from_authoritative_mutation_counts",
-    "output": "redacted_evidence_only",
-    "currentState": "implemented_and_fake_tested_not_executed"
+    "output": "redacted_evidence_only"
   },
   "productionBasicCustomerCanaryPrechargeRecovery": {
     "baseCanary": "productionBasicCustomerCanary",
@@ -769,8 +760,7 @@
       "precondition": "live_spendable_wallet_usd_micros > current_server_quote_usd_micros",
       "postCount": 1,
       "recovery": "GET only approved launchOperationId and workspaceId never a second POST"
-    },
-    "currentState": "implemented_and_fake_tested_not_executed"
+    }
   },
   "productionWorkspaceLaunchClaimClosure": {
     "productionNetwork": "github_actions_production_environment_authorized_runner_only",
@@ -798,8 +788,7 @@
       "exactWrites": {"sub2apiDebit": 1, "cvmCreate": 1, "cvmOwnershipClaim": 1, "nodeClaim": 1, "cbsCreate": 1, "runtimeCreate": 1, "receiptCreate": 1},
       "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
     },
-    "evidenceSubstitution": "forbidden_both_A_and_B_required",
-    "implementationState": "contract_frozen_implementation_rollout_and_production_evidence_pending"
+    "evidenceSubstitution": "forbidden_both_A_and_B_required"
   },
   "productionBasicAcceptanceB": {
     "tool": "tools/production-basic-acceptance-b.ts",
@@ -1079,8 +1068,7 @@
       "schemaVersion": 1,
       "fields": ["operationMode", "status", "recoveryEligible", "errorCode", "release", "target", "approval", "manualReview", "controlPlaneMutationCounts", "runnerDirectMutationCounts", "verifiedAt"],
       "forbidden": ["password", "secret", "token", "cookie", "nonce", "csrf", "raw_launch_operation_id", "raw_workspace_id"]
-    },
-    "currentState": "implemented_and_locally_fake_tested_not_executed"
+    }
   },
   "productionRecoveryAcceptanceFundingPrepare": {
     "workflow": ".github/workflows/production-basic-customer-operation.yml",
@@ -1142,8 +1130,7 @@
     "allowedWrites": ["control_plane_e2e_attempt_reservation", "single_workspace_model_request", "control_plane_e2e_attempt_completion"],
     "forbiddenCapabilities": ["kubeconfig", "tencent_credentials", "internal_service_token", "launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_cbs", "kubernetes"],
     "resultUnknown": "persistent_attempted_marker_never_resend",
-    "resourceDeliveryDependency": "one_way_resource_closure_to_e2e_no_reverse_dependency",
-    "currentState": "code_complete_local_focused_and_postgresql_verified_not_executed"
+    "resourceDeliveryDependency": "one_way_resource_closure_to_e2e_no_reverse_dependency"
   },
   "protectedSystemResources": {
     "nodePoolIdEnv": "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
@@ -1162,7 +1149,6 @@
   "productionVerificationWorkflow": {
     "file": ".github/workflows/verify-production-chain.yml",
     "job": "verify",
-    "launchStatus": "paused",
     "releaseGate": false,
     "mode": "read_only_dual_fixed_slots",
     "slotDescriptors": [
@@ -1236,7 +1222,6 @@
   "providerAcceptanceWorkflow": {
     "file": ".github/workflows/provider-acceptance.yml",
     "job": "accept",
-    "launchStatus": "paused",
     "releaseGate": false,
     "mode": "operator_only_one_time_dual_fixed_slot",
     "mutationAuthorityWiring": "dispatch_approval_id_protected_manifest_explicit_cli_allow_flags",
@@ -1732,16 +1717,9 @@
     "appRepository": "https://github.com/gaofeng21cn/one-person-lab-app.git",
     "activeShellRepository": "https://github.com/gaofeng21cn/opl-aion-shell.git",
     "frameworkRepository": "https://github.com/gaofeng21cn/one-person-lab.git",
-    "candidateAppMainSha": "6b334ef7f239eb01c40578159e6df9ed2e7f97dc",
-    "candidateActiveShellMainSha": "dbd9d68115604673df85033d7a0ab323d65a79a2",
-    "candidateFrameworkMainSha": "51d16f0e93aebf3fd5ccf96082490395fcbb8711",
     "candidateRequirements": ["40_character_git_sha", "merged_into_repository_main"],
     "targetRepository": "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app",
     "candidateTagFormat": "<app-sha-12>-<active-shell-sha-12>-<framework-sha-12>",
-    "immutableTcrDigest": null,
-    "immutableTcrDigestStatus": "pending_publication_readback",
-    "readyPodImageId": null,
-    "readyPodImageIdStatus": "pending_deployment_readback",
     "productionReference": "repository@sha256",
     "mutableTagsForbidden": ["latest", "stable"]
   },

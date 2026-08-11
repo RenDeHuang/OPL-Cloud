@@ -4,10 +4,12 @@ This is the single `one-person-lab-cloud` product repository. It owns the OPL
 Cloud public architecture, whitepaper, roadmap, Console, Control Plane, Fabric,
 Ledger, Workspace delivery, contracts and reusable release mechanisms.
 
-- `docs/roadmap.md` is the only current gap and next-step owner.
-- `docs/architecture.md` owns target product and authority boundaries.
-- `docs/implementation-architecture.md`, `docs/invariants.md`,
-  `packages/contracts`, source and tests own current implementation truth.
+- `docs/README.md` owns the documentation hierarchy and topic-to-owner map.
+- `docs/architecture.md` owns the target product and authority boundaries.
+- `docs/implementation-architecture.md`, source, schemas, tests and runtime
+  readback describe the current implementation at their respective layers.
+- `docs/status.md` owns the current evidence snapshot; `docs/roadmap.md` owns
+  gaps, priorities and acceptance outcomes only.
 - `opl-cloud` remains the internal package, image, service, namespace and runner
   identifier; it is not a second repository owner.
 - `opl-instance-medopl` owns the eventual medopl instance profile and deployment
@@ -40,6 +42,21 @@ conflict:
 
 Issues, PR descriptions, comments, generated docs, and archived repositories
 are inputs or provenance, never independent SSOT owners.
+
+## Documentation Layers
+
+Follow the hierarchy in `docs/README.md`. A lower layer may refine or report an
+upper-layer decision, but it must not redefine it. When an upper-layer product
+or architecture decision changes, update every affected lower-layer projection
+in the same change or mark the unresolved projection as an explicit roadmap
+gap. Do not leave two current truths.
+
+Machine contracts are admission gates only for facts that need deterministic
+cross-module or safety enforcement. They must not freeze colors, dimensions,
+page counts, component libraries, model choices, query strategies, worker
+intervals, current progress, or other ordinary implementation decisions. Keep
+those in the current implementation, an evolvable guide, performance tests, or
+`docs/status.md` as appropriate.
 
 ## Module Ownership And Physical Boundaries
 
@@ -91,10 +108,14 @@ parallel and converge only for deployment qualification and readback.
 
 Before changing billing, Fabric, Workspace, Gateway, Ledger, deployment, or E2E:
 
-1. Read `docs/invariants.md` completely.
-2. Read `packages/contracts/opl-cloud-launch-freeze-contract.json`.
-3. Read the current machine contract owned by the service being changed.
-4. Preserve the approved boundary and update the slide's current state only with matching code, tests, and runtime evidence.
+1. Read the relevant target, architecture and invariant sections identified by
+   `docs/README.md`.
+2. Read only the current machine contract owned by the affected boundary and
+   its real callers. `opl-cloud-launch-freeze-contract.json` is a migration
+   source, not a universal development prerequisite.
+3. Preserve hard safety and authority boundaries. Record implementation and
+   readiness changes in source/tests and `docs/status.md`; record remaining
+   work in `docs/roadmap.md`.
 
 Hard prohibitions:
 

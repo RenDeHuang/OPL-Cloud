@@ -1,48 +1,64 @@
 # OPL Cloud Documentation
 
-This repository follows the `one-person-lab` documentation lifecycle.
+This index owns the documentation hierarchy. It follows OPL Doc's semantic
+governance model: one current owner per topic, current truth separated from
+active gaps, support detail and history.
 
-## Source Of Truth
+## Hierarchy
 
-- Product target and public architecture: this repository's
-  [architecture.md](./architecture.md), whitepaper and roadmap.
-- Current implementation: [implementation-architecture.md](./implementation-architecture.md),
-  [invariants.md](./invariants.md), `packages/contracts`, source, tests, runtime
-  readback and deployment manifests.
-- Development framework truth: `one-person-lab`.
-- First instance truth: initialized `opl-instance-medopl`; its profile identity,
-  deployment receipts and Cloud-co-located medopl values remain migration work.
+| Level | Question | Canonical owner | Change rate |
+| --- | --- | --- | --- |
+| 1. Product concept | Why does OPL Cloud exist and what is in scope? | [project.md](./project.md) and the [whitepaper](./whitepapers/opl-cloud-whitepaper.md) | Long term |
+| 2. Target architecture | What should the product become and who owns each authority? | [architecture.md](./architecture.md) and durable [decisions.md](./decisions.md) | Long term |
+| 3. Durable invariants | Which safety, integrity and ownership facts must survive refactors? | [invariants.md](./invariants.md) and eligible machine contracts | Infrequent |
+| 4. Current implementation | What paths, schemas and module boundaries exist now? | [implementation-architecture.md](./implementation-architecture.md), source, schemas and focused tests | Frequent |
+| 5. Functional modules | What user capability does each product surface provide? | `docs/opl-*.md`, `docs/product/**` and public API schemas | Feature paced |
+| 6. Status and plan | What is proven now, what is missing and what comes next? | [status.md](./status.md) for evidence; [roadmap.md](./roadmap.md) for gaps, priority and acceptance | Continuous |
+| 7. Operations | How is the current release operated? | `docs/runtime/**`, deployment manifests and workflows | Release paced |
+| 8. History | Why did a retired decision or shape exist? | [history](./history/README.md) | Append or retire |
 
-Human docs explain the system. They do not replace machine contracts, runtime
-readback or owner acceptance. `opl-cloud` is an internal artifact and service
-identifier, not another repository.
+The hierarchy is directional. A lower level may implement, explain or report
+an upper-level decision; it cannot redefine it. When a product or architecture
+owner changes, the same change must reconcile affected invariants, current
+implementation docs, module docs, status and roadmap. A lower projection that
+cannot yet follow is an explicit roadmap gap, not a competing SSOT.
 
-## Active Docs
+## Authority Rules
 
-- [project.md](./project.md): repository scope and ownership.
-- [architecture.md](./architecture.md): target product and authority boundaries.
-- [implementation-architecture.md](./implementation-architecture.md): current implemented request, persistence, provider and production boundaries.
-- [invariants.md](./invariants.md): rules that must stay true across refactors.
-- [status.md](./status.md): current implementation and readiness evidence snapshot.
-- [decisions.md](./decisions.md): durable decisions.
-- [roadmap.md](./roadmap.md): the single current gap and next-step owner; do not restate its open-work list elsewhere.
-- [whitepapers/opl-cloud-whitepaper.md](./whitepapers/opl-cloud-whitepaper.md): public product whitepaper source.
-- [product/console-workspace-v1.md](./product/console-workspace-v1.md): OPL Console commercial workspace product.
-- [runtime/production-runbook.md](./runtime/production-runbook.md): production operations.
-- [runtime/tke-production-deployment.md](./runtime/tke-production-deployment.md): Tencent TKE deployment contract.
-- [policies/docs-lifecycle-policy.md](./policies/docs-lifecycle-policy.md): active documentation, contract, and test lifecycle.
-- [policies/development-worktree-policy.md](./policies/development-worktree-policy.md): worktree, branch, stash, and repository size rules.
+- Target intent comes from the latest user decision and its canonical product
+  or architecture owner. Current code does not silently redefine the target.
+- Current implementation claims require source, schema, tests or runtime
+  evidence. A target document or contract field is not delivery evidence.
+- `docs/status.md` is a replaceable current snapshot, not a chronological
+  ledger. `docs/roadmap.md` owns open gaps and acceptance outcomes, not agent
+  prompts, shell commands or branch write sets.
+- Machine contracts exist only when a cross-module, public-interface, security,
+  data-integrity or irreversible-side-effect fact needs deterministic
+  enforcement. Visual preference and ordinary implementation shape stay out.
+- `one-person-lab` owns the reusable development method. Instance identity,
+  provider profile and deployment receipts belong to the instance repository;
+  `opl-cloud` remains an internal artifact identifier.
 
-## History
+## Active Navigation
 
-Dated plans, design freezes, run evidence, closeout notes, and completed implementation ledgers belong under `docs/history/**`.
+- [Console Workspace product](./product/console-workspace-v1.md)
+- [Console experience guide](./product/console-experience-guide.md)
+- [Workspace identity and external SaaS boundary](./workspace-identity-and-external-saas-boundary.md)
+- [Production runbook](./runtime/production-runbook.md)
+- [TKE deployment](./runtime/tke-production-deployment.md)
+- [Documentation lifecycle policy](./policies/docs-lifecycle-policy.md)
+- [Development worktree policy](./policies/development-worktree-policy.md)
 
-Active docs must not become process ledgers.
+## Lifecycle
 
-## Rules
+Classify sections by meaning, not merely by filename:
 
-1. Keep durable product rules in docs and machine-readable contracts.
-2. Keep dated implementation evidence in history.
-3. Do not preserve compatibility wrappers after active callers move to the current surface.
-4. Do not test prose wording.
-5. Promote temporary tests into contract-driven tests or delete them.
+- `current_truth`: concise content owned here and supported by the proper source;
+- `active_gap`: only in `docs/roadmap.md`;
+- `support_detail`: explanation that points to, but does not duplicate, its owner;
+- `history_or_provenance`: under `docs/history/**` and never a current gate;
+- `stale_or_conflicting`: remove or reconcile in the same change.
+
+Do not test prose wording. Test the owned behavior or schema. Dated plans,
+design freezes, screenshots, closeout notes and completed implementation
+ledgers belong in history or Git history, not active documentation.

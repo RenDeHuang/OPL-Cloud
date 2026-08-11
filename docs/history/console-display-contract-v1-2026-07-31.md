@@ -1,4 +1,12 @@
-# OPL Console UI Display Contract V1
+# Historical OPL Console UI Display Contract V1
+
+State: `history_or_provenance`
+
+This 2026-07-31 design freeze records the implementation context of PR #75.
+It is not a current product, visual, navigation or test authority. The current
+experience owner is
+[`docs/product/console-experience-guide.md`](../product/console-experience-guide.md);
+current routes and presentation live in `apps/console-ui`.
 
 状态：`frozen-for-implementation`
 
@@ -7,7 +15,7 @@
 约束来源：
 
 - [`docs/invariants.md`](../invariants.md)
-- [`console-workspace-v1.md`](console-workspace-v1.md)
+- [`console-workspace-v1.md`](../product/console-workspace-v1.md)
 - [`opl-cloud-launch-freeze-contract.json`](../../packages/contracts/opl-cloud-launch-freeze-contract.json)
 - [`opl-cloud-console-source-truth-contract.json`](../../packages/contracts/opl-cloud-console-source-truth-contract.json)
 - [`opl-cloud-business-object-contract.json`](../../packages/contracts/opl-cloud-business-object-contract.json)

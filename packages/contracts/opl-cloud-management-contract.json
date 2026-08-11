@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 17,
+  "schemaVersion": 18,
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
@@ -145,11 +145,6 @@
     "operatorProvisioning": "A fresh PostgreSQL database reads the fixed Sub2API operator identity and atomically commits its Account/User mapping plus internal compatibility rows.",
     "legacyLocalUsersEnv": "retired_nonempty_value_fails_startup"
   },
-  "identityDelivery": {
-    "controlPlane": "canonical_provisioning_integrated_local_verified",
-    "deploymentCutover": "canonical_route_deployment_pending",
-    "authenticatedRuntimeEvidence": "pending"
-  },
   "userLifecycle": {
     "sessionPolicy": "Disabling or deleting a User revokes that User's sessions and process-local delegated Gateway credentials.",
     "ownerRenewalPolicy": "Disabling or deleting an owner turns off the Workspace autoRenew intent without deleting provider resources."
@@ -181,34 +176,6 @@
     ],
     "supportTicketMappings": "GET /api/support/tickets",
     "createSupportTicketMapping": "POST /api/support/tickets"
-  },
-  "operatorProjection": {
-    "sub2apiReads": {
-      "currentPageUsers": "GET /api/v1/admin/users/{userId}",
-      "usersUsage": "POST /api/v1/admin/dashboard/users-usage",
-      "apiKeysUsage": "POST /api/v1/admin/dashboard/api-keys-usage",
-      "currentPageKeyCounts": "GET /api/v1/admin/users/{userId}/api-keys?page=1&page_size=1",
-      "batchSizeMax": 50
-    },
-    "usersPagination": "control_plane_order_limit_offset_count_then_current_page_sub2api_reads",
-    "pageSizeDefault": 20,
-    "pageSizeMax": 50,
-    "remoteReadScope": "current_control_plane_page_only",
-    "scaleInvariant": "same_page_size_request_count_equal_for_100_and_1000_accounts",
-    "userAndBalanceRead": "current_page_exact_id_bounded_concurrency_max_4",
-    "userReadConcurrencyMax": 4,
-    "usageRead": "current_page_user_ids_batch_required",
-    "balanceProjection": "floor_non_negative_raw_decimal_usd_to_integer_micros",
-    "batchPartialFailure": "missing_or_malformed_requested_item_unavailable_extra_unrequested_id_fails_closed",
-    "workspaceCountRead": "single_control_plane_group_by_for_current_page",
-    "keyCountRead": "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",
-    "keyCountDecodedItemsMax": 1,
-    "keyCountPersistence": "none_request_join_only",
-    "persistence": "none_request_join_only",
-    "readReplica": false,
-    "partialFailure": "affected_nested_source_unavailable_without_zero_data",
-    "sourceUpdatedAt": "only_authoritative_sub2api_or_ledger_timestamp_never_fetched_at",
-    "implementation": "code_complete_local_focused_tests"
   },
   "walletAdjustments": {
     "routes": {
@@ -244,16 +211,14 @@
       "message": false
     },
     "statePersistence": "control_plane_runtime_operations_non_authoritative",
-    "evidence": ["control_plane_admin_audit", "ledger_reference"],
-    "implementation": "code_complete_local_focused_tests"
+    "evidence": ["control_plane_admin_audit", "ledger_reference"]
   },
   "announcements": {
     "owner": "control_plane_postgresql",
     "tables": ["control_plane_announcements", "control_plane_announcement_reads"],
     "states": ["draft", "scheduled", "published", "withdrawn"],
     "audience": "all_pilot_users",
-    "scheduler": false,
-    "implementation": "code_complete_local_focused_tests"
+    "scheduler": false
   },
   "operatorAuthPolicy": {
     "operatorOverview": "GET /api/operator/overview",
@@ -261,10 +226,6 @@
     "providerAcceptanceCredential": "x-opl-provider-acceptance-token header only",
     "queryTokenAllowed": false,
     "adminSessionAllowed": true,
-    "defaultRoute": "/console/overview",
-    "consoleRouteBehavior": "owner_console_access",
-    "navigation": "customer_routes_then_admin_routes",
-    "accountPageLabel": "客户与计费账户",
     "reservedAdminAccountInCustomerRows": true,
     "reservedAdminSelfDisable": "forbidden_frontend_and_backend",
     "otherAccountSecretAccess": "forbidden"

@@ -82,25 +82,23 @@ until that shared change reaches fresh-main CI; other module lanes continue.
 
 ## Current Simplification Pressure
 
-A read-only structural audit found several implemented surfaces whose current
-in-repo product demand is absent, superseded, paused, or narrower than their
-implementation. These are current code-shape facts, not deletion authorization:
+A read-only structural audit found implemented surfaces whose current in-repo
+product demand is absent, superseded, paused, or narrower than their code shape.
+These are current implementation facts, not deletion authorization:
 
 | Cluster | Current implementation fact |
 | --- | --- |
-| Control Plane persistence | The disabled archive/retention worker and operator routes carry six Archive schemas; four Shared Execution schemas remain after their machine contract became superseded; Organization/Membership remain one-to-one compatibility storage |
-| Fabric optional verticals | ContentTransfer and StorageSnapshot/Restore have provider/service/store/route/test surfaces but no current in-repo Control Plane or Console caller; the Pilot excludes transfer and backup/recovery |
-| Ledger optional verticals | Artifact, Review, ReviewPolicy and Continuation APIs and stores exist, while current Control Plane product callers use receipt and reconciliation paths; future user-visible continuation remains a separate target decision |
-| Indirection and tooling | `internal/controlplane.Service` exposes 79 methods, several tools own duplicate argument parsers, production workflows repeat checkout/setup/cleanup mechanics, and the Control Plane owns custom static-file gzip behavior |
-| Active-tree residue | Console retains multiple visual generations in one 6,010-line stylesheet; completed dated plans and ignored Browser QA outputs remain tracked |
+| Control Plane persistence | Disabled archive/retention and superseded shared-execution models remain; Organization/Membership are one-to-one compatibility storage |
+| Fabric optional verticals | ContentTransfer and Snapshot/Restore have provider/service/store/route/test surfaces but no current in-repo product caller; the Pilot excludes transfer and backup/recovery |
+| Ledger optional verticals | Artifact, Review, ReviewPolicy, and Continuation APIs exist while current Control Plane callers primarily consume receipts and reconciliation |
+| Indirection and tooling | A large Control Plane facade, repeated CLI parsers, repeated workflow setup/cleanup, and custom static-file behavior create maintenance cost |
+| Active-tree residue | Console styles retain multiple generations after the current UI work; dated execution plans and frozen QA assets were retired from active history |
 
-The authoritative keep, shrink or delete candidates, priority, risk, admission
-evidence and bounded write sets live only in the
+The keep, shrink, or delete candidates, priority, risk, admission evidence, and
+owner boundaries live only in the
 [Simplification Backlog](roadmap.md#simplification-backlog). Candidate admission
-must trace real callers, target obligations, persisted data and external
-consumers before any public route or schema is removed. Low-risk history and
-unreachable-tool cleanup may proceed independently of product, portability and
-deployment lanes.
+must trace real callers, target obligations, persisted data, and external
+consumers before any public route or schema is removed.
 
 ## Repository And Instance Boundary
 
@@ -136,10 +134,11 @@ is omitted unless the authority supplies it. Browser identity parameters never
 override the current Session mapping, and raw downstream DTOs never cross the
 Control Plane boundary.
 
-Console displays and copies `https://gflabtoken.cn/v1` as the public model
-endpoint. It is never a link or redirect target, iframe, HTML source, or direct
-browser call to Sub2API management APIs. `OPL_SUB2API_BASE_URL` remains
-server-only, and Cloud does not inject a second Runtime Gateway base URL.
+Control Plane currently projects `https://gflabtoken.cn/v1` as the public model
+endpoint. Console may present that public endpoint according to the current UX.
+It never exposes or directly calls Sub2API management APIs;
+`OPL_SUB2API_BASE_URL` remains server-only, and Cloud does not inject a second
+Runtime Gateway base URL.
 
 `code-complete` means the local contracts, code, PostgreSQL, browser, and
 structure gates pass on one revision. `pilot-ready` additionally requires
@@ -168,7 +167,9 @@ facts but cannot overwrite Control Plane entitlement state.
 Artifact, Continuation, retention, audit, and idempotency records. It never
 changes Sub2API balance.
 
-`packages/contracts` is machine-readable current truth, not a runtime service.
+`packages/contracts` contains narrow machine-enforced cross-module, interface,
+security, integrity, permission, and irreversible-side-effect boundaries; it is
+not a runtime service or a complete current-implementation specification.
 Speculative route and object entries remain outside the active contracts.
 
 ## Provider Port
