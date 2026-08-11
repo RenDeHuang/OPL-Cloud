@@ -73,13 +73,15 @@ initial implementation may select one primary adapter per instance while every
 Workspace persists its exact provider binding so later instances can expose
 more than one provider without changing Workspace identity.
 
-`local-docker` is the required Core adapter, but it is not implemented in the
-current source. Fabric startup still selects `TencentProvider`; Tencent/TKE is
-an extension chosen by `opl-instance-medopl`, not proof of portable Core. A
-healthy product Compose stack starts Fabric as a control service only and does
-not prove Workspace create/readback/delete. Current facts belong to
-[status](status.md), and the implementation gap belongs to the
-[roadmap](roadmap.md).
+`local-docker` is now implemented as the default Core adapter. Fabric startup
+selects it even when `NODE_ENV=production`; `tencent-tke` is available only when
+an instance explicitly sets `OPL_FABRIC_PROVIDER=tencent-tke`. Both adapters pay
+the same provider-neutral Fabric port, while provider writes and authoritative
+readback stay inside the selected adapter. The real Docker integration gate
+exercises compute, storage, attachment, Secret binding, and Runtime, but this
+Fabric evidence alone does not prove the complete Console-to-Workspace path.
+Current facts belong to [status](status.md), and the remaining end-to-end gap
+belongs to the [roadmap](roadmap.md).
 
 Control Plane owns one durable Workspace Launch business state machine; Create
 and Resume enter its same Reconciler. Fabric does not own that cursor or a second
@@ -97,10 +99,11 @@ not derive resource ownership from `:compute` suffixes, unscoped operation
 listings, provider tags, or adapter fields.
 
 Recovery may cause Control Plane to re-enter the original Reconciler only after
-an immutable CAS-persisted Resume authorization. It does not provide a resource
-ID or call Fabric/provider mutation directly. Exact request and response shapes
-remain an implementation admission item until a real caller, both owner
-implementations, and focused tests establish the narrow public contract.
+an immutable CAS-persisted Resume authorization. It does not call a provider or
+provider-specific mutation directly. The current Fabric routes mirror the real
+typed caller DTO and accept only the five canonical stage/action pairs. Serial
+cross-module absorption and the end-to-end launch gate remain separate from this
+Fabric-owned implementation proof.
 
 For Serve, Fabric may prepare an isolated sandbox or worker, inject approved
 secret refs, apply network/egress policy, enforce resource limits and collect

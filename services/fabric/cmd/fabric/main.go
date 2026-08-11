@@ -34,10 +34,29 @@ func main() {
 		}
 		operationStore = store
 	}
-	handler := fabrichttp.NewServer(fabric.NewServiceWithOperationStore(fabric.NewTencentProvider(), operationStore), token)
+	provider, err := selectedProvider(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	handler := fabrichttp.NewServer(fabric.NewServiceWithOperationStore(provider, operationStore), token)
 	log.Printf("fabric listening on %s", addr)
 	if err := newHTTPServer(addr, handler).ListenAndServe(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func selectedProvider(getenv func(string) string) (fabric.Provider, error) {
+	name := getenv("OPL_FABRIC_PROVIDER")
+	if name == "" {
+		name = "local-docker"
+	}
+	switch name {
+	case "local-docker":
+		return fabric.NewLocalDockerProvider(), nil
+	case "tencent-tke":
+		return fabric.NewTencentProvider(), nil
+	default:
+		return nil, errors.New("OPL_FABRIC_PROVIDER must be local-docker or tencent-tke")
 	}
 }
 
