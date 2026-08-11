@@ -1,5 +1,21 @@
 # OPL Cloud Development Rules
 
+This is the single `one-person-lab-cloud` product repository. It owns the OPL
+Cloud public architecture, whitepaper, roadmap, Console, Control Plane, Fabric,
+Ledger, Workspace delivery, contracts and reusable release mechanisms.
+
+- `docs/roadmap.md` is the only current gap and next-step owner.
+- `docs/architecture.md` owns target product and authority boundaries.
+- `docs/implementation-architecture.md`, `docs/invariants.md`,
+  `packages/contracts`, source and tests own current implementation truth.
+- `opl-cloud` remains the internal package, image, service, namespace and runner
+  identifier; it is not a second repository owner.
+- `opl-instance-medopl` owns the eventual medopl instance profile and deployment
+  evidence. Co-located medopl configuration is migration state, not product
+  architecture.
+- The archived documentation repository is provenance only and must never
+  become a parallel current writer.
+
 Before changing billing, Fabric, Workspace, Gateway, Ledger, deployment, or E2E:
 
 1. Read `docs/invariants.md` completely.

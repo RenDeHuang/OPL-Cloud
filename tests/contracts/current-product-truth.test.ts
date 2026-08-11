@@ -25,7 +25,7 @@ async function filesUnder(directory, include = () => true) {
 test("current docs describe only the operator-provisioned paid Pilot", async () => {
   const [readme, architecture, packages, invariants, status, runbook, tke] = await Promise.all([
     text("README.md"),
-    text("docs/architecture.md"),
+    text("docs/implementation-architecture.md"),
     text("packages/README.md"),
     text("docs/invariants.md"),
     text("docs/status.md"),

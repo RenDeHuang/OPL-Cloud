@@ -1,16 +1,24 @@
 # Decisions
 
-## 2026-08-11: One Implementation Repository And Explicit Instances
+## 2026-08-11: One Product Repository And Explicit Instances
 
-`one-person-lab-cloud` owns product architecture and the whitepaper. The target
-lowercase `opl-cloud` repository is the single implementation owner for Console,
-Control Plane, Fabric, and Ledger. The earlier standalone Console, Fabric, and
-Ledger repositories are prototypes, not parallel current writers.
+`one-person-lab-cloud` is the single product and implementation owner for the
+OPL Cloud architecture, whitepaper, roadmap, Console, Control Plane, Fabric,
+Ledger, Workspace delivery, contracts and reusable release mechanisms. The
+transferred implementation repository keeps its GitHub identity and history,
+then takes this canonical name. The former documentation repository becomes a
+read-only archive after its current product truth and Pages path are absorbed.
+
+`opl-cloud` remains the short package, image, binary, service, namespace,
+environment-variable and runner identifier. It is not a second repository.
+Earlier standalone Console, Fabric, Ledger and deployment repositories are
+prototypes or history, not parallel current writers.
 
 A concrete installation is an instance, not a deployment-code fork. The first
 commercial instance is `opl-instance-medopl`. It owns medopl domains, provider
 profile, enabled plans and prices, image pins, secret references, promotion
-policy, and deployment receipts while consuming immutable `opl-cloud` releases.
+policy, and deployment receipts while consuming immutable
+`one-person-lab-cloud` releases.
 
 An account may own zero or more independent Workspaces. There is no fixed
 product-level count limit; each creation remains subject to balance, provider

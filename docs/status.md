@@ -56,7 +56,6 @@ or renewal works in production.
 
 The remaining architecture changes are explicit:
 
-- transfer and rename the implementation repository to `opl-cloud`;
 - materialize `opl-instance-medopl` and move medopl domains, Tencent profile,
   enabled plans/prices, image pins, secret refs, promotion, and deployment
   evidence out of the reusable implementation boundary;
@@ -73,6 +72,13 @@ Gateway/Sub2API remains the only spendable-balance owner. Console owns the
 account-total billing projection and settlement policy; Fabric owns zero
 balance; Ledger records append-only settlement and reconciliation evidence.
 No second wallet is part of this transition.
+
+Repository consolidation retains the transferred implementation repository's
+GitHub identity, pull requests, Actions, Environments and deployment history
+under the canonical `one-person-lab-cloud` name. The former documentation
+repository is provenance only after product docs, whitepaper sources, roadmap
+and Pages publication are read back from this repository. `opl-cloud` remains
+the internal artifact/service identifier.
 
 ## Preliminary Local Checks
 

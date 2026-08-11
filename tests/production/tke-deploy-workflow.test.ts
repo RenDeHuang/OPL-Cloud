@@ -152,7 +152,7 @@ ${step.run}
       ...process.env,
       GITHUB_ENV: "/dev/null",
       REQUESTED_CLOUD_SHA: requestedSha,
-      OPL_CLOUD_SOURCE_REPOSITORY: "RenDeHuang/OPL-Cloud",
+      OPL_CLOUD_SOURCE_REPOSITORY: "gaofeng21cn/one-person-lab-cloud",
       CLOUD_HEAD_SHA: headSha,
       CLOUD_MAIN_SHA: mainSha,
       CLOUD_CANDIDATE_MERGED: merged ? "true" : "false"
@@ -2313,7 +2313,7 @@ test("image release accepts only a full Cloud commit contained in the workflow r
 
   const accepted = runCloudSourceGate(verify, cloudCandidateSha);
   assert.equal(accepted.status, 0, accepted.stderr);
-  assert.match(accepted.stderr, /git fetch --no-tags https:\/\/github\.com\/RenDeHuang\/OPL-Cloud\.git main:refs\/remotes\/release-source\/main/);
+  assert.match(accepted.stderr, /git fetch --no-tags https:\/\/github\.com\/gaofeng21cn\/one-person-lab-cloud\.git main:refs\/remotes\/release-source\/main/);
   assert.match(accepted.stderr, /git merge-base --is-ancestor/);
 
   for (const invalidSha of ["main", "abcdef0", "g".repeat(40), "c".repeat(39), "c".repeat(41)]) {

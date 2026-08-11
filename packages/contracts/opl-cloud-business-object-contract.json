@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "owner": "OPL Console",
   "purpose": "Machine-readable requirements for current commercial Console objects.",
   "state": "current",
@@ -13,7 +13,7 @@
   "currentSlice": "Administrator-provisioned owner login, live Sub2API Wallet/Key/Usage facts, multiple independent Workspace subscriptions, live Fabric resource details, Runtime readiness, and Ledger receipts.",
   "customerRenewalAuthority": "workspace",
   "repositoryBoundaries": [
-    "opl-cloud"
+    "one-person-lab-cloud"
   ],
   "serviceBoundaries": {
     "console": "apps/console-ui",
@@ -46,7 +46,7 @@
     "Backup, recovery, sync, transfer, payment orders, and raw provider diagnostics are forbidden Pilot customer surfaces; owned general Key mutation is projected through Control Plane with delegated user credentials."
   ],
   "repoBoundaryRules": [
-    "opl-cloud is the single current implementation repository; standalone Console, Fabric, and Ledger repositories are prototypes only.",
+    "one-person-lab-cloud is the single current product and implementation repository; opl-cloud is an internal artifact and service identifier only.",
     "Console owns UI and product presentation through Control Plane APIs only; Sub2API authenticates customer credentials.",
     "Fabric owns compute, storage, attachment, Workspace runtime, and provider execution boundaries.",
     "Ledger owns evidence, audit, reconciliation, and review policy boundaries."
@@ -54,7 +54,7 @@
   "objectKinds": [
     {
       "kind": "Account",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "control-plane",
       "routeKinds": [
         "read_model",
@@ -73,7 +73,7 @@
     },
     {
       "kind": "User",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "control-plane",
       "routeKind": "read_model",
       "lifecycle": "current",
@@ -90,7 +90,7 @@
     },
     {
       "kind": "Session",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "control-plane",
       "routeKind": "read_model",
       "lifecycle": "current",
@@ -105,7 +105,7 @@
     },
     {
       "kind": "ComputeAllocation",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "fabric",
       "routeKinds": [
         "business_object",
@@ -148,7 +148,7 @@
     },
     {
       "kind": "StorageVolume",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "fabric",
       "routeKind": "business_object",
       "lifecycle": "current",
@@ -174,7 +174,7 @@
     },
     {
       "kind": "StorageAttachment",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "fabric",
       "routeKind": "business_object",
       "lifecycle": "current",
@@ -190,7 +190,7 @@
     },
     {
       "kind": "Workspace",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "control-plane",
       "routeKinds": [
         "business_object",
@@ -234,7 +234,7 @@
     },
     {
       "kind": "Balance",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "control-plane",
       "routeKind": "read_model",
       "lifecycle": "current",
@@ -249,7 +249,7 @@
     },
     {
       "kind": "EvidenceReceipt",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "ledger",
       "routeKind": "read_model",
       "lifecycle": "current",
@@ -264,7 +264,7 @@
     },
     {
       "kind": "FabricOperation",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "fabric",
       "routeKind": "read_model",
       "lifecycle": "current",
@@ -280,7 +280,7 @@
     },
     {
       "kind": "AdminAuditEvent",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "control-plane",
       "routeKind": "read_model",
       "lifecycle": "current",
@@ -294,7 +294,7 @@
     },
     {
       "kind": "SupportTicketMapping",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "control-plane",
       "routeKind": "external_integration",
       "lifecycle": "current",
@@ -310,7 +310,7 @@
     },
     {
       "kind": "Announcement",
-      "ownerRepo": "opl-cloud",
+      "ownerRepo": "one-person-lab-cloud",
       "ownerService": "control-plane",
       "routeKind": "business_object",
       "lifecycle": "current",

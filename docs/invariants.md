@@ -1,10 +1,15 @@
 # Launch Invariants
 
-This file is the mandatory human-readable launch contract for this implementation repository. The target product boundaries come from `https://github.com/gaofeng21cn/one-person-lab-cloud`; the revision reviewed for this freeze is `43830f7bd209be293a1ce6445202a429b6996cda`.
+This file is the mandatory human-readable launch contract for the unified
+`one-person-lab-cloud` repository. Target product boundaries come from
+`docs/architecture.md` in the same repository revision; current implementation
+boundaries come from `docs/implementation-architecture.md`, this file and the
+machine contracts.
 
-The upstream repository owns product architecture. The target `opl-cloud`
-repository owns the reusable Console, Control Plane, Fabric, and Ledger
-implementation. `opl-instance-medopl` owns the selected backend, exact prices,
+The repository owns the reusable Console, Control Plane, Fabric, and Ledger
+implementation together with product architecture. `opl-cloud` remains only an
+internal artifact and service identifier. `opl-instance-medopl` owns the
+selected backend, exact prices,
 provider procurement, deployment state, and runtime evidence for the medopl
 instance. Those instance values remain temporarily co-located here until the
 instance repository is materialized; that migration state must not become a

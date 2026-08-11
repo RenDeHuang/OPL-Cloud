@@ -1,16 +1,39 @@
 # OPL Cloud
 
-OPL Cloud is the reusable implementation of the product defined by
-[`one-person-lab-cloud`](https://github.com/gaofeng21cn/one-person-lab-cloud).
-`one-person-lab` supplies the development framework; this repository owns the
-Console, Control Plane, Fabric, Ledger, and reusable Workspace delivery
-mechanisms. The current medopl/Tencent TKE deployment remains temporarily
-co-located here as instance-migration state.
+OPL Cloud is the cloud product of One Person Lab. This repository is its single
+product and implementation owner: it contains the public architecture,
+whitepaper and roadmap together with Console, Control Plane, Fabric, Ledger,
+Workspace delivery, contracts and release mechanisms. `one-person-lab` supplies
+the development framework and `one-person-lab-app` supplies the local and
+Workspace application experience.
 
-The canonical target repository name is `opl-cloud`. It is the single reusable
-implementation repository; Console, Fabric, and Ledger are logical services,
-not separate current repositories. Concrete installations belong to instance
-repositories. The first commercial instance is `opl-instance-medopl`.
+The canonical repository name is `one-person-lab-cloud`, aligned with
+`one-person-lab-app`. The short identifier `opl-cloud` remains correct for npm,
+images, binaries, services, namespaces, environment variables and runner
+labels. Concrete installations belong to instance repositories; the first
+commercial instance is `opl-instance-medopl`. Current medopl/Tencent TKE values
+remain temporarily co-located here as explicit instance-migration state.
+
+Product target truth starts at [docs/architecture.md](./docs/architecture.md),
+current implementation truth at
+[docs/implementation-architecture.md](./docs/implementation-architecture.md),
+remaining gaps at [docs/roadmap.md](./docs/roadmap.md), and launch invariants at
+[docs/invariants.md](./docs/invariants.md). None of these documents or their
+tests alone proves a deployed runtime or production readiness.
+
+Read the [OPL Cloud whitepaper](https://gaofeng21cn.github.io/one-person-lab-cloud/latest/whitepapers/opl-cloud-whitepaper.html)
+or its [source](./docs/whitepapers/opl-cloud-whitepaper.md).
+
+## Product Surfaces
+
+| Need | Product surface | Responsibility |
+| --- | --- | --- |
+| AI access and usage | **OPL Gateway** | Model access, routing, provider policy and usage signals |
+| Online project work | **OPL Workspace** | Zero or more independent cloud workbenches per account |
+| External Agent use | **OPL Serve** | Exact Service, immutable Revision, Deployment, API, Embed and Hosted UI |
+| Account governance | **OPL Console** | Account onboarding, Workspace lifecycle, policy, quota and billing projection |
+| Data, tools and compute | **OPL Fabric** | Provider-neutral Connect, Compute, Storage, Environments and execution adapters |
+| Evidence continuity | **OPL Ledger** | Append-only receipts, provenance, review and continuation refs |
 
 ## Runtime Boundaries
 
@@ -119,7 +142,7 @@ text only: Console never links or redirects to Sub2API, embeds it, or calls its
 management API from the browser. `OPL_SUB2API_BASE_URL` remains server-only,
 and Cloud does not inject a second Gateway base URL into Runtime.
 
-The React Console refactor in this branch has local `code-complete` evidence
+The current React Console implementation has local `code-complete` evidence
 only. Overall Pilot V2 delivery remains `codeComplete=false`,
 `pilotReady=false`, and `productionProven=false` until the complete release
 gates and separately approved real evidence pass. Only the same immutable
