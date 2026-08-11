@@ -20,6 +20,19 @@
     "configuredProfileSelectionOwner": "instance_repository",
     "implementationScope": "opl-instance-medopl is one concrete Tencent profile instance, not the unique owner of the public Cloud contract.",
     "admittedBindingReadbackOwner": "services/fabric",
+    "requestFields": [
+      "schemaVersion",
+      "launchOperationId",
+      "accountId",
+      "workspaceId",
+      "packageId",
+      "sizeGb",
+      "workspaceImageDigest",
+      "requestHash"
+    ],
+    "forbiddenRequestFields": [
+      "resources"
+    ],
     "responseIdentityFields": [
       "schemaVersion",
       "launchOperationId",
@@ -27,6 +40,23 @@
       "providerProfileRef",
       "bindingRef"
     ]
+  },
+  "stageInput": {
+    "fields": [
+      "binding",
+      "providerProfileRef",
+      "preflightBindingRef",
+      "packageId",
+      "sizeGb",
+      "workspaceImageDigest",
+      "resources",
+      "gatewayCredential"
+    ],
+    "forbiddenFields": [
+      "resumeAuthorizationDigest",
+      "mutationBudget"
+    ],
+    "gatewayCredential": "optional_secret_stage_transport_only_never_hashed_or_persisted"
   },
   "launchBinding": {
     "schemaVersion": 1,
@@ -49,6 +79,167 @@
     "stageSemantics": "control_plane_durable_cursor",
     "actionSemantics": "fabric_mutation_command",
     "immutability": "all_fields_are_immutable_for_one_fabricOperationId"
+  },
+  "stageRequestHash": {
+    "algorithm": "sha256",
+    "digestEncoding": "lowercase_hex",
+    "payloadFields": [
+      "launchRequestHash",
+      "action",
+      "packageId",
+      "sizeGb",
+      "imageDigest",
+      "resources"
+    ],
+    "jsonEncoding": {
+      "characterEncoding": "utf-8",
+      "whitespace": "none",
+      "payloadFieldOrder": [
+        "launchRequestHash",
+        "action",
+        "packageId",
+        "sizeGb",
+        "imageDigest",
+        "resources"
+      ],
+      "resourceFieldOrder": [
+        "computeAllocationId",
+        "computeBindingRef",
+        "storageId",
+        "storageBindingRef",
+        "attachmentId",
+        "attachmentBindingRef",
+        "gatewaySecretRef",
+        "gatewaySecretVersion",
+        "gatewaySecretFingerprint",
+        "secretBindingRef",
+        "runtimeId",
+        "runtimeServiceName",
+        "runtimeUsername",
+        "runtimeUrl",
+        "runtimeCredentialStatus",
+        "runtimeCredentialVersion",
+        "runtimeCredentialSecretRef",
+        "runtimeBindingRef"
+      ],
+      "omitEmptyResourceStrings": true
+    },
+    "bindingProjection": "action_only",
+    "excludedBindingFields": [
+      "schemaVersion",
+      "launchOperationId",
+      "accountId",
+      "workspaceId",
+      "stage",
+      "fabricOperationId",
+      "idempotencyKey",
+      "requestHash",
+      "expectedResourceBinding"
+    ],
+    "excludedStageInputFields": [
+      "providerProfileRef",
+      "preflightBindingRef",
+      "gatewayCredential"
+    ],
+    "consumerModules": [
+      "services/control-plane",
+      "services/fabric"
+    ],
+    "testFixturePolicy": "read_this_goldenVectors_array_without_a_copied_caller_hash_helper",
+    "outsideHashValidation": {
+      "bindingIdentity": "exact_immutable_launch_stage_binding",
+      "providerProfileRef": "exact_admitted_preflight_profile",
+      "preflightBindingRef": "exact_fabric_preflight_record"
+    },
+    "goldenVectors": [
+      {
+        "stage": "ensure_compute_allocation",
+        "payload": {
+          "launchRequestHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "action": "ensure_compute_allocation",
+          "packageId": "basic",
+          "sizeGb": 10,
+          "imageDigest": "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resources": {}
+        },
+        "sha256": "ddb1c0c5195c4e04c1d23230a493da582a2ca56af528a7abcf67d781f81c3fe1"
+      },
+      {
+        "stage": "storage",
+        "payload": {
+          "launchRequestHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "action": "ensure_storage",
+          "packageId": "basic",
+          "sizeGb": 10,
+          "imageDigest": "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resources": {
+            "computeAllocationId": "compute-alpha",
+            "computeBindingRef": "fabric:launch-alpha:ensure_compute_allocation"
+          }
+        },
+        "sha256": "a57a63f5759d1076fea8df8218e250f3799f9d4e2ca806cce3b5d23343d7743b"
+      },
+      {
+        "stage": "attachment",
+        "payload": {
+          "launchRequestHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "action": "ensure_attachment",
+          "packageId": "basic",
+          "sizeGb": 10,
+          "imageDigest": "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resources": {
+            "computeAllocationId": "compute-alpha",
+            "computeBindingRef": "fabric:launch-alpha:ensure_compute_allocation",
+            "storageId": "storage-alpha",
+            "storageBindingRef": "fabric:launch-alpha:storage"
+          }
+        },
+        "sha256": "6a858cf1adce79548fd2db4023821c5240d0793a1b79a7514c46470cd97df7ae"
+      },
+      {
+        "stage": "secret",
+        "payload": {
+          "launchRequestHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "action": "ensure_gateway_secret",
+          "packageId": "basic",
+          "sizeGb": 10,
+          "imageDigest": "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resources": {
+            "computeAllocationId": "compute-alpha",
+            "computeBindingRef": "fabric:launch-alpha:ensure_compute_allocation",
+            "storageId": "storage-alpha",
+            "storageBindingRef": "fabric:launch-alpha:storage",
+            "attachmentId": "attachment-alpha",
+            "attachmentBindingRef": "fabric:launch-alpha:attachment",
+            "gatewaySecretFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        },
+        "sha256": "e8c96970e9b262baf8b3ca2d1aa759cea8df1a4d551f6165591a9c1bec40ab5b"
+      },
+      {
+        "stage": "runtime",
+        "payload": {
+          "launchRequestHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "action": "ensure_runtime",
+          "packageId": "basic",
+          "sizeGb": 10,
+          "imageDigest": "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "resources": {
+            "computeAllocationId": "compute-alpha",
+            "computeBindingRef": "fabric:launch-alpha:ensure_compute_allocation",
+            "storageId": "storage-alpha",
+            "storageBindingRef": "fabric:launch-alpha:storage",
+            "attachmentId": "attachment-alpha",
+            "attachmentBindingRef": "fabric:launch-alpha:attachment",
+            "gatewaySecretRef": "secret-alpha",
+            "gatewaySecretVersion": "1",
+            "gatewaySecretFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "secretBindingRef": "fabric:launch-alpha:secret"
+          }
+        },
+        "sha256": "a6c7feb4ee0a39f752ca68d5a841ce91f88283cd89bb5768638e22f788db63dd"
+      }
+    ]
   },
   "stageOperations": [
     {

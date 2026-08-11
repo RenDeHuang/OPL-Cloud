@@ -71,6 +71,9 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
     forbiddenResultFields: ["phase", "currentDecision"],
     cas: "exact_prior_result_and_launch_identity_single_winner"
   });
+  assert.deepEqual(contract.stageDecision.attemptPersistence.goFields, ["Attempted", "Max", "IdempotencyKey"]);
+  assert.equal(contract.stageDecision.attemptPersistence.maxPerStage, 1);
+  assert.deepEqual(contract.stageDecision.attemptPersistence.forbiddenLegacyFields, ["ChargeAttempted"]);
   assert.equal(contract.stageDecision.fabricOperationBinding, "opl-cloud-fabric-launch-binding-contract.json");
   assert.equal(contract.recovery.route, "POST /api/operator/workspace-launches/{operationId}/resume");
   assert.deepEqual(contract.recovery.requestFields, ["launchVersion", "authorizedStage", "reason", "mutationBudget"]);
@@ -97,8 +100,18 @@ test("Fabric uses explicit immutable launch-stage binding and typed routes", asy
     configuredProfileSelectionOwner: "instance_repository",
     implementationScope: "opl-instance-medopl is one concrete Tencent profile instance, not the unique owner of the public Cloud contract.",
     admittedBindingReadbackOwner: "services/fabric",
+    requestFields: [
+      "schemaVersion", "launchOperationId", "accountId", "workspaceId", "packageId", "sizeGb",
+      "workspaceImageDigest", "requestHash"
+    ],
+    forbiddenRequestFields: ["resources"],
     responseIdentityFields: ["schemaVersion", "launchOperationId", "requestHash", "providerProfileRef", "bindingRef"]
   });
+  assert.deepEqual(contract.stageInput.fields, [
+    "binding", "providerProfileRef", "preflightBindingRef", "packageId", "sizeGb",
+    "workspaceImageDigest", "resources", "gatewayCredential"
+  ]);
+  assert.deepEqual(contract.stageInput.forbiddenFields, ["resumeAuthorizationDigest", "mutationBudget"]);
   assert.deepEqual(contract.launchBinding.fields, [
     "schemaVersion",
     "launchOperationId",
@@ -122,6 +135,18 @@ test("Fabric uses explicit immutable launch-stage binding and typed routes", asy
   ]);
   assert.equal(contract.launchBinding.stageSemantics, "control_plane_durable_cursor");
   assert.equal(contract.launchBinding.actionSemantics, "fabric_mutation_command");
+  assert.deepEqual(contract.stageRequestHash.payloadFields, [
+    "launchRequestHash", "action", "packageId", "sizeGb", "imageDigest", "resources"
+  ]);
+  assert.deepEqual(contract.stageRequestHash.excludedBindingFields, [
+    "schemaVersion", "launchOperationId", "accountId", "workspaceId", "stage", "fabricOperationId",
+    "idempotencyKey", "requestHash", "expectedResourceBinding"
+  ]);
+  assert.deepEqual(contract.stageRequestHash.excludedStageInputFields, [
+    "providerProfileRef", "preflightBindingRef", "gatewayCredential"
+  ]);
+  assert.deepEqual(contract.stageRequestHash.consumerModules, ["services/control-plane", "services/fabric"]);
+  assert.equal(contract.stageRequestHash.goldenVectors.length, 5);
   assert.equal(contract.notOwned.includes("preflight_binding_truth"), false);
   assert.deepEqual(contract.readback.matchFields, contract.launchBinding.fields);
   assert.deepEqual(contract.readback.forbiddenInference, [

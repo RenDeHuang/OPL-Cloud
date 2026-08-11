@@ -61,6 +61,33 @@
       ],
       "cas": "exact_prior_result_and_launch_identity_single_winner"
     },
+    "attemptPersistence": {
+      "reconcilerSource": "services/control-plane/internal/server/workspace_launch_reconciler.go",
+      "stageAdapterSources": [
+        "services/control-plane/internal/server/workspace_launch_account_stages.go",
+        "services/control-plane/internal/server/workspace_launch_fabric_stages.go",
+        "services/control-plane/internal/server/workspace_launch_activation.go"
+      ],
+      "goFields": [
+        "Attempted",
+        "Max",
+        "IdempotencyKey"
+      ],
+      "jsonFields": [
+        "attempted",
+        "max",
+        "idempotencyKey"
+      ],
+      "maxPerStage": 1,
+      "reservationOrder": [
+        "increment_attempted_and_set_idempotency_key",
+        "persist_exact_result_cas",
+        "invoke_stage_mutation"
+      ],
+      "forbiddenLegacyFields": [
+        "ChargeAttempted"
+      ]
+    },
     "fabricOperationBinding": "opl-cloud-fabric-launch-binding-contract.json"
   },
   "recovery": {

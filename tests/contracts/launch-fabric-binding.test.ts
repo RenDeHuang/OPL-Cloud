@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -35,6 +36,21 @@ test("Control Plane owns the launch identity and recovery authorization", async 
     forbiddenResultFields: ["phase", "currentDecision"],
     cas: "exact_prior_result_and_launch_identity_single_winner"
   });
+  assert.deepEqual(contract.stageDecision.attemptPersistence, {
+    reconcilerSource: "services/control-plane/internal/server/workspace_launch_reconciler.go",
+    stageAdapterSources: [
+      "services/control-plane/internal/server/workspace_launch_account_stages.go",
+      "services/control-plane/internal/server/workspace_launch_fabric_stages.go",
+      "services/control-plane/internal/server/workspace_launch_activation.go"
+    ],
+    goFields: ["Attempted", "Max", "IdempotencyKey"],
+    jsonFields: ["attempted", "max", "idempotencyKey"],
+    maxPerStage: 1,
+    reservationOrder: [
+      "increment_attempted_and_set_idempotency_key", "persist_exact_result_cas", "invoke_stage_mutation"
+    ],
+    forbiddenLegacyFields: ["ChargeAttempted"]
+  });
   assert.deepEqual(contract.recovery, {
     authority: "services/control-plane",
     operation: "resume_original_workspace_launch_stage",
@@ -68,7 +84,20 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
     configuredProfileSelectionOwner: "instance_repository",
     implementationScope: "opl-instance-medopl is one concrete Tencent profile instance, not the unique owner of the public Cloud contract.",
     admittedBindingReadbackOwner: "services/fabric",
+    requestFields: [
+      "schemaVersion", "launchOperationId", "accountId", "workspaceId", "packageId", "sizeGb",
+      "workspaceImageDigest", "requestHash"
+    ],
+    forbiddenRequestFields: ["resources"],
     responseIdentityFields: ["schemaVersion", "launchOperationId", "requestHash", "providerProfileRef", "bindingRef"]
+  });
+  assert.deepEqual(contract.stageInput, {
+    fields: [
+      "binding", "providerProfileRef", "preflightBindingRef", "packageId", "sizeGb",
+      "workspaceImageDigest", "resources", "gatewayCredential"
+    ],
+    forbiddenFields: ["resumeAuthorizationDigest", "mutationBudget"],
+    gatewayCredential: "optional_secret_stage_transport_only_never_hashed_or_persisted"
   });
   assert.deepEqual(contract.launchBinding.fields, [
     "schemaVersion", "launchOperationId", "accountId", "workspaceId", "stage", "action",
@@ -84,6 +113,25 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
   );
   assert.equal(contract.launchBinding.stageSemantics, "control_plane_durable_cursor");
   assert.equal(contract.launchBinding.actionSemantics, "fabric_mutation_command");
+  assert.deepEqual(contract.stageRequestHash.payloadFields, [
+    "launchRequestHash", "action", "packageId", "sizeGb", "imageDigest", "resources"
+  ]);
+  assert.deepEqual(contract.stageRequestHash.jsonEncoding.payloadFieldOrder, contract.stageRequestHash.payloadFields);
+  assert.equal(contract.stageRequestHash.algorithm, "sha256");
+  assert.equal(contract.stageRequestHash.digestEncoding, "lowercase_hex");
+  assert.equal(contract.stageRequestHash.bindingProjection, "action_only");
+  assert.deepEqual(contract.stageRequestHash.excludedBindingFields, [
+    "schemaVersion", "launchOperationId", "accountId", "workspaceId", "stage", "fabricOperationId",
+    "idempotencyKey", "requestHash", "expectedResourceBinding"
+  ]);
+  assert.deepEqual(contract.stageRequestHash.excludedStageInputFields, [
+    "providerProfileRef", "preflightBindingRef", "gatewayCredential"
+  ]);
+  assert.deepEqual(contract.stageRequestHash.consumerModules, ["services/control-plane", "services/fabric"]);
+  assert.equal(
+    contract.stageRequestHash.testFixturePolicy,
+    "read_this_goldenVectors_array_without_a_copied_caller_hash_helper"
+  );
   assert.deepEqual(contract.readback.matchFields, contract.launchBinding.fields);
   assert.deepEqual(contract.readback.forbiddenInference, [
     "idempotency_suffix", "unscoped_operation_list", "provider_tag", "provider_resource_name"
@@ -100,6 +148,23 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
     contract.stageOperations.map((stage: Record<string, string>) => [stage.stage, stage.action]),
     expectedStages
   );
+  assert.equal(contract.stageRequestHash.goldenVectors.length, expectedStages.length);
+  for (const [index, vector] of contract.stageRequestHash.goldenVectors.entries()) {
+    assert.deepEqual([vector.stage, vector.payload.action], expectedStages[index]);
+    assert.deepEqual(Object.keys(vector.payload), contract.stageRequestHash.payloadFields);
+    const resourceOrder = Object.keys(vector.payload.resources).map((field) =>
+      contract.stageRequestHash.jsonEncoding.resourceFieldOrder.indexOf(field)
+    );
+    assert.equal(resourceOrder.every((position) => position >= 0), true, `${vector.stage}:resource fields`);
+    assert.deepEqual(resourceOrder, [...resourceOrder].sort((left, right) => left - right), `${vector.stage}:resource order`);
+    const digest = createHash("sha256").update(JSON.stringify(vector.payload), "utf8").digest("hex");
+    assert.equal(digest, vector.sha256, vector.stage);
+    const serialized = JSON.stringify(vector.payload);
+    for (const excluded of [
+      ...contract.stageRequestHash.excludedBindingFields,
+      ...contract.stageRequestHash.excludedStageInputFields
+    ]) assert.equal(serialized.includes(`\"${excluded}\"`), false, `${vector.stage}:${excluded}`);
+  }
   assert.equal(contract.notOwned.includes("preflight_binding_truth"), false);
 
   const serialized = JSON.stringify(contract);
