@@ -56,18 +56,6 @@ func (f AnnouncementReadFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.V
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AnnouncementReadMutation", m)
 }
 
-// The ArchiveJobFunc type is an adapter to allow the use of ordinary
-// function as ArchiveJob mutator.
-type ArchiveJobFunc func(context.Context, *ent.ArchiveJobMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ArchiveJobFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ArchiveJobMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ArchiveJobMutation", m)
-}
-
 // The ArchivedAdminAuditEventFunc type is an adapter to allow the use of ordinary
 // function as ArchivedAdminAuditEvent mutator.
 type ArchivedAdminAuditEventFunc func(context.Context, *ent.ArchivedAdminAuditEventMutation) (ent.Value, error)
@@ -78,54 +66,6 @@ func (f ArchivedAdminAuditEventFunc) Mutate(ctx context.Context, m ent.Mutation)
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ArchivedAdminAuditEventMutation", m)
-}
-
-// The ArchivedComputeAllocationFunc type is an adapter to allow the use of ordinary
-// function as ArchivedComputeAllocation mutator.
-type ArchivedComputeAllocationFunc func(context.Context, *ent.ArchivedComputeAllocationMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ArchivedComputeAllocationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ArchivedComputeAllocationMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ArchivedComputeAllocationMutation", m)
-}
-
-// The ArchivedStorageAttachmentFunc type is an adapter to allow the use of ordinary
-// function as ArchivedStorageAttachment mutator.
-type ArchivedStorageAttachmentFunc func(context.Context, *ent.ArchivedStorageAttachmentMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ArchivedStorageAttachmentFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ArchivedStorageAttachmentMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ArchivedStorageAttachmentMutation", m)
-}
-
-// The ArchivedStorageVolumeFunc type is an adapter to allow the use of ordinary
-// function as ArchivedStorageVolume mutator.
-type ArchivedStorageVolumeFunc func(context.Context, *ent.ArchivedStorageVolumeMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ArchivedStorageVolumeFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ArchivedStorageVolumeMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ArchivedStorageVolumeMutation", m)
-}
-
-// The ArchivedWorkspaceFunc type is an adapter to allow the use of ordinary
-// function as ArchivedWorkspace mutator.
-type ArchivedWorkspaceFunc func(context.Context, *ent.ArchivedWorkspaceMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ArchivedWorkspaceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ArchivedWorkspaceMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ArchivedWorkspaceMutation", m)
 }
 
 // The AuthAttemptFunc type is an adapter to allow the use of ordinary
@@ -162,18 +102,6 @@ func (f ComputeAllocationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ComputeAllocationMutation", m)
-}
-
-// The ExecutionRequestFunc type is an adapter to allow the use of ordinary
-// function as ExecutionRequest mutator.
-type ExecutionRequestFunc func(context.Context, *ent.ExecutionRequestMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ExecutionRequestFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ExecutionRequestMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ExecutionRequestMutation", m)
 }
 
 // The MembershipFunc type is an adapter to allow the use of ordinary

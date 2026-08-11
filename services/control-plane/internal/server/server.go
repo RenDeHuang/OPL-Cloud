@@ -65,8 +65,8 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	if providerReconcileWorkerEnabled() {
 		app.startProviderReconcileWorker(context.Background(), service, providerReconcileInterval())
 	}
-	if archiveRetentionWorkerEnabled() {
-		app.startArchiveRetentionWorker(context.Background(), archiveRetentionWorkerInterval())
+	if retentionWorkerEnabled() {
+		app.startRetentionWorker(context.Background(), retentionWorkerInterval())
 	}
 	mux := http.NewServeMux()
 	registerCoreRoutes(mux, app, service)
@@ -95,6 +95,7 @@ func retiredConsoleAPI(method, path string) bool {
 	}
 	if path == "/api/projects" || strings.HasPrefix(path, "/api/projects/") ||
 		path == "/api/execution-requests" || strings.HasPrefix(path, "/api/execution-requests/") ||
+		path == "/api/operator/archive-terminal-resources" ||
 		path == "/api/workspace-backups" || strings.HasPrefix(path, "/api/workspace-backups/") || strings.HasPrefix(path, "/api/payment") || strings.HasPrefix(path, "/api/orders") ||
 		strings.HasPrefix(path, "/api/api-keys") || strings.HasPrefix(path, "/api/keys") ||
 		strings.HasPrefix(path, "/api/users") || strings.HasPrefix(path, "/api/compute-allocations") ||

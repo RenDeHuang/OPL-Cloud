@@ -84,22 +84,6 @@ var (
 		Columns:    ControlPlaneAnnouncementReadsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneAnnouncementReadsColumns[0]},
 	}
-	// ControlPlaneArchiveJobsColumns holds the columns for the "control_plane_archive_jobs" table.
-	ControlPlaneArchiveJobsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "resource_kind", Type: field.TypeString, Default: ""},
-		{Name: "status", Type: field.TypeString, Default: ""},
-		{Name: "reason", Type: field.TypeString, Default: ""},
-		{Name: "amount_cents", Type: field.TypeInt64, Default: 0},
-	}
-	// ControlPlaneArchiveJobsTable holds the schema information for the "control_plane_archive_jobs" table.
-	ControlPlaneArchiveJobsTable = &schema.Table{
-		Name:       "control_plane_archive_jobs",
-		Columns:    ControlPlaneArchiveJobsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneArchiveJobsColumns[0]},
-	}
 	// ControlPlaneArchivedAdminAuditEventsColumns holds the columns for the "control_plane_archived_admin_audit_events" table.
 	ControlPlaneArchivedAdminAuditEventsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -123,86 +107,6 @@ var (
 		Name:       "control_plane_archived_admin_audit_events",
 		Columns:    ControlPlaneArchivedAdminAuditEventsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneArchivedAdminAuditEventsColumns[0]},
-	}
-	// ControlPlaneArchivedComputeAllocationsColumns holds the columns for the "control_plane_archived_compute_allocations" table.
-	ControlPlaneArchivedComputeAllocationsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "account_id", Type: field.TypeString, Default: ""},
-		{Name: "workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_kind", Type: field.TypeString, Default: ""},
-		{Name: "name", Type: field.TypeString, Default: ""},
-		{Name: "status", Type: field.TypeString, Default: ""},
-		{Name: "reason", Type: field.TypeString, Default: ""},
-		{Name: "archived_at", Type: field.TypeTime, Nullable: true},
-	}
-	// ControlPlaneArchivedComputeAllocationsTable holds the schema information for the "control_plane_archived_compute_allocations" table.
-	ControlPlaneArchivedComputeAllocationsTable = &schema.Table{
-		Name:       "control_plane_archived_compute_allocations",
-		Columns:    ControlPlaneArchivedComputeAllocationsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneArchivedComputeAllocationsColumns[0]},
-	}
-	// ControlPlaneArchivedStorageAttachmentsColumns holds the columns for the "control_plane_archived_storage_attachments" table.
-	ControlPlaneArchivedStorageAttachmentsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "account_id", Type: field.TypeString, Default: ""},
-		{Name: "workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_kind", Type: field.TypeString, Default: ""},
-		{Name: "name", Type: field.TypeString, Default: ""},
-		{Name: "status", Type: field.TypeString, Default: ""},
-		{Name: "reason", Type: field.TypeString, Default: ""},
-		{Name: "archived_at", Type: field.TypeTime, Nullable: true},
-	}
-	// ControlPlaneArchivedStorageAttachmentsTable holds the schema information for the "control_plane_archived_storage_attachments" table.
-	ControlPlaneArchivedStorageAttachmentsTable = &schema.Table{
-		Name:       "control_plane_archived_storage_attachments",
-		Columns:    ControlPlaneArchivedStorageAttachmentsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneArchivedStorageAttachmentsColumns[0]},
-	}
-	// ControlPlaneArchivedStorageVolumesColumns holds the columns for the "control_plane_archived_storage_volumes" table.
-	ControlPlaneArchivedStorageVolumesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "account_id", Type: field.TypeString, Default: ""},
-		{Name: "workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_kind", Type: field.TypeString, Default: ""},
-		{Name: "name", Type: field.TypeString, Default: ""},
-		{Name: "status", Type: field.TypeString, Default: ""},
-		{Name: "reason", Type: field.TypeString, Default: ""},
-		{Name: "archived_at", Type: field.TypeTime, Nullable: true},
-	}
-	// ControlPlaneArchivedStorageVolumesTable holds the schema information for the "control_plane_archived_storage_volumes" table.
-	ControlPlaneArchivedStorageVolumesTable = &schema.Table{
-		Name:       "control_plane_archived_storage_volumes",
-		Columns:    ControlPlaneArchivedStorageVolumesColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneArchivedStorageVolumesColumns[0]},
-	}
-	// ControlPlaneArchivedWorkspacesColumns holds the columns for the "control_plane_archived_workspaces" table.
-	ControlPlaneArchivedWorkspacesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "account_id", Type: field.TypeString, Default: ""},
-		{Name: "workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_kind", Type: field.TypeString, Default: ""},
-		{Name: "name", Type: field.TypeString, Default: ""},
-		{Name: "status", Type: field.TypeString, Default: ""},
-		{Name: "reason", Type: field.TypeString, Default: ""},
-		{Name: "archived_at", Type: field.TypeTime, Nullable: true},
-	}
-	// ControlPlaneArchivedWorkspacesTable holds the schema information for the "control_plane_archived_workspaces" table.
-	ControlPlaneArchivedWorkspacesTable = &schema.Table{
-		Name:       "control_plane_archived_workspaces",
-		Columns:    ControlPlaneArchivedWorkspacesColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneArchivedWorkspacesColumns[0]},
 	}
 	// ControlPlaneAuthAttemptsColumns holds the columns for the "control_plane_auth_attempts" table.
 	ControlPlaneAuthAttemptsColumns = []*schema.Column{
@@ -279,34 +183,6 @@ var (
 		Name:       "control_plane_compute_allocations",
 		Columns:    ControlPlaneComputeAllocationsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneComputeAllocationsColumns[0]},
-	}
-	// ControlPlaneExecutionRequestsColumns holds the columns for the "control_plane_execution_requests" table.
-	ControlPlaneExecutionRequestsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "organization_id", Type: field.TypeString},
-		{Name: "workspace_id", Type: field.TypeString},
-		{Name: "project_id", Type: field.TypeString},
-		{Name: "task_id", Type: field.TypeString},
-		{Name: "actor_user_id", Type: field.TypeString},
-		{Name: "approval_id", Type: field.TypeString, Default: ""},
-		{Name: "approval_status", Type: field.TypeString, Default: "pending"},
-		{Name: "approved_by", Type: field.TypeString, Default: ""},
-		{Name: "approved_at", Type: field.TypeString, Default: ""},
-		{Name: "status", Type: field.TypeString, Default: "awaiting_approval"},
-		{Name: "environment_ref", Type: field.TypeString, Default: ""},
-		{Name: "job_id", Type: field.TypeString, Default: ""},
-		{Name: "receipt_id", Type: field.TypeString, Default: ""},
-		{Name: "continuation_id", Type: field.TypeString, Default: ""},
-		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
-		{Name: "version", Type: field.TypeInt64, Default: 1},
-	}
-	// ControlPlaneExecutionRequestsTable holds the schema information for the "control_plane_execution_requests" table.
-	ControlPlaneExecutionRequestsTable = &schema.Table{
-		Name:       "control_plane_execution_requests",
-		Columns:    ControlPlaneExecutionRequestsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneExecutionRequestsColumns[0]},
 	}
 	// ControlPlaneMembershipsColumns holds the columns for the "control_plane_memberships" table.
 	ControlPlaneMembershipsColumns = []*schema.Column{
@@ -690,16 +566,10 @@ var (
 		ControlPlaneAdminAuditEventsTable,
 		ControlPlaneAnnouncementsTable,
 		ControlPlaneAnnouncementReadsTable,
-		ControlPlaneArchiveJobsTable,
 		ControlPlaneArchivedAdminAuditEventsTable,
-		ControlPlaneArchivedComputeAllocationsTable,
-		ControlPlaneArchivedStorageAttachmentsTable,
-		ControlPlaneArchivedStorageVolumesTable,
-		ControlPlaneArchivedWorkspacesTable,
 		ControlPlaneAuthAttemptsTable,
 		ControlPlaneBillingReconciliationTable,
 		ControlPlaneComputeAllocationsTable,
-		ControlPlaneExecutionRequestsTable,
 		ControlPlaneMembershipsTable,
 		ControlPlaneOrganizationsTable,
 		ControlPlaneProductionE2eRecordsTable,
@@ -729,23 +599,8 @@ func init() {
 	ControlPlaneAnnouncementReadsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_announcement_reads",
 	}
-	ControlPlaneArchiveJobsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_archive_jobs",
-	}
 	ControlPlaneArchivedAdminAuditEventsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_archived_admin_audit_events",
-	}
-	ControlPlaneArchivedComputeAllocationsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_archived_compute_allocations",
-	}
-	ControlPlaneArchivedStorageAttachmentsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_archived_storage_attachments",
-	}
-	ControlPlaneArchivedStorageVolumesTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_archived_storage_volumes",
-	}
-	ControlPlaneArchivedWorkspacesTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_archived_workspaces",
 	}
 	ControlPlaneAuthAttemptsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_auth_attempts",
@@ -755,9 +610,6 @@ func init() {
 	}
 	ControlPlaneComputeAllocationsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_compute_allocations",
-	}
-	ControlPlaneExecutionRequestsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_execution_requests",
 	}
 	ControlPlaneMembershipsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_memberships",

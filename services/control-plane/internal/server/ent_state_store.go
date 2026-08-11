@@ -922,21 +922,6 @@ var (
 		textField("Reason", "SetReason", "reason"),
 		textField("URL", "SetURL", "url"),
 	}
-	archiveJobEntFields = []entRecordField{
-		textField("ResourceKind", "SetResourceKind", "resourceKind"),
-		textField("Status", "SetStatus", "status"),
-		textField("Reason", "SetReason", "reason"),
-		intField("AmountCents", "SetAmountCents", "amountCents"),
-	}
-	archivedResourceEntFields = []entRecordField{
-		textField("AccountID", "SetAccountID", "accountId"),
-		textField("WorkspaceID", "SetWorkspaceID", "workspaceId"),
-		textField("ResourceID", "SetResourceID", "resourceId"),
-		textField("ResourceKind", "SetResourceKind", "resourceKind"),
-		textField("Name", "SetName", "name"),
-		textField("Status", "SetStatus", "status"),
-		textField("Reason", "SetReason", "reason"),
-	}
 	reconcileEntFields = []entRecordField{
 		textField("Status", "SetStatus", "status"),
 		textField("GuardStatus", "SetGuardStatus", "guard", "status"),
@@ -2622,129 +2607,7 @@ func (s *postgresEntStateStore) SaveBillingReconciliation(ctx context.Context, r
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.BillingReconciliation.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.BillingReconciliation.Create() }, reconcileEntFields)
 }
 
-func (s *postgresEntStateStore) ArchiveTerminalResources(ctx context.Context, reason string) (map[string]any, error) {
-	tx, err := s.client.Tx(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	now := time.Now().UTC()
-	result := map[string]any{
-		"computeArchived":    0,
-		"storageArchived":    0,
-		"attachmentArchived": 0,
-		"workspaceArchived":  0,
-	}
-
-	computes, err := tx.ComputeAllocation.Query().All(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range computes {
-		if !terminalComputeStatus(row.Status) {
-			continue
-		}
-		if err := saveArchivedResource(ctx, tx.ArchivedComputeAllocation.Create(), "compute", row.ID, row.AccountID, row.WorkspaceID, row.Name, row.Status, reason, now); err != nil {
-			return nil, err
-		}
-		if _, err := tx.ComputeAllocation.Delete().Where(computeallocation.ID(row.ID)).Exec(ctx); err != nil {
-			return nil, err
-		}
-		result["computeArchived"] = result["computeArchived"].(int) + 1
-	}
-
-	storages, err := tx.StorageVolume.Query().All(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range storages {
-		if !terminalStorageStatus(row.Status) {
-			continue
-		}
-		if err := saveArchivedResource(ctx, tx.ArchivedStorageVolume.Create(), "storage", row.ID, row.AccountID, row.WorkspaceID, row.Name, row.Status, reason, now); err != nil {
-			return nil, err
-		}
-		if _, err := tx.StorageVolume.Delete().Where(storagevolume.ID(row.ID)).Exec(ctx); err != nil {
-			return nil, err
-		}
-		result["storageArchived"] = result["storageArchived"].(int) + 1
-	}
-
-	attachments, err := tx.StorageAttachment.Query().All(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range attachments {
-		if !terminalAttachmentStatus(row.Status) {
-			continue
-		}
-		if err := saveArchivedResource(ctx, tx.ArchivedStorageAttachment.Create(), "attachment", row.ID, row.AccountID, row.WorkspaceID, row.ID, row.Status, reason, now); err != nil {
-			return nil, err
-		}
-		if _, err := tx.StorageAttachment.Delete().Where(storageattachment.ID(row.ID)).Exec(ctx); err != nil {
-			return nil, err
-		}
-		result["attachmentArchived"] = result["attachmentArchived"].(int) + 1
-	}
-
-	workspaces, err := tx.Workspace.Query().All(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range workspaces {
-		if !terminalWorkspaceStatus(firstNonEmpty(row.State, row.Status)) {
-			continue
-		}
-		if err := saveArchivedResource(ctx, tx.ArchivedWorkspace.Create(), "workspace", row.ID, firstNonEmpty(row.OwnerAccountID, row.AccountID), row.ID, row.Name, firstNonEmpty(row.State, row.Status), reason, now); err != nil {
-			return nil, err
-		}
-		if _, err := tx.Workspace.Delete().Where(workspace.ID(row.ID)).Exec(ctx); err != nil {
-			return nil, err
-		}
-		result["workspaceArchived"] = result["workspaceArchived"].(int) + 1
-	}
-
-	total := result["computeArchived"].(int) + result["storageArchived"].(int) + result["attachmentArchived"].(int) + result["workspaceArchived"].(int)
-	if total > 0 {
-		if err := tx.ArchiveJob.Create().
-			SetID("archive-job-" + stableID(now.Format(time.RFC3339Nano), reason)[:12]).
-			SetResourceKind("terminal_control_plane_resources").
-			SetStatus("succeeded").
-			SetReason(reason).
-			SetAmountCents(int64(total)).
-			SetCreatedAt(now).
-			SetUpdatedAt(now).
-			Exec(ctx); err != nil {
-			return nil, err
-		}
-	}
-	result["archived"] = total
-	result["reason"] = reason
-	return result, tx.Commit()
-}
-
 func (s *postgresEntStateStore) ArchiveState(ctx context.Context) (map[string]any, error) {
-	jobs, err := loadEventRows(ctx, s.client.ArchiveJob.Query().All, archiveJobEntFields)
-	if err != nil {
-		return nil, err
-	}
-	computes, err := loadEventRows(ctx, s.client.ArchivedComputeAllocation.Query().All, archivedResourceEntFields)
-	if err != nil {
-		return nil, err
-	}
-	storages, err := loadEventRows(ctx, s.client.ArchivedStorageVolume.Query().All, archivedResourceEntFields)
-	if err != nil {
-		return nil, err
-	}
-	attachments, err := loadEventRows(ctx, s.client.ArchivedStorageAttachment.Query().All, archivedResourceEntFields)
-	if err != nil {
-		return nil, err
-	}
-	workspaces, err := loadEventRows(ctx, s.client.ArchivedWorkspace.Query().All, archivedResourceEntFields)
-	if err != nil {
-		return nil, err
-	}
 	auditEvents, err := loadEventRows(ctx, s.client.ArchivedAdminAuditEvent.Query().All, auditEntFields)
 	if err != nil {
 		return nil, err
@@ -2753,15 +2616,7 @@ func (s *postgresEntStateStore) ArchiveState(ctx context.Context) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	resources := make([]any, 0, len(computes)+len(storages)+len(attachments)+len(workspaces))
-	for _, rows := range [][]controlPlaneRecord{computes, storages, attachments, workspaces} {
-		for _, row := range rows {
-			resources = append(resources, row)
-		}
-	}
 	return map[string]any{
-		"jobs":             rowsAsAny(jobs),
-		"resources":        resources,
 		"adminAuditEvents": rowsAsAny(auditEvents),
 		"productionE2E":    productionE2ESummary(e2eRecords),
 		"retentionPolicy":  currentRetentionPolicy().dto(),
@@ -2802,24 +2657,11 @@ func (s *postgresEntStateStore) ApplyRetention(ctx context.Context, policy reten
 		result["supportDeleted"] = deleted
 	}
 	if cutoff := policy.cutoff(policy.ProductionE2EDays); !cutoff.IsZero() {
-		deleted, err := tx.ProductionE2ERecord.Delete().Where(
-			productione2erecord.CreatedAtLT(cutoff),
-			productione2erecord.ReasonNEQ(recoveredWorkspaceE2EAttemptReason),
-		).Exec(ctx)
+		deleted, err := tx.ProductionE2ERecord.Delete().Where(productione2erecord.CreatedAtLT(cutoff)).Exec(ctx)
 		if err != nil {
 			return nil, err
 		}
 		result["productionE2EDeleted"] = deleted
-	}
-	if err := tx.ArchiveJob.Create().
-		SetID("archive-job-" + stableID(time.Now().UTC().Format(time.RFC3339Nano), "scheduled_retention")[:12]).
-		SetResourceKind("retention_policy").
-		SetStatus("succeeded").
-		SetReason("scheduled_retention").
-		SetCreatedAt(time.Now().UTC()).
-		SetUpdatedAt(time.Now().UTC()).
-		Exec(ctx); err != nil {
-		return nil, err
 	}
 	return result, tx.Commit()
 }
@@ -3042,25 +2884,6 @@ func filteredEvents(rows []controlPlaneRecord, accountID string) []map[string]an
 		out = append(out, cloneMap(row))
 	}
 	return out
-}
-
-func saveArchivedResource(ctx context.Context, builder any, kind string, id string, accountID string, workspaceID string, name string, status string, reason string, archivedAt time.Time) error {
-	callSetter(builder, "SetID", "archived-"+kind+"-"+id)
-	callSetter(builder, "SetAccountID", accountID)
-	callSetter(builder, "SetWorkspaceID", workspaceID)
-	callSetter(builder, "SetResourceID", id)
-	callSetter(builder, "SetResourceKind", kind)
-	callSetter(builder, "SetName", name)
-	callSetter(builder, "SetStatus", status)
-	callSetter(builder, "SetReason", reason)
-	callSetter(builder, "SetArchivedAt", archivedAt)
-	callSetter(builder, "SetCreatedAt", archivedAt)
-	callSetter(builder, "SetUpdatedAt", archivedAt)
-	err := execCreate(ctx, builder)
-	if controlplaneent.IsConstraintError(err) {
-		return nil
-	}
-	return err
 }
 
 func callSetter(builder any, name string, value any) {

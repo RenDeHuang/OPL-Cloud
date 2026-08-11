@@ -1691,30 +1691,14 @@ func TestPersistDerivesAttachmentAccountFromExistingFacts(t *testing.T) {
 	}
 }
 
-func TestArchiveTerminalResourcesRemovesCurrentState(t *testing.T) {
-	app := newControlPlaneApp()
-	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-dead", "status": "destroyed"}))
-	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-dead", "status": "destroyed"}))
-	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{"id": "attach-dead", "status": "detached"}))
-	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{"id": "ws-dead", "state": "unrecoverable"}))
-
-	result, err := app.archiveTerminalResources(context.Background(), map[string]any{"reason": "test"})
-	if err != nil {
-		t.Fatalf("archive terminal resources: %v", err)
-	}
-	if result["currentStateRemoved"] != 4 {
-		t.Fatalf("archive removed count = %#v, want 4", result)
-	}
-	if len(app.listComputes("")) != 0 || len(app.listStorages("")) != 0 || len(app.listAttachments("")) != 0 || len(app.listWorkspaces("")) != 0 {
-		t.Fatalf("terminal resources still in current state")
-	}
-}
-
-func TestArchiveStateEndpointReturnsBackendArchiveAndRetentionPolicy(t *testing.T) {
+func TestArchiveStateEndpointReturnsRetentionEvidenceAndPolicy(t *testing.T) {
 	path := t.TempDir() + "/control-plane-state.sqlite"
-	store := NewTestEntStateStore(t, path)
-	if err := store.SaveCompute(context.Background(), map[string]any{"id": "compute-dead", "accountId": "acct-alpha", "status": "destroyed"}); err != nil {
-		t.Fatalf("seed terminal compute: %v", err)
+	store := NewTestEntStateStore(t, path).(*postgresEntStateStore)
+	if err := store.SaveAuditEvent(context.Background(), map[string]any{"id": "audit-old", "action": "test", "createdAt": "2000-01-01T00:00:00Z"}); err != nil {
+		t.Fatalf("seed old audit event: %v", err)
+	}
+	if _, err := store.ApplyRetention(context.Background(), retentionPolicy{AdminAuditDays: 1}); err != nil {
+		t.Fatalf("apply retention: %v", err)
 	}
 	service := newTestService(fakeLedgerClient{}, &fakeFabricClient{})
 	server, err := NewPersistentServer(service, store)
@@ -1722,7 +1706,6 @@ func TestArchiveStateEndpointReturnsBackendArchiveAndRetentionPolicy(t *testing.
 		t.Fatalf("server: %v", err)
 	}
 	admin := operatorSessionForTest(t, server)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/operator/archive-terminal-resources", `{"confirm":true,"reason":"test_archive_query"}`)
 
 	rec := requestWithSession(t, server, admin, http.MethodGet, "/api/operator/archive", "")
 	if rec.Code != http.StatusOK {
@@ -1732,8 +1715,14 @@ func TestArchiveStateEndpointReturnsBackendArchiveAndRetentionPolicy(t *testing.
 	if err := json.NewDecoder(rec.Body).Decode(&archive); err != nil {
 		t.Fatalf("decode archive state: %v", err)
 	}
-	if len(archive["resources"].([]any)) == 0 || archive["retentionPolicy"].(map[string]any)["adminAuditDays"] == nil {
-		t.Fatalf("archive state must come from backend archive facts and policy: %#v", archive)
+	if len(archive["adminAuditEvents"].([]any)) != 1 || archive["retentionPolicy"].(map[string]any)["adminAuditDays"] == nil {
+		t.Fatalf("archive state must come from retained audit facts and policy: %#v", archive)
+	}
+	if _, exists := archive["resources"]; exists {
+		t.Fatalf("retired resource archive projection remains: %#v", archive)
+	}
+	if _, exists := archive["jobs"]; exists {
+		t.Fatalf("retired archive job projection remains: %#v", archive)
 	}
 }
 
@@ -2066,7 +2055,6 @@ func TestHighRiskMutationsRequireBackendConfirmation(t *testing.T) {
 		body   string
 	}{
 		{http.MethodPost, "/api/billing/reconciliation", `{"report":{"id":"recon-confirm","generatedAt":"2026-07-06T00:00:00Z"}}`},
-		{http.MethodPost, "/api/operator/archive-terminal-resources", `{"reason":"test"}`},
 	} {
 		rec := requestWithSession(t, server, admin, tc.method, tc.path, tc.body)
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "confirmation_required") {
@@ -2320,7 +2308,6 @@ func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
 		{http.MethodPost, "/api/auth/logout", `{}`},
 		{http.MethodPost, "/api/billing/reconciliation", `{"report":{"id":"recon-test","generatedAt":"2026-07-06T00:00:00Z"}}`},
 		{http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`},
-		{http.MethodPost, "/api/operator/archive-terminal-resources", `{"reason":"test"}`},
 	}
 
 	for _, tc := range cases {

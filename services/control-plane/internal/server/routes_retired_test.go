@@ -35,6 +35,7 @@ func TestRetiredConsoleAPIRoutesAreMethodlessTombstones(t *testing.T) {
 		"/api/execution-requests/request-alpha/execute",
 		"/api/execution-requests/request-alpha/sync",
 		"/api/execution-requests/request-alpha/continuation",
+		"/api/operator/archive-terminal-resources",
 		"/api/workspaces/ws-alpha/backups",
 		"/api/workspace-backups",
 		"/api/workspace-backups/backup-alpha/export",

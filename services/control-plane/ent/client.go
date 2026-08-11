@@ -16,15 +16,9 @@ import (
 	"opl-cloud/services/control-plane/ent/announcement"
 	"opl-cloud/services/control-plane/ent/announcementread"
 	"opl-cloud/services/control-plane/ent/archivedadminauditevent"
-	"opl-cloud/services/control-plane/ent/archivedcomputeallocation"
-	"opl-cloud/services/control-plane/ent/archivedstorageattachment"
-	"opl-cloud/services/control-plane/ent/archivedstoragevolume"
-	"opl-cloud/services/control-plane/ent/archivedworkspace"
-	"opl-cloud/services/control-plane/ent/archivejob"
 	"opl-cloud/services/control-plane/ent/authattempt"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
-	"opl-cloud/services/control-plane/ent/executionrequest"
 	"opl-cloud/services/control-plane/ent/membership"
 	"opl-cloud/services/control-plane/ent/organization"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
@@ -57,26 +51,14 @@ type Client struct {
 	Announcement *AnnouncementClient
 	// AnnouncementRead is the client for interacting with the AnnouncementRead builders.
 	AnnouncementRead *AnnouncementReadClient
-	// ArchiveJob is the client for interacting with the ArchiveJob builders.
-	ArchiveJob *ArchiveJobClient
 	// ArchivedAdminAuditEvent is the client for interacting with the ArchivedAdminAuditEvent builders.
 	ArchivedAdminAuditEvent *ArchivedAdminAuditEventClient
-	// ArchivedComputeAllocation is the client for interacting with the ArchivedComputeAllocation builders.
-	ArchivedComputeAllocation *ArchivedComputeAllocationClient
-	// ArchivedStorageAttachment is the client for interacting with the ArchivedStorageAttachment builders.
-	ArchivedStorageAttachment *ArchivedStorageAttachmentClient
-	// ArchivedStorageVolume is the client for interacting with the ArchivedStorageVolume builders.
-	ArchivedStorageVolume *ArchivedStorageVolumeClient
-	// ArchivedWorkspace is the client for interacting with the ArchivedWorkspace builders.
-	ArchivedWorkspace *ArchivedWorkspaceClient
 	// AuthAttempt is the client for interacting with the AuthAttempt builders.
 	AuthAttempt *AuthAttemptClient
 	// BillingReconciliation is the client for interacting with the BillingReconciliation builders.
 	BillingReconciliation *BillingReconciliationClient
 	// ComputeAllocation is the client for interacting with the ComputeAllocation builders.
 	ComputeAllocation *ComputeAllocationClient
-	// ExecutionRequest is the client for interacting with the ExecutionRequest builders.
-	ExecutionRequest *ExecutionRequestClient
 	// Membership is the client for interacting with the Membership builders.
 	Membership *MembershipClient
 	// Organization is the client for interacting with the Organization builders.
@@ -118,16 +100,10 @@ func (c *Client) init() {
 	c.AdminAuditEvent = NewAdminAuditEventClient(c.config)
 	c.Announcement = NewAnnouncementClient(c.config)
 	c.AnnouncementRead = NewAnnouncementReadClient(c.config)
-	c.ArchiveJob = NewArchiveJobClient(c.config)
 	c.ArchivedAdminAuditEvent = NewArchivedAdminAuditEventClient(c.config)
-	c.ArchivedComputeAllocation = NewArchivedComputeAllocationClient(c.config)
-	c.ArchivedStorageAttachment = NewArchivedStorageAttachmentClient(c.config)
-	c.ArchivedStorageVolume = NewArchivedStorageVolumeClient(c.config)
-	c.ArchivedWorkspace = NewArchivedWorkspaceClient(c.config)
 	c.AuthAttempt = NewAuthAttemptClient(c.config)
 	c.BillingReconciliation = NewBillingReconciliationClient(c.config)
 	c.ComputeAllocation = NewComputeAllocationClient(c.config)
-	c.ExecutionRequest = NewExecutionRequestClient(c.config)
 	c.Membership = NewMembershipClient(c.config)
 	c.Organization = NewOrganizationClient(c.config)
 	c.ProductionE2ERecord = NewProductionE2ERecordClient(c.config)
@@ -231,35 +207,29 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:                       ctx,
-		config:                    cfg,
-		Account:                   NewAccountClient(cfg),
-		AdminAuditEvent:           NewAdminAuditEventClient(cfg),
-		Announcement:              NewAnnouncementClient(cfg),
-		AnnouncementRead:          NewAnnouncementReadClient(cfg),
-		ArchiveJob:                NewArchiveJobClient(cfg),
-		ArchivedAdminAuditEvent:   NewArchivedAdminAuditEventClient(cfg),
-		ArchivedComputeAllocation: NewArchivedComputeAllocationClient(cfg),
-		ArchivedStorageAttachment: NewArchivedStorageAttachmentClient(cfg),
-		ArchivedStorageVolume:     NewArchivedStorageVolumeClient(cfg),
-		ArchivedWorkspace:         NewArchivedWorkspaceClient(cfg),
-		AuthAttempt:               NewAuthAttemptClient(cfg),
-		BillingReconciliation:     NewBillingReconciliationClient(cfg),
-		ComputeAllocation:         NewComputeAllocationClient(cfg),
-		ExecutionRequest:          NewExecutionRequestClient(cfg),
-		Membership:                NewMembershipClient(cfg),
-		Organization:              NewOrganizationClient(cfg),
-		ProductionE2ERecord:       NewProductionE2ERecordClient(cfg),
-		ProjectTaskSyncHead:       NewProjectTaskSyncHeadClient(cfg),
-		RuntimeOperation:          NewRuntimeOperationClient(cfg),
-		Session:                   NewSessionClient(cfg),
-		StorageAttachment:         NewStorageAttachmentClient(cfg),
-		StorageVolume:             NewStorageVolumeClient(cfg),
-		SupportTicketMapping:      NewSupportTicketMappingClient(cfg),
-		User:                      NewUserClient(cfg),
-		Workspace:                 NewWorkspaceClient(cfg),
-		WorkspaceBackup:           NewWorkspaceBackupClient(cfg),
-		WorkspaceSyncEvent:        NewWorkspaceSyncEventClient(cfg),
+		ctx:                     ctx,
+		config:                  cfg,
+		Account:                 NewAccountClient(cfg),
+		AdminAuditEvent:         NewAdminAuditEventClient(cfg),
+		Announcement:            NewAnnouncementClient(cfg),
+		AnnouncementRead:        NewAnnouncementReadClient(cfg),
+		ArchivedAdminAuditEvent: NewArchivedAdminAuditEventClient(cfg),
+		AuthAttempt:             NewAuthAttemptClient(cfg),
+		BillingReconciliation:   NewBillingReconciliationClient(cfg),
+		ComputeAllocation:       NewComputeAllocationClient(cfg),
+		Membership:              NewMembershipClient(cfg),
+		Organization:            NewOrganizationClient(cfg),
+		ProductionE2ERecord:     NewProductionE2ERecordClient(cfg),
+		ProjectTaskSyncHead:     NewProjectTaskSyncHeadClient(cfg),
+		RuntimeOperation:        NewRuntimeOperationClient(cfg),
+		Session:                 NewSessionClient(cfg),
+		StorageAttachment:       NewStorageAttachmentClient(cfg),
+		StorageVolume:           NewStorageVolumeClient(cfg),
+		SupportTicketMapping:    NewSupportTicketMappingClient(cfg),
+		User:                    NewUserClient(cfg),
+		Workspace:               NewWorkspaceClient(cfg),
+		WorkspaceBackup:         NewWorkspaceBackupClient(cfg),
+		WorkspaceSyncEvent:      NewWorkspaceSyncEventClient(cfg),
 	}, nil
 }
 
@@ -277,35 +247,29 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:                       ctx,
-		config:                    cfg,
-		Account:                   NewAccountClient(cfg),
-		AdminAuditEvent:           NewAdminAuditEventClient(cfg),
-		Announcement:              NewAnnouncementClient(cfg),
-		AnnouncementRead:          NewAnnouncementReadClient(cfg),
-		ArchiveJob:                NewArchiveJobClient(cfg),
-		ArchivedAdminAuditEvent:   NewArchivedAdminAuditEventClient(cfg),
-		ArchivedComputeAllocation: NewArchivedComputeAllocationClient(cfg),
-		ArchivedStorageAttachment: NewArchivedStorageAttachmentClient(cfg),
-		ArchivedStorageVolume:     NewArchivedStorageVolumeClient(cfg),
-		ArchivedWorkspace:         NewArchivedWorkspaceClient(cfg),
-		AuthAttempt:               NewAuthAttemptClient(cfg),
-		BillingReconciliation:     NewBillingReconciliationClient(cfg),
-		ComputeAllocation:         NewComputeAllocationClient(cfg),
-		ExecutionRequest:          NewExecutionRequestClient(cfg),
-		Membership:                NewMembershipClient(cfg),
-		Organization:              NewOrganizationClient(cfg),
-		ProductionE2ERecord:       NewProductionE2ERecordClient(cfg),
-		ProjectTaskSyncHead:       NewProjectTaskSyncHeadClient(cfg),
-		RuntimeOperation:          NewRuntimeOperationClient(cfg),
-		Session:                   NewSessionClient(cfg),
-		StorageAttachment:         NewStorageAttachmentClient(cfg),
-		StorageVolume:             NewStorageVolumeClient(cfg),
-		SupportTicketMapping:      NewSupportTicketMappingClient(cfg),
-		User:                      NewUserClient(cfg),
-		Workspace:                 NewWorkspaceClient(cfg),
-		WorkspaceBackup:           NewWorkspaceBackupClient(cfg),
-		WorkspaceSyncEvent:        NewWorkspaceSyncEventClient(cfg),
+		ctx:                     ctx,
+		config:                  cfg,
+		Account:                 NewAccountClient(cfg),
+		AdminAuditEvent:         NewAdminAuditEventClient(cfg),
+		Announcement:            NewAnnouncementClient(cfg),
+		AnnouncementRead:        NewAnnouncementReadClient(cfg),
+		ArchivedAdminAuditEvent: NewArchivedAdminAuditEventClient(cfg),
+		AuthAttempt:             NewAuthAttemptClient(cfg),
+		BillingReconciliation:   NewBillingReconciliationClient(cfg),
+		ComputeAllocation:       NewComputeAllocationClient(cfg),
+		Membership:              NewMembershipClient(cfg),
+		Organization:            NewOrganizationClient(cfg),
+		ProductionE2ERecord:     NewProductionE2ERecordClient(cfg),
+		ProjectTaskSyncHead:     NewProjectTaskSyncHeadClient(cfg),
+		RuntimeOperation:        NewRuntimeOperationClient(cfg),
+		Session:                 NewSessionClient(cfg),
+		StorageAttachment:       NewStorageAttachmentClient(cfg),
+		StorageVolume:           NewStorageVolumeClient(cfg),
+		SupportTicketMapping:    NewSupportTicketMappingClient(cfg),
+		User:                    NewUserClient(cfg),
+		Workspace:               NewWorkspaceClient(cfg),
+		WorkspaceBackup:         NewWorkspaceBackupClient(cfg),
+		WorkspaceSyncEvent:      NewWorkspaceSyncEventClient(cfg),
 	}, nil
 }
 
@@ -335,11 +299,9 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.Account, c.AdminAuditEvent, c.Announcement, c.AnnouncementRead, c.ArchiveJob,
-		c.ArchivedAdminAuditEvent, c.ArchivedComputeAllocation,
-		c.ArchivedStorageAttachment, c.ArchivedStorageVolume, c.ArchivedWorkspace,
-		c.AuthAttempt, c.BillingReconciliation, c.ComputeAllocation,
-		c.ExecutionRequest, c.Membership, c.Organization, c.ProductionE2ERecord,
+		c.Account, c.AdminAuditEvent, c.Announcement, c.AnnouncementRead,
+		c.ArchivedAdminAuditEvent, c.AuthAttempt, c.BillingReconciliation,
+		c.ComputeAllocation, c.Membership, c.Organization, c.ProductionE2ERecord,
 		c.ProjectTaskSyncHead, c.RuntimeOperation, c.Session, c.StorageAttachment,
 		c.StorageVolume, c.SupportTicketMapping, c.User, c.Workspace,
 		c.WorkspaceBackup, c.WorkspaceSyncEvent,
@@ -352,11 +314,9 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.Account, c.AdminAuditEvent, c.Announcement, c.AnnouncementRead, c.ArchiveJob,
-		c.ArchivedAdminAuditEvent, c.ArchivedComputeAllocation,
-		c.ArchivedStorageAttachment, c.ArchivedStorageVolume, c.ArchivedWorkspace,
-		c.AuthAttempt, c.BillingReconciliation, c.ComputeAllocation,
-		c.ExecutionRequest, c.Membership, c.Organization, c.ProductionE2ERecord,
+		c.Account, c.AdminAuditEvent, c.Announcement, c.AnnouncementRead,
+		c.ArchivedAdminAuditEvent, c.AuthAttempt, c.BillingReconciliation,
+		c.ComputeAllocation, c.Membership, c.Organization, c.ProductionE2ERecord,
 		c.ProjectTaskSyncHead, c.RuntimeOperation, c.Session, c.StorageAttachment,
 		c.StorageVolume, c.SupportTicketMapping, c.User, c.Workspace,
 		c.WorkspaceBackup, c.WorkspaceSyncEvent,
@@ -376,26 +336,14 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Announcement.mutate(ctx, m)
 	case *AnnouncementReadMutation:
 		return c.AnnouncementRead.mutate(ctx, m)
-	case *ArchiveJobMutation:
-		return c.ArchiveJob.mutate(ctx, m)
 	case *ArchivedAdminAuditEventMutation:
 		return c.ArchivedAdminAuditEvent.mutate(ctx, m)
-	case *ArchivedComputeAllocationMutation:
-		return c.ArchivedComputeAllocation.mutate(ctx, m)
-	case *ArchivedStorageAttachmentMutation:
-		return c.ArchivedStorageAttachment.mutate(ctx, m)
-	case *ArchivedStorageVolumeMutation:
-		return c.ArchivedStorageVolume.mutate(ctx, m)
-	case *ArchivedWorkspaceMutation:
-		return c.ArchivedWorkspace.mutate(ctx, m)
 	case *AuthAttemptMutation:
 		return c.AuthAttempt.mutate(ctx, m)
 	case *BillingReconciliationMutation:
 		return c.BillingReconciliation.mutate(ctx, m)
 	case *ComputeAllocationMutation:
 		return c.ComputeAllocation.mutate(ctx, m)
-	case *ExecutionRequestMutation:
-		return c.ExecutionRequest.mutate(ctx, m)
 	case *MembershipMutation:
 		return c.Membership.mutate(ctx, m)
 	case *OrganizationMutation:
@@ -959,139 +907,6 @@ func (c *AnnouncementReadClient) mutate(ctx context.Context, m *AnnouncementRead
 	}
 }
 
-// ArchiveJobClient is a client for the ArchiveJob schema.
-type ArchiveJobClient struct {
-	config
-}
-
-// NewArchiveJobClient returns a client for the ArchiveJob from the given config.
-func NewArchiveJobClient(c config) *ArchiveJobClient {
-	return &ArchiveJobClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `archivejob.Hooks(f(g(h())))`.
-func (c *ArchiveJobClient) Use(hooks ...Hook) {
-	c.hooks.ArchiveJob = append(c.hooks.ArchiveJob, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `archivejob.Intercept(f(g(h())))`.
-func (c *ArchiveJobClient) Intercept(interceptors ...Interceptor) {
-	c.inters.ArchiveJob = append(c.inters.ArchiveJob, interceptors...)
-}
-
-// Create returns a builder for creating a ArchiveJob entity.
-func (c *ArchiveJobClient) Create() *ArchiveJobCreate {
-	mutation := newArchiveJobMutation(c.config, OpCreate)
-	return &ArchiveJobCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of ArchiveJob entities.
-func (c *ArchiveJobClient) CreateBulk(builders ...*ArchiveJobCreate) *ArchiveJobCreateBulk {
-	return &ArchiveJobCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *ArchiveJobClient) MapCreateBulk(slice any, setFunc func(*ArchiveJobCreate, int)) *ArchiveJobCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &ArchiveJobCreateBulk{err: fmt.Errorf("calling to ArchiveJobClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*ArchiveJobCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &ArchiveJobCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for ArchiveJob.
-func (c *ArchiveJobClient) Update() *ArchiveJobUpdate {
-	mutation := newArchiveJobMutation(c.config, OpUpdate)
-	return &ArchiveJobUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *ArchiveJobClient) UpdateOne(aj *ArchiveJob) *ArchiveJobUpdateOne {
-	mutation := newArchiveJobMutation(c.config, OpUpdateOne, withArchiveJob(aj))
-	return &ArchiveJobUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *ArchiveJobClient) UpdateOneID(id string) *ArchiveJobUpdateOne {
-	mutation := newArchiveJobMutation(c.config, OpUpdateOne, withArchiveJobID(id))
-	return &ArchiveJobUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for ArchiveJob.
-func (c *ArchiveJobClient) Delete() *ArchiveJobDelete {
-	mutation := newArchiveJobMutation(c.config, OpDelete)
-	return &ArchiveJobDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *ArchiveJobClient) DeleteOne(aj *ArchiveJob) *ArchiveJobDeleteOne {
-	return c.DeleteOneID(aj.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ArchiveJobClient) DeleteOneID(id string) *ArchiveJobDeleteOne {
-	builder := c.Delete().Where(archivejob.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &ArchiveJobDeleteOne{builder}
-}
-
-// Query returns a query builder for ArchiveJob.
-func (c *ArchiveJobClient) Query() *ArchiveJobQuery {
-	return &ArchiveJobQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeArchiveJob},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a ArchiveJob entity by its id.
-func (c *ArchiveJobClient) Get(ctx context.Context, id string) (*ArchiveJob, error) {
-	return c.Query().Where(archivejob.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *ArchiveJobClient) GetX(ctx context.Context, id string) *ArchiveJob {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *ArchiveJobClient) Hooks() []Hook {
-	return c.hooks.ArchiveJob
-}
-
-// Interceptors returns the client interceptors.
-func (c *ArchiveJobClient) Interceptors() []Interceptor {
-	return c.inters.ArchiveJob
-}
-
-func (c *ArchiveJobClient) mutate(ctx context.Context, m *ArchiveJobMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&ArchiveJobCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&ArchiveJobUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&ArchiveJobUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&ArchiveJobDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown ArchiveJob mutation op: %q", m.Op())
-	}
-}
-
 // ArchivedAdminAuditEventClient is a client for the ArchivedAdminAuditEvent schema.
 type ArchivedAdminAuditEventClient struct {
 	config
@@ -1222,538 +1037,6 @@ func (c *ArchivedAdminAuditEventClient) mutate(ctx context.Context, m *ArchivedA
 		return (&ArchivedAdminAuditEventDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown ArchivedAdminAuditEvent mutation op: %q", m.Op())
-	}
-}
-
-// ArchivedComputeAllocationClient is a client for the ArchivedComputeAllocation schema.
-type ArchivedComputeAllocationClient struct {
-	config
-}
-
-// NewArchivedComputeAllocationClient returns a client for the ArchivedComputeAllocation from the given config.
-func NewArchivedComputeAllocationClient(c config) *ArchivedComputeAllocationClient {
-	return &ArchivedComputeAllocationClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `archivedcomputeallocation.Hooks(f(g(h())))`.
-func (c *ArchivedComputeAllocationClient) Use(hooks ...Hook) {
-	c.hooks.ArchivedComputeAllocation = append(c.hooks.ArchivedComputeAllocation, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `archivedcomputeallocation.Intercept(f(g(h())))`.
-func (c *ArchivedComputeAllocationClient) Intercept(interceptors ...Interceptor) {
-	c.inters.ArchivedComputeAllocation = append(c.inters.ArchivedComputeAllocation, interceptors...)
-}
-
-// Create returns a builder for creating a ArchivedComputeAllocation entity.
-func (c *ArchivedComputeAllocationClient) Create() *ArchivedComputeAllocationCreate {
-	mutation := newArchivedComputeAllocationMutation(c.config, OpCreate)
-	return &ArchivedComputeAllocationCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of ArchivedComputeAllocation entities.
-func (c *ArchivedComputeAllocationClient) CreateBulk(builders ...*ArchivedComputeAllocationCreate) *ArchivedComputeAllocationCreateBulk {
-	return &ArchivedComputeAllocationCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *ArchivedComputeAllocationClient) MapCreateBulk(slice any, setFunc func(*ArchivedComputeAllocationCreate, int)) *ArchivedComputeAllocationCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &ArchivedComputeAllocationCreateBulk{err: fmt.Errorf("calling to ArchivedComputeAllocationClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*ArchivedComputeAllocationCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &ArchivedComputeAllocationCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for ArchivedComputeAllocation.
-func (c *ArchivedComputeAllocationClient) Update() *ArchivedComputeAllocationUpdate {
-	mutation := newArchivedComputeAllocationMutation(c.config, OpUpdate)
-	return &ArchivedComputeAllocationUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *ArchivedComputeAllocationClient) UpdateOne(aca *ArchivedComputeAllocation) *ArchivedComputeAllocationUpdateOne {
-	mutation := newArchivedComputeAllocationMutation(c.config, OpUpdateOne, withArchivedComputeAllocation(aca))
-	return &ArchivedComputeAllocationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *ArchivedComputeAllocationClient) UpdateOneID(id string) *ArchivedComputeAllocationUpdateOne {
-	mutation := newArchivedComputeAllocationMutation(c.config, OpUpdateOne, withArchivedComputeAllocationID(id))
-	return &ArchivedComputeAllocationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for ArchivedComputeAllocation.
-func (c *ArchivedComputeAllocationClient) Delete() *ArchivedComputeAllocationDelete {
-	mutation := newArchivedComputeAllocationMutation(c.config, OpDelete)
-	return &ArchivedComputeAllocationDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *ArchivedComputeAllocationClient) DeleteOne(aca *ArchivedComputeAllocation) *ArchivedComputeAllocationDeleteOne {
-	return c.DeleteOneID(aca.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ArchivedComputeAllocationClient) DeleteOneID(id string) *ArchivedComputeAllocationDeleteOne {
-	builder := c.Delete().Where(archivedcomputeallocation.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &ArchivedComputeAllocationDeleteOne{builder}
-}
-
-// Query returns a query builder for ArchivedComputeAllocation.
-func (c *ArchivedComputeAllocationClient) Query() *ArchivedComputeAllocationQuery {
-	return &ArchivedComputeAllocationQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeArchivedComputeAllocation},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a ArchivedComputeAllocation entity by its id.
-func (c *ArchivedComputeAllocationClient) Get(ctx context.Context, id string) (*ArchivedComputeAllocation, error) {
-	return c.Query().Where(archivedcomputeallocation.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *ArchivedComputeAllocationClient) GetX(ctx context.Context, id string) *ArchivedComputeAllocation {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *ArchivedComputeAllocationClient) Hooks() []Hook {
-	return c.hooks.ArchivedComputeAllocation
-}
-
-// Interceptors returns the client interceptors.
-func (c *ArchivedComputeAllocationClient) Interceptors() []Interceptor {
-	return c.inters.ArchivedComputeAllocation
-}
-
-func (c *ArchivedComputeAllocationClient) mutate(ctx context.Context, m *ArchivedComputeAllocationMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&ArchivedComputeAllocationCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&ArchivedComputeAllocationUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&ArchivedComputeAllocationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&ArchivedComputeAllocationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown ArchivedComputeAllocation mutation op: %q", m.Op())
-	}
-}
-
-// ArchivedStorageAttachmentClient is a client for the ArchivedStorageAttachment schema.
-type ArchivedStorageAttachmentClient struct {
-	config
-}
-
-// NewArchivedStorageAttachmentClient returns a client for the ArchivedStorageAttachment from the given config.
-func NewArchivedStorageAttachmentClient(c config) *ArchivedStorageAttachmentClient {
-	return &ArchivedStorageAttachmentClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `archivedstorageattachment.Hooks(f(g(h())))`.
-func (c *ArchivedStorageAttachmentClient) Use(hooks ...Hook) {
-	c.hooks.ArchivedStorageAttachment = append(c.hooks.ArchivedStorageAttachment, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `archivedstorageattachment.Intercept(f(g(h())))`.
-func (c *ArchivedStorageAttachmentClient) Intercept(interceptors ...Interceptor) {
-	c.inters.ArchivedStorageAttachment = append(c.inters.ArchivedStorageAttachment, interceptors...)
-}
-
-// Create returns a builder for creating a ArchivedStorageAttachment entity.
-func (c *ArchivedStorageAttachmentClient) Create() *ArchivedStorageAttachmentCreate {
-	mutation := newArchivedStorageAttachmentMutation(c.config, OpCreate)
-	return &ArchivedStorageAttachmentCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of ArchivedStorageAttachment entities.
-func (c *ArchivedStorageAttachmentClient) CreateBulk(builders ...*ArchivedStorageAttachmentCreate) *ArchivedStorageAttachmentCreateBulk {
-	return &ArchivedStorageAttachmentCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *ArchivedStorageAttachmentClient) MapCreateBulk(slice any, setFunc func(*ArchivedStorageAttachmentCreate, int)) *ArchivedStorageAttachmentCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &ArchivedStorageAttachmentCreateBulk{err: fmt.Errorf("calling to ArchivedStorageAttachmentClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*ArchivedStorageAttachmentCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &ArchivedStorageAttachmentCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for ArchivedStorageAttachment.
-func (c *ArchivedStorageAttachmentClient) Update() *ArchivedStorageAttachmentUpdate {
-	mutation := newArchivedStorageAttachmentMutation(c.config, OpUpdate)
-	return &ArchivedStorageAttachmentUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *ArchivedStorageAttachmentClient) UpdateOne(asa *ArchivedStorageAttachment) *ArchivedStorageAttachmentUpdateOne {
-	mutation := newArchivedStorageAttachmentMutation(c.config, OpUpdateOne, withArchivedStorageAttachment(asa))
-	return &ArchivedStorageAttachmentUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *ArchivedStorageAttachmentClient) UpdateOneID(id string) *ArchivedStorageAttachmentUpdateOne {
-	mutation := newArchivedStorageAttachmentMutation(c.config, OpUpdateOne, withArchivedStorageAttachmentID(id))
-	return &ArchivedStorageAttachmentUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for ArchivedStorageAttachment.
-func (c *ArchivedStorageAttachmentClient) Delete() *ArchivedStorageAttachmentDelete {
-	mutation := newArchivedStorageAttachmentMutation(c.config, OpDelete)
-	return &ArchivedStorageAttachmentDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *ArchivedStorageAttachmentClient) DeleteOne(asa *ArchivedStorageAttachment) *ArchivedStorageAttachmentDeleteOne {
-	return c.DeleteOneID(asa.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ArchivedStorageAttachmentClient) DeleteOneID(id string) *ArchivedStorageAttachmentDeleteOne {
-	builder := c.Delete().Where(archivedstorageattachment.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &ArchivedStorageAttachmentDeleteOne{builder}
-}
-
-// Query returns a query builder for ArchivedStorageAttachment.
-func (c *ArchivedStorageAttachmentClient) Query() *ArchivedStorageAttachmentQuery {
-	return &ArchivedStorageAttachmentQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeArchivedStorageAttachment},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a ArchivedStorageAttachment entity by its id.
-func (c *ArchivedStorageAttachmentClient) Get(ctx context.Context, id string) (*ArchivedStorageAttachment, error) {
-	return c.Query().Where(archivedstorageattachment.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *ArchivedStorageAttachmentClient) GetX(ctx context.Context, id string) *ArchivedStorageAttachment {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *ArchivedStorageAttachmentClient) Hooks() []Hook {
-	return c.hooks.ArchivedStorageAttachment
-}
-
-// Interceptors returns the client interceptors.
-func (c *ArchivedStorageAttachmentClient) Interceptors() []Interceptor {
-	return c.inters.ArchivedStorageAttachment
-}
-
-func (c *ArchivedStorageAttachmentClient) mutate(ctx context.Context, m *ArchivedStorageAttachmentMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&ArchivedStorageAttachmentCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&ArchivedStorageAttachmentUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&ArchivedStorageAttachmentUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&ArchivedStorageAttachmentDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown ArchivedStorageAttachment mutation op: %q", m.Op())
-	}
-}
-
-// ArchivedStorageVolumeClient is a client for the ArchivedStorageVolume schema.
-type ArchivedStorageVolumeClient struct {
-	config
-}
-
-// NewArchivedStorageVolumeClient returns a client for the ArchivedStorageVolume from the given config.
-func NewArchivedStorageVolumeClient(c config) *ArchivedStorageVolumeClient {
-	return &ArchivedStorageVolumeClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `archivedstoragevolume.Hooks(f(g(h())))`.
-func (c *ArchivedStorageVolumeClient) Use(hooks ...Hook) {
-	c.hooks.ArchivedStorageVolume = append(c.hooks.ArchivedStorageVolume, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `archivedstoragevolume.Intercept(f(g(h())))`.
-func (c *ArchivedStorageVolumeClient) Intercept(interceptors ...Interceptor) {
-	c.inters.ArchivedStorageVolume = append(c.inters.ArchivedStorageVolume, interceptors...)
-}
-
-// Create returns a builder for creating a ArchivedStorageVolume entity.
-func (c *ArchivedStorageVolumeClient) Create() *ArchivedStorageVolumeCreate {
-	mutation := newArchivedStorageVolumeMutation(c.config, OpCreate)
-	return &ArchivedStorageVolumeCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of ArchivedStorageVolume entities.
-func (c *ArchivedStorageVolumeClient) CreateBulk(builders ...*ArchivedStorageVolumeCreate) *ArchivedStorageVolumeCreateBulk {
-	return &ArchivedStorageVolumeCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *ArchivedStorageVolumeClient) MapCreateBulk(slice any, setFunc func(*ArchivedStorageVolumeCreate, int)) *ArchivedStorageVolumeCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &ArchivedStorageVolumeCreateBulk{err: fmt.Errorf("calling to ArchivedStorageVolumeClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*ArchivedStorageVolumeCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &ArchivedStorageVolumeCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for ArchivedStorageVolume.
-func (c *ArchivedStorageVolumeClient) Update() *ArchivedStorageVolumeUpdate {
-	mutation := newArchivedStorageVolumeMutation(c.config, OpUpdate)
-	return &ArchivedStorageVolumeUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *ArchivedStorageVolumeClient) UpdateOne(asv *ArchivedStorageVolume) *ArchivedStorageVolumeUpdateOne {
-	mutation := newArchivedStorageVolumeMutation(c.config, OpUpdateOne, withArchivedStorageVolume(asv))
-	return &ArchivedStorageVolumeUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *ArchivedStorageVolumeClient) UpdateOneID(id string) *ArchivedStorageVolumeUpdateOne {
-	mutation := newArchivedStorageVolumeMutation(c.config, OpUpdateOne, withArchivedStorageVolumeID(id))
-	return &ArchivedStorageVolumeUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for ArchivedStorageVolume.
-func (c *ArchivedStorageVolumeClient) Delete() *ArchivedStorageVolumeDelete {
-	mutation := newArchivedStorageVolumeMutation(c.config, OpDelete)
-	return &ArchivedStorageVolumeDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *ArchivedStorageVolumeClient) DeleteOne(asv *ArchivedStorageVolume) *ArchivedStorageVolumeDeleteOne {
-	return c.DeleteOneID(asv.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ArchivedStorageVolumeClient) DeleteOneID(id string) *ArchivedStorageVolumeDeleteOne {
-	builder := c.Delete().Where(archivedstoragevolume.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &ArchivedStorageVolumeDeleteOne{builder}
-}
-
-// Query returns a query builder for ArchivedStorageVolume.
-func (c *ArchivedStorageVolumeClient) Query() *ArchivedStorageVolumeQuery {
-	return &ArchivedStorageVolumeQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeArchivedStorageVolume},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a ArchivedStorageVolume entity by its id.
-func (c *ArchivedStorageVolumeClient) Get(ctx context.Context, id string) (*ArchivedStorageVolume, error) {
-	return c.Query().Where(archivedstoragevolume.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *ArchivedStorageVolumeClient) GetX(ctx context.Context, id string) *ArchivedStorageVolume {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *ArchivedStorageVolumeClient) Hooks() []Hook {
-	return c.hooks.ArchivedStorageVolume
-}
-
-// Interceptors returns the client interceptors.
-func (c *ArchivedStorageVolumeClient) Interceptors() []Interceptor {
-	return c.inters.ArchivedStorageVolume
-}
-
-func (c *ArchivedStorageVolumeClient) mutate(ctx context.Context, m *ArchivedStorageVolumeMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&ArchivedStorageVolumeCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&ArchivedStorageVolumeUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&ArchivedStorageVolumeUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&ArchivedStorageVolumeDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown ArchivedStorageVolume mutation op: %q", m.Op())
-	}
-}
-
-// ArchivedWorkspaceClient is a client for the ArchivedWorkspace schema.
-type ArchivedWorkspaceClient struct {
-	config
-}
-
-// NewArchivedWorkspaceClient returns a client for the ArchivedWorkspace from the given config.
-func NewArchivedWorkspaceClient(c config) *ArchivedWorkspaceClient {
-	return &ArchivedWorkspaceClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `archivedworkspace.Hooks(f(g(h())))`.
-func (c *ArchivedWorkspaceClient) Use(hooks ...Hook) {
-	c.hooks.ArchivedWorkspace = append(c.hooks.ArchivedWorkspace, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `archivedworkspace.Intercept(f(g(h())))`.
-func (c *ArchivedWorkspaceClient) Intercept(interceptors ...Interceptor) {
-	c.inters.ArchivedWorkspace = append(c.inters.ArchivedWorkspace, interceptors...)
-}
-
-// Create returns a builder for creating a ArchivedWorkspace entity.
-func (c *ArchivedWorkspaceClient) Create() *ArchivedWorkspaceCreate {
-	mutation := newArchivedWorkspaceMutation(c.config, OpCreate)
-	return &ArchivedWorkspaceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of ArchivedWorkspace entities.
-func (c *ArchivedWorkspaceClient) CreateBulk(builders ...*ArchivedWorkspaceCreate) *ArchivedWorkspaceCreateBulk {
-	return &ArchivedWorkspaceCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *ArchivedWorkspaceClient) MapCreateBulk(slice any, setFunc func(*ArchivedWorkspaceCreate, int)) *ArchivedWorkspaceCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &ArchivedWorkspaceCreateBulk{err: fmt.Errorf("calling to ArchivedWorkspaceClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*ArchivedWorkspaceCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &ArchivedWorkspaceCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for ArchivedWorkspace.
-func (c *ArchivedWorkspaceClient) Update() *ArchivedWorkspaceUpdate {
-	mutation := newArchivedWorkspaceMutation(c.config, OpUpdate)
-	return &ArchivedWorkspaceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *ArchivedWorkspaceClient) UpdateOne(aw *ArchivedWorkspace) *ArchivedWorkspaceUpdateOne {
-	mutation := newArchivedWorkspaceMutation(c.config, OpUpdateOne, withArchivedWorkspace(aw))
-	return &ArchivedWorkspaceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *ArchivedWorkspaceClient) UpdateOneID(id string) *ArchivedWorkspaceUpdateOne {
-	mutation := newArchivedWorkspaceMutation(c.config, OpUpdateOne, withArchivedWorkspaceID(id))
-	return &ArchivedWorkspaceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for ArchivedWorkspace.
-func (c *ArchivedWorkspaceClient) Delete() *ArchivedWorkspaceDelete {
-	mutation := newArchivedWorkspaceMutation(c.config, OpDelete)
-	return &ArchivedWorkspaceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *ArchivedWorkspaceClient) DeleteOne(aw *ArchivedWorkspace) *ArchivedWorkspaceDeleteOne {
-	return c.DeleteOneID(aw.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ArchivedWorkspaceClient) DeleteOneID(id string) *ArchivedWorkspaceDeleteOne {
-	builder := c.Delete().Where(archivedworkspace.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &ArchivedWorkspaceDeleteOne{builder}
-}
-
-// Query returns a query builder for ArchivedWorkspace.
-func (c *ArchivedWorkspaceClient) Query() *ArchivedWorkspaceQuery {
-	return &ArchivedWorkspaceQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeArchivedWorkspace},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a ArchivedWorkspace entity by its id.
-func (c *ArchivedWorkspaceClient) Get(ctx context.Context, id string) (*ArchivedWorkspace, error) {
-	return c.Query().Where(archivedworkspace.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *ArchivedWorkspaceClient) GetX(ctx context.Context, id string) *ArchivedWorkspace {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *ArchivedWorkspaceClient) Hooks() []Hook {
-	return c.hooks.ArchivedWorkspace
-}
-
-// Interceptors returns the client interceptors.
-func (c *ArchivedWorkspaceClient) Interceptors() []Interceptor {
-	return c.inters.ArchivedWorkspace
-}
-
-func (c *ArchivedWorkspaceClient) mutate(ctx context.Context, m *ArchivedWorkspaceMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&ArchivedWorkspaceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&ArchivedWorkspaceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&ArchivedWorkspaceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&ArchivedWorkspaceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown ArchivedWorkspace mutation op: %q", m.Op())
 	}
 }
 
@@ -2153,139 +1436,6 @@ func (c *ComputeAllocationClient) mutate(ctx context.Context, m *ComputeAllocati
 		return (&ComputeAllocationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown ComputeAllocation mutation op: %q", m.Op())
-	}
-}
-
-// ExecutionRequestClient is a client for the ExecutionRequest schema.
-type ExecutionRequestClient struct {
-	config
-}
-
-// NewExecutionRequestClient returns a client for the ExecutionRequest from the given config.
-func NewExecutionRequestClient(c config) *ExecutionRequestClient {
-	return &ExecutionRequestClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `executionrequest.Hooks(f(g(h())))`.
-func (c *ExecutionRequestClient) Use(hooks ...Hook) {
-	c.hooks.ExecutionRequest = append(c.hooks.ExecutionRequest, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `executionrequest.Intercept(f(g(h())))`.
-func (c *ExecutionRequestClient) Intercept(interceptors ...Interceptor) {
-	c.inters.ExecutionRequest = append(c.inters.ExecutionRequest, interceptors...)
-}
-
-// Create returns a builder for creating a ExecutionRequest entity.
-func (c *ExecutionRequestClient) Create() *ExecutionRequestCreate {
-	mutation := newExecutionRequestMutation(c.config, OpCreate)
-	return &ExecutionRequestCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of ExecutionRequest entities.
-func (c *ExecutionRequestClient) CreateBulk(builders ...*ExecutionRequestCreate) *ExecutionRequestCreateBulk {
-	return &ExecutionRequestCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *ExecutionRequestClient) MapCreateBulk(slice any, setFunc func(*ExecutionRequestCreate, int)) *ExecutionRequestCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &ExecutionRequestCreateBulk{err: fmt.Errorf("calling to ExecutionRequestClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*ExecutionRequestCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &ExecutionRequestCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for ExecutionRequest.
-func (c *ExecutionRequestClient) Update() *ExecutionRequestUpdate {
-	mutation := newExecutionRequestMutation(c.config, OpUpdate)
-	return &ExecutionRequestUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *ExecutionRequestClient) UpdateOne(er *ExecutionRequest) *ExecutionRequestUpdateOne {
-	mutation := newExecutionRequestMutation(c.config, OpUpdateOne, withExecutionRequest(er))
-	return &ExecutionRequestUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *ExecutionRequestClient) UpdateOneID(id string) *ExecutionRequestUpdateOne {
-	mutation := newExecutionRequestMutation(c.config, OpUpdateOne, withExecutionRequestID(id))
-	return &ExecutionRequestUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for ExecutionRequest.
-func (c *ExecutionRequestClient) Delete() *ExecutionRequestDelete {
-	mutation := newExecutionRequestMutation(c.config, OpDelete)
-	return &ExecutionRequestDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *ExecutionRequestClient) DeleteOne(er *ExecutionRequest) *ExecutionRequestDeleteOne {
-	return c.DeleteOneID(er.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ExecutionRequestClient) DeleteOneID(id string) *ExecutionRequestDeleteOne {
-	builder := c.Delete().Where(executionrequest.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &ExecutionRequestDeleteOne{builder}
-}
-
-// Query returns a query builder for ExecutionRequest.
-func (c *ExecutionRequestClient) Query() *ExecutionRequestQuery {
-	return &ExecutionRequestQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeExecutionRequest},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a ExecutionRequest entity by its id.
-func (c *ExecutionRequestClient) Get(ctx context.Context, id string) (*ExecutionRequest, error) {
-	return c.Query().Where(executionrequest.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *ExecutionRequestClient) GetX(ctx context.Context, id string) *ExecutionRequest {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *ExecutionRequestClient) Hooks() []Hook {
-	return c.hooks.ExecutionRequest
-}
-
-// Interceptors returns the client interceptors.
-func (c *ExecutionRequestClient) Interceptors() []Interceptor {
-	return c.inters.ExecutionRequest
-}
-
-func (c *ExecutionRequestClient) mutate(ctx context.Context, m *ExecutionRequestMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&ExecutionRequestCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&ExecutionRequestUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&ExecutionRequestUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&ExecutionRequestDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown ExecutionRequest mutation op: %q", m.Op())
 	}
 }
 
@@ -4021,21 +3171,19 @@ func (c *WorkspaceSyncEventClient) mutate(ctx context.Context, m *WorkspaceSyncE
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Account, AdminAuditEvent, Announcement, AnnouncementRead, ArchiveJob,
-		ArchivedAdminAuditEvent, ArchivedComputeAllocation, ArchivedStorageAttachment,
-		ArchivedStorageVolume, ArchivedWorkspace, AuthAttempt, BillingReconciliation,
-		ComputeAllocation, ExecutionRequest, Membership, Organization,
-		ProductionE2ERecord, ProjectTaskSyncHead, RuntimeOperation, Session,
-		StorageAttachment, StorageVolume, SupportTicketMapping, User, Workspace,
-		WorkspaceBackup, WorkspaceSyncEvent []ent.Hook
+		Account, AdminAuditEvent, Announcement, AnnouncementRead,
+		ArchivedAdminAuditEvent, AuthAttempt, BillingReconciliation, ComputeAllocation,
+		Membership, Organization, ProductionE2ERecord, ProjectTaskSyncHead,
+		RuntimeOperation, Session, StorageAttachment, StorageVolume,
+		SupportTicketMapping, User, Workspace, WorkspaceBackup,
+		WorkspaceSyncEvent []ent.Hook
 	}
 	inters struct {
-		Account, AdminAuditEvent, Announcement, AnnouncementRead, ArchiveJob,
-		ArchivedAdminAuditEvent, ArchivedComputeAllocation, ArchivedStorageAttachment,
-		ArchivedStorageVolume, ArchivedWorkspace, AuthAttempt, BillingReconciliation,
-		ComputeAllocation, ExecutionRequest, Membership, Organization,
-		ProductionE2ERecord, ProjectTaskSyncHead, RuntimeOperation, Session,
-		StorageAttachment, StorageVolume, SupportTicketMapping, User, Workspace,
-		WorkspaceBackup, WorkspaceSyncEvent []ent.Interceptor
+		Account, AdminAuditEvent, Announcement, AnnouncementRead,
+		ArchivedAdminAuditEvent, AuthAttempt, BillingReconciliation, ComputeAllocation,
+		Membership, Organization, ProductionE2ERecord, ProjectTaskSyncHead,
+		RuntimeOperation, Session, StorageAttachment, StorageVolume,
+		SupportTicketMapping, User, Workspace, WorkspaceBackup,
+		WorkspaceSyncEvent []ent.Interceptor
 	}
 )
