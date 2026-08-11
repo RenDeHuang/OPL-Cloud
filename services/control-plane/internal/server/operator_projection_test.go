@@ -653,7 +653,7 @@ func TestOperatorAccountsReadsOnlyMappedCurrentPageUsers(t *testing.T) {
 
 func TestOperatorAccountsReadOnlyCurrentPageOwners(t *testing.T) {
 	store := &operatorWorkspacePagingStore{memoryTableStore: newMemoryTableStore()}
-	client := newOperatorProjectionClient(operatorProjectionUser(1, "admin@medopl.cn", "active", 0))
+	client := newOperatorProjectionClient(operatorProjectionUser(1, "admin@opl.local", "active", 0))
 	client.userUsage[1] = clients.Sub2APIBatchUserUsage{UserID: 1}
 	for index := 1; index <= 25; index++ {
 		accountID := fmt.Sprintf("acct-%04d", index)
@@ -701,7 +701,7 @@ func TestOperatorAccountsKeepsIdentityWhenMappedWalletHasSubMicroBalance(t *test
 		case "/api/v1/auth/login":
 			write(map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
 		case "/api/v1/admin/users/1":
-			write(map[string]any{"id": 1, "email": "admin@medopl.cn", "balance": 0, "status": "active", "created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z"})
+			write(map[string]any{"id": 1, "email": "admin@opl.local", "balance": 0, "status": "active", "created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z"})
 		case "/api/v1/admin/users/41":
 			write(map[string]any{"id": 41, "email": "alpha@example.com", "balance": 10, "status": "active", "created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z"})
 		case "/api/v1/admin/users/42":
@@ -720,7 +720,7 @@ func TestOperatorAccountsKeepsIdentityWhenMappedWalletHasSubMicroBalance(t *test
 	}))
 	t.Cleanup(upstream.Close)
 	client, err := clients.NewSub2APIHTTPClient(clients.Sub2APIConfig{
-		BaseURL: upstream.URL, AdminEmail: "admin@medopl.cn", AdminPassword: "admin-secret", Timeout: time.Second,
+		BaseURL: upstream.URL, AdminEmail: "admin@opl.local", AdminPassword: "admin-secret", Timeout: time.Second,
 	}, upstream.Client())
 	if err != nil {
 		t.Fatal(err)
@@ -765,7 +765,7 @@ func TestOperatorAccountsFreshInstallIncludesReservedAdmin(t *testing.T) {
 }
 
 func TestOperatorAccountsIncludesReservedAdminOwner(t *testing.T) {
-	client := newOperatorProjectionClient(operatorProjectionUser(1, "admin@medopl.cn", "active", 60_000_000))
+	client := newOperatorProjectionClient(operatorProjectionUser(1, "admin@opl.local", "active", 60_000_000))
 	client.userUsage[1] = clients.Sub2APIBatchUserUsage{UserID: 1, TotalActualCostUSDMicros: 123}
 	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), newMemoryTableStore())
 	if err != nil {
@@ -867,7 +867,7 @@ func TestOperatorAccountUserReadFailureIsIsolated(t *testing.T) {
 	seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
 	seedOperatorProjectionAccount(t, store, "acct-beta", "usr-beta", "beta@example.com", 42)
 	client := newOperatorProjectionClient(
-		operatorProjectionUser(1, "admin@medopl.cn", "active", 0),
+		operatorProjectionUser(1, "admin@opl.local", "active", 0),
 		operatorProjectionUser(41, "alpha@example.com", "active", 10_000_000),
 		operatorProjectionUser(42, "beta@example.com", "active", 20_000_000),
 	)
@@ -1311,7 +1311,7 @@ func TestOperatorAccountKeyCountFailureIsIsolated(t *testing.T) {
 	seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
 	seedOperatorProjectionAccount(t, store, "acct-beta", "usr-beta", "beta@example.com", 42)
 	client := newOperatorProjectionClient(
-		operatorProjectionUser(1, "admin@medopl.cn", "active", 0),
+		operatorProjectionUser(1, "admin@opl.local", "active", 0),
 		operatorProjectionUser(41, "alpha@example.com", "active", 10_000_000),
 		operatorProjectionUser(42, "beta@example.com", "active", 20_000_000),
 	)

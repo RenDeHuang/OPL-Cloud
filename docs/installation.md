@@ -30,6 +30,17 @@ The Compose installation starts PostgreSQL, Ledger, Fabric, and Control Plane
 as separate processes. Only the Control Plane is published to the host. Data is
 stored in the `opl-cloud-postgres` named volume.
 
+The services intentionally require either verified PostgreSQL TLS or an
+explicit RFC1918 address when TLS is disabled. The Compose template therefore
+places PostgreSQL at `OPL_POSTGRES_HOST` inside `OPL_DOCKER_SUBNET`. If the
+default network overlaps another Docker or host network, choose an unused
+RFC1918 subnet and update both values together before startup.
+
+On first start, Control Plane binds its reserved operator account to the active
+Sub2API administrator identity returned for `OPL_SUB2API_ADMIN_EMAIL`. The
+email is installation-owned rather than product-coded; a later ID or email
+mismatch fails closed instead of silently changing operator authority.
+
 This is not yet a complete Workspace installation. The repository currently
 has no `local-docker` Workspace provider, and the Compose profile leaves
 Workspace launch workers disabled. A healthy Compose stack proves only that the

@@ -995,7 +995,7 @@ func (s *postgresEntStateStore) GetUserByEmail(ctx context.Context, email string
 }
 
 func (s *postgresEntStateStore) SaveUser(ctx context.Context, row map[string]any) error {
-	operator := stringValue(row["id"]) == "usr-admin" && stringValue(row["accountId"]) == "acct-admin" && normalizeEmail(stringValue(row["email"])) == "admin@medopl.cn" && stringValue(row["role"]) == "admin"
+	operator := isReservedOperatorIdentity(row)
 	if stringValue(row["role"]) != "owner" && !operator {
 		return errInvalidRole
 	}

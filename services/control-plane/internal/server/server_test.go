@@ -831,7 +831,7 @@ type testSub2APIClient struct {
 func (*testSub2APIClient) Version(context.Context) (string, error) { return "0.1.155", nil }
 
 func (*testSub2APIClient) AdminIdentity(context.Context) (clients.Sub2APIIdentity, error) {
-	return clients.Sub2APIIdentity{ID: 1, Email: "admin@medopl.cn", Status: "active"}, nil
+	return clients.Sub2APIIdentity{ID: 1, Email: "admin@opl.local", Status: "active"}, nil
 }
 
 func testSub2APIUserID(email string) int64 {
@@ -894,7 +894,7 @@ func (c *testSub2APIClient) User(_ context.Context, userID int64) (clients.Sub2A
 		}
 	}
 	if userID == 1 {
-		return clients.Sub2APIIdentity{ID: 1, Email: "admin@medopl.cn", Status: "active"}, nil
+		return clients.Sub2APIIdentity{ID: 1, Email: "admin@opl.local", Status: "active"}, nil
 	}
 	if userID == 41 || userID == 42 {
 		return clients.Sub2APIIdentity{ID: userID, Email: fmt.Sprintf("user-%d@example.com", userID), Status: "active"}, nil
@@ -1543,13 +1543,13 @@ func reservedOperatorSessionForTest(t *testing.T, server http.Handler) *httptest
 	}
 	var admin map[string]any
 	for _, user := range users {
-		if strings.EqualFold(stringValue(user["email"]), "admin@medopl.cn") {
+		if isOperatorUser(user) {
 			admin = user
 			break
 		}
 	}
 	if admin == nil {
-		t.Fatal("admin@medopl.cn test user missing")
+		t.Fatal("reserved operator test user missing")
 	}
 	payload, sessionID, err := handler.app.createSession(admin, "test-user-delegated-token")
 	if err != nil {

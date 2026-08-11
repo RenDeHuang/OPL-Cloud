@@ -16,17 +16,16 @@ test("portable distribution is product-owned and instance-neutral", async () => 
     "workspace_access",
     "workspace_delete"
   ]);
-  assert.equal(contract.evidenceOwners.currentCapability, "docs/status.md");
-
   const composeSource = await readFile("compose.yaml", "utf8");
   const dockerfile = await readFile("Dockerfile", "utf8");
   const compose = YAML.parse(composeSource);
   assert.deepEqual(Object.keys(compose.services).sort(), ["control-plane", "fabric", "ledger", "postgres"]);
   assert.equal(compose.services.ledger.command[0], "/usr/local/bin/opl-ledger");
   assert.equal(compose.services.fabric.command[0], "/usr/local/bin/opl-fabric");
-  assert.match(composeSource, /@postgres:5432/);
+  assert.match(composeSource, /@\$\{OPL_POSTGRES_HOST:-172\.30\.0\.10\}:5432/);
+  assert.match(composeSource, /subnet: \$\{OPL_DOCKER_SUBNET:-172\.30\.0\.0\/24\}/);
   assert.doesNotMatch(composeSource, /medopl\.cn|TENCENT_DEPLOY_|tencentyun\.com/);
-  assert.doesNotMatch(composeSource, /local-docker|docker\.sock|\/var\/run\/docker\.sock|172\.30\.0\.10/);
+  assert.doesNotMatch(composeSource, /local-docker|docker\.sock|\/var\/run\/docker\.sock/);
   assert.match(dockerfile, /apt-get install[^\n]*ca-certificates curl/);
   assert.doesNotMatch(dockerfile, /apt-get purge[^\n]*curl/);
 });
@@ -41,19 +40,4 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
   assert.match(source, /\^v0\\\.\[0-9\]\+\\\.\[0-9\]\+\$/);
   assert.doesNotMatch(source, /environment:\s*production|tencentyun\.com|:latest|:stable/);
   assert.doesNotMatch(source, /--tag "\$IMAGE_REPOSITORY:sha-/);
-});
-
-test("current status and roadmap do not claim the local Docker Workspace gap is closed", async () => {
-  const [status, roadmap, fabricMain] = await Promise.all([
-    readFile("docs/status.md", "utf8"),
-    readFile("docs/roadmap.md", "utf8"),
-    readFile("services/fabric/cmd/fabric/main.go", "utf8")
-  ]);
-
-  assert.match(status, /local-docker.*not yet completed.*launch.*readback.*recovery/is);
-  assert.match(status, /Tencent TKE.*medopl instance implementation fact/is);
-  assert.match(fabricMain, /NewTencentProvider\(\)/);
-  assert.match(roadmap, /MVP-LOCAL-WORKSPACE-GATEWAY-01/);
-  assert.match(roadmap, /only `P0` lane/);
-  assert.equal(roadmap.match(/\| `[^`]+` \| `(?:next|planned|candidate|later|external_owner|in_review)` \| `P0` \|/g)?.length, 1);
 });

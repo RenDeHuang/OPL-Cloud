@@ -6,7 +6,7 @@ x-opl-cloud-common: &opl-cloud-common
   init: true
   environment: &opl-cloud-environment
     NODE_ENV: production
-    DATABASE_URL: postgresql://${POSTGRES_USER:-oplcloud}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-oplcloud}?sslmode=disable
+    DATABASE_URL: postgresql://${POSTGRES_USER:-oplcloud}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@${OPL_POSTGRES_HOST:-172.30.0.10}:5432/${POSTGRES_DB:-oplcloud}?sslmode=disable
     PGSSLMODE: disable
     OPL_INTERNAL_SERVICE_TOKEN: ${OPL_INTERNAL_SERVICE_TOKEN:?Set OPL_INTERNAL_SERVICE_TOKEN}
 
@@ -25,7 +25,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    networks: [opl-cloud]
+    networks:
+      opl-cloud:
+        ipv4_address: ${OPL_POSTGRES_HOST:-172.30.0.10}
 
   ledger:
     <<: *opl-cloud-common
@@ -96,3 +98,6 @@ volumes:
 
 networks:
   opl-cloud:
+    ipam:
+      config:
+        - subnet: ${OPL_DOCKER_SUBNET:-172.30.0.0/24}

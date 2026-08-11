@@ -36,7 +36,7 @@ func TestFreshPersistentServerBootstrapsRemoteOperatorIdentityAtomically(t *test
 	store := freshIdentityMemoryStore()
 	remote := &bootstrapIdentitySub2API{
 		testSub2APIClient: testSub2APIClient{charges: map[string]int64{}},
-		identity:          clients.Sub2APIIdentity{ID: 91, Email: "admin@medopl.cn", Status: "active"},
+		identity:          clients.Sub2APIIdentity{ID: 91, Email: "operator@example.test", Status: "active"},
 	}
 
 	_, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, remote), store)
@@ -51,7 +51,7 @@ func TestFreshPersistentServerBootstrapsRemoteOperatorIdentityAtomically(t *test
 		t.Fatalf("calls=%d accounts=%#v users=%#v organizations=%#v memberships=%#v", remote.calls, accounts, users, organizations, memberships)
 	}
 	if accounts[0]["id"] != "acct-admin" || accounts[0]["ownerUserId"] != "usr-admin" || accounts[0]["sub2apiUserId"] != int64(91) ||
-		users[0]["id"] != "usr-admin" || users[0]["email"] != "admin@medopl.cn" || users[0]["role"] != "admin" || users[0]["passwordHash"] != nil ||
+		users[0]["id"] != "usr-admin" || users[0]["email"] != "operator@example.test" || users[0]["role"] != "admin" || users[0]["passwordHash"] != nil ||
 		organizations[0]["id"] != "org-admin" || memberships[0]["id"] != "mem-admin" || memberships[0]["userId"] != "usr-admin" {
 		t.Fatalf("accounts=%#v users=%#v organizations=%#v memberships=%#v", accounts, users, organizations, memberships)
 	}
@@ -61,7 +61,7 @@ func TestFreshPostgresPersistentServerBootstrapsRemoteOperatorIdentityAtomically
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
 	remote := &bootstrapIdentitySub2API{
 		testSub2APIClient: testSub2APIClient{charges: map[string]int64{}},
-		identity:          clients.Sub2APIIdentity{ID: 91, Email: "admin@medopl.cn", Status: "active"},
+		identity:          clients.Sub2APIIdentity{ID: 91, Email: "operator@example.test", Status: "active"},
 	}
 
 	if _, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, remote), store); err != nil {
@@ -75,7 +75,7 @@ func TestFreshPostgresPersistentServerBootstrapsRemoteOperatorIdentityAtomically
 		t.Fatalf("calls=%d accounts=%#v users=%#v organizations=%#v memberships=%#v", remote.calls, accounts, users, organizations, memberships)
 	}
 	if accounts[0]["id"] != "acct-admin" || accounts[0]["ownerUserId"] != "usr-admin" || accounts[0]["sub2apiUserId"] != int64(91) ||
-		users[0]["id"] != "usr-admin" || users[0]["email"] != "admin@medopl.cn" || users[0]["role"] != "admin" || users[0]["passwordHash"] != nil ||
+		users[0]["id"] != "usr-admin" || users[0]["email"] != "operator@example.test" || users[0]["role"] != "admin" || users[0]["passwordHash"] != nil ||
 		organizations[0]["id"] != "org-admin" || organizations[0]["billingAccountId"] != "acct-admin" ||
 		memberships[0]["id"] != "mem-admin" || memberships[0]["accountId"] != "acct-admin" || memberships[0]["organizationId"] != "org-admin" || memberships[0]["userId"] != "usr-admin" || memberships[0]["role"] != "owner" {
 		t.Fatalf("accounts=%#v users=%#v organizations=%#v memberships=%#v", accounts, users, organizations, memberships)
@@ -191,26 +191,33 @@ func TestPersistentServerRejectsMalformedLocalOperatorEmailWithoutMutation(t *te
 }
 
 func TestPersistentServerRejectsRemoteOperatorMappingMismatchWithoutWriting(t *testing.T) {
-	store := freshIdentityMemoryStore()
-	account := map[string]any{"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": int64(91), "status": "active"}
-	user := map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}
-	organization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
-	membership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
-	if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
-		t.Fatal(err)
-	}
-	beforeAccounts, beforeUsers := cloneStateTable(store.accounts), cloneStateTable(store.users)
-	remote := &bootstrapIdentitySub2API{
-		testSub2APIClient: testSub2APIClient{charges: map[string]int64{}},
-		identity:          clients.Sub2APIIdentity{ID: 92, Email: "admin@medopl.cn", Status: "active"},
-	}
+	for _, identity := range []clients.Sub2APIIdentity{
+		{ID: 92, Email: "admin@medopl.cn", Status: "active"},
+		{ID: 91, Email: "operator@example.test", Status: "active"},
+	} {
+		t.Run(identity.Email, func(t *testing.T) {
+			store := freshIdentityMemoryStore()
+			account := map[string]any{"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": int64(91), "status": "active"}
+			user := map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}
+			organization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
+			membership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
+			if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
+				t.Fatal(err)
+			}
+			beforeAccounts, beforeUsers := cloneStateTable(store.accounts), cloneStateTable(store.users)
+			remote := &bootstrapIdentitySub2API{
+				testSub2APIClient: testSub2APIClient{charges: map[string]int64{}},
+				identity:          identity,
+			}
 
-	_, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, remote), store)
-	if !errors.Is(err, clients.ErrSub2APIIdentityConflict) {
-		t.Fatalf("error=%v want=%v", err, clients.ErrSub2APIIdentityConflict)
-	}
-	if remote.calls != 1 || !reflect.DeepEqual(store.accounts, beforeAccounts) || !reflect.DeepEqual(store.users, beforeUsers) {
-		t.Fatalf("calls=%d accounts=%#v users=%#v", remote.calls, store.accounts, store.users)
+			_, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, remote), store)
+			if !errors.Is(err, clients.ErrSub2APIIdentityConflict) {
+				t.Fatalf("error=%v want=%v", err, clients.ErrSub2APIIdentityConflict)
+			}
+			if remote.calls != 1 || !reflect.DeepEqual(store.accounts, beforeAccounts) || !reflect.DeepEqual(store.users, beforeUsers) {
+				t.Fatalf("calls=%d accounts=%#v users=%#v", remote.calls, store.accounts, store.users)
+			}
+		})
 	}
 }
 
