@@ -60,6 +60,7 @@ import type {
   WorkspacePricePreview
 } from "../api/dtos.ts";
 import {
+  deleteWorkspace as deleteWorkspaceCommand,
   findWorkspaceInPages,
   getWorkspaceLaunch,
   getWorkspaceLaunches,
@@ -69,6 +70,7 @@ import {
   launchWorkspace,
   revealWorkspaceCredentials,
   rotateWorkspaceCredentials,
+  workspaceDeleteIdempotencyKey,
   workspaceLaunchIdempotencyKey
 } from "../api/workspaces-api.ts";
 import { defaultAuthenticatedRoute, hasSufficientWorkspaceLaunchBalance, needsSession, workspaceIdFromPath, workspacePage } from "../console-model.ts";
@@ -185,7 +187,8 @@ export function useConsoleController() {
   const [launchConfirmed, setLaunchConfirmed] = useState(false);
   const [previews, setPreviews] = useState<Partial<Record<PlanId, WorkspacePricePreview>>>({});
   const [launchOperation, setLaunchOperation] = useState<Awaited<ReturnType<typeof getWorkspaceLaunch>> | null>(null);
-  const [launchPollIssue, setLaunchPollIssue] = useState<"" | "error" | "timeout">("");
+  const [launchPollIssue, setLaunchPollIssue] = useState<"" | "error" | "timeout" | "readback">("");
+  const [workspaceDeleteIssue, setWorkspaceDeleteIssue] = useState<"" | "unavailable" | "unconfirmed">("");
   const [secrets, setSecrets] = useState<ConsoleSecrets>({ apiKey: null, workspace: null });
   const [workspaceSecretBusy, setWorkspaceSecretBusy] = useState(false);
   const [gatewaySecretBusy, setGatewaySecretBusy] = useState(false);
@@ -216,6 +219,7 @@ export function useConsoleController() {
   const secretTimer = useRef<number | undefined>(undefined);
   const toastTimer = useRef<number | undefined>(undefined);
   const workspaceLaunchIntent = useRef<{ input: WorkspaceLaunchRequest; idempotencyKey: string } | null>(null);
+  const workspaceDeleteIntent = useRef<{ workspaceId: string; idempotencyKey: string } | null>(null);
   const runtimeRotationIntent = useRef<{ workspaceId: string; idempotencyKey: string } | null>(null);
   const walletAdjustmentIntent = useRef<{ accountId: string; input: WalletAdjustmentRequest; idempotencyKey: string } | null>(null);
   const walletAdjustmentRecoveryIntent = useRef<{ operationId: string; input: WalletAdjustmentRecoveryRequest; idempotencyKey: string } | null>(null);
@@ -268,6 +272,7 @@ export function useConsoleController() {
     setGlobalSlide("");
     setLaunchOperation(null);
     setLaunchPollIssue("");
+    setWorkspaceDeleteIssue("");
     setLaunchStep("configure");
     setLaunchConfirmed(false);
     setLaunchName("");
@@ -297,6 +302,7 @@ export function useConsoleController() {
     setCommandBusy(false);
     setAnnouncementBusy("");
     workspaceLaunchIntent.current = null;
+    workspaceDeleteIntent.current = null;
     runtimeRotationIntent.current = null;
     walletAdjustmentIntent.current = null;
     walletAdjustmentRecoveryIntent.current = null;
@@ -537,6 +543,28 @@ export function useConsoleController() {
     }
   };
 
+  const confirmWorkspaceLaunchReadback = async (workspaceId: string, generation: number, activeSession: AuthSession) => {
+    try {
+      const detail = await findWorkspaceInPages(workspaceId);
+      if (!isRequestCurrent(generation, activeSession.user.id)) return false;
+      if (!detail.available || detail.data === null) {
+        setLaunchPollIssue("readback");
+        flash("开通操作已完成，但 Workspace 权威回读尚未确认", "danger");
+        return false;
+      }
+      setLaunchPollIssue("");
+      flash("Workspace 已开通");
+      navigate(`/console/workspaces/${encodeURIComponent(workspaceId)}`);
+      return true;
+    } catch {
+      if (isRequestCurrent(generation, activeSession.user.id)) {
+        setLaunchPollIssue("readback");
+        flash("开通操作已完成，但 Workspace 权威回读尚未确认", "danger");
+      }
+      return false;
+    }
+  };
+
   const pollWorkspaceLaunch = async (operationId: string, generation: number, activeSession: AuthSession) => {
     setLaunchPollIssue("");
     for (let attempt = 0; attempt < workspaceLaunchPollAttempts; attempt += 1) {
@@ -549,8 +577,7 @@ export function useConsoleController() {
         if (operation.status === "manual_review") return;
         if (isTerminalWorkspaceLaunch(operation.status)) {
           if (operation.status === "succeeded" && operation.workspaceId) {
-            flash("Workspace 已开通");
-            navigate(`/console/workspaces/${encodeURIComponent(operation.workspaceId)}`);
+            await confirmWorkspaceLaunchReadback(operation.workspaceId, generation, activeSession);
           } else if (operation.status === "refunded") {
             flash("Workspace 未完成，已退款", "danger");
           }
@@ -719,6 +746,7 @@ export function useConsoleController() {
     if (path !== "/login") invalidateLoginAttempt();
     const generation = ++requestGeneration.current;
     clearSecrets();
+    setWorkspaceDeleteIssue("");
     setSidebarOpen(false);
     setGlobalSlide("");
     if (logoutState.current !== "idle") return;
@@ -863,8 +891,7 @@ export function useConsoleController() {
       workspaceLaunchIntent.current = null;
       setLaunchOperation(operation);
       if (operation.status === "succeeded" && operation.workspaceId) {
-        flash("Workspace 已开通");
-        navigate(`/console/workspaces/${encodeURIComponent(operation.workspaceId)}`);
+        await confirmWorkspaceLaunchReadback(operation.workspaceId, requestGeneration.current, session);
       } else if (operation.status === "refunded") {
         flash("Workspace 未完成，已退款", "danger");
       } else if (!isTerminalWorkspaceLaunch(operation.status) && operation.status !== "manual_review") {
@@ -875,6 +902,81 @@ export function useConsoleController() {
       const payload = error && typeof error === "object" && "payload" in error ? (error as { payload?: unknown }).payload : null;
       const unknown = Boolean(payload && typeof payload === "object" && (payload as { status?: string }).status === "unknown");
       if (!unknown) workspaceLaunchIntent.current = null;
+      flash(friendlyError(error), "danger");
+    } finally {
+      if (requestStillCurrent()) setCommandBusy(false);
+    }
+  };
+
+  const openLaunchedWorkspace = async () => {
+    if (!session || !launchOperation?.workspaceId) return;
+    await confirmWorkspaceLaunchReadback(launchOperation.workspaceId, requestGeneration.current, session);
+  };
+
+  const confirmWorkspaceDeleteReadback = async (workspaceId: string, requestStillCurrent: () => boolean) => {
+    try {
+      const readback = await findWorkspaceInPages(workspaceId);
+      if (!requestStillCurrent()) return false;
+      if (!readback.available || readback.data !== null) {
+        setWorkspaceDeleteIssue("unconfirmed");
+        flash("删除结果尚未获得权威回读确认", "danger");
+        return false;
+      }
+      workspaceDeleteIntent.current = null;
+      setWorkspaceDeleteIssue("");
+      flash("Workspace 已删除");
+      navigate("/console/workspaces");
+      return true;
+    } catch {
+      if (requestStillCurrent()) {
+        setWorkspaceDeleteIssue("unconfirmed");
+        flash("删除结果尚未获得权威回读确认", "danger");
+      }
+      return false;
+    }
+  };
+
+  const deleteCurrentWorkspace = async () => {
+    if (!session || commandBusy) return;
+    const detailSource = sources.workspaceDetail.value;
+    const workspace = detailSource?.available ? detailSource.data : null;
+    if (!workspace || !window.confirm(`确认删除 Workspace “${workspace.name || workspace.id}”？`)) return;
+    const mutationStillCurrent = currentMutationRequest();
+    const requestStillCurrent = () => mutationStillCurrent()
+      && workspaceIdFromPath(window.location.pathname) === workspace.id;
+    if (!workspaceDeleteIntent.current || workspaceDeleteIntent.current.workspaceId !== workspace.id) {
+      workspaceDeleteIntent.current = {
+        workspaceId: workspace.id,
+        idempotencyKey: workspaceDeleteIdempotencyKey(workspace.id)
+      };
+    }
+    setCommandBusy(true);
+    setWorkspaceDeleteIssue("");
+    try {
+      const result = await deleteWorkspaceCommand(
+        workspace.id,
+        session.csrfToken,
+        workspaceDeleteIntent.current.idempotencyKey
+      );
+      if (!requestStillCurrent()) return;
+      if (!result.available) {
+        workspaceDeleteIntent.current = null;
+        setWorkspaceDeleteIssue("unavailable");
+        flash("Workspace 删除暂不可用", "danger");
+        return;
+      }
+      await confirmWorkspaceDeleteReadback(workspace.id, requestStillCurrent);
+    } catch (error) {
+      if (!requestStillCurrent()) return;
+      if (apiErrorCode(error) === "workspace_not_found") {
+        await confirmWorkspaceDeleteReadback(workspace.id, requestStillCurrent);
+        return;
+      }
+      const status = error && typeof error === "object" && "status" in error
+        ? Number((error as { status?: number }).status)
+        : 0;
+      if (status > 0 && status < 500) workspaceDeleteIntent.current = null;
+      setWorkspaceDeleteIssue("unconfirmed");
       flash(friendlyError(error), "danger");
     } finally {
       if (requestStillCurrent()) setCommandBusy(false);
@@ -1438,9 +1540,12 @@ export function useConsoleController() {
     balanceSufficient,
     launchOperation,
     launchPollIssue,
+    openLaunchedWorkspace,
     reviewWorkspaceLaunch,
     submitWorkspaceLaunch,
     commandBusy,
+    workspaceDeleteIssue,
+    deleteCurrentWorkspace,
     supportTickets,
     supportLoading,
     supportError,

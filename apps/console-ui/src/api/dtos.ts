@@ -179,6 +179,16 @@ export interface WorkspaceLaunchResponse {
   updatedAt?: string;
 }
 
+export interface WorkspaceDeleteResponse {
+  workspaceId: string;
+  status: string;
+  operationId?: string;
+}
+
+export type WorkspaceDeleteCommandResult =
+  | { available: true; data: WorkspaceDeleteResponse }
+  | { available: false; reasonCode: "workspace_delete_unavailable" };
+
 export interface WorkspaceLaunchOperationDTO extends WorkspaceLaunchResponse {
   workspaceApiKeyId?: string;
   workspaceKeyStatus?: string;
