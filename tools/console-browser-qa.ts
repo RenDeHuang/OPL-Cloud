@@ -1323,12 +1323,12 @@ export async function runConsoleBrowserQa({
       authenticateFixtureSession(state, "customer");
       state.sourceState = "available";
       await page.goto(`${server.origin}/`, { waitUntil: "networkidle" });
-      await waitForText(page, "管理员预配置账户后登录");
-      await waitForText(page, "公开注册、在线充值和浏览器端业务推导不属于当前产品边界");
+      await waitForText(page, "让你的 One Person Lab 在云端继续工作");
+      await waitForText(page, "账户由管理员开通");
       const logoLoaded = await page.locator(".public-nav").getByAltText("OPL Cloud").evaluate((image) => image.complete && image.naturalWidth > 0);
       if (!logoLoaded) throw new Error("console_browser_logo_missing");
       await page.goto(`${server.origin}/login`, { waitUntil: "networkidle" });
-      await waitForText(page, "Console 登录");
+      await waitForText(page, "登录 OPL Cloud");
       state.customerRoutes.add("/login");
       await page.getByLabel("邮箱").fill(CONSOLE_DEMO_CREDENTIALS.customer.email);
       await page.getByLabel("密码").fill(CONSOLE_DEMO_CREDENTIALS.customer.password);

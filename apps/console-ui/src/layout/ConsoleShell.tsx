@@ -125,7 +125,7 @@ export function ConsoleShell({ children, controller }: { children: ReactNode; co
   const mobileItems = adminSurface ? adminMenu : customerMenu;
 
   return (
-    <div className="app-shell" data-visual-direction="quiet-ledger">
+    <div className="app-shell">
       {controller.sidebarOpen ? <button aria-label="关闭导航" className="sidebar-scrim" onClick={() => controller.setSidebarOpen(false)} /> : null}
       <aside className={`sidebar ${controller.sidebarOpen ? "open" : ""}`} aria-label="产品导航">
         <div className="sidebar-head">

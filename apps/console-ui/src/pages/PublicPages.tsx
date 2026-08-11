@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, Cloud, LockKeyhole, RefreshCw } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, Cloud, KeyRound, LockKeyhole, ReceiptText, RefreshCw } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import type { ConsoleController } from "../app/use-console-controller.ts";
@@ -11,15 +11,28 @@ function PublicBrand() {
 export function PublicHome({ controller }: { controller: ConsoleController }) {
   return (
     <div className="access-page">
-      <nav className="public-nav"><PublicBrand /><Button onClick={() => controller.navigate("/login")} variant="outline">Console 登录</Button></nav>
+      <nav className="public-nav"><PublicBrand /><Button onClick={() => controller.navigate("/login")} variant="outline">登录</Button></nav>
       <main className="access-main">
-        <div>
-          <p className="kicker">OPL Cloud Console</p>
-          <h1>工作区、API 服务与账单，在一个权威控制面里。</h1>
-          <p>管理员预配置账户后登录。公开注册、在线充值和浏览器端业务推导不属于当前产品边界。</p>
-          <Button color="primary" onClick={() => controller.navigate("/login")}>进入 Console</Button>
-        </div>
-        <img alt="OPL Cloud" className="access-mark" src="/opl-app-icon.png" />
+        <section aria-labelledby="home-heading" className="access-hero">
+          <div className="access-identity">
+            <img alt="" src="/opl-app-icon.png" />
+            <div>
+              <p className="kicker">Your lab, online</p>
+              <h1 id="home-heading">OPL Cloud</h1>
+            </div>
+          </div>
+          <p className="access-tagline">让你的 One Person Lab 在云端继续工作</p>
+          <p className="access-lede">登录后，你可以管理多个在线 Workspace，查看 AI API 的用量与费用，并掌握账户余额和账单。</p>
+          <div className="access-actions">
+            <Button color="primary" onClick={() => controller.navigate("/login")}>登录 OPL Cloud<ArrowRight aria-hidden size={17} /></Button>
+          </div>
+          <p className="access-pilot"><LockKeyhole aria-hidden size={16} /><span>当前为 Pilot，账户由管理员开通；暂不支持公开注册和在线充值。</span></p>
+        </section>
+        <ul aria-label="产品能力" className="access-features">
+          <li><Cloud aria-hidden size={22} /><div><strong>在线 Workspace</strong><span>打开和管理你的云端工作空间。</span></div></li>
+          <li><KeyRound aria-hidden size={22} /><div><strong>AI API</strong><span>管理密钥，查看使用记录与费用。</span></div></li>
+          <li><ReceiptText aria-hidden size={22} /><div><strong>余额与账单</strong><span>掌握账户余额、Workspace 月费和 API 消费。</span></div></li>
+        </ul>
       </main>
     </div>
   );
@@ -36,8 +49,14 @@ export function LoginPage({ controller }: { controller: ConsoleController }) {
   return (
     <main className="login-page">
       <button className="back-button" onClick={() => controller.navigate("/")}><ArrowLeft aria-hidden size={17} />返回</button>
+      <aside aria-hidden="true" className="login-aside">
+        <img alt="" src="/opl-app-icon.png" />
+        <p className="kicker">OPL Cloud</p>
+        <strong>回到你的云端工作区</strong>
+        <span>Workspace、AI API 与账单，都在这里。</span>
+      </aside>
       <section className="login-panel" aria-labelledby="login-heading">
-        <div className="login-brand"><img alt="OPL Cloud" src="/opl-app-icon.png" /><div><strong id="login-heading">Console 登录</strong><span>管理员预配置账户</span></div></div>
+        <div className="login-brand"><img alt="OPL Cloud" src="/opl-app-icon.png" /><div><strong id="login-heading">登录 OPL Cloud</strong><span>使用管理员为你开通的账户</span></div></div>
         <form onSubmit={submit}>
           <Field autoComplete="email" label="邮箱" onChange={(event) => setEmail(event.currentTarget.value)} required type="email" value={email} />
           <Field autoComplete="current-password" label="密码" onChange={(event) => setPassword(event.currentTarget.value)} required type="password" value={password} />
@@ -89,7 +108,7 @@ export function NotFoundPage({ controller }: { controller: ConsoleController }) 
     <main className="message-page">
       <Cloud aria-hidden size={28} />
       <h1>页面不存在</h1>
-      <p>这个路由不属于已冻结的 Console 展示合同。</p>
+      <p>你访问的页面不存在或暂未开放。</p>
       <Button onClick={() => controller.navigate(controller.session ? "/console/overview" : "/")} variant="outline">返回</Button>
     </main>
   );

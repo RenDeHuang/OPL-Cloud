@@ -17,9 +17,13 @@ test("public entry and Login preserve the OPL Cloud identity", async () => {
   const pages = await source("apps/console-ui/src/pages/PublicPages.tsx");
   assert.match(pages, /src="\/opl-app-icon\.png"/);
   assert.match(pages, /alt="OPL Cloud"/);
-  assert.match(pages, /Console 登录/);
-  assert.match(pages, /管理员预配置账户/);
-  assert.match(pages, /公开注册、在线充值和浏览器端业务推导不属于当前产品边界/);
+  assert.match(pages, /让你的 One Person Lab 在云端继续工作/);
+  assert.match(pages, /在线 Workspace/);
+  assert.match(pages, /AI API/);
+  assert.match(pages, /余额与账单/);
+  assert.match(pages, /登录 OPL Cloud/);
+  assert.match(pages, /账户由管理员开通/);
+  assert.doesNotMatch(pages, /权威控制面|浏览器端业务推导|余额守卫|正式回执|medopl/i);
   assert.match(pages, /autoComplete="email"/);
   assert.match(pages, /autoComplete="current-password"/);
 });

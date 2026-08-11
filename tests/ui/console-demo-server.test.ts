@@ -366,7 +366,7 @@ test("Console demo is clickable in a normal browser for customer and Admin", asy
 
     await page.getByRole("button", { name: "退出登录", exact: true }).click();
     await page.waitForURL(new RegExp(`${demo.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?$`));
-    await page.getByRole("button", { name: "Console 登录", exact: true }).click();
+    await page.getByRole("button", { name: "登录", exact: true }).click();
     await page.waitForURL(/\/login$/);
     await page.getByLabel("邮箱").fill(CONSOLE_DEMO_CREDENTIALS.admin.email);
     await page.getByLabel("密码").fill(CONSOLE_DEMO_CREDENTIALS.admin.password);
