@@ -41,7 +41,7 @@ type WorkspaceLaunchStageBinding struct {
 	WorkspaceID             string `json:"workspaceId"`
 	Stage                   string `json:"stage"`
 	Action                  string `json:"action"`
-	StageOperationID        string `json:"stageOperationId"`
+	FabricOperationID       string `json:"fabricOperationId"`
 	IdempotencyKey          string `json:"idempotencyKey"`
 	RequestHash             string `json:"requestHash"`
 	ExpectedResourceBinding string `json:"expectedResourceBinding,omitempty"`

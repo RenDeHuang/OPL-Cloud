@@ -255,6 +255,25 @@ func TestWorkspaceLaunchFabricBindingDriftBecomesUnknown(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchFabricReadAndMutationShareExplicitOperationIdentity(t *testing.T) {
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Stage = "storage"
+	operation.raw["storageBindingRef"] = json.RawMessage(`"binding-storage"`)
+	input, err := (&controlPlaneWorkspaceLaunchStageAdapter{}).workspaceLaunchFabricStageInput(context.Background(), operation, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.Binding.FabricOperationID != operation.ID+":storage" || input.Binding.LaunchOperationID != operation.ID ||
+		input.Binding.AccountID != operation.stringFact("accountId") || input.Binding.WorkspaceID != operation.stringFact("workspaceId") ||
+		input.Binding.Stage != "storage" || input.Binding.Action != "ensure_storage" || input.Binding.IdempotencyKey != operation.ID+":storage" ||
+		input.Binding.RequestHash == "" || input.Binding.ExpectedResourceBinding != "binding-storage" {
+		t.Fatalf("incomplete explicit Fabric binding=%#v", input.Binding)
+	}
+}
+
 func TestWorkspaceLaunchFabricReadyWithoutRequiredFactsBecomesUnknown(t *testing.T) {
 	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
 	if err != nil {

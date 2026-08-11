@@ -24,6 +24,10 @@ func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T)
 		case "/fabric/workspace-launches/stages/read", "/fabric/workspace-launches/stages/ensure":
 			var input WorkspaceLaunchStageInput
 			_ = json.NewDecoder(r.Body).Decode(&input)
+			if input.Binding.FabricOperationID != "launch-1:storage" || input.Binding.LaunchOperationID != "launch-1" || input.Binding.AccountID != "acct-1" || input.Binding.WorkspaceID != "ws-1" ||
+				input.Binding.Stage != "storage" || input.Binding.Action != "ensure_storage" || input.Binding.RequestHash != "stage-request" || input.Binding.ExpectedResourceBinding != "binding-storage" {
+				t.Fatalf("incomplete stage binding=%#v", input.Binding)
+			}
 			if r.URL.Path == "/fabric/workspace-launches/stages/ensure" && r.Header.Get("Idempotency-Key") != input.Binding.IdempotencyKey {
 				t.Fatalf("Idempotency-Key=%q", r.Header.Get("Idempotency-Key"))
 			}
@@ -39,7 +43,7 @@ func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T)
 	if _, err := client.PreflightWorkspaceLaunch(context.Background(), preflightInput); err != nil {
 		t.Fatal(err)
 	}
-	stageInput := WorkspaceLaunchStageInput{Binding: WorkspaceLaunchStageBinding{SchemaVersion: 1, LaunchOperationID: "launch-1", AccountID: "acct-1", WorkspaceID: "ws-1", Stage: "storage", Action: "ensure_storage", StageOperationID: "launch-1:storage", IdempotencyKey: "launch-1:storage", RequestHash: "stage-request"}}
+	stageInput := WorkspaceLaunchStageInput{Binding: WorkspaceLaunchStageBinding{SchemaVersion: 1, LaunchOperationID: "launch-1", AccountID: "acct-1", WorkspaceID: "ws-1", Stage: "storage", Action: "ensure_storage", FabricOperationID: "launch-1:storage", IdempotencyKey: "launch-1:storage", RequestHash: "stage-request", ExpectedResourceBinding: "binding-storage"}}
 	if _, err := client.ReadWorkspaceLaunchStage(context.Background(), stageInput); err != nil {
 		t.Fatal(err)
 	}

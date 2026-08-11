@@ -61,7 +61,7 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) workspaceLaunchFabricStageInpu
 		WorkspaceID:       operation.stringFact("workspaceId"),
 		Stage:             operation.Stage,
 		Action:            action,
-		StageOperationID:  operation.ID + ":" + operation.Stage,
+		FabricOperationID: operation.ID + ":" + operation.Stage,
 		IdempotencyKey:    workspaceLaunchStageIdempotencyKey(operation, 1),
 		RequestHash:       workspaceLaunchFabricRequestHash(operation, action, resources),
 	}
