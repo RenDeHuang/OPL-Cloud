@@ -38,11 +38,11 @@ Domain agents        domain strategy, quality verdict and delivery authority
 one-person-lab-cloud
   product architecture, whitepaper, roadmap
   Console + Control Plane + Fabric + Ledger implementation
-  reusable contracts, images and release mechanisms
-        |
+  reusable contracts, portable images and GitHub Releases
+        | immutable product SHA + image digest
         v
 opl-instance-medopl
-  medopl instance profile, IaC, secret refs, promotion and deployment evidence
+  medopl customization, production environment, deployment, rollback and evidence
 ```
 
 `one-person-lab-cloud` is the single product and implementation repository.

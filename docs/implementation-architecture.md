@@ -52,8 +52,8 @@ adapter and resolve to `/api/*`. This gate runs through the existing `npm test`
 lane; it complements behavior and contract tests rather than replacing them.
 
 Physical deployment isolation is incomplete. The three services use separate
-processes, Deployments and tables, but the current TKE profile injects one
-`DATABASE_URL`, one internal service token and one shared ConfigMap. Consequently
+processes and tables, but the portable Compose profile and current external
+medopl TKE profile inject one `DATABASE_URL` and one internal service token. Consequently
 table ownership and caller identity are contract-enforced, not database-role or
 service-credential-enforced. The common image also makes them one release unit,
 which is intentional for the current product repository but not independent
@@ -256,13 +256,10 @@ rotation; ordinary reads never infer scope from Workspace count or Key name.
 Ordinary runtime status is non-secret. Dedicated owner-only POST commands reveal
 or rotate the password transiently; Control Plane never persists it, and Console
 retains it only in Workspace detail component memory. A Workspace image candidate
-combines exact `one-person-lab-app`, `opl-aion-shell`, and `one-person-lab` Framework
-commits; all must be full 40-character SHAs already merged into their respective `main`.
-The fixed candidates are App `6b334ef7f239eb01c40578159e6df9ed2e7f97dc`, shell
-`dbd9d68115604673df85033d7a0ab323d65a79a2`, and Framework
-`51d16f0e93aebf3fd5ccf96082490395fcbb8711`. The release workflow checks out all three detached, runs the existing
-`ensure:shell`, builds the active shell context into TCR, and reads back the immutable
-digest. Production manifests accept only the resulting target `repository@sha256`.
+combines exact `one-person-lab-app`, active-shell, and Framework revisions. The
+Workspace owner publishes that image independently; an instance pins its
+immutable `repository@sha256` alongside the OPL Cloud product release. The Cloud
+product release does not build, publish, or promote an instance Workspace image.
 The immutable Workspace image is pinned for deployment, but a customer
 Workspace Ready-Pod `imageID` readback remains pending. No configured digest,
 placeholder, or local timestamp substitutes for that Pod evidence.
@@ -291,23 +288,19 @@ Control Plane availability coupling for the operator-provisioned Pilot. A dedica
 Workspace Router remains a later ownership and scaling decision; no router or
 security-model change is authorized by this document.
 
-## Current Medopl Production
+## Product Release And Instance Qualification
 
-Production runs Control Plane, Fabric, and Ledger as separate Kubernetes
-Deployments. Secrets are Kubernetes Secret references, configuration is a shared
-ConfigMap, and the deploy workflow waits for all three rollouts. The production
-Fabric catalog exposes both Basic and Pro; availability means product access,
-while Tencent MonthlyPreflight remains the capacity authority before debit.
-Separately approved provider verification remains paused and does not gate
-ordinary deploy.
+Cloud publishes one multi-architecture GHCR image and GitHub Release containing
+Compose, an environment template, and a release manifest. Product release uses
+no production environment and performs no instance deployment. The image is
+identified by a version tag, exact product SHA, and immutable digest; mutable
+`latest` and `stable` tags are forbidden.
 
-The Cloud services have ordinary rollout and deployment readback evidence. That
-evidence does not complete the Basic canary, customer Workspace imageID, or model
-Usage checks, and it does not imply a real Pro purchase.
-
-Image publication accepts a full 40-character Cloud commit only. The release
-workflow reads back the exact checked-out HEAD and official Cloud `origin/main`,
-then requires the candidate to be contained in that main history before building.
+The private `opl-instance-medopl` repository owns the current medopl/TKE
+configuration, production environment, deployment workflow, rollback, canaries,
+and receipts. Historical rollout evidence predates this owner split and does
+not prove the migrated Instance path. Fresh production claims require Instance
+workflow readback for the exact Cloud release.
 
 Control Plane remains one Pod. Existing load evidence covers request concurrency
 and replay, but its historical per-resource renewal scan is not proof of the

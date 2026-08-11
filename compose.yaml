@@ -1,0 +1,103 @@
+name: opl-cloud
+
+x-opl-cloud-common: &opl-cloud-common
+  image: ${OPL_CLOUD_IMAGE:?Set OPL_CLOUD_IMAGE to an immutable GHCR digest}
+  restart: unless-stopped
+  init: true
+  environment: &opl-cloud-environment
+    NODE_ENV: production
+    DATABASE_URL: postgresql://${POSTGRES_USER:-oplcloud}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@172.30.0.10:5432/${POSTGRES_DB:-oplcloud}?sslmode=disable
+    PGSSLMODE: disable
+    OPL_INTERNAL_SERVICE_TOKEN: ${OPL_INTERNAL_SERVICE_TOKEN:?Set OPL_INTERNAL_SERVICE_TOKEN}
+
+services:
+  postgres:
+    image: postgres:16.8-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-oplcloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-oplcloud}
+    volumes:
+      - opl-cloud-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      opl-cloud:
+        ipv4_address: 172.30.0.10
+
+  ledger:
+    <<: *opl-cloud-common
+    command: ["/usr/local/bin/opl-ledger"]
+    environment:
+      <<: *opl-cloud-environment
+      LEDGER_ADDR: :8081
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8081/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [opl-cloud]
+
+  fabric:
+    <<: *opl-cloud-common
+    command: ["/usr/local/bin/opl-fabric"]
+    environment:
+      <<: *opl-cloud-environment
+      FABRIC_ADDR: :8082
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8082/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [opl-cloud]
+
+  control-plane:
+    <<: *opl-cloud-common
+    command: ["/usr/local/bin/opl-control-plane"]
+    environment:
+      <<: *opl-cloud-environment
+      CONTROL_PLANE_ADDR: :8787
+      LEDGER_URL: http://ledger:8081
+      FABRIC_URL: http://fabric:8082
+      OPL_PUBLIC_URL: ${OPL_PUBLIC_URL:-http://localhost:8787}
+      OPL_SUB2API_BASE_URL: ${OPL_SUB2API_BASE_URL:?Set OPL_SUB2API_BASE_URL}
+      OPL_SUB2API_ADMIN_EMAIL: ${OPL_SUB2API_ADMIN_EMAIL:?Set OPL_SUB2API_ADMIN_EMAIL}
+      OPL_SUB2API_ADMIN_PASSWORD: ${OPL_SUB2API_ADMIN_PASSWORD:?Set OPL_SUB2API_ADMIN_PASSWORD}
+      OPL_SUB2API_REQUEST_TIMEOUT_MS: ${OPL_SUB2API_REQUEST_TIMEOUT_MS:-5000}
+      OPL_AIONUI_ADMIN_PASSWORD_SEED: ${OPL_AIONUI_ADMIN_PASSWORD_SEED:?Set OPL_AIONUI_ADMIN_PASSWORD_SEED}
+      OPL_MONTHLY_BILLING_WORKER_ENABLED: ${OPL_MONTHLY_BILLING_WORKER_ENABLED:-0}
+      OPL_WORKSPACE_LAUNCH_WORKER_ENABLED: ${OPL_WORKSPACE_LAUNCH_WORKER_ENABLED:-0}
+    ports:
+      - "${OPL_BIND_ADDRESS:-127.0.0.1}:${OPL_HTTP_PORT:-8787}:8787"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ledger:
+        condition: service_healthy
+      fabric:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8787/api/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [opl-cloud]
+
+volumes:
+  opl-cloud-postgres:
+
+networks:
+  opl-cloud:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

@@ -82,16 +82,17 @@ a deployment resource, not a Workspace.
 `one-person-lab-cloud` is the single OPL Cloud product and implementation
 repository. It owns the public vision, target architecture, whitepaper, roadmap,
 Console, Control Plane, Fabric, Ledger, Workspace delivery, machine contracts,
-and reusable release mechanisms. `opl-cloud` remains the short identifier for
+portable installation assets, GHCR images, GitHub Releases, and reusable
+provider adapters. `opl-cloud` remains the short identifier for
 npm packages, images, binaries, services, namespaces, environment variables,
 and runner labels; it is not a second repository.
 
-`opl-instance-medopl` owns the `medopl` instance's domains, provider profile,
-enabled plans and prices, image pins, secret references, and deployment
-receipts. Medopl and Tencent values that remain here are explicit migration
-state, not the reusable product boundary. A design, contract, generated artifact,
-or passing test does not prove that Gateway, Workspace, Serve, Console, Fabric,
-or Ledger is deployed or ready.
+`opl-instance-medopl` is the only owner of the `medopl` instance's domains,
+Tencent/TKE selection, enabled plans and prices, production environment and
+Secrets, deployment workflows, image pins, rollback, and receipts. It consumes
+an immutable Cloud product SHA and image digest without copying product source.
+A design, contract, generated artifact, passing test, or published image does
+not prove that an instance is deployed or ready.
 
 Capability, health, security, billing, release, and acceptance claims require
 fresh implementation, machine-contract, runtime, and owner evidence. The
@@ -103,6 +104,7 @@ steps; it is not a readiness dashboard.
 - [Read the OPL Cloud whitepaper](https://gaofeng21cn.github.io/one-person-lab-cloud/latest/whitepapers/opl-cloud-whitepaper.html)
 - [Documentation and owner map](docs/README.md)
 - [Architecture and authority boundaries](docs/architecture.md)
+- [Install a released OPL Cloud application](docs/installation.md)
 - [Current gaps and next steps](docs/roadmap.md)
 - [Workspace identity and external SaaS boundary](docs/workspace-identity-and-external-saas-boundary.md)
 
@@ -116,12 +118,12 @@ one-person-lab-cloud/
   apps/                Console user interface
   assets/              Public brand and user-journey assets
   contracts/           Whitepaper artifact profile
-  deploy/              Reusable deployment interface and instance migration state
+  deploy/              Portable installation and reusable adapter templates
   docs/                Product, implementation, planning, and provenance docs
   packages/contracts/  Current machine contracts
   scripts/             Whitepaper build and publication-request wrappers
   services/            Control Plane, Fabric, and Ledger
-  tools/               Local, release, and production verification tools
+  tools/               Local, product-release, and reusable verification tools
 ```
 
 Technical documentation starts at [docs/README.md](docs/README.md). Keep product

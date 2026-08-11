@@ -1,5 +1,18 @@
 # Decisions
 
+## 2026-08-11: Product Release And Instance Deployment Are Separate
+
+`one-person-lab-cloud` publishes the installable product: source, contracts,
+multi-architecture GHCR image, GitHub Release, Compose assets, and reusable
+provider adapters. Its release workflow uses no production environment and does
+not deploy, diagnose, verify, or roll back a concrete installation.
+
+`opl-instance-medopl` is the only medopl.cn customization and deployment owner.
+Its `main` workflow and protected `production` environment select Tencent/TKE,
+hold Secrets, consume an immutable Cloud product SHA and image digest, and own
+deployment, canary, rollback, and receipts. Product source is never copied into
+the Instance repository, and Instance state is never written back into Cloud.
+
 ## 2026-08-11: One Product Repository And Explicit Instances
 
 `one-person-lab-cloud` is the single product and implementation owner for the

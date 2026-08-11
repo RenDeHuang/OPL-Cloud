@@ -17,6 +17,7 @@
     "lint": "tsc -p apps/console-ui/tsconfig.json --noEmit --noUnusedLocals --noUnusedParameters",
     "build": "vite build",
     "build:whitepaper": "node --experimental-strip-types scripts/build-opl-cloud-whitepaper.ts",
+    "validate:product-boundary": "node tools/validate-product-boundary.mjs",
     "verify:production": "node tools/production-verifier.ts",
     "validate:production-manifest": "node tools/validate-production-manifest.ts"
   },

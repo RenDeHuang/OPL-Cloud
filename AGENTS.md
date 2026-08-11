@@ -12,9 +12,13 @@ Ledger, Workspace delivery, contracts and reusable release mechanisms.
   gaps, priorities and acceptance outcomes only.
 - `opl-cloud` remains the internal package, image, service, namespace and runner
   identifier; it is not a second repository owner.
-- `opl-instance-medopl` owns the eventual medopl instance profile and deployment
-  evidence. Co-located medopl configuration is migration state, not product
-  architecture.
+- `opl-instance-medopl` is the only medopl instance owner. It owns domains,
+  provider selection, production environments and Secrets, deployment,
+  verification, rollback, and receipts while consuming an immutable Cloud
+  release.
+- This repository must not contain an instance deployment workflow or require a
+  production environment for product release. It publishes portable GHCR images,
+  GitHub Releases, installation assets, and reusable provider adapters only.
 - The archived documentation repository is provenance only and must never
   become a parallel current writer.
 
@@ -94,8 +98,9 @@ Assign every feature to one primary module before editing:
 after required CI passes and review conversations are resolved. Module owners
 route review when it adds value; the repository does not automatically request
 a reviewer for every PR or require an approving review. Production mutation
-authorization remains separate and is governed by protected GitHub Actions
-environments, exact inputs, and authoritative readback.
+authorization remains separate in the owning instance repository and is
+governed by protected GitHub Actions environments, exact inputs, and
+authoritative readback.
 
 Development follows `parallel_work_serialized_integration`. Multiple roadmap
 `next` lanes may proceed at once when they have distinct owners and write sets.
@@ -119,7 +124,12 @@ Before changing billing, Fabric, Workspace, Gateway, Ledger, deployment, or E2E:
 
 Hard prohibitions:
 
-- The local WSL development machine cannot access the production private network. Never attempt local direct access to production-internal endpoints, clusters, databases, or services. All production deployment and private-network verification must run through the repository's GitHub Actions workflows using the `production` environment and its authorized runner; local work is limited to code changes, workflow dispatch, and reading back GitHub evidence.
+- The local development machine cannot access the production private network.
+  Never attempt local direct access to production-internal endpoints, clusters,
+  databases, or services. Medopl production deployment and private-network
+  verification run only through `opl-instance-medopl` workflows using its
+  protected `production` environment and authorized runner. This repository may
+  publish product releases but must not dispatch instance deployment.
 - Do not add a second wallet or Gateway service; Sub2API is the Gateway backend and spendable-balance owner.
 - Do not introduce `POSTPAID_BY_HOUR` for customer or verification CVM/CBS resources.
 - Do not buy or delete Tencent CVM/CBS resources during an ordinary CI, release, or E2E run.

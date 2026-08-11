@@ -44,12 +44,13 @@ RUN npm run build
 FROM node:22-bookworm-slim AS runtime
 
 WORKDIR /app
+ARG TARGETARCH
 ENV NODE_ENV=production
 ENV CONTROL_PLANE_ADDR=:8787
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
-  && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.30.8/bin/linux/amd64/kubectl" \
+  && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.30.8/bin/linux/${TARGETARCH}/kubectl" \
   && chmod +x /usr/local/bin/kubectl \
   && apt-get purge -y --auto-remove curl \
   && rm -rf /var/lib/apt/lists/*

@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Cloud",
+  "purpose": "Portable product distribution and instance handoff boundary.",
+  "state": "current",
+  "productRepository": "gaofeng21cn/one-person-lab-cloud",
+  "distribution": {
+    "workflow": ".github/workflows/release-opl-cloud-image.yml",
+    "registry": "ghcr.io/gaofeng21cn/one-person-lab-cloud",
+    "releaseTagFormat": "v0.x.y",
+    "mutableTagsForbidden": [
+      "latest",
+      "stable"
+    ],
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "releaseAssets": [
+      "compose.yaml",
+      "opl-cloud.env.example",
+      "opl-cloud-release.json"
+    ],
+    "immutableIdentity": [
+      "releaseTag",
+      "productSha",
+      "imageDigest"
+    ]
+  },
+  "portableInstallation": {
+    "entrypoint": "compose.yaml",
+    "documentation": "docs/installation.md",
+    "processes": [
+      "control-plane",
+      "fabric",
+      "ledger"
+    ],
+    "persistence": "postgresql",
+    "providerSelection": "instance_or_installer_owned"
+  },
+  "instanceHandoff": {
+    "repository": "gaofeng21cn/opl-instance-medopl",
+    "inputs": [
+      "productSha",
+      "imageDigest"
+    ],
+    "cloudRepositoryMustNotOwn": [
+      "instance_domains",
+      "production_environment",
+      "production_secrets",
+      "deployment_dispatch",
+      "instance_canary",
+      "instance_rollback",
+      "production_receipts"
+    ]
+  },
+  "currentLimitations": {
+    "fabricAdapters": [
+      "tencent-tke"
+    ],
+    "portableComposeConfiguresProvider": false,
+    "workspaceDeliveryRequiresInstanceConfiguration": true
+  }
+}
