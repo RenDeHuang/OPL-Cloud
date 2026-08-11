@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,20 @@ import (
 	"net/http/httptest"
 	"testing"
 )
+
+func TestWorkspaceLaunchStageBindingAlwaysSerializesExpectedResourceBinding(t *testing.T) {
+	encoded, err := json.Marshal(WorkspaceLaunchStageInput{Binding: WorkspaceLaunchStageBinding{
+		SchemaVersion: 1, LaunchOperationID: "launch-1", AccountID: "acct-1", WorkspaceID: "ws-1",
+		Stage: "ensure_compute_allocation", Action: "ensure_compute_allocation", FabricOperationID: "fabric-op-1",
+		IdempotencyKey: "launch-1:ensure-compute-allocation", RequestHash: "stage-request",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"expectedResourceBinding":""`)) {
+		t.Fatalf("expected resource binding omitted: %s", encoded)
+	}
+}
 
 func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T) {
 	var paths []string

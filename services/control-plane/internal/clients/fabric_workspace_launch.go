@@ -44,7 +44,7 @@ type WorkspaceLaunchStageBinding struct {
 	FabricOperationID       string `json:"fabricOperationId"`
 	IdempotencyKey          string `json:"idempotencyKey"`
 	RequestHash             string `json:"requestHash"`
-	ExpectedResourceBinding string `json:"expectedResourceBinding,omitempty"`
+	ExpectedResourceBinding string `json:"expectedResourceBinding"`
 }
 
 type WorkspaceLaunchResources struct {
