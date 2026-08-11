@@ -41,19 +41,19 @@
       "action": "ensure_compute_allocation"
     },
     {
-      "stage": "storage",
+      "stage": "ensure_storage",
       "action": "ensure_storage"
     },
     {
-      "stage": "attachment",
+      "stage": "ensure_attachment",
       "action": "ensure_attachment"
     },
     {
-      "stage": "secret",
+      "stage": "ensure_gateway_secret",
       "action": "ensure_gateway_secret"
     },
     {
-      "stage": "runtime",
+      "stage": "ensure_runtime",
       "action": "ensure_runtime"
     }
   ],

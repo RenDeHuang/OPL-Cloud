@@ -25,13 +25,19 @@
   },
   "stageDecision": {
     "owner": "services/control-plane",
+    "preflightAdmission": {
+      "timing": "before_first_external_write",
+      "mode": "read_only",
+      "durableStage": false
+    },
     "orderedStages": [
+      "key",
       "debit",
-      "compute_claim",
-      "storage",
-      "attachment",
-      "secret",
-      "runtime",
+      "ensure_compute_allocation",
+      "ensure_storage",
+      "ensure_attachment",
+      "ensure_gateway_secret",
+      "ensure_runtime",
       "activation",
       "receipt",
       "succeeded"

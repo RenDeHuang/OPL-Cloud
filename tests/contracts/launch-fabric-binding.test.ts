@@ -28,6 +28,15 @@ test("Control Plane owns the launch identity and recovery authorization", async 
     "launchOperationId", "accountId", "ownerUserId", "workspaceId", "requestHash"
   ]);
   assert.equal(contract.stageDecision.fabricOperationBinding, "opl-cloud-fabric-launch-binding-contract.json");
+  assert.deepEqual(contract.stageDecision.preflightAdmission, {
+    timing: "before_first_external_write",
+    mode: "read_only",
+    durableStage: false
+  });
+  assert.deepEqual(contract.stageDecision.orderedStages, [
+    "key", "debit", "ensure_compute_allocation", "ensure_storage", "ensure_attachment",
+    "ensure_gateway_secret", "ensure_runtime", "activation", "receipt", "succeeded"
+  ]);
   assert.equal(contract.recovery.operation, "continue_original_workspace_launch");
   assert.equal(contract.recovery.resourceIdentityInput, "forbidden_server_authoritative_readback_only");
 
@@ -72,10 +81,10 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
 
   const expectedStages = [
     ["ensure_compute_allocation", "ensure_compute_allocation"],
-    ["storage", "ensure_storage"],
-    ["attachment", "ensure_attachment"],
-    ["secret", "ensure_gateway_secret"],
-    ["runtime", "ensure_runtime"]
+    ["ensure_storage", "ensure_storage"],
+    ["ensure_attachment", "ensure_attachment"],
+    ["ensure_gateway_secret", "ensure_gateway_secret"],
+    ["ensure_runtime", "ensure_runtime"]
   ];
   assert.deepEqual(
     contract.stageOperations.map((stage: Record<string, string>) => [stage.stage, stage.action]),
@@ -87,6 +96,30 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
     "stageReadbackApi", "workspace-launch-stage-readback", "proofRoute", "convergeRoute",
     "fabricRecordId", "sub2apiMutationCount", "tencentMutationCount", "kubernetesMutationCount",
     "fabricOperationMutationCount", "idempotencyIdentity", "<launchOperationId>"
+  ]) {
+    assert.equal(serialized.includes(legacy), false, legacy);
+  }
+});
+
+test("service boundary delegates launch truth to focused owners and typed routes", async () => {
+  const [boundary, fabric] = await Promise.all([
+    json("packages/contracts/opl-cloud-service-boundary-contract.json"),
+    json("packages/contracts/opl-cloud-fabric-launch-binding-contract.json")
+  ]);
+
+  assert.equal(boundary.services.controlPlane.workspaceLaunchContract, "opl-cloud-control-plane-launch-contract.json");
+  assert.equal(boundary.services.fabric.workspaceLaunch.contract, "opl-cloud-fabric-launch-binding-contract.json");
+  assert.deepEqual(boundary.services.fabric.workspaceLaunch.routes, [
+    fabric.workspaceLaunchApi.preflightRoute,
+    fabric.workspaceLaunchApi.stageReadRoute,
+    fabric.workspaceLaunchApi.stageEnsureRoute
+  ]);
+
+  const serialized = JSON.stringify(boundary);
+  for (const legacy of [
+    "workspace-launch-stage-readback", "proofRoute", "convergeRoute", "fabricConvergenceRoute",
+    "workspaceLaunchManualReviewProviderTruth", "workspaceComputeClaimRecovery", "computeProcurement",
+    "computePoolHeadTerminalization", "normalWorkspaceLaunch"
   ]) {
     assert.equal(serialized.includes(legacy), false, legacy);
   }

@@ -26,9 +26,8 @@ them:
 | Fabric stage operation, idempotency, request hash, and resource binding | `opl-cloud-fabric-launch-binding-contract.json` |
 | Receipt, evidence, reconciliation, and continuation refs | `opl-cloud-evidence-ledger-contract.json` |
 
-`opl-cloud-launch-freeze-contract.json` is a migration-only compatibility
-projection for remaining aggregate readers. It is not a current owner and must
-not receive new facts.
+These focused contracts are the only current machine owners for the launch and
+settlement boundary. Do not recreate an aggregate launch contract.
 
 ## Admission
 
