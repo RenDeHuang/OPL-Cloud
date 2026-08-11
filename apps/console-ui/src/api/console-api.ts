@@ -2,6 +2,15 @@ export type JsonObject = Record<string, unknown>;
 
 export type ApiError = Error & { payload?: unknown };
 
+export function controlPlaneApiPath(path: string): string {
+  const base = "https://opl-cloud.invalid";
+  const resolved = new URL(path, base);
+  if (!path.startsWith("/api/") || resolved.origin !== base || !resolved.pathname.startsWith("/api/")) {
+    throw new Error("control_plane_api_path_required");
+  }
+  return path;
+}
+
 function asObject(value: unknown): JsonObject {
   return value && typeof value === "object" ? value as JsonObject : {};
 }
@@ -31,7 +40,7 @@ async function writeJson<T>(method: "POST" | "PUT" | "PATCH" | "DELETE", path: s
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const timeout = AbortSignal.timeout(timeoutMs);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-  const response = await fetch(path, {
+  const response = await fetch(controlPlaneApiPath(path), {
     method,
     headers,
     body: JSON.stringify(body),
@@ -61,7 +70,7 @@ export function deleteJson<T>(path: string, csrfToken = "", idempotencyKey = "")
 export async function getJson<T>(path: string, { signal }: { signal?: AbortSignal } = {}): Promise<T> {
   const timeout = AbortSignal.timeout(10_000);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-  const response = await fetch(path, { signal: requestSignal });
+  const response = await fetch(controlPlaneApiPath(path), { signal: requestSignal });
   const payload = await responsePayload(response);
   if (!response.ok || asObject(payload).ok === false) throwApiError(payload);
   return payload as T;
