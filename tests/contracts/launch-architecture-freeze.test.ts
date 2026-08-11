@@ -3,733 +3,115 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
-const candidateAppSha = "6b334ef7f239eb01c40578159e6df9ed2e7f97dc";
-const candidateShellSha = "dbd9d68115604673df85033d7a0ab323d65a79a2";
-const candidateFrameworkSha = "51d16f0e93aebf3fd5ccf96082490395fcbb8711";
+const text = (path: string) => readFile(new URL(path, root), "utf8");
+const json = async (path: string) => JSON.parse(await text(path));
 
-async function text(path) {
-  return readFile(new URL(path, root), "utf8");
+function collectKeys(value: unknown, keys: string[] = []): string[] {
+  if (!value || typeof value !== "object") return keys;
+  if (Array.isArray(value)) {
+    for (const item of value) collectKeys(item, keys);
+    return keys;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    keys.push(key);
+    collectKeys(child, keys);
+  }
+  return keys;
 }
 
-async function json(path) {
-  return JSON.parse(await text(path));
-}
-
-test("root agent instructions require the launch invariants", async () => {
-  const [agents, gitignore] = await Promise.all([text("AGENTS.md"), text(".gitignore")]);
-
-  assert.match(agents, /docs\/invariants\.md/);
-  assert.match(agents, /Before changing billing, Fabric, Workspace, Gateway, Ledger, deployment, or E2E/i);
-  assert.match(gitignore, /^\.codegraph\/$/m);
-});
-
-test("launch freeze fixes the V2 products, owner lanes, settlement, and verification slot", async () => {
+test("launch freeze is a bounded migration contract without status ledgers", async () => {
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
 
-  assert.equal(freeze.schemaVersion, 30);
-  assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
-  assert.deepEqual(freeze.architectureAuthority, {
-    repository: "https://github.com/gaofeng21cn/one-person-lab-cloud",
-    branch: "main",
-    targetPath: "docs/architecture.md",
-    implementationPath: "docs/implementation-architecture.md",
-    binding: "same_repository_revision",
-    rule: "Target product boundaries and current implementation choices are versioned in the same repository revision; exact prices and delivery gaps remain machine and runtime facts."
-  });
-  assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
-  assert.deepEqual(freeze.productSurfaces.serve, { product: "OPL Serve", launchStatus: "planned_not_in_launch" });
-  assert.match(freeze.machineBoundary, /Six product surfaces.*OPL Serve.*planned_not_in_launch/);
-  assert.match(freeze.machineBoundary, /two paused production verification slots/i);
-  assert.deepEqual(Object.keys(freeze.ownerLanes), ["console", "fabric", "gateway", "ledger"]);
-  assert.deepEqual(freeze.customerProducts.basic, {
-    priceVersion: "pilot-usd-2026-07-v1",
-    currency: "USD",
-    compute: { cpu: 2, memoryGb: 4, usdMicros: 50000000 },
-    storage: { sizeGb: 10, usdMicros: 2580000 },
-    totalUsdMicros: 52580000,
-    targetSaleable: true,
-    productionCatalogAvailable: true,
-    realSubscriptionEvidence: "pending",
-    productionProven: false
-  });
-  assert.deepEqual(freeze.customerProducts.pro, {
-    priceVersion: "pilot-usd-2026-07-v1",
-    currency: "USD",
-    compute: { cpu: 8, memoryGb: 16, usdMicros: 214280000 },
-    storage: { sizeGb: 100, usdMicros: 25800000 },
-    totalUsdMicros: 240080000,
-    targetSaleable: true,
-    productionCatalogAvailable: true,
-    realSubscriptionEvidence: "not_executed_by_scope",
-    productionProven: false
-  });
-  assert.equal(freeze.deliveryEvidence.productionProven, false);
-  assert.deepEqual(freeze.internalProviderCostEvidence, {
-    currency: "CNY",
-    computeMonthlyCnyCents: { basic: 35000, pro: 150000 },
-    storageMonthlyCnyCents: { "10": 1800, "100": 18000 },
-    customerChargeDerivation: "forbidden"
-  });
-  assert.equal(freeze.workspaceLaunch.priceVersion, "pilot-usd-2026-07-v1");
-  assert.equal(freeze.workspaceLaunch.currency, "USD");
-  assert.deepEqual(freeze.workspaceLaunch.requiredCreateFields, ["name", "packageId", "sizeGb", "autoRenew"]);
-  assert.deepEqual(freeze.workspaceLaunch.validPackageStoragePairs, [
-    { packageId: "basic", sizeGb: 10 },
-    { packageId: "pro", sizeGb: 100 }
+  assert.equal(freeze.schemaVersion, 32);
+  assert.equal(freeze.state, "migration");
+  assert.equal(freeze.lifecycle.type, "migration_guard");
+  assert.deepEqual(Object.keys(freeze), [
+    "schemaVersion", "owner", "purpose", "state", "machineBoundary", "lifecycle",
+    "monthlySettlement", "workspaceLaunch", "providerProcurement"
   ]);
-  assert.equal(freeze.workspaceLaunch.packageAvailabilitySource, "live_fabric_catalog");
-  assert.equal(freeze.workspaceLaunch.unavailablePackageBehavior, "package_unavailable_before_gateway_balance_debit_ledger_or_tencent_calls");
-  assert.deepEqual(freeze.workspaceLaunch.requestHashFields, ["accountId", "ownerUserId", "name", "packageId", "sizeGb", "autoRenew", "priceVersion"]);
-  assert.deepEqual(freeze.workspaceLaunch.workspaceIdentity, {
-    derivation: "stable_from_account_id_and_launch_operation_idempotency_identity",
-    sameIdempotencyRequest: "same_workspace",
-    newIdempotencyRequest: "new_workspace",
-    accountConcurrentPaidLaunches: 1
-  });
-  assert.equal(freeze.workspaceLaunch.autoRenew.submission, "customer_boolean_default_false");
-  assert.equal(freeze.workspaceLaunch.autoRenew.defaultProductIntent, false);
-  assert.equal(freeze.workspaceLaunch.autoRenew.customerMutable, true);
-  assert.equal(freeze.workspaceLaunch.autoRenew.intentAuthority, "control_plane_workspace");
-  assert.equal(freeze.workspaceLaunch.autoRenew.tencentAutomaticRenewal, false);
-  assert.equal(freeze.workspaceLaunch.autoRenew.currentBranchImplementation, "deferred_control_plane_ui_and_monthly_worker_outside_fabric_nodepool_hard_cut");
-  assert.deepEqual(freeze.workspaceLaunch.customerResponsePricingFields, ["priceVersion", "currency", "totalChargeUsdMicros"]);
-  assert.equal(freeze.workspaceLaunch.recoveryPlan.authority, "control_plane_only");
-  assert.deepEqual(freeze.workspaceLaunch.recoveryPlan.operatorInput, ["accountId", "launchOperationId", "decision"]);
-  assert.deepEqual(freeze.workspaceLaunch.recoveryPlan.consoleExecuteRequest, ["planId", "planDigest", "decision", "confirmation"]);
-  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.fencing, "current_byte_exact_lease_token_required_to_finalize");
-  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.releasedLeaseReacquire, "both_token_and_expiry_empty_reacquire_same_nonterminal_execution_and_run_identity");
-  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.partialOrInvalidLease, "fail_closed_identity_conflict");
-  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.workerTerminalSync, "workspace_launch_postgresql_cas_synchronizes_succeeded_or_manual_review_to_plan_and_execution");
-  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.confirmedWriteReadbackRetry, "cbs_and_runtime_transient_readback_only_no_budget_reset_or_second_external_write");
-  assert.equal(freeze.workspaceLaunch.manualReviewRecovery.route, "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute");
-  assert.equal(freeze.workspaceLaunch.manualReviewRecovery.operatorAuthorization, "authenticated_reserved_operator_session_plus_csrf");
-  assert.equal(freeze.workspaceLaunch.manualReviewRecovery.resourceIdentityInput, "forbidden_server_authoritative_readback_only");
-  assert.deepEqual(freeze.workspaceLaunch.controlledBasicPilot, {
-    state: "code_complete_local_verified_production_default_disabled",
-    scope: "new_workspace.launch.v2_purchase_only",
-    packageIds: ["basic"],
-    autoRenew: false,
-    configuration: {
-      enabled: "OPL_CONTROLLED_BASIC_PILOT_ENABLED",
-      accountAllowlist: "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
-      globalMaxInFlight: "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT",
-      defaultEnabled: false,
-      defaultMaxInFlight: 1
-    },
-    admissionOrder: ["validate_request", "resume_exact_or_matching_active_operation", "controlled_pilot_or_exact_acceptance_b_gate", "fabric_catalog_and_preflight", "sub2api_balance", "global_launch_claim", "workspace_key_convergence"],
-    productionAcceptanceBException: {
-      publicMode: false,
-      pilotMayRemainDisabled: true,
-      approvalSource: "dedicated_control_plane_kubernetes_secret",
-      capabilitySource: "current_internal_service_secret_runner_memory_only",
-      exactBinding: ["account", "email", "approval_id", "idempotency_key", "operation_id", "workspace_id", "release_sha", "cloud_image_digest", "workspace_image_digest", "basic_10gb_autoRenew_false", "node_pool", "instance_type", "expiry", "allowed_and_forbidden_writes"],
-      launchPostMaximum: 1,
-      capacitySlot: "one_global_single_use_exact_approval_slot_independent_of_ordinary_pilot_in_flight_capacity",
-      sameAccountNonterminal: "reject",
-      secondAcceptanceOperation: "reject",
-      prePostReadback: "deterministic_operation_get_first",
-      unknownPost: "same_operation_get_only_no_second_post",
-      rejectionMutationCounts: { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 }
-    },
-    rejectionMutationCounts: { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 },
-    globalCapacity: "ordinary_launches_use_configured_max_in_flight; one_exact_acceptance_b_operation_uses_a_separate_global_single_use_slot; both_are_serialized_by_memory_mutex_or_postgresql_transaction_with_stable_account_row_lock_before_count_and_insert",
-    disableBehavior: "block_new_purchase_only_reads_and_original_operation_continuations_remain_available",
-    firstFailure: "operator_health_disableRequired_and_redacted_alert_then_set_enabled_0",
-    productionEvidence: "pending"
-  });
-  assert.deepEqual(freeze.workspaceLaunch.manualReviewRecovery.matrix, {
-      computeReadyStorageAbsent: "resume_storage_fulfilling_with_original_operation_identity",
-      computeReadyStorageReady: "resume_attaching_with_original_operation_identity",
-      computeAbsentStorageAbsent: "one_idempotent_workspace_refund",
-      computeAbsentStorageReady: "remain_manual_review",
-      providerUnknown: "remain_manual_review",
-      receiptPending: "retry_purchase_receipt_only",
-      refundConfirmedReceiptPending: "retry_refund_receipt_only"
-  });
-  assert.deepEqual(freeze.workspaceLaunch.computeClaimRecovery.publicRoutes, []);
-  assert.equal(freeze.workspaceLaunch.computeClaimRecovery.legacyPublicRouteStatus, "404_retired");
-  assert.equal(freeze.workspaceLaunch.computeClaimRecovery.claimAuthorization, "reserved_operator_session_plus_csrf_then_control_plane_persisted_validated_plan_and_server_generated_approval_digest");
-  assert.deepEqual(freeze.workspaceLaunch.computeClaimRecovery.consoleSubmittedResourceFields, []);
-  assert.deepEqual(freeze.workspaceLaunch.computeClaimRecovery.executionAuthority, {
-    owner: "control_plane",
-    singleWinner: "postgresql_cas_persisted_execution_lease",
-    fencing: "byte_exact_current_lease_token_required_to_finalize",
-    identity: ["planId", "planDigest", "approvalDigest", "executionId", "runId", "decision", "reviewer"],
-    replay: "same_plan_digest_decision_and_reviewer_returns_same_execution_and_run_identity",
-    failedZeroSuccessor: "archive_old_plan_execution_approval_error_and_mutation_outcome_then_require_new_plan_validation_and_approval"
-  });
-  assert.deepEqual(freeze.providerProcurement.preDebitIamGate, {
-    timing: "compute_monthly_preflight_before_kubernetes_rbac_capacity_and_first_sub2api_debit",
-    proofMode: "production_runner_deployment_attestation",
-    releaseBinding: "exact_merged_OPL_RELEASE_SHA",
-    identityAuthority: "live_STS_GetCallerIdentity_at_deploy_and_preflight",
-    identityFields: ["type", "principalId", "accountId", "userId"],
-    policyDigestSource: "protected_release_owner_verified_production_policy_digest",
-    requiredTencentActions: ["tag:TagResources", "tag:ModifyResourcesTagValue"],
-    actualTencentTagWriteCalls: 0,
-    failure: "before_rbac_capacity_debit_and_provider_mutation_all_business_mutation_counts_zero"
-  });
-  assert.equal(freeze.workspaceLaunch.computePoolHeadPreDebitGate.timing, "after_compute_monthly_preflight_before_sub2api_debit");
-  assert.equal(freeze.workspaceLaunch.computePoolHeadPreDebitGate.chargedContinuation, "skip_gate_when_ChargeAttempted_or_ChargeConfirmation_is_present");
-  assert.deepEqual(freeze.workspaceLaunch.computePoolHeadPreDebitGate.externalMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
-  assert.equal(freeze.workspaceLaunch.computePoolHeadTerminalization.scope, "one_exact_current_fifo_head");
-  assert.equal(freeze.workspaceLaunch.computePoolHeadTerminalization.cas, "claim_pending_to_failed_with_terminal_unprovable_evidence_single_winner");
-  assert.equal(freeze.workspaceLaunch.computePoolHeadTerminalization.controlPlaneLaunchState, "preserved_manual_review_compute_claim_pending");
-  assert.deepEqual(freeze.workspaceLaunch.computePoolHeadTerminalization.providerMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
-  assert.match(freeze.workspaceLaunch.computePoolHeadTerminalization.responseLoss, /never_second_POST/);
-  assert.deepEqual({
-    trigger: freeze.workspaceLaunch.computeClaimRecovery.trigger,
-    pendingState: freeze.workspaceLaunch.computeClaimRecovery.pendingState,
-    proofContract: freeze.workspaceLaunch.computeClaimRecovery.proofContract,
-    identitySource: freeze.workspaceLaunch.computeClaimRecovery.identitySource,
-    legacyCandidates: freeze.workspaceLaunch.computeClaimRecovery.legacyCandidates,
-    legacyNormalization: freeze.workspaceLaunch.computeClaimRecovery.legacyNormalization,
-    normalizationMutationCounts: freeze.workspaceLaunch.computeClaimRecovery.normalizationMutationCounts,
-    fabricIdempotencyBinding: freeze.workspaceLaunch.computeClaimRecovery.fabricIdempotencyBinding,
-    requestHashReconciliation: freeze.workspaceLaunch.computeClaimRecovery.requestHashReconciliation,
-    confirmedNodeDriftRecovery: freeze.workspaceLaunch.computeClaimRecovery.confirmedNodeDriftRecovery,
-    claimMutationBounds: freeze.workspaceLaunch.computeClaimRecovery.claimMutationBounds,
-    storageProof: freeze.workspaceLaunch.computeClaimRecovery.storageProof,
-    storageApprovalBinding: freeze.workspaceLaunch.computeClaimRecovery.storageApprovalBinding,
-    storageCreateBounds: freeze.workspaceLaunch.computeClaimRecovery.storageCreateBounds,
-    storageReplay: freeze.workspaceLaunch.computeClaimRecovery.storageReplay,
-    normalRetry: freeze.workspaceLaunch.computeClaimRecovery.normalRetry,
-    successTransition: freeze.workspaceLaunch.computeClaimRecovery.successTransition,
-    failureTransition: freeze.workspaceLaunch.computeClaimRecovery.failureTransition,
-    forbidden: freeze.workspaceLaunch.computeClaimRecovery.forbidden,
-    currentImplementation: freeze.workspaceLaunch.computeClaimRecovery.currentImplementation
-  }, {
-    trigger: "debit_confirmed_unique_compute_created_claim_interrupted_regardless_of_later_storage_attempt_state",
-    pendingState: "compute_claim_pending",
-    proofContract: "opl-cloud-service-boundary-contract.json#services.fabric.workspaceComputeClaimRecovery",
-    identitySource: ["workspace.launch.v2", "create_compute_allocation", "allocation_plan", "machine_ownership"],
-    legacyCandidates: [{ status: "manual_review", phase: "compute_fulfilling" }],
-    legacyNormalization: "after_debit_and_exact_compute_identity_ownership_proof_postgresql_cas_to_compute_claim_pending",
-    normalizationMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-    fabricIdempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
-    requestHashReconciliation: {
-      owner: "Fabric_ClaimComputeRecovery",
-      candidate: "persisted_request_hash_is_the_only_primitive_binding_mismatch",
-      requiredIdentity: ["canonical_compute_operation", "original_launch", "target_hash", "allocation_plan", "quarantined_compute_allocation", "quarantined_machine_ownership", "tencent_cvm", "tke_machine", "kubernetes_node", "node_pool", "sku", "zone", "prepaid_manual_renew_deadline"],
-      generations: {
-        isolated_request_hash_v1: {
-          schemaVersion: 1,
-          operationStatus: "claim_pending",
-          requiredEvidence: "valid_isolated_manual_recovery_ledger"
-        },
-        normal_launch_terminal_evidence_v1: {
-          schemaVersion: 2,
-          operationStatus: "failed",
-          manualRecoveryLedger: "absent",
-          requiredStageBudgets: {
-            computeCreate: { attempted: 1, confirmed: 1, unknown: 0, max: 1 },
-            computeClaimCvm: { attempted: 1, confirmed: 0, unknown: 1, max: 1 },
-            computeClaimNode: "absent"
-          },
-          requiredTerminalEvidence: "compute_claim_cvm_terminal_unprovable_exact_operation_binding_and_resource_identity"
-        }
-      },
-      persistence: "versioned_single_winner_cas_provenance_on_original_compute_operation",
-      preserved: ["persisted_binding", "source_recovery_evidence", "normal_launch_mutation_budgets", "terminal_evidence", "launch", "debit", "cvm", "allocation", "ownership"],
-      consumer: "original_ClaimComputeRecovery_only",
-      mutationBounds: { sub2api: 0, tencent: 0, kubernetesNodePatchMax: 1 },
-      failClosed: ["released_ownership", "zero_or_multiple_compute_candidates", "other_binding_mismatch", "source_evidence_drift", "provider_identity_drift", "cas_conflict", "compute_unknown_readback"]
-    },
-    confirmedNodeDriftRecovery: {
-      contract: "normal_launch_confirmed_node_drift_v1",
-      classification: "persisted_node_mutation_confirmed_and_fresh_kubernetes_get_unallocated",
-      authorities: {
-        history: "immutable_fabric_reconciliation_and_mutation_ledger",
-        current: "fresh_tencent_describe_and_kubernetes_get"
-      },
-      requiredIdentity: ["original_launch", "account", "owner_user", "workspace", "compute_allocation", "node_pool", "machine", "cvm", "node", "private_ip", "sku", "zone", "prepaid_manual_renew_deadline", "fabric_binding", "reconciliation_provenance"],
-      authorization: "validated_control_plane_recovery_plan_operator_execution_receipt_only",
-      normalLaunchKubernetesPatchLifetimeMax: 1,
-      attempt: {
-        idempotency: "launch_operation_id:compute:confirmed-node-drift:approval_digest",
-        canonicalComputeBindingUnchanged: true,
-        reservation: "original_fabric_operation_payload_single_winner_cas",
-        ledgerGeneration: "normal_launch_confirmed_node_drift_v1",
-        mutationBounds: { sub2api: 0, tencent: 0, kubernetesPatchMax: 1 },
-        patchPrecondition: "fresh_kubernetes_get_resourceVersion",
-        successReadback: "fresh_kubernetes_get_target_owned",
-        replayAfterReservedAcceptedTimeoutUnknownOrReadbackFailure: "get_only_no_second_patch"
-      },
-      sharedPath: ["compute_provider_truth_collector", "compute_claim_evaluator", "launch_stage_reducer", "current_decision", "compute_stage_executor"],
-      forbidden: ["automatic_normal_launch_drift_patch", "binding_takeover", "second_launch", "second_debit", "second_cvm", "second_cbs", "second_key", "automatic_retry_after_failure"]
-    },
-    claimMutationBounds: { sub2api: 0, tencent: { min: 0, max: 5 }, kubernetes: { min: 0, max: 1 } },
-    storageProof: "DescribeDisks_only_four_ownership_tags_complete_pagination_exact_facts_mutation_zero",
-    storageApprovalBinding: ["storageState", "storageProviderResourceId"],
-    storageCreateBounds: { storage_not_started: 1, storage_existing_exact: 0, unknown: 0 },
-    storageReplay: "persisted_original_operation_identity_fresh_discovery_reuses_exact_disk_after_restart",
-    normalRetry: "same_operation_claim_only_never_prepare_or_scale_again",
-    successTransition: "same_launch_storage_fulfilling_with_original_storage_identity",
-    failureTransition: "manual_review_without_refund_or_replacement",
-    forbidden: ["second_debit", "refund", "second_cvm", "early_cbs", "replacement_compute"],
-    currentImplementation: "normal_launch_confirmed_node_drift_v1_fabric_and_control_plane_local_focused_verified_release_deploy_and_original_launch_execution_pending"
-  });
 
-  assert.deepEqual(freeze.monthlySettlement.protocol, ["debit", "fabric_fulfillment", "claim", "activate", "record_workspace_receipt"]);
-  assert.equal(freeze.monthlySettlement.confirmedNoResourceAfterDebit, "idempotent_refund");
-  assert.equal(freeze.monthlySettlement.partialOrUnknownProviderResult, "manual_review_without_refund");
-  assert.equal(freeze.monthlySettlement.exactBalanceEvidence, undefined);
-  assert.deepEqual(freeze.monthlySettlement.chargeConfirmationEvidence, {
-    authority: "exactly_one_matching_redeem_code_history_entry",
-    balanceSnapshots: "preflight_and_projection_only",
-    exactBalanceDeltaRequired: false,
-    concurrentUsage: "allowed",
-    balanceDeltaMismatchAlone: "not_manual_review",
-    monthlyDebitMaximum: 1
-  });
-  assert.deepEqual(freeze.workspaceLaunch.providerPreflightRecovery, {
-    timing: "before_first_charge_attempt",
-    runWhen: "ChargeAttempted=false_and_ChargeConfirmation_absent",
-    skipOnRecoveryWhenAnyPresent: ["ChargeAttempted", "ChargeConfirmation"],
-    writes: "none"
-  });
-  assert.deepEqual(freeze.workspaceLaunch.backgroundWorkers, {
-    activeLaunchWorker: {
-      intervalSeconds: 10,
-      query: "non_terminal_workspace.launch.v2_only",
-      purpose: "advance_active_launches"
-    },
-    providerReconcileWorker: {
-      intervalSeconds: 600,
-      purpose: "recovery_gate_and_provider_fact_reconciliation"
-    },
-    duplicateDebitOrProcurement: "prevented_by_existing_cas_lease_and_idempotency"
-  });
-  assert.equal(freeze.providerProcurement.chargeType, "PREPAID");
-  assert.equal(freeze.providerProcurement.periodMonths, 1);
-  assert.equal(freeze.providerProcurement.renewFlag, "NOTIFY_AND_MANUAL_RENEW");
-  assert.deepEqual(freeze.providerProcurement.forbiddenChargeTypes, ["POSTPAID_BY_HOUR"]);
-  assert.deepEqual(freeze.providerProcurement.mutationPermissionGate, {
+  const keys = new Set(collectKeys(freeze));
+  for (const forbidden of [
+    "deliveryEvidence", "launchStages", "currentImplementation", "currentState",
+    "currentBranchScope", "productionEvidence", "releaseEvidence"
+  ]) assert.equal(keys.has(forbidden), false, forbidden);
+});
+
+test("monthly settlement keeps one debit and fail-closed unknown-result bounds", async () => {
+  const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
+  const settlement = freeze.monthlySettlement;
+
+  assert.equal(settlement.balanceOwner, "Sub2API");
+  assert.deepEqual(settlement.protocol, ["debit", "fabric_fulfillment", "claim", "activate", "record_workspace_receipt"]);
+  assert.equal(settlement.doubleDebitForbidden, true);
+  assert.equal(settlement.confirmedNoResourceAfterDebit, "idempotent_refund");
+  assert.equal(settlement.partialOrUnknownProviderResult, "manual_review_without_refund");
+  assert.equal(settlement.chargeConfirmationEvidence.monthlyDebitMaximum, 1);
+  assert.equal(settlement.chargeConfirmationEvidence.balanceDeltaMismatchAlone, "not_manual_review");
+  assert.equal(settlement.ledgerFailureAfterActivation, "retry_receipt_only");
+});
+
+test("Workspace launch preserves debit-first ordering and deterministic replay", async () => {
+  const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
+  const launch = freeze.workspaceLaunch;
+
+  assert.equal(launch.customerDebitCardinality, 1);
+  assert.deepEqual(launch.submissionOrder, [
+    "workspace_quote", "compute_read_only_preflight", "storage_read_only_preflight",
+    "workspace_key_preflight", "sub2api_total_balance_preflight", "persist_launch"
+  ]);
+  assert.equal(launch.unavailablePackageBehavior, "package_unavailable_before_gateway_balance_debit_ledger_or_tencent_calls");
+  assert.equal(launch.totalBalanceSemantics, "read_only_preflight_not_hold_or_reservation");
+  assert.equal(launch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
+  assert.equal(launch.providerPreflightRecovery.writes, "none");
+  assert.equal(launch.continuationAttemptBudgets.maxPerStage, 1);
+  assert.equal(launch.continuationAttemptBudgets.restart, "remaining_budget_loaded_from_persisted_launch");
+});
+
+test("manual review recovery cannot become a second launch or second purchase", async () => {
+  const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
+  const recovery = freeze.workspaceLaunch.manualReviewRecovery;
+
+  assert.equal(recovery.operatorAuthorization, "authenticated_reserved_operator_session_plus_csrf");
+  assert.equal(recovery.resourceIdentityInput, "forbidden_server_authoritative_readback_only");
+  assert.deepEqual(recovery.requestFields, ["planId", "planDigest", "decision", "confirmation"]);
+  assert.equal(recovery.allowedAction, "continue_original_workspace_launch");
+  assert.equal(recovery.matrix.providerUnknown, "remain_manual_review");
+  assert.equal(recovery.matrix.computeAbsentStorageAbsent, "one_idempotent_workspace_refund");
+});
+
+test("provider procurement remains prepaid, gated and protected", async () => {
+  const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
+  const provider = freeze.providerProcurement;
+
+  assert.equal(provider.chargeType, "PREPAID");
+  assert.equal(provider.periodMonths, 1);
+  assert.equal(provider.renewFlag, "NOTIFY_AND_MANUAL_RENEW");
+  assert.deepEqual(provider.forbiddenChargeTypes, ["POSTPAID_BY_HOUR"]);
+  assert.deepEqual(provider.mutationPermissionGate, {
     env: "RUN_TENCENT_CREATE_RELEASE_EXECUTION",
     requiredValue: "1",
     check: "shared_tencent_monthly_preflight_before_sub2api_debit",
     failure: "zero_charge_zero_fabric_mutation"
   });
-  assert.deepEqual(freeze.providerProcurement.dedicatedNodePools, {
-    system: {
-      nodePoolId: "np-6l4nkdto",
-      machineId: "np-6l4nkdto-2cdtm",
-      nodeName: "10.66.0.42",
-      machineType: "readback_from_exact_system_node_pool",
-      cvmId: "required_only_for_nativecvm"
-    },
-    basic: {
-      stablePoolName: "pool-basic-2c4g",
-      packageId: "basic",
-      resourceContract: { cpu: 2, memoryGb: 4 },
-      resolvedInstanceTypeSource: "deterministic_zone_prepaid_sell_shape_price_inventory_then_bootstrap_registration",
-      replicasMayBeZero: true
-    },
-    pro: {
-      stablePoolName: "pool-pro-8c16g",
-      packageId: "pro",
-      resourceContract: { cpu: 8, memoryGb: 16 },
-      resolvedInstanceTypeSource: "deterministic_zone_prepaid_sell_shape_price_inventory_then_bootstrap_registration",
-      replicasMayBeZero: true
-    },
-    packagePoolsDistinctFromEachOtherAndSystem: true,
-    maxReplicas: "required_explicit_production_configuration_no_default"
-  });
-  assert.deepEqual(freeze.providerProcurement.computeAllocation, {
-    nodePoolIdentitySource: "persisted_exact_monthly_preflight_node_pool_id",
-    discoveryFallback: false,
-    createNodePool: false,
-    admission: "persisted_fifo_by_exact_node_pool",
-    admissionLock: "short_postgresql_transaction_advisory_lock_only",
-    headExecution: "only_started_head_can_prepare_scale_bounded_poll_and_claim",
-    executionFence: "short_lease_without_provider_call_holding_postgresql_connection",
-    crossPoolConcurrency: "independent_node_pools_parallel",
-    persistBeforeTencentMutation: ["baselineReplicas", "targetReplicas=baselineReplicas+1", "beforeMachineNames"],
-    replay: "align_same_absolute_target_never_recompute_current_plus_one",
-    claim: "exactly_one_ready_machine_in_after_minus_before",
-    zeroDifference: "bounded_poll_same_persisted_absolute_target",
-    unsafeDifference: "manual_review_without_second_scale_or_old_machine_claim",
-    machineIdentityReadback: {
-      readyStates: ["Ready", "Running"],
-      missingOrUnknownState: "fail_closed_never_default_running",
-      privateIpCvmMatches: "exactly_one",
-      exactIdentityChain: ["nodePoolId", "machineName", "cvmInstanceId", "privateIp", "vpcId", "subnetId"],
-      instanceTypeConsistency: ["node_pool", "machine", "native", "cvm"],
-      resourceShapeRequired: ["machine_cpu_memory", "native_cpu_memory", "cvm_cpu_memory"],
-      zeroMultipleMissingOrMismatch: "fail_closed"
-    },
-    ownershipWriteGate: ["cvm_ins_id", "sku", "zone", "chargeType=PREPAID", "periodMonths=1", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
-    customerMachineSource: "new_machine_created_for_this_workspace_only"
-  });
-  assert.deepEqual(freeze.providerProcurement.nodePoolBootstrap, {
-    authority: "manual_approved_bootstrap_workflow_only",
-    environment: "production",
-    credentials: "existing_production_tencent_credentials_and_kubeconfig",
-    inventoryFirst: ["system", "basic", "pro", "zone_sku", "prepaid_quota", "subnet_ip", "tke_cluster_node_limit"],
-    createOnlyWhenMissingAndUnambiguous: true,
-    newPoolReplicas: 0,
-    stableInfrastructureLabelsOnly: true,
-    customerOwnershipLabels: false,
-    skuSelection: {
-      action: "workspace_sku_inventory",
-      chargeType: "PREPAID",
-      stockStatus: "SELL",
-      price: "complete_positive_monthly_price",
-      basic: "lowest_monthly_price_then_instance_type_for_exact_2c4g",
-      pro: "lowest_monthly_price_then_instance_type_for_exact_8c16g",
-      dryRun: "automatic_recommended",
-      mutation: "selected_candidate_revalidated_immediately_before_create"
-    },
-    requiredCapacity: 1,
-    capacityGates: ["prepaid_quota", "subnet_available_ip", "tke_cluster_node_limit"],
-    inventoryEvidence: "sorted_complete_node_pool_ids_before_mutation",
-    unknownNodePool: "fail_closed_before_create",
-    mutationSource: "exact_merged_origin_main_sha",
-    resolvedInstanceTypeRegistration: ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
-    maxReplicas: { basic: 50, pro: 50, source: "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits" },
-    mutationConfirmation: "CREATE_MISSING_WORKSPACE_NODEPOOLS",
-    taintMigration: {
-      action: "migrate_workspace_node_pool_taints",
-      confirmation: "MIGRATE_BASIC_PRO_NODEPOOL_PACKAGE_TAINTS",
-      targetPools: ["basic", "pro"],
-      protectedSystemExcluded: true,
-      default: "dry_run",
-      unknown: "get_only_no_retry",
-      maxModifyNodePoolCalls: 2,
-      updateExistedNode: true,
-      mutationPrecondition: "fresh_full_node_pool_package_name_ip_uid_workspace_labels_and_complete_taints_sha256_binding",
-      attemptAuthority: "existing_fabric_operations_postgresql_claim_runtime_single_winner",
-      replayAfterReservedTimeoutUnknownOrReadbackFailure: "get_only_reconcile_no_second_modify_node_pool",
-      runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-      indirectNodeTaintEffect: "ModifyNodePool_UpdateExistedNode_true_controller_propagation_reported_separately",
-      readback: "bounded_condition_poll_node_pool_and_all_affected_nodes",
-      stability: "two_consecutive_same_node_uid_workspace_labels_and_unique_package_taint",
-    },
-    dryRunMutationCount: 0,
-    idempotency: "running_or_exact_creating_pool_is_registered_or_pending_without_duplicate_create",
-    partialState: "preserve_successful_pool_report_failure_retry_missing_only",
-    ordinaryCallerCreateNodePoolCount: 0
-  });
-  assert.deepEqual(freeze.providerProcurement.protectedResourceGuard, {
-    identities: ["system_node_pool", "system_machine", "system_node", "system_cvm_when_applicable"],
-    appliesTo: ["tencent_mutation", "kubernetes_mutation", "cleanup_workflows"],
-    failure: "reject_before_provider_client_or_kubectl_mutation"
-  });
-  assert.deepEqual(freeze.providerProcurement.activationReadback, {
-    api: "POST /fabric/workspace-activation-truth",
-    semantic: "describe_get_only_mutation_zero_proof",
-    consumers: ["workspace_activation", "workspace_url_gateway"],
-    requiredFacts: ["compute_ownership", "unique_cbs_pv_pvc", "attachment_identity", "gateway_secret_identity", "unique_runtime", "ready_pod_on_claimed_node", "service_endpoints_identity", "workspace_network_policy"],
-    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-    mismatch: "manual_review_without_activation"
-  });
-  assert.deepEqual(freeze.providerProcurement.unpaidExpiry, {
-    workspaceAccess: "deny_immediately",
-    autoRenew: false,
-    providerAction: "none_expire_by_provider",
-    providerReclamation: "tencent_prepaid_expiry_policy",
-    recoveryCommitment: "none",
-    fabricMutationCount: 0,
-    tencentMutationCount: 0
-  });
-  assert.deepEqual(freeze.providerProcurement.workspaceRenewal, {
-    intentAuthority: "control_plane_workspace_autoRenew",
-    autoRenewFalse: "zero_debit_zero_fabric_renewal",
-    autoRenewTrueOperation: [
-      "read_autoRenew_and_paidThrough",
-      "wallet_and_compute_storage_read_only_preflight",
-      "single_workspace_total_debit",
-      "renew_same_cvm",
-      "renew_same_cbs",
-      "fabric_authoritative_deadline_readback",
-      "extend_workspace_paidThrough",
-      "billing.workspace_renewed.v1"
-    ],
-    tencentRenewFlag: "NOTIFY_AND_MANUAL_RENEW",
-    partialOrUnknown: "manual_review_without_duplicate_debit_renewal_or_purchase",
-    fabricPrimitives: ["RenewComputeAllocation", "RenewStorageVolume"],
-    currentBranchScope: "preserve_fabric_primitives_only_control_plane_switch_ui_and_worker_deferred"
-  });
-  assert.equal(freeze.workspaceLaunch.codeCompleteThroughPhase, undefined);
-  assert.equal(freeze.workspaceLaunch.nextBlockedStage, undefined);
-  assert.match(freeze.workspaceLaunch.currentImplementation, /manual-review recovery.*integrated local fake evidence/i);
-  assert.doesNotMatch(freeze.workspaceLaunch.currentImplementation, /pending integrated verification/i);
-  assert.doesNotMatch(freeze.workspaceLaunch.currentImplementation, /manual review.*code-complete/i);
-  assert.deepEqual(freeze.workspaceRuntime.sourceImage, {
-    appRepository: "https://github.com/gaofeng21cn/one-person-lab-app.git",
-    activeShellRepository: "https://github.com/gaofeng21cn/opl-aion-shell.git",
-    frameworkRepository: "https://github.com/gaofeng21cn/one-person-lab.git",
-    candidateAppMainSha: candidateAppSha,
-    candidateActiveShellMainSha: candidateShellSha,
-    candidateFrameworkMainSha: candidateFrameworkSha,
-    candidateRequirements: ["40_character_git_sha", "merged_into_repository_main"]
-  });
-  assert.deepEqual(freeze.workspaceRuntime.releaseEvidence, {
-    immutableTcrDigest: null,
-    immutableTcrDigestStatus: "pending_publication_readback",
-    readyPodImageId: null,
-    readyPodImageIdStatus: "pending_deployment_readback"
-  });
-  assert.deepEqual(freeze.workspaceRuntime.projectFacts, {
-    launchStatus: "paused_not_in_release",
-    authority: "workspace_runtime_projects_mount_and_statfs",
-    apiRoutes: [],
-    consolePresentation: "absent",
-    persistence: "none",
-    releaseValidation: "direct_runtime_pod_sha256_markers_only",
-    correspondingEvidence: "not_claimed"
-  });
-  assert.equal(freeze.workspaceRuntime.workspaceCardinality, "many_per_account");
-  assert.deepEqual(freeze.workspaceRuntime.gatewaySecret, {
-    scope: "workspace",
-    writeIdentityFields: ["accountId", "workspaceId", "workspaceApiKeyId", "fingerprint"],
-    newWritePolicy: "workspace_scoped_deterministic_identity_only",
-    legacyReadCompatibility: "explicit_persisted_scope_or_ref_only",
-    legacyMigration: "first_target_workspace_key_rotation_without_automatic_runtime_restart",
-    scopeInferenceForbidden: ["workspace_count", "key_name"]
-  });
-  assert.equal(freeze.workspaceRuntime.statusContainsPassword, false);
-  assert.equal(freeze.workspaceRuntime.runtimeRequestIdentityBinding, "not_in_pilot_requires_sso");
-  assert.deepEqual(freeze.workspaceRuntime.credentialCommands, {
-    reveal: "POST /api/workspaces/{workspaceId}/runtime-credentials/reveal",
-    rotate: "POST /api/workspaces/{workspaceId}/runtime-credentials/rotate",
-    authorization: "workspace.ownerUserId_equals_session_user.id",
-    cacheControl: "private, no-store",
-    passwordPersistence: "none",
-    rotationReceiptType: "workspace.access_token_reset"
-  });
-  assert.equal(freeze.gateway.sub2apiMutable, false);
-  assert.equal(freeze.gateway.backend, "Sub2API");
-  assert.equal(freeze.gateway.compatibilityGate, "required_capabilities");
-  assert.equal(freeze.gateway.versionRole, "diagnostic_only");
-  assert.equal("compatibleVersions" in freeze.gateway, false);
-  assert.deepEqual(freeze.gateway.compatibilityEvidence, ["contract_tests", "read_only_production_probe"]);
-  assert.equal(freeze.productSurfaces.gateway.backend, freeze.gateway.backend);
-  assert.equal(freeze.gateway.legacyWorkspaceKeyName, "opl-workspace");
-  assert.equal(freeze.gateway.newWorkspaceKeyName, "stable_reserved_name_derived_from_workspace_id");
-  assert.equal(freeze.gateway.workspaceKeyActiveCardinality, "one_per_workspace");
-  assert.deepEqual(freeze.gateway.workspaceKeyLifecycle.scopeIdentity, ["workspaceId", "workspaceApiKeyId"]);
-  assert.equal(freeze.gateway.workspaceKeyLifecycle.oldKeyRetirementGate, "only_after_runtime_authoritative_readback_and_atomic_workspace_commit");
-  assert.equal(freeze.gateway.workspaceKeyLifecycle.runtimeCredentialInvariant, "key_rotation_does_not_change_username_password_or_credential_version");
-  assert.deepEqual(freeze.gateway.usageScope, ["user_id", "api_key_id"]);
-  assert.deepEqual(freeze.gateway.usageListFields, [
-    "user_id", "api_key_id", "request_id", "created_at", "model", "inbound_endpoint", "request_type",
-    "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "actual_cost",
-    "duration_ms", "first_token_ms"
+  assert.deepEqual(provider.protectedResourceGuard.appliesTo, [
+    "tencent_mutation", "kubernetes_mutation", "cleanup_workflows"
   ]);
-  assert.equal(freeze.gateway.usageMoneySource, "actual_cost");
-  assert.equal(freeze.gateway.usageMoneyRepresentation, "integer_usd_micros");
-  assert.deepEqual(freeze.gateway.liveBalanceProjection, {
-    method: "Sub2APIHTTPClient.Balance",
-    meaning: "conservative_spendable_lower_bound",
-    conversion: "floor(rawDecimalUSD * 1000000)",
-    exactRawBalanceCopy: false,
-    unavailableWhen: ["non_numeric", "negative", "non_finite", "int64_overflow"],
-    failureBehavior: "dependent_surface_unavailable_never_zero",
-    integerMicrosDebitInvariant: "projected_pre_minus_projected_post_equals_exact_integer_micros_debit"
-  });
-  assert.equal(freeze.gateway.rawAdminDTOForwarding, false);
-  assert.equal(freeze.gateway.missingCapabilityBehavior, "dependent_surface_unavailable_never_zero");
-  assert.equal(freeze.gateway.summaryApi, undefined);
-  assert.equal(freeze.gateway.customerReadContract, "opl-cloud-console-source-truth-contract.json");
-  assert.deepEqual(freeze.gateway.emptyListPaginationRule, {
-    appliesTo: ["Keys", "UserKeys", "Usage", "BalanceHistory"], total: 0, page: 1, pages: 1, items: [], otherShapes: "reject"
-  });
-  assert.deepEqual(freeze.gateway.customerMutationApis, [
-    "create_general_key",
-    "update_general_key",
-    "delete_general_key",
-    "reveal_owned_key",
-    "change_group",
-    "reset_quota",
-    "reset_rate_limit_usage"
-  ]);
-  assert.equal(freeze.consoleFinancialProjection.mode, "read_only_projection");
-  assert.deepEqual(freeze.consoleFinancialProjection.authorities, {
-    balanceApiKeysAndRequestUsage: "Sub2API",
-    resourceBillingHistory: "Ledger receipts",
-    workspaceAndEntitlements: "Control Plane"
-  });
-  assert.deepEqual(freeze.consoleFinancialProjection.prohibitions, [
-    "second_wallet",
-    "usage_database",
-    "billing_fact_table",
-    "raw_admin_dto",
-    "browser_to_sub2api",
-    "frontend_financial_derivation",
-    "payment_or_topup_ui",
-    "prompt_or_response_content"
-  ]);
-
-  assert.deepEqual(freeze.verification.slots, [
-    {
-      id: "verification-slot-basic-01", packageId: "basic", computeInstanceType: "SA5.MEDIUM4",
-      resources: { cpu: 2, memoryGb: 4, cbsGb: 10 }, customerProduct: false,
-      chargeType: "PREPAID", periodMonths: 1, renewFlag: "NOTIFY_AND_MANUAL_RENEW", reuseForBillingPeriod: true, concurrency: 1
-    },
-    {
-      id: "verification-slot-pro-01", packageId: "pro", computeInstanceType: "SA5.2XLARGE16",
-      resources: { cpu: 8, memoryGb: 16, cbsGb: 100 }, customerProduct: false,
-      chargeType: "PREPAID", periodMonths: 1, renewFlag: "NOTIFY_AND_MANUAL_RENEW", reuseForBillingPeriod: true, concurrency: 1
-    }
-  ]);
-  assert.equal(freeze.verification.purchaseBudget, 2);
-  assert.equal("purchaseBudgetRemaining" in freeze.verification, false);
-  assert.deepEqual(freeze.verification.providerAcceptance, {
-    launchStatus: "paused",
-    releaseGate: false,
-    operatorOnly: true,
-    approvalEnvironment: "production-provider-acceptance",
-    credentialEnv: "OPL_PROVIDER_ACCEPTANCE_TOKEN",
-    credentialHeader: "x-opl-provider-acceptance-token",
-    operatorSessionAccepted: false,
-    genericOperatorTokenAccepted: false,
-    operationCardinality: 2,
-    operationCardinalityPerSlot: 1,
-    fixedSlotOperationReplayable: true,
-    slotExistenceSource: ["workspace", "compute", "storage"]
-  });
-  assert.equal(freeze.verification.perRunTencentPurchase, false);
-  assert.equal(freeze.verification.monthlyBillingBackend, "fake");
-  assert.equal(freeze.verification.gatewayRequest, "real_dedicated_test_key");
-  assert.deepEqual(freeze.verification.providerResourcesDeletedPerRun, []);
-  assert.equal(freeze.launchStages.length, 10);
-  assert.equal("slides" in freeze, false);
-  assert.equal("deliveryPhases" in freeze, false);
+  assert.equal(provider.protectedResourceGuard.failure, "reject_before_provider_client_or_kubectl_mutation");
+  assert.deepEqual(provider.activationReadback.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.equal(provider.activationReadback.mismatch, "manual_review_without_activation");
+  assert.equal(provider.unpaidExpiry.fabricMutationCount, 0);
+  assert.equal(provider.unpaidExpiry.tencentMutationCount, 0);
 });
 
-test("human launch contract binds target and implementation architecture to the same repository revision", async () => {
-  const [freeze, invariants] = await Promise.all([
-    json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
-    text("docs/invariants.md")
+test("runtime implementation follows the remaining side-effect bounds", async () => {
+  const [launchSource, fabricSource] = await Promise.all([
+    text("services/control-plane/internal/server/workspace_launch.go"),
+    text("services/fabric/internal/fabric/service.go")
   ]);
 
-  assert.match(invariants, /docs\/architecture\.md/);
-  assert.match(invariants, /docs\/implementation-architecture\.md/);
-  assert.equal(freeze.architectureAuthority.binding, "same_repository_revision");
-  for (const sha of [candidateAppSha, candidateShellSha, candidateFrameworkSha]) assert.match(invariants, new RegExp(sha));
-  assert.doesNotMatch(invariants, /13ae5d1410e1a4349c14dc76e7c3446ff200cfdb/);
-  assert.match(invariants, /metadata\/statfs API and Console presentation are paused/i);
-});
-
-test("Workspace contracts permit multiple independent Workspaces", async () => {
-  const [product, freeze] = await Promise.all([
-    json("packages/contracts/opl-cloud-product-contract.json"),
-    json("packages/contracts/opl-cloud-launch-freeze-contract.json")
-  ]);
-
-  assert.equal(product.pilotBoundary.workspaceCardinality, "many_per_account");
-  assert.equal(freeze.workspaceRuntime.workspaceCardinality, "many_per_account");
-  assert.ok(product.pilotBoundary.independentPerWorkspaceFacts.includes("runtime"));
-  assert.ok(product.pilotBoundary.independentPerWorkspaceFacts.includes("purchaseReceiptId"));
-});
-
-test("every launch stage declares business, current state, deliverables, and evidence", async () => {
-  const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
-  const expected = [
-    "offer_identity",
-    "wallet_quote",
-    "balance_debit",
-    "prepaid_fulfillment",
-    "claim_and_activate",
-    "workspace_access",
-    "gateway_usage",
-    "renewal_expiry_recovery",
-    "reusable_verification",
-    "production_release"
-  ];
-
-  assert.deepEqual(freeze.launchStages.map((stage) => stage.id), expected);
-  for (const stage of freeze.launchStages) {
-    assert.ok(stage.business, `${stage.id} business`);
-    assert.ok(Array.isArray(stage.owners) && stage.owners.length > 0, `${stage.id} owners`);
-    assert.ok(stage.currentState, `${stage.id} currentState`);
-    assert.ok(Array.isArray(stage.requiredDeliverables) && stage.requiredDeliverables.length > 0, `${stage.id} requiredDeliverables`);
-    assert.ok(Array.isArray(stage.completionEvidence) && stage.completionEvidence.length > 0, `${stage.id} completionEvidence`);
-  }
-});
-
-test("human invariants reject paid per-run resource verification", async () => {
-  const invariants = await text("docs/invariants.md");
-
-  for (const heading of ["Console", "Fabric", "Ledger", "Gateway", "Launch Stages", "Verification Slot"]) {
-    assert.match(invariants, new RegExp(`## ${heading}`));
-  }
-  assert.match(invariants, /SA5\.MEDIUM4/);
-  assert.match(invariants, /debit.*provision.*claim.*activate/is);
-  assert.match(invariants, /confirmed.*no billable resource.*refund/is);
-  assert.match(invariants, /POSTPAID_BY_HOUR.*forbidden/is);
-  assert.doesNotMatch(invariants, /monthly settlement requires Sub2API-owned `reserve`/i);
-  assert.match(invariants, /version is diagnostic metadata and never blocks/i);
-  assert.match(invariants, /actual_cost.*integer USD micros/is);
-  assert.match(invariants, /Raw Sub2API admin responses.*never reach Console/is);
-  assert.doesNotMatch(invariants, /Cloud accepts the API-compatible v0\.1\./i);
-  assert.doesNotMatch(invariants, /Production E2E requires explicit confirmation that it spends real balance/);
-  assert.doesNotMatch(invariants, /Fabric prepares before charge/);
-  assert.match(invariants, /POST \/api\/operator\/accounts.*ProvisionAccountRequest/is);
-  assert.match(invariants, /lockResource\("sub2api-wallet", accountId\)/);
-  assert.doesNotMatch(invariants, /postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros/);
-  assert.match(invariants, /unique matching Redeem Code history entry is the authority/);
-  assert.match(invariants, /ChargeAttempted.*ChargeConfirmation.*skip/is);
-  assert.match(invariants, /POST \/fabric\/workspace-activation-truth.*Describe.*GET.*mutation.*0/is);
-  assert.match(invariants, /runnerDirectMutationCounts=0.*runner performs no.*direct.*write.*later operator-confirmed.*separate Control Plane operation/is);
-  assert.match(invariants, /GET \/fabric\/monthly-provider-truth\?computeAllocationId=<id>&storageVolumeId=<id>/);
-  assert.match(invariants, /provider_truth.*Describe-only/is);
-  assert.match(invariants, /local\s+identit.*unknown.*absent.*refund/is);
-  assert.match(invariants, /does not run.*Sync.*Tag.*kubectl apply.*delete.*label.*purchase.*renew.*destroy/is);
-  assert.match(invariants, /Console flow.*diagnose.*view persisted Recovery Plan.*validate.*confirm continue/is);
-  assert.doesNotMatch(invariants, /manual[- ]review[^.\n]{0,160}code-complete/i);
-});
-
-test("paused fixed-slot verification does not gate the Basic rollout", async () => {
-  const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
-  const [architecture, decisions, project, readme, runbook, status] = await Promise.all([
-    text("docs/implementation-architecture.md"),
-    text("docs/decisions.md"),
-    text("docs/project.md"),
-    text("README.md"),
-    text("docs/runtime/production-runbook.md"),
-    text("docs/status.md")
-  ]);
-
-  assert.equal(deployment.productionVerificationWorkflow.launchStatus, "paused");
-  assert.equal(deployment.productionVerificationWorkflow.releaseGate, false);
-  assert.equal(deployment.productionVerificationWorkflow.mode, "read_only_dual_fixed_slots");
-  assert.equal(deployment.productionLiveQaJob, undefined);
-  assert.equal(deployment.providerAcceptanceWorkflow.launchStatus, "paused");
-  assert.equal(deployment.providerAcceptanceWorkflow.releaseGate, false);
-  assert.doesNotMatch(JSON.stringify(deployment), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
-  assert.equal(deployment.workspaceImage.candidateAppMainSha, candidateAppSha);
-  assert.equal(deployment.workspaceImage.candidateActiveShellMainSha, candidateShellSha);
-  assert.equal(deployment.workspaceImage.candidateFrameworkMainSha, candidateFrameworkSha);
-  assert.deepEqual(deployment.workspaceImage.candidateRequirements, ["40_character_git_sha", "merged_into_repository_main"]);
-  assert.equal(deployment.workspaceImage.immutableTcrDigest, null);
-  assert.equal(deployment.workspaceImage.immutableTcrDigestStatus, "pending_publication_readback");
-  assert.equal(deployment.workspaceImage.readyPodImageId, null);
-  assert.equal(deployment.workspaceImage.readyPodImageIdStatus, "pending_deployment_readback");
-  assert.equal(deployment.workspaceImage.productionReference, "repository@sha256");
-  assert.match(runbook, /Do not run the legacy paid\s+verifier/);
-  assert.match(architecture, /debit.*before\s+Fabric.*activate/is);
-  assert.doesNotMatch(architecture, /Fabric preparation happens before the external charge/);
-  for (const document of [architecture, decisions, project, readme, status]) {
-    assert.doesNotMatch(document, /single paid verifier|one paid production verifier|explicitly confirmed paid E2E/i);
-  }
-});
-
-test("current rollout truth contains no legacy Workspace image evidence", async () => {
-  const paths = [
-    ".github/workflows/release-opl-cloud-image.yml",
-    ".env.example",
-    "docs/invariants.md",
-    "docs/implementation-architecture.md",
-    "packages/contracts/opl-cloud-launch-freeze-contract.json",
-    "packages/contracts/opl-cloud-deployment-contract.json"
-  ];
-
-  for (const path of paths) {
-    const source = await text(path);
-    assert.doesNotMatch(source, /v?26\.7\.1[23]/, path);
-    assert.doesNotMatch(source, /9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76/, path);
-    assert.doesNotMatch(source, /6e1491a3693a820a37b81ab9a26f8efc4262fb9581f981641c6de084b0fa654f/, path);
-  }
+  assert.match(launchSource, /ChargeAttempted/);
+  assert.match(launchSource, /manual_review/);
+  assert.match(launchSource, /IdempotencyKey/);
+  assert.doesNotMatch(fabricSource, /POSTPAID_BY_HOUR/);
 });

@@ -54,26 +54,11 @@ test("Controlled Basic Pilot is closed by default, identifier-free, and continua
 });
 
 test("Current contracts hard cut Gateway keys and source envelopes", async () => {
-  const [freeze, sourceTruth, boundary, dtos] = await Promise.all([
-    json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
+  const [sourceTruth, boundary, dtos] = await Promise.all([
     json("packages/contracts/opl-cloud-console-source-truth-contract.json"),
     json("packages/contracts/opl-cloud-service-boundary-contract.json"),
     text("apps/console-ui/src/api/dtos.ts")
   ]);
-
-  assert.deepEqual(freeze.deliveryEvidence, {
-    required: true,
-    codeComplete: false,
-    pilotReady: false,
-    productionProven: false,
-    saleable: false
-  });
-  assert.equal(freeze.gateway.publicEndpoint.route, "GET /api/gateway/endpoint");
-  assert.deepEqual(freeze.gateway.customerMutationApis, ["create_general_key", "update_general_key", "delete_general_key", "reveal_owned_key", "change_group", "reset_quota", "reset_rate_limit_usage"]);
-  assert.equal(freeze.gateway.createKeyRequest.groupRequired, true);
-  assert.equal(freeze.gateway.createKeyRequest.expiryField, "expiresInDays");
-  assert.equal(freeze.gateway.createKeyRequest.responseExpiryField, "expiresAt");
-  assert.equal(freeze.gateway.createKeyRequest.createThenUpdate, false);
 
   assert.equal(sourceTruth.envelope.typeName, "SourceEnvelope<T>");
   assert.equal(sourceTruth.envelope.serverWriter, "writeSourceEnvelope");
@@ -127,33 +112,15 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 30);
-  assert.equal(billing.schemaVersion, 11);
+  assert.equal(freeze.schemaVersion, 32);
+  assert.equal(freeze.state, "migration");
+  assert.equal(billing.schemaVersion, 12);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
   assert.equal(freeze.workspaceLaunch.codeCompleteThroughPhase, undefined);
   assert.equal(freeze.workspaceLaunch.legacyNonTerminalPolicy, "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_and_exact_compute_identity_ownership_proof_via_postgresql_cas");
-  assert.deepEqual(freeze.workspaceLaunch.stageDecisionContract, {
-    aggregateRoot: "workspace.launch.v2",
-    orderedStages: ["debit", "compute_claim", "storage", "attachment", "secret", "runtime", "activation", "receipt", "succeeded"],
-    collector: "shared_control_plane_GET_/fabric/compute-provider-truth_per_source_present_absent_unavailable_or_conflict_without_cross_source_erasure",
-    reducer: "pure_normalized_snapshot_to_one_current_decision",
-    currentDecisionFields: ["currentStage", "stageState", "firstFalsePredicate", "expected", "actual", "authority", "nextAction", "requiresApproval", "allowedMutation", "stageAttemptId", "mutationState", "evidenceDigest", "decisionVersion"],
-    atomicPersistence: "phase_status_and_currentDecision_same_launch_postgresql_cas",
-    sharedConsumers: ["normal_launch", "manual_review_recovery", "recovery_diagnose_validate_execute"],
-    projectionOnly: ["get_only_workflow", "console", "artifact"],
-    p0MutationAuthorizationScope: "compute_claim",
-    stageIsolation: "storage_attempted_unknown_or_conflict_never_masks_or_blocks_authoritative_compute_node_ownership",
-    storageEntry: "node_target_owned_only",
-    failClosed: "freeze_current_dangerous_mutation_preserve_other_successful_evidence_and_active_launch"
-  });
-  assert.equal(freeze.workspaceLaunch.backgroundProgression, "non_review_and_manual_review_recovery_integrated_local_fake_verified");
-  assert.equal(
-    freeze.workspaceLaunch.recoveryPlan.execution.fabricLedgerEvidence,
-    "mutationLedger_mutationLedgerOutcome_binding_classification_binding_sha256_digest_and_exact_persisted_cvm_node_attempted_confirmed_unknown_missing_failureStage_providerErrorClass_from_zero_mutation_fabric_identity_evidence"
-  );
-  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.releasedLeaseReacquire, "both_token_and_expiry_empty_reacquire_same_nonterminal_execution_and_run_identity");
-  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.workerTerminalSync, "workspace_launch_postgresql_cas_synchronizes_succeeded_or_manual_review_to_plan_and_execution");
+  assert.equal(freeze.workspaceLaunch.stageDecisionContract.aggregateRoot, "workspace.launch.v2");
+  assert.equal(freeze.workspaceLaunch.stageDecisionContract.p0MutationAuthorizationScope, "compute_claim");
   assert.equal(freeze.workspaceLaunch.nextBlockedStage, undefined);
   assert.deepEqual(freeze.workspaceLaunch.fulfillmentResources, ["compute", "storage", "attachment", "gateway_secret", "runtime"]);
   assert.deepEqual(freeze.workspaceLaunch.computeClaimRecoveryCustomerProjection, {
@@ -161,28 +128,8 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     fields: ["approvalId", "approvalDigest", "recoveryKey", "workspaceImageDigest"],
     forbidden: ["customer_email", "full_approval", "gateway_secret_ref", "credential", "capability"]
   });
-  assert.deepEqual(freeze.workspaceLaunch.continuationAttemptBudgets, {
-    persistence: "original_workspace.launch.v2_operation_result",
-    stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
-    fields: ["attempted", "confirmed", "unknown", "max"],
-    maxPerStage: 1,
-    reservation: "postgresql_cas_before_external_write",
-    restart: "remaining_budget_loaded_from_persisted_launch",
-    unknownOrExhausted: "manual_review_worker_stops"
-  });
-  assert.deepEqual(freeze.gateway.workspaceKeyLifecycle, {
-    scopeIdentity: ["workspaceId", "workspaceApiKeyId"],
-    launchConvergence: "one_reserved_key_per_workspace",
-    rotationApi: "POST /api/workspaces/{workspaceId}/workspace-key/rotate",
-    mutationCredential: "session_delegated_user_bearer",
-    workspacePersistence: "workspace_api_key_id_only",
-    operationPersistence: "control_plane_runtime_operations_non_secret_phases",
-    phases: ["replacement_check", "replacement_create", "secret_write", "runtime_bind", "runtime_readback", "workspace_commit", "retire_old", "promote_new", "delete_old", "receipt", "complete"],
-    runtimeCredentialInvariant: "key_rotation_does_not_change_username_password_or_credential_version",
-    oldKeyRetirementGate: "only_after_runtime_authoritative_readback_and_atomic_workspace_commit",
-    receiptType: "workspace.gateway_key_rotated.v1",
-    currentImplementation: "code_complete_local_focused_tests_only"
-  });
+  assert.equal(freeze.workspaceLaunch.continuationAttemptBudgets.maxPerStage, 1);
+  assert.equal(freeze.workspaceLaunch.continuationAttemptBudgets.unknownOrExhausted, "manual_review_worker_stops");
   assert.equal(billing.chargePolicy.customerObject, "workspace");
   assert.equal(billing.chargePolicy.debitCardinalityPerPeriod, 1);
   assert.equal(billing.chargePolicy.launchOperationAction, "workspace.launch.v2");
@@ -215,11 +162,11 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
   });
   assert.equal(billing.workspaceLaunchFulfillment.manualReviewRecoveryContract, "opl-cloud-launch-freeze-contract.json#workspaceLaunch.manualReviewRecovery");
   assert.equal(freeze.workspaceLaunch.manualReviewRecovery.providerTruthContract, "opl-cloud-service-boundary-contract.json#services.fabric.workspaceLaunchManualReviewProviderTruth");
-  assert.equal(billing.workspaceLaunchFulfillment.implementation, "non_review_path_local_tests_manual_review_recovery_pending_integration_verification");
-  assert.equal(billing.workspaceLaunchFulfillment.realEnvironmentEvidence, "pending_owner_approved_acceptance");
+  assert.equal(billing.workspaceLaunchFulfillment.implementation, undefined);
+  assert.equal(billing.workspaceLaunchFulfillment.realEnvironmentEvidence, undefined);
   assert.equal(pricing.workspaceCharge.launchOperationAction, "workspace.launch.v2");
   assert.equal(pricing.workspaceCharge.codeCompleteThroughPhase, undefined);
-  assert.equal(pricing.workspaceCharge.implementation, "non_review_price_and_charge_contract_local_tests_manual_review_recovery_pending_integration");
+  assert.equal(pricing.workspaceCharge.implementation, undefined);
   assert.equal(pricing.workspaceCharge.nextBlockedStage, undefined);
   assert.equal(pricing.workspaceCharge.catalogAvailabilityMeaning, "product_open_not_tencent_capacity");
   assert.equal(pricing.workspaceCharge.capacityAuthority, "Tencent MonthlyPreflight immediately before first debit");
@@ -227,15 +174,15 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
   assert.equal(billing.ledgerEvidencePolicy.workspaceReceiptTypes.purchased, "billing.workspace_purchased.v1");
   assert.deepEqual(billing.ledgerEvidencePolicy.workspaceFulfillmentReceiptTypes, ["billing.workspace_purchased.v1", "billing.workspace_renewed.v1"]);
   assert.deepEqual(billing.ledgerEvidencePolicy.workspacePurchasedAdditionalCostFields, ["sub2apiUserId", "sub2apiRedeemCode", "postChargeBalanceUsdMicros"]);
-  assert.equal(billing.ledgerEvidencePolicy.realEnvironmentEvidence, "pending_owner_approved_acceptance");
+  assert.equal(billing.ledgerEvidencePolicy.realEnvironmentEvidence, undefined);
   assert.equal(billing.entitlementPolicy.resourceCompatibility.customerChargeOwner, false);
   assert.ok(evidence.receiptTypes.includes("billing.workspace_purchased.v1"));
   assert.ok(evidence.receiptTypes.includes("workspace.gateway_key_rotated.v1"));
   assert.ok(evidence.receiptTypes.includes("gateway.wallet_adjustment.v1"));
   assert.deepEqual(evidence.workspaceMonthlyBillingReceiptV1.purchasedAdditionalCostFields, ["sub2apiUserId", "sub2apiRedeemCode", "postChargeBalanceUsdMicros"]);
   assert.deepEqual(evidence.workspaceMonthlyBillingReceiptV1.purchasedRequiredExecutionFields, ["computeAllocationId", "storageId"]);
-  assert.equal(evidence.workspaceMonthlyBillingReceiptV1.implementation, "validator_writer_and_customer_projection_code_complete_local_tests_only");
-  assert.equal(evidence.workspaceMonthlyBillingReceiptV1.realEnvironmentEvidence, "pending_owner_approved_acceptance");
+  assert.equal(evidence.workspaceMonthlyBillingReceiptV1.implementation, undefined);
+  assert.equal(evidence.workspaceMonthlyBillingReceiptV1.realEnvironmentEvidence, undefined);
 
   const workspace = business.objectKinds.find((entry: { kind: string }) => entry.kind === "Workspace");
   const compute = business.objectKinds.find((entry: { kind: string }) => entry.kind === "ComputeAllocation");
@@ -252,19 +199,11 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
 	assert.equal(workspace.workspaceKeyRotationRoute, "POST /api/workspaces/{workspaceId}/workspace-key/rotate");
 	assert.equal(workspace.workspaceKeyPersistence, "workspace_api_key_id_only");
 	assert.deepEqual(workspace.workspaceKeyRotationDTOFields, ["operationId", "workspaceId", "status", "workspaceApiKeyId", "fingerprint", "updatedAt", "receiptId"]);
-	assert.equal(evidence.workspaceGatewayKeyRotationReceipt.implementation, "validator_and_control_plane_exact_readback_code_complete_local_only");
+	assert.equal(evidence.workspaceGatewayKeyRotationReceipt.implementation, undefined);
   assert.deepEqual(sourceTruth.sources.ledger.billingReceipts.moneyFieldsByType.workspacePurchased, ["totalUsdMicros"]);
   assert.deepEqual(sourceTruth.sources.ledger.billingReceipts.workspaceFulfillmentFields, ["computeAllocationId", "storageId", "attachmentId", "workspaceApiKeyId", "runtimeId"]);
   assert.equal(sourceTruth.sources.ledger.billingReceipts.rawProviderReadback, false);
-  assert.deepEqual(product.workspaceRuntimeFacts, {
-    launchStatus: "paused_not_in_release",
-    fileMetadataAuthority: "workspace_runtime_projects_mount",
-    filesystemUsageAuthority: "workspace_runtime_statfs",
-    apiRoutes: [],
-    consolePresentation: "absent",
-    persistence: "none",
-    releaseValidation: "direct_runtime_pod_sha256_markers_only"
-  });
+  assert.equal(product.workspaceRuntimeFacts, undefined);
 });
 
 test("Current Fabric contracts require dedicated package NodePools without weakening Workspace renewal", async () => {
@@ -313,8 +252,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     periodMonths: 1,
     renewFlag: "NOTIFY_AND_MANUAL_RENEW",
     idempotentReadback: true,
-    customerBillingOwner: "control_plane_workspace_single_operation",
-    currentBranchScope: "preserved_not_rewritten"
+    customerBillingOwner: "control_plane_workspace_single_operation"
   });
   assert.equal(catalog.workspacePackageNodePools.basic.poolName, "pool-basic-2c4g");
   assert.deepEqual(catalog.workspacePackageNodePools.basic.resourceContract, { cpu: 2, memoryGb: 4 });
@@ -391,53 +329,6 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     },
     guardCallers: ["fabric_tencent_mutations", "fabric_kubernetes_mutations", "cleanup_tke_compute_residual", "cleanup_tke_nodepool_machines"]
   });
-  assert.deepEqual(freeze.verification.customerBasicCanary, {
-    runner: "tools/production-live-qa.ts --basic-customer-canary",
-    workflow: ".github/workflows/production-basic-customer-operation.yml",
-    authority: "manual_release_owner_explicit_write_approval_only",
-    runnerIsolation: {
-      prepare: "self_hosted_tke_vpc_revision_fabric_kubernetes_and_business_authority",
-      complete: "ubuntu_latest_public_browser_websocket_and_single_model_request",
-      sharedConcurrency: "production-resource-verification",
-      hostedRunnerKubeconfig: false,
-      vpcRunnerBrowser: false
-    },
-    handoff: "same_run_redacted_runtime_ready_evidence_plus_authoritative_public_readback_no_checkpoint_authority",
-    publicTestMode: false,
-    accountProvisionApi: "POST /api/operator/accounts",
-    walletRechargeApi: "POST /api/operator/accounts/{accountId}/wallet-adjustments",
-    workspaceLaunchApi: "POST /api/workspace-launches",
-    workspaceLaunchPostCount: 1,
-    launchReplay: false,
-    approvalExpected: ["mergedSha", "cloudImageDigest", "nodePoolId", "resolvedInstanceType", "workspaceImageDigest", "model"],
-    preBusinessPostRevisionGate: {
-      releaseSource: "exact_merged_origin_main_sha",
-      remoteMainVerification: "live_git_ls_remote_before_each_business_write",
-      deploySource: "opl-cloud-config_OPL_CLOUD_IMAGE",
-      services: ["control-plane", "fabric", "ledger"],
-      ownerChain: "deployment_uid_current_revision_to_replicaset_uid_to_ready_pod",
-      imageMatch: "deployment_replicaset_and_ready_pod_image_id_equal_approved_cloud_digest",
-      failure: "fail_closed_zero_business_posts",
-      productionReadinessBooleanAccepted: false
-    },
-    fabricInternalAccess: {
-      tokenSource: "current_kubernetes_secret_opl-cloud-internal-service",
-      tokenHandling: "step_memory_only_immediate_mask_no_github_secret",
-      podScope: "current_ready_fabric_revision_owner_chain",
-      transport: "localhost_kubectl_port_forward",
-      cleanup: "exit_trap_kills_port_forward_and_temp_files_removed"
-    },
-    basicResourceContract: { cpu: 2, memoryGb: 4 },
-    skuConsistency: ["node_pool_allocation_plan", "fabric_compute_allocation", "tencent_provider_truth", "operator_provider_fact"],
-    resourceEvidence: ["fabric_catalog_cpu_memory", "runtime_pod_limits"],
-    recovery: "checkpoint_hint_only_deterministic_account_operation_workspace_authoritative_readback",
-    checkpointAuthority: false,
-    modelResultUnknown: "attempted_or_ready_without_authoritative_request_identity_never_resend",
-    attemptAccounting: "http_attempts_separate_from_authoritative_mutation_counts",
-    evidence: ["wallet_recharge_delta", "basic_purchase_delta", "model_usage_delta", "dedicated_pool_N_plus_1", "resolved_instance_type", "basic_2c4g", "new_cvm", "new_cbs", "attachment", "runtime", "workspace_image_id", "password_login", "websocket_101_bidirectional_frames", "single_model_response", "single_usage_record", "billing.workspace_purchased.v1"],
-    redaction: "no_password_token_secret_redeem_code_or_provider_request_id",
-    currentState: "orchestration_and_fake_tests_only_external_mutation_count_zero"
-  });
   assert.deepEqual(deployment.productionBasicCustomerCanary, {
     runner: "tools/production-live-qa.ts",
     mode: "--basic-customer-canary",
@@ -479,10 +370,9 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     checkpointAuthority: false,
     modelResultUnknown: "attempted_or_ready_without_authoritative_request_identity_never_resend",
     attemptAccounting: "http_attempts_separate_from_authoritative_mutation_counts",
-    output: "redacted_evidence_only",
-    currentState: "implemented_and_fake_tested_not_executed"
+    output: "redacted_evidence_only"
   });
-  assert.equal(deployment.schemaVersion, 46);
+  assert.equal(deployment.schemaVersion, 47);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.proofMode, "production_runner_deployment_attestation");
   assert.deepEqual(deployment.deployWorkflow.preDebitTencentIamGate.requiredTencentActions, ["tag:TagResources", "tag:ModifyResourcesTagValue"]);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.tencentTagWriteCalls, 0);
@@ -567,8 +457,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     allowedWrites: ["control_plane_e2e_attempt_reservation", "single_workspace_model_request", "control_plane_e2e_attempt_completion"],
     forbiddenCapabilities: ["kubeconfig", "tencent_credentials", "internal_service_token", "launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_cbs", "kubernetes"],
     resultUnknown: "persistent_attempted_marker_never_resend",
-    resourceDeliveryDependency: "one_way_resource_closure_to_e2e_no_reverse_dependency",
-    currentState: "code_complete_local_focused_and_postgresql_verified_not_executed"
+    resourceDeliveryDependency: "one_way_resource_closure_to_e2e_no_reverse_dependency"
   });
   assert.doesNotMatch(await text("tools/production-live-qa.ts"), /SA5\.MEDIUM4/);
   assert.equal(freeze.providerProcurement.workspaceRenewal.tencentRenewFlag, "NOTIFY_AND_MANUAL_RENEW");
@@ -601,7 +490,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     disable: "POST /api/operator/accounts/{accountId}/disable",
     delete: false
   });
-  assert.equal(management.schemaVersion, 17);
+  assert.equal(management.schemaVersion, 18);
   assert.equal(management.identityProvisioning.requestType, "ProvisionAccountRequest");
   assert.deepEqual(management.identityProvisioning.semantics, {
     command: "provision",
@@ -618,34 +507,8 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     accountReconciliation: "GET /api/operator/account-reconciliation",
     health: "GET /api/operator/health"
   });
-  assert.deepEqual(management.operatorProjection.sub2apiReads, {
-    currentPageUsers: "GET /api/v1/admin/users/{userId}",
-    usersUsage: "POST /api/v1/admin/dashboard/users-usage",
-    apiKeysUsage: "POST /api/v1/admin/dashboard/api-keys-usage",
-    currentPageKeyCounts: "GET /api/v1/admin/users/{userId}/api-keys?page=1&page_size=1",
-    batchSizeMax: 50
-  });
-  assert.equal("perAccountUserOrUsageNPlusOne" in management.operatorProjection, false);
-  assert.equal(management.operatorProjection.pageSizeDefault, 20);
-  assert.equal(management.operatorProjection.userAndBalanceRead, "current_page_exact_id_bounded_concurrency_max_4");
-  assert.equal(management.operatorProjection.userReadConcurrencyMax, 4);
-  assert.equal(management.operatorProjection.usageRead, "current_page_user_ids_batch_required");
-  assert.equal(management.operatorProjection.balanceProjection, "floor_non_negative_raw_decimal_usd_to_integer_micros");
-  assert.equal(management.operatorProjection.batchPartialFailure, "missing_or_malformed_requested_item_unavailable_extra_unrequested_id_fails_closed");
-  assert.equal(management.operatorProjection.workspaceCountRead, "single_control_plane_group_by_for_current_page");
-  assert.equal(management.operatorProjection.usersPagination, "control_plane_order_limit_offset_count_then_current_page_sub2api_reads");
-  assert.equal(management.operatorProjection.remoteReadScope, "current_control_plane_page_only");
-  assert.equal(management.operatorProjection.scaleInvariant, "same_page_size_request_count_equal_for_100_and_1000_accounts");
-  assert.equal(management.operatorProjection.persistence, "none_request_join_only");
-  assert.equal(management.operatorProjection.keyCountRead, "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4");
-  assert.equal(management.operatorProjection.keyCountDecodedItemsMax, 1);
-  assert.equal(management.operatorProjection.readReplica, false);
-  assert.equal(management.operatorProjection.partialFailure, "affected_nested_source_unavailable_without_zero_data");
+  assert.equal(management.operatorProjection, undefined);
   assert.equal(management.workspaceOwnership.cardinality, "many_workspaces_per_account");
-  assert.equal(management.operatorAuthPolicy.defaultRoute, "/console/overview");
-  assert.equal(management.operatorAuthPolicy.consoleRouteBehavior, "owner_console_access");
-  assert.equal(management.operatorAuthPolicy.navigation, "customer_routes_then_admin_routes");
-  assert.equal(management.operatorAuthPolicy.accountPageLabel, "客户与计费账户");
   assert.equal(management.operatorAuthPolicy.reservedAdminAccountInCustomerRows, true);
   assert.equal(management.operatorAuthPolicy.reservedAdminSelfDisable, "forbidden_frontend_and_backend");
   assert.equal(management.operatorAuthPolicy.otherAccountSecretAccess, "forbidden");
@@ -678,10 +541,10 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     rawBody: false,
     message: false
   });
-  assert.equal(management.walletAdjustments.implementation, "code_complete_local_focused_tests");
+  assert.equal(management.walletAdjustments.implementation, undefined);
   assert.deepEqual(evidence.gatewayWalletAdjustmentReceipt.commonRequiredRefs, ["operationId", "kind", "amountUsdMicros", "balanceHistoryRef", "actor"]);
   assert.deepEqual(evidence.gatewayWalletAdjustmentReceipt.businessRefundAdditionalRequiredRefs, ["relatedOperationId"]);
-  assert.equal(evidence.gatewayWalletAdjustmentReceipt.implementation, "validator_and_control_plane_exact_readback_code_complete_local_only");
+  assert.equal(evidence.gatewayWalletAdjustmentReceipt.implementation, undefined);
   assert.equal(billing.walletAdjustmentEvidence.balanceAuthority, "sub2api");
   assert.equal(billing.walletAdjustmentEvidence.controlPlaneState, "runtime_operation_non_authoritative");
   assert.equal(billing.walletAdjustmentEvidence.ledgerState, "append_only_reference_non_authoritative");
@@ -708,7 +571,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   });
   assert.equal(management.announcements.owner, "control_plane_postgresql");
   assert.deepEqual(management.announcements.tables, ["control_plane_announcements", "control_plane_announcement_reads"]);
-  assert.equal(management.announcements.implementation, "code_complete_local_focused_tests");
+  assert.equal(management.announcements.implementation, undefined);
   assert.equal(boundary.services.controlPlane.owns.includes("announcements"), true);
 
   const resource = sourceTruth.sources.operator.resources;
@@ -717,24 +580,16 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     "status", "createdAt", "expiresAt", "lastReadAt", "operationRef", "receiptRef"
   ]);
   assert.equal(resource.fabricAndLedgerPersistenceInControlPlane, false);
-  assert.equal(sourceTruth.sources.identity.operatorAccounts.pagination, "control_plane_order_limit_offset_count_then_current_page_sub2api_reads");
-  assert.equal(sourceTruth.sources.identity.operatorAccounts.remoteReadScope, "current_control_plane_page_only");
-  assert.equal(sourceTruth.sources.identity.operatorAccounts.userAndBalanceRead, "current_page_exact_id_bounded_concurrency_max_4");
-  assert.equal(sourceTruth.sources.identity.operatorAccounts.usageRead, "current_page_user_ids_batch_required");
-  assert.equal(sourceTruth.sources.identity.operatorAccounts.workspaceCountRead, "single_control_plane_group_by_for_current_page");
-  assert.equal(sourceTruth.sources.identity.operatorAccounts.keyCountRead, "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4");
-  assert.equal(sourceTruth.sources.identity.operatorAccounts.keyCountDecodedItemsMax, 1);
+  assert.equal(sourceTruth.sources.identity.operatorAccounts.fieldAuthority.keyCount, "sub2api");
   assert.equal(sourceTruth.sources.operator.resources.providerAuthority, "live_fabric_batch_readback_only");
   assert.equal(sourceTruth.sources.operator.resources.controlPlaneProviderSnapshotFallback, false);
   assert.deepEqual(boundary.services.fabric.providerFactsBatchRead, {
     endpoint: "POST /fabric/provider-facts/batch",
     requestDto: { items: ["accountId", "workspaceId", "resourceType", "resourceId"] },
     responseDto: { items: ["accountId", "workspaceId", "resourceType", "resourceId", "available", "facts", "errorCode"] },
-    batchSizeMax: 50,
     readOnly: true,
     computeAndStorageAuthority: "tencent_describe",
     attachmentAndRuntimeAuthority: "fabric_and_kubernetes_live_readback",
-    independentTimeouts: true,
     unavailableFallback: "none",
     tencentMutationCount: 0
   });
@@ -743,7 +598,6 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     responseDto: ["total", "ready", "unready"],
     scope: "operator_dashboard_only",
     providerAuthority: "single_kubernetes_deployment_and_pod_aggregate_read",
-    deadlineSeconds: 5,
     readOnly: true,
     perWorkspaceItems: false,
     unavailableFallback: "none",
@@ -760,10 +614,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   });
   assert.equal(boundary.services.controlPlane.operatorProjection.persistence, "none_request_join_only");
   assert.deepEqual(boundary.services.controlPlane.operatorProjection.authorities, ["control_plane", "sub2api", "fabric", "ledger", "runtime"]);
-  assert.equal(boundary.services.controlPlane.operatorProjection.userAndBalanceRead, "current_page_exact_id_bounded_concurrency_max_4");
-  assert.equal(boundary.services.controlPlane.operatorProjection.usageRead, "current_page_user_ids_batch_required");
-  assert.equal(boundary.services.controlPlane.operatorProjection.keyCountRead, "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4");
-  assert.equal(boundary.services.controlPlane.operatorProjection.keyCountDecodedItemsMax, 1);
+  assert.equal(boundary.services.controlPlane.operatorProjection.missingOwnerFact, "source_unavailable_without_zero_or_fallback");
   assert.deepEqual(boundary.services.controlPlane.accountOwnerAuthorization, {
     authority: "active_account_owner_graph",
     reservedAdminOwnerAccount: "acct-admin",
@@ -790,7 +641,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 36);
+  assert.equal(boundary.schemaVersion, 39);
   assert.deepEqual(boundary.services.controlPlane.workspaceLaunchRecoveryAcceptanceCanary, {
     defaultEnabled: false,
     allowlistEnv: "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
@@ -1054,13 +905,12 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
       persistence: "none",
       fields: ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
       forbidden: ["approval", "lease", "resource_identity", "private_ip", "provider_request_id", "mutation_ledger_digest"]
-    },
-    implementation: "server_authoritative_plan_local_focused_verified_not_merged_deployed_or_production_verified"
+    }
   });
-  assert.equal(boundary.externalServices.gateway.currentImplementation, "exact_id_current_page_users_batch_usage_bounded_key_counts_and_full_delegated_key_parity_code_complete_local_only");
+  assert.equal(boundary.externalServices.gateway.currentImplementation, undefined);
   const announcement = business.objectKinds.find((entry: { kind: string }) => entry.kind === "Announcement");
   assert.equal(Boolean(announcement), true);
-  assert.equal(announcement.implementation, "code_complete_local_focused_tests");
+  assert.equal(announcement.implementation, undefined);
 });
 
 test("Current contracts keep compute-claim continuation automatic while preserving the original Fabric identity", async () => {
@@ -1196,11 +1046,10 @@ test("Current contracts keep compute-claim continuation automatic while preservi
       exactWrites: { sub2apiDebit: 1, cvmCreate: 1, cvmOwnershipClaim: 1, nodeClaim: 1, cbsCreate: 1, runtimeCreate: 1, receiptCreate: 1 },
       terminalEvidence: ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
     },
-    evidenceSubstitution: "forbidden_both_A_and_B_required",
-    implementationState: "contract_frozen_implementation_rollout_and_production_evidence_pending"
+    evidenceSubstitution: "forbidden_both_A_and_B_required"
   });
 
-  assert.equal(sourceTruth.schemaVersion, 14);
+  assert.equal(sourceTruth.schemaVersion, 16);
   assert.deepEqual(sourceTruth.sources.operator.workspaceLaunchProgression, {
     route: "GET /api/operator/reconciliation",
     requiredItemFields: ["accountId", "billingOperationId", "phase", "errorCode", "progressionOwner", "allowedActions"],
@@ -1266,11 +1115,11 @@ test("Current human truth preserves public entry points and evidence levels", as
     assert.match(document, /pilot-ready/i);
     assert.match(document, /production-proven/i);
   }
-  assert.match(consoleProduct, /Home.*Login.*Logo/is);
+  assert.match(consoleProduct, /Public Home and Login may evolve[\s\S]{0,160}without changing this Workspace capability boundary/i);
   assert.match(consoleProduct, /URL.*用户名.*密码.*Workspace Key/is);
-  assert.match(invariants, /Dedicated `workspace\.launch\.v2` review recovery uses the Console flow[\s\S]{0,400}`diagnose -> view persisted Recovery Plan -> validate -> confirm continue`/i);
-  assert.match(invariants, /Fabric evidence proves the original compute mutation ledger is\s+(?:absent\s+or\s+)?observed with complete confirmed-zero evidence/i);
-  assert.match(invariants, /Server-authoritative Recovery Plan handling has local focused evidence only/i);
+  assert.match(invariants, /Recovery is an authorization path for the original launch, not a second\s+business state machine/i);
+  assert.match(invariants, /mutation ledger is absent or observed with complete confirmed-zero evidence/i);
+  assert.match(status, /server-authoritative\s+Recovery Plan handling/i);
   assert.doesNotMatch(invariants, /pending integrated verification/i);
   assert.doesNotMatch(invariants, /stops at\s+`debited`[\s\S]{0,300}S8/i);
   assert.doesNotMatch(invariants, /durable `workspace\.launch` RuntimeOperation/);

@@ -529,7 +529,6 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
     "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS",
     "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"
   ]) assert.equal(contract.deployWorkflow.requiredEnv.includes(key), true, key);
-  assert.equal(contract.productionVerificationWorkflow.launchStatus, "paused");
   assert.equal(contract.productionVerificationWorkflow.mode, "read_only_dual_fixed_slots");
   assert.deepEqual(contract.productionVerificationWorkflow.requiredInputs, []);
   assert.equal(contract.productionVerificationWorkflow.requestTimeoutMsDefault, 30_000);
@@ -537,7 +536,7 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assert.deepEqual(contract.productionVerificationWorkflow.slotDescriptors, [basicSlotDescriptor, proSlotDescriptor]);
   assertWorkflowContract(await readWorkflow(contract.productionVerificationWorkflow.file), contract.productionVerificationWorkflow, contract);
   assert.equal(contract.productionLiveQaJob, undefined);
-  assert.equal(contract.providerAcceptanceWorkflow.launchStatus, "paused");
+  assert.equal(contract.providerAcceptanceWorkflow.releaseGate, false);
   assert.equal(contract.productionBootstrapJob.mode, "endpoints_and_cloud_image_readiness_only");
   assert.equal(contract.productionBootstrapJob.releaseComplete, false);
   assert.equal(contract.productionBootstrapJob.approvalEnvironment, "production");
@@ -1942,8 +1941,7 @@ test("Recovery Acceptance canary is default-off, allowlisted, original-launch-on
       schemaVersion: 1,
       fields: ["operationMode", "status", "recoveryEligible", "errorCode", "release", "target", "approval", "manualReview", "controlPlaneMutationCounts", "runnerDirectMutationCounts", "verifiedAt"],
       forbidden: ["password", "secret", "token", "cookie", "nonce", "csrf", "raw_launch_operation_id", "raw_workspace_id"]
-    },
-    currentState: "implemented_and_locally_fake_tested_not_executed"
+    }
   });
 });
 

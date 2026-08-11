@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 11,
+  "schemaVersion": 12,
   "owner": "OPL Control Plane",
   "purpose": "One-charge Workspace purchase and renewal, fulfillment, entitlement, receipt, wallet-adjustment reference, and reconciliation ownership contract.",
   "state": "current",
@@ -63,9 +63,7 @@
       "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
       "mismatch": "manual_review_without_activation"
     },
-    "manualReviewRecoveryContract": "opl-cloud-launch-freeze-contract.json#workspaceLaunch.manualReviewRecovery",
-    "implementation": "non_review_path_local_tests_manual_review_recovery_pending_integration_verification",
-    "realEnvironmentEvidence": "pending_owner_approved_acceptance"
+    "manualReviewRecoveryContract": "opl-cloud-launch-freeze-contract.json#workspaceLaunch.manualReviewRecovery"
   },
   "walletAdjustmentEvidence": {
     "kinds": ["recharge", "debit", "business_refund"],
@@ -245,9 +243,7 @@
       "rawProviderResponse",
       "password",
       "token"
-    ],
-    "implementation": "workspace_purchase_validator_writer_and_projection_code_complete_local_tests_only",
-    "realEnvironmentEvidence": "pending_owner_approved_acceptance"
+    ]
   },
   "reconciliationPolicy": {
     "owner": "opl-ledger",

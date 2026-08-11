@@ -76,13 +76,14 @@ reuses one prepaid `SA5.MEDIUM4` plus 10GB CBS Verification Slot for its paid
 period and deletes only temporary workloads and test data. A real provider
 purchase or renewal requires a separate explicit Provider Acceptance run.
 
-## 2026-07-21: Public Gateway Endpoint Is Copy-Only
+## 2026-07-21: Public Gateway And Management Endpoints Stay Separate
 
 Control Plane projects the configured public `/v1` endpoint and Console may
-display and copy `https://gflabtoken.cn/v1`. Console never links, redirects,
-embeds, scrapes, or calls Sub2API management APIs from the browser.
-`OPL_SUB2API_BASE_URL` stays server-only, and Cloud does not inject a second
-Runtime Gateway base URL.
+present it as text, a copy target, or an external link according to the current
+UX. The durable security boundary is different: Console never exposes, links,
+redirects to, embeds, scrapes, or calls the Sub2API management origin from the
+browser. `OPL_SUB2API_BASE_URL` stays server-only, and Cloud does not inject a
+second Runtime Gateway base URL.
 
 ## 2026-07-19: Evidence Levels Cannot Be Inferred
 

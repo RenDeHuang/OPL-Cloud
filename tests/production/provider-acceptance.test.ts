@@ -261,7 +261,6 @@ test("Provider Acceptance CLI rejects unsupported manual-review reasons without 
 test("Provider Acceptance workflow is independently approved, dual-slot fixed, and cannot mutate resources directly", async () => {
   const workflow = parse(await readFile(".github/workflows/provider-acceptance.yml", "utf8"));
   const contract = JSON.parse(await readFile("packages/contracts/opl-cloud-deployment-contract.json", "utf8"));
-  const launch = JSON.parse(await readFile("packages/contracts/opl-cloud-launch-freeze-contract.json", "utf8"));
   const backend = await readFile("services/control-plane/internal/server/routes_provider_acceptance.go", "utf8");
   const spec = contract.providerAcceptanceWorkflow;
   const deploySpec = contract.deployWorkflow;
@@ -307,11 +306,6 @@ test("Provider Acceptance workflow is independently approved, dual-slot fixed, a
   assert.equal(deploySpec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"), false);
   assert.equal(deploySpec.secretEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"), false);
   assert.doesNotMatch(JSON.stringify(deploySpec.requiredCommandsByStep["Install Kubernetes secrets"]), /OPL_PROVIDER_ACCEPTANCE_TOKEN/);
-  assert.equal(launch.verification.providerAcceptance.approvalEnvironment, "production-provider-acceptance");
-  assert.equal(launch.verification.providerAcceptance.credentialEnv, "OPL_PROVIDER_ACCEPTANCE_TOKEN");
-  assert.equal(launch.verification.providerAcceptance.credentialHeader, "x-opl-provider-acceptance-token");
-  assert.equal(launch.verification.providerAcceptance.operatorSessionAccepted, false);
-  assert.equal(launch.verification.providerAcceptance.genericOperatorTokenAccepted, false);
   assert.match(runStep.run, /node tools\/provider-acceptance\.ts --allow-gateway-write --allow-provider-write --approval-id "\$OPL_VERIFY_MUTATION_APPROVAL_ID"/);
   assert.doesNotMatch(source, /TENCENTCLOUD_SECRET|compute-allocations|storage-volumes|destroy|delete|renew/i);
   assert.match(backend, /POST \/api\/operator\/provider-acceptance/);

@@ -1,95 +1,100 @@
-# Status
+# OPL Cloud Current Status
 
-## Current Boundary
+Owner: `one-person-lab-cloud`
+Purpose: `replaceable_current_evidence_snapshot`
+State: `current_snapshot`
 
-Current status is the contract-frozen Pilot V2 implementation candidate for
-administrator-provisioned customer accounts. Capacity evidence targets a
-1000-provisioned-user data set, not 1000 concurrent users, concurrent logins,
-concurrent provisioning operations, or HA. Delivery evidence is currently `code-complete=false`,
-`pilot-ready=false`, and `production-proven=false`; contract targets are not
-runtime evidence and the product is not yet saleable.
+This file reports what is implemented or evidenced now. It does not define the
+target architecture, long-term invariants, open priorities, workflow procedure,
+or historical provenance.
 
-The current V2 boundary requires:
+## Product Boundary
 
-- one Console User to one Account to one Sub2API User/Wallet, with Session-scoped
-  delegated Gateway credentials;
-- the public model endpoint `https://gflabtoken.cn/v1` is displayed and copied
-  through Control Plane only, with no link, redirect, iframe, browser-to-Sub2API
-  request, or Runtime override from Cloud; `OPL_SUB2API_BASE_URL` remains server-only;
-- general Key create/update/delete/reveal and authoritative per-Key Usage;
-- N independent Workspace purchases or renewals per Account, each with exactly
-  one USD-micros debit per period and its own Key, Secret, resources, and Receipt;
-- compute, storage, attachment, Gateway Secret, and Runtime as fulfillment only;
-- source envelopes whose availability and timestamps report real owner readback;
-- operator wallet adjustment, resource facts, audit evidence, and announcements.
+The current Pilot implementation supports administrator-provisioned accounts.
+One Console User maps to one Account and one Sub2API User/Wallet; one Account may
+own multiple independent Workspaces. Public registration, customer payment,
+shared multi-user Workspaces, backup/recovery/sync/transfer, HA, and GPU are not
+current customer capabilities.
 
-Current evidence snapshot:
+Basic and Pro are selectable Workspace packages. Catalog visibility is not
+provider-capacity evidence. Customer pricing is exact integer USD micros and
+Sub2API remains the only spendable-balance authority.
 
-- Separately approved provider verification remains paused; Pro is open in the
-  production catalog but its
-  real evidence remains `not_executed_by_scope` and `productionProven=false`;
-- an ordinary Cloud rollout has deployment readback, while the approved Basic
-  canary, customer Workspace imageID, model Usage, exact-one wallet delta,
-  browser Workspace login/WebSocket, real renewal, and rollback evidence remain incomplete;
-- Runtime projects-entry and filesystem-usage product APIs are paused outside this
-  release; Console does not display them and persistence is verified only with direct
-  SHA256 markers on the Runtime Pod mounts;
-- public registration, payment/order UI, backup/recovery/sync/transfer, HA, GPU,
-  and shared multi-user collaboration are outside the Pilot.
+The configured public model `/v1` endpoint is projected by Control Plane. Its
+current presentation is a Console implementation choice. The server-only
+Sub2API management origin and credentials are never exposed to the browser.
 
-The current integration target also requires stable Control Plane pagination
-before any Sub2API/Fabric enrichment, live Fabric provider facts with no stale
-fallback, and unpaid expiry with zero Fabric/Tencent mutations. These truths are
-not production evidence until the matching implementation and final gate pass.
+## Implementation Snapshot
 
-Workspace file bodies remain only on CBS. Platform PostgreSQL contains identity,
-operation, reference, and audit facts only; PostgreSQL recovery does not back up
-or restore Workspace files.
+- Public and login surfaces present the generic OPL Cloud product in user-task
+  language, preserve the administrator-provisioned Pilot boundary, and use the
+  current responsive Console implementation. This is presentation evidence,
+  not evidence of a new functional capability.
+- Console calls Control Plane product APIs only and projects live Sub2API,
+  Fabric, Ledger, and Control Plane facts through customer-safe DTOs.
+- Control Plane, Fabric, and Ledger are separate Go processes and PostgreSQL
+  schema owners. The current production deployment still uses a shared database
+  credential and internal token, so service-specific database roles and service
+  identities remain open work.
+- Tencent TKE is the only production-wired Fabric provider, and that path is a
+  medopl instance implementation fact rather than reusable Cloud MVP acceptance.
+  A Provider interface exists, but `local-docker` has not yet completed launch,
+  readback, and recovery acceptance.
+- Workspace file bodies remain only on CBS. Platform PostgreSQL stores identity,
+  operation, reference, and evidence facts.
+- The Control Plane Session credential vault is process-local and single
+  replica. Horizontal scaling is not supported until a secure shared vault and
+  distributed wallet-mutation serialization boundary exist.
+- Runtime projects-entry and filesystem-usage product APIs remain outside the
+  current release; direct mount-marker checks do not prove those product APIs.
 
-## Target Alignment
+## Evidence Snapshot
 
-The product SSOT now defines zero-to-many independent Workspaces per account.
-This implementation is already aligned at the core contract and API level: it
-uses `many_per_account`, lists Workspaces, and keeps independent Workspace ids,
-resources, Keys, periods, and receipts. This is not evidence that every launch
-or renewal works in production.
+Current delivery levels remain:
 
-Open target-alignment work and its delivery order are owned only by
-[`docs/roadmap.md`](./roadmap.md). Provider portability and the current medopl
-co-location remain implementation facts in
-[`docs/implementation-architecture.md`](./implementation-architecture.md); this
-status snapshot does not maintain a second action list.
+- `code-complete=false` for the repository as a whole;
+- `pilot-ready=false`;
+- `production-proven=false`.
 
-Gateway/Sub2API remains the only spendable-balance owner. Console owns the
-account-total billing projection and settlement policy; Fabric owns zero
-balance; Ledger records append-only settlement and reconciliation evidence.
-No second wallet is part of this transition.
+Focused local evidence exists for the non-review Workspace launch path,
+idempotent settlement, provider/resource recovery guards, server-authoritative
+Recovery Plan handling, source envelopes, and Console behavior. This does not
+prove a real `local-docker` Workspace path, live Gateway accounting, Runtime,
+browser, renewal, rollback, or production behavior. Existing Tencent/TKE
+evidence applies only to its medopl instance path.
 
-The durable repository identity decision lives in
-[`docs/decisions.md`](./decisions.md), and the completed migration record lives
-under `docs/history/**`; neither is repeated as current delivery work here.
+An ordinary Cloud rollout has partial deployment readback. Approved Basic
+customer evidence still lacks a complete immutable chain covering exact wallet
+delta, one Workspace purchase, provider resources, Runtime login/WebSocket,
+model Usage, Receipt, renewal, and rollback. Pro provider evidence has not been
+executed for the current product revision.
 
-## Preliminary Local Checks
+Capacity evidence targets a 1000-provisioned-user data set. It does not claim
+1000 concurrent users, concurrent provisioning, multiple Control Plane
+replicas, or HA.
 
-```bash
-npm test
-npm run typecheck
-npm run lint
-npm run build
-(cd services/control-plane && go test ./... -count=1)
-(cd services/fabric && go test ./... -count=1)
-(cd services/ledger && go test ./... -count=1)
-(cd services/internal/postgresmigrate && go test ./... -count=1)
-sentrux check .
-git diff --check
-```
+## Documentation And Contract Migration
 
-These checks do not establish code-complete. The final gate additionally parses
-Node TAP and Go JSON output, rejects every skip, runs all PostgreSQL suites with
-`OPL_POSTGRES_TESTS=1`, and runs the Control Plane capacity suite with
-`OPL_CAPACITY_TESTS=1`. Production PostgreSQL is forbidden for that gate.
+The active documentation hierarchy now separates product concept, target
+architecture, durable invariants, current implementation, functional modules,
+status/roadmap, operations, and history.
 
-`pilot-ready` additionally requires separately approved real environment
-readback. `production-proven` requires the same immutable revision deployed and
-an end-to-end production evidence bundle. The exact evidence levels are defined
-in `docs/invariants.md`; executable gates are defined by the current PR workflow.
+The former Console display freeze is historical provenance, and presentation is
+owned by the current Console implementation under an evolvable experience
+guide. The machine Console UI contract and superseded package/shared-execution
+machine contracts are retired.
+
+The aggregate launch and deployment contracts are migration guards rather than
+long-term product specifications. Launch safety still needs to move into the
+owning billing, Control Plane, Fabric, and Ledger contracts. Deployment detail
+still needs workflow-family migration while preserving authorization, identity,
+Secret, immutable-image, mutation-bound, readback, and rollback gates. The open
+sequence and acceptance conditions live only in [the roadmap](./roadmap.md).
+
+## Evidence Interpretation
+
+The durable definitions of `code-complete`, `pilot-ready`, and
+`production-proven` live in [the invariants](./invariants.md). Executable checks
+live in source, test, and workflow owners. Product and structural gaps live in
+[the roadmap](./roadmap.md); this snapshot does not maintain a second action
+list.

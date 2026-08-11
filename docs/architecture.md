@@ -59,6 +59,19 @@ deployment receipts. An instance may run on a hosted cloud, a local server, or
 a Mac. Secrets remain in the selected secret owner, never in the instance
 repository.
 
+## Current MVP Cut
+
+The current reusable Cloud MVP is deliberately narrow: a thin Console, one
+`local-docker` OPL Workspace path, and OPL Gateway accounting projected without
+creating a second wallet. Self-service registration, recharge/payment, refined
+Console presentation, public Agent Service publication, and broader managed
+resource orchestration are later product layers, not MVP prerequisites.
+
+Tencent/TKE is a medopl instance provider choice and migration surface. Existing
+Tencent/TKE source and workflow evidence may remain current implementation
+facts until the instance cutover is complete, but they do not define generic
+Cloud identity, MVP acceptance, or the portable provider contract.
+
 ```mermaid
 flowchart TB
   User[User] --> App[OPL App]
@@ -121,24 +134,22 @@ Each implementation module is paid for by a current product responsibility,
 real caller, public contract, persisted-state obligation, or independently
 deployable owner boundary. Repository co-location does not permit cross-service
 imports or shared domain state, while a future possibility does not by itself
-justify a route, schema, store, worker, facade, workflow or compatibility layer.
-Code that exists without one of those payers is implementation evidence only,
-not target architecture, and enters the roadmap as a keep, shrink or delete
-candidate.
+justify a route, schema, store, worker, facade, workflow, or compatibility layer.
+Code without one of those payers is implementation evidence only, not target
+architecture, and enters the roadmap as a keep, shrink, or delete candidate.
 
 Modules stay cohesive around their owned capability and communicate through
 typed product or service contracts. Internal file splits may reduce change
 collisions, but must not create cross-module packages, mirror another owner's
-truth, or duplicate one launch/recovery, wallet, provider or receipt authority.
-Once real callers have moved to a successor, the old route, DTO, facade, schema
-and test path are retired as one bounded cut rather than retained as a permanent
-fallback.
+truth, or duplicate launch/recovery, wallet, provider, or receipt authority.
+Once real callers move to a successor, the old route, DTO, facade, schema, and
+test path retire as one bounded change rather than a permanent fallback.
 
-Physical deployment isolation, product feature development and internal
+Physical deployment isolation, product feature development, and internal
 cohesion are independent lanes. They may proceed concurrently and converge at a
-shared contract, canonical integration or exact deployment qualification. An
+shared contract, canonical integration, or exact deployment qualification. An
 unfinished isolation or refactor lane is not a global development prerequisite.
-The ranked current work and candidate admission decisions are owned only by
+Current priorities and admission decisions belong only to
 [the roadmap](roadmap.md).
 
 ## Workspace Identity Boundary

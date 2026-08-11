@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 11,
+  "schemaVersion": 12,
   "owner": "OPL Ledger",
   "purpose": "General execution, monthly billing, and current control-plane lifecycle evidence receipts.",
   "state": "current",
@@ -256,16 +256,14 @@
   "workspaceGatewayKeyRotationReceipt": {
     "type": "workspace.gateway_key_rotated.v1",
     "requiredRefs": ["operationId", "workspaceId", "oldKeyId", "newKeyId", "secretFingerprint"],
-    "forbiddenContent": ["apiKey", "rawCredential", "sessionCredential", "rawSub2apiResponse"],
-    "implementation": "validator_and_control_plane_exact_readback_code_complete_local_only"
+    "forbiddenContent": ["apiKey", "rawCredential", "sessionCredential", "rawSub2apiResponse"]
   },
   "gatewayWalletAdjustmentReceipt": {
     "type": "gateway.wallet_adjustment.v1",
     "balanceAuthority": "sub2api",
     "commonRequiredRefs": ["operationId", "kind", "amountUsdMicros", "balanceHistoryRef", "actor"],
     "businessRefundAdditionalRequiredRefs": ["relatedOperationId"],
-    "forbiddenContent": ["redeemCode", "adminToken", "rawSub2apiResponse"],
-    "implementation": "validator_and_control_plane_exact_readback_code_complete_local_only"
+    "forbiddenContent": ["redeemCode", "adminToken", "rawSub2apiResponse"]
   },
   "monthlyBillingReceiptV1": {
     "status": "superseded_internal_compatibility",
@@ -395,9 +393,7 @@
     ],
     "writeProtocol": "append_first_with_idempotency",
     "launchTerminalCardinality": "exactly_one_purchased_or_refunded_workspace_receipt",
-    "forbiddenContentRule": "same recursive case-insensitive exact-key rejection as general receipts",
-    "implementation": "validator_writer_and_customer_projection_code_complete_local_tests_only",
-    "realEnvironmentEvidence": "pending_owner_approved_acceptance"
+    "forbiddenContentRule": "same recursive case-insensitive exact-key rejection as general receipts"
   },
   "reconciliationReportV1": {
     "recordApi": "POST /ledger/reconciliation",

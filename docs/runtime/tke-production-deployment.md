@@ -16,10 +16,10 @@ The deployment owns:
 - one-person-lab-app runtime scheduling onto user-owned CVM nodes.
 - separate Control Plane, Fabric, and Ledger PostgreSQL schemas.
 
-The deployed Console follows the frozen 10-primary-page, 27-slide surface in
-`docs/product/console-display-contract-v1.md`. Its browser code calls only
-Control Plane product APIs; Fabric, Ledger, Sub2API, and Tencent remain
-server-side boundaries.
+The deployed Console follows the current implementation in `apps/console-ui`
+and the outcomes in `docs/product/console-experience-guide.md`. Its browser code
+calls only Control Plane product APIs; Fabric, Ledger, Sub2API, and Tencent
+remain server-side boundaries.
 
 ## Manifest Rules
 

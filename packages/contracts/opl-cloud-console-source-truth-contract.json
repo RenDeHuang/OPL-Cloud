@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 14,
+  "schemaVersion": 16,
   "owner": "OPL Console Control Plane",
   "purpose": "Strict source envelopes and customer-safe live projections for Console source-of-truth APIs.",
   "state": "current",
@@ -26,12 +26,6 @@
       "authentication": [401, 403],
       "unavailableBody": "strict_unavailable_envelope"
     }
-  },
-  "implementationEvidence": {
-    "generalKeys": "code_complete_local_focused_tests",
-    "operatorProjection": "base_projection_and_server_authoritative_workspace_recovery_plan_local_focused_tests",
-    "workspaceBillingReceipts": "purchased_components_and_fulfillment_projection_code_complete_local_tests",
-    "browserAndProduction": "pending"
   },
   "sources": {
     "gateway": {
@@ -169,13 +163,6 @@
         "itemFields": ["type", "valueUsdMicros", "status", "usedAt", "createdAt"],
         "valueUsdMicrosEncoding": "signed_int64_decimal_string",
         "dataFields": ["items", "total", "page", "pageSize", "pages"],
-        "pagination": {
-          "pageDefault": 1,
-          "pageSizeDefault": 20,
-          "pageSizeMax": 100,
-          "upstreamPagesPerRequest": 1
-        },
-        "financialScanAllowed": false,
         "emptyUpstreamPagination": { "total": 0, "page": 1, "pages": 1, "items": [], "otherShapes": "reject" },
         "empty": "real_zero_rows",
         "fetchedAt": "control_plane_response_fetch_completion_time",
@@ -224,26 +211,11 @@
           "wallet": "sub2api_exact_user_id_readback",
           "usage": "sub2api_batch_user_usage",
           "workspaceCount": "control_plane",
-          "keyCount": "sub2api_current_page_bounded_concurrent_readback"
+          "keyCount": "sub2api"
         },
         "sub2apiUserIdFormat": "positive_decimal_string",
         "statusValues": ["active", "disabled"],
         "mappingConsistency": "remote_id_and_normalized_email_must_equal_control_plane_mapping",
-        "pagination": "control_plane_order_limit_offset_count_then_current_page_sub2api_reads",
-        "pageSizeDefault": 20,
-        "batchSizeMax": 50,
-        "remoteReadScope": "current_control_plane_page_only",
-        "scaleInvariant": "same_page_size_request_count_equal_for_100_and_1000_accounts",
-        "userAndBalanceRead": "current_page_exact_id_bounded_concurrency_max_4",
-        "usageRead": "current_page_user_ids_batch_required",
-        "balanceProjection": "floor_non_negative_raw_decimal_usd_to_integer_micros",
-        "batchPartialFailure": "missing_or_malformed_requested_item_unavailable_extra_unrequested_id_fails_closed",
-        "workspaceCountRead": "single_control_plane_group_by_for_current_page",
-        "userReadConcurrencyMax": 4,
-        "keyCountRead": "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",
-        "keyCountDecodedItemsMax": 1,
-        "keyCountConcurrencyMax": 4,
-        "keyCountPersistence": "none_request_join_only",
         "failure": "affected_nested_source_unavailable_without_zero_data",
         "fetchedAt": "control_plane_response_fetch_completion_time",
         "sourceUpdatedAt": "sub2api_user_updated_at_only_for_corresponding_nested_facts"
@@ -292,15 +264,6 @@
         "reconciliation": "GET /api/operator/reconciliation",
         "health": "GET /api/operator/health"
       },
-      "projection": {
-        "persistence": "none_request_join_only",
-        "controlPlanePaginationFirst": true,
-        "sub2apiCalls": "current_control_plane_page_only_upstream_pages_and_batch_aggregates",
-        "fabricCalls": "current_workspace_page_only_provider_facts_batch_max_50",
-        "ledgerCalls": "detail_receipt_readback_and_public_readyz_postgresql_ping",
-        "readReplica": false,
-        "sourceUpdatedAt": "authoritative_owner_timestamp_only_never_local_fetch_time"
-      },
       "workspaceLaunchReconciliation": {
         "route": "GET /api/operator/reconciliation",
         "action": "workspace.launch.v2",
@@ -324,8 +287,7 @@
           "persistence": "none",
           "fields": ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
           "forbidden": ["approval", "lease", "resource_identity", "private_ip", "provider_request_id", "mutation_ledger_digest"]
-        },
-        "implementation": "server_authoritative_plan_local_focused_verified_not_merged_deployed_or_production_verified"
+        }
       },
       "workspaceLaunchProgression": {
         "route": "GET /api/operator/reconciliation",
@@ -438,12 +400,5 @@
       }
     }
   },
-  "forbiddenCustomerFields": ["key", "secret", "notes", "raw", "rawAdminDTO", "prompt", "responseContent"],
-  "deploymentEvidence": {
-    "sub2api": {
-      "anonymousProbeStatus": 401,
-      "proves": "route_presence_only",
-      "authenticatedSchema": "pending_13B"
-    }
-  }
+  "forbiddenCustomerFields": ["key", "secret", "notes", "raw", "rawAdminDTO", "prompt", "responseContent"]
 }

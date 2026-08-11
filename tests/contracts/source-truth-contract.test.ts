@@ -18,8 +18,8 @@ test("Console source truth exposes Sub2API Keys parity without a second authorit
   assert.deepEqual(gateway.keys.operations, [
     "create", "reveal", "update", "enable", "disable", "delete", "change_group", "reset_quota", "reset_rate_limit_usage"
   ]);
-  assert.equal(contract.sources.identity.operatorAccounts.fieldAuthority.keyCount, "sub2api_current_page_bounded_concurrent_readback");
-  assert.equal(contract.sources.operator.projection.ledgerCalls, "detail_receipt_readback_and_public_readyz_postgresql_ping");
+  assert.equal(contract.sources.identity.operatorAccounts.fieldAuthority.keyCount, "sub2api");
+  assert.equal(contract.sources.operator.projection, undefined);
 });
 
 test("Console source truth contract fixes strict envelopes and live Gateway projections", async () => {
@@ -149,13 +149,8 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
   assert.equal(gateway.accountUsageStats.periodContract, "same_explicit_asia_shanghai_calendar_range_as_gateway_usage_list");
   assert.deepEqual(gateway.balanceHistory.itemFields, ["type", "valueUsdMicros", "status", "usedAt", "createdAt"]);
   assert.deepEqual(gateway.balanceHistory.dataFields, ["items", "total", "page", "pageSize", "pages"]);
-  assert.deepEqual(gateway.balanceHistory.pagination, {
-    pageDefault: 1,
-    pageSizeDefault: 20,
-    pageSizeMax: 100,
-    upstreamPagesPerRequest: 1
-  });
-  assert.equal(gateway.balanceHistory.financialScanAllowed, false);
+  assert.equal(gateway.balanceHistory.pagination, undefined);
+  assert.equal(gateway.balanceHistory.financialScanAllowed, undefined);
   assert.deepEqual(gateway.balanceHistory.emptyUpstreamPagination, gateway.keys.emptyUpstreamPagination);
 
   const identity = contract.sources.identity;
@@ -200,26 +195,11 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
       wallet: "sub2api_exact_user_id_readback",
       usage: "sub2api_batch_user_usage",
       workspaceCount: "control_plane",
-      keyCount: "sub2api_current_page_bounded_concurrent_readback"
+      keyCount: "sub2api"
     },
     sub2apiUserIdFormat: "positive_decimal_string",
     statusValues: ["active", "disabled"],
     mappingConsistency: "remote_id_and_normalized_email_must_equal_control_plane_mapping",
-    pagination: "control_plane_order_limit_offset_count_then_current_page_sub2api_reads",
-    pageSizeDefault: 20,
-    batchSizeMax: 50,
-    remoteReadScope: "current_control_plane_page_only",
-    scaleInvariant: "same_page_size_request_count_equal_for_100_and_1000_accounts",
-    userAndBalanceRead: "current_page_exact_id_bounded_concurrency_max_4",
-    usageRead: "current_page_user_ids_batch_required",
-    balanceProjection: "floor_non_negative_raw_decimal_usd_to_integer_micros",
-    batchPartialFailure: "missing_or_malformed_requested_item_unavailable_extra_unrequested_id_fails_closed",
-    workspaceCountRead: "single_control_plane_group_by_for_current_page",
-    userReadConcurrencyMax: 4,
-    keyCountRead: "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",
-    keyCountDecodedItemsMax: 1,
-    keyCountConcurrencyMax: 4,
-    keyCountPersistence: "none_request_join_only",
     failure: "affected_nested_source_unavailable_without_zero_data",
     fetchedAt: "control_plane_response_fetch_completion_time",
     sourceUpdatedAt: "sub2api_user_updated_at_only_for_corresponding_nested_facts"
@@ -327,9 +307,5 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
     "key", "secret", "notes", "raw", "rawAdminDTO", "prompt", "responseContent"
   ]);
 
-  assert.deepEqual(contract.deploymentEvidence.sub2api, {
-    anonymousProbeStatus: 401,
-    proves: "route_presence_only",
-    authenticatedSchema: "pending_13B"
-  });
+  assert.equal(contract.deploymentEvidence, undefined);
 });

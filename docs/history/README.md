@@ -18,6 +18,9 @@ Current truth starts from [the docs index](../README.md),
 - [Retired Cloud Agent Registry](./retired-agent-registry.md): tombstone for the
   duplicate package-registry model replaced by package-owner identity,
   native-carrier lifecycle, and Framework aggregation.
+- [Console UI display freeze, 2026-07-31](./console-display-contract-v1-2026-07-31.md):
+  PR #75 page, slide and visual freeze retained as provenance only; it is not a
+  current UI authority.
 
 Do not revive a historical term or owner path from this directory. Reintroduce
 useful lessons only through an explicit update to the current canonical owner.

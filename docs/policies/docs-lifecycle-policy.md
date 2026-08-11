@@ -1,40 +1,50 @@
 # Documentation Lifecycle Policy
 
-This repository adopts the `one-person-lab` documentation lifecycle.
+This repository applies the OPL Doc method through the hierarchy in
+`docs/README.md`. The policy governs semantic ownership; it does not prescribe
+one file layout for every topic.
 
-## Active Documentation
+## One Topic, One Current Owner
 
-Active docs describe current product behavior, architecture boundaries, operating rules, or current launch gaps. They must be short enough to stay maintained.
+Classify each changed section as `current_truth`, `active_gap`,
+`support_detail`, `history_or_provenance`, or `stale_or_conflicting`.
 
-Active docs must not store:
+- Keep one current owner for each semantic topic.
+- Reduce other active documents to a pointer plus unique support detail.
+- Put all open work in `docs/roadmap.md`; put current evidence in
+  `docs/status.md`.
+- Move dated plans, design freezes, screenshots, execution logs, raw
+  verification output and completed ledgers to `docs/history/**` or rely on Git
+  history when no no-resurrection record is needed.
+- Delete stale or conflicting text after its successor and callers are proven.
 
-- dated execution logs,
-- branch-specific implementation plans,
-- completed closeout notes,
-- raw production verification output,
-- temporary smoke reports,
-- old compatibility stories.
+## Downward Reconciliation
 
-## History
+An upper-level change must identify affected lower projections. Reconcile them
+in the same change when possible. If implementation cannot yet follow a target
+decision, preserve the target, report the current implementation honestly and
+record one roadmap gap. Never weaken the target to match accidental current
+code, and never claim the target is implemented from prose alone.
 
-Move completed or dated process material to `docs/history/**`.
+## Machine Contract Admission
 
-History preserves provenance. It is not an active implementation contract.
+Machine-readable contracts live in `packages/contracts/**`. A fact belongs
+there only when all of the following are true:
 
-## Contracts
+1. It has one named authority owner.
+2. A current runtime, cross-module caller, public interface, security rule,
+   data-integrity rule or irreversible side effect depends on it.
+3. Deterministic validation is more valuable than leaving the decision to the
+   owning implementation.
+4. The contract does not duplicate a schema, source constant, workflow or
+   another contract that already owns the fact.
 
-Machine-readable contracts live in `packages/contracts/**`.
-
-Each contract should state:
-
-- `schemaVersion`
-- `owner`
-- `purpose`
-- `state`
-- `machineBoundary`
-- `lifecycle`
-
-Contracts should preserve product boundaries, permissions, safety rules, receipt shape, recovery rules, and lower-bound projection guarantees. They should not preserve old implementation process.
+Colors, spacing, layout dimensions, page or slide counts, component libraries,
+model choices, query strategies, batch sizes, concurrency tuning, worker
+intervals, file paths, command sequences, current progress and pending evidence
+do not qualify merely because tests can assert them. Use an evolvable guide,
+source, API schema, performance test, workflow, `docs/status.md` or
+`docs/roadmap.md` instead.
 
 ## Tests
 
@@ -46,6 +56,10 @@ Tests are classified by lifecycle:
 - `implementation_shape`: source-structure or workflow-shape check that must either become a contract test or be retired.
 
 Temporary tests need an owner and removal condition.
+
+Long-term tests should validate public behavior, authority, accessibility,
+security, integrity and side-effect bounds. They must not turn a replaceable UI
+or internal implementation choice into a product freeze.
 
 ## No Compatibility Layer Rule
 

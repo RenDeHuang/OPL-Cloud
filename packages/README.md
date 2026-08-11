@@ -10,8 +10,8 @@ This directory contains shared package boundaries only. Runtime ownership now li
 
 ## Current Boundary
 
-The current deployment contains three separate Go services and one React
-browser application built on `@openai/apps-sdk-ui`:
+The current deployment contains three separate Go services and one browser
+application:
 
 ```text
 apps/console-ui
@@ -25,10 +25,10 @@ Sub2API through typed HTTP clients. Sub2API remains the sole customer identity,
 wallet, Key, and Usage authority. Do not recreate runtime services, a wallet, or
 a Gateway under `packages/*`.
 
-The Console presentation is frozen as 10 primary pages and 27 slides by
-`docs/product/console-display-contract-v1.md`; its React implementation boundary
-is machine-readable in `contracts/opl-cloud-console-ui-contract.json`. These UI
-contracts do not move downstream authority into the browser.
+The Console experience principles live in
+`docs/product/console-experience-guide.md`; current routes, components and
+presentation live in `apps/console-ui`. Visual and navigation choices are not
+machine contracts. Downstream authority never moves into the browser.
 
 ## Ownership Rule
 

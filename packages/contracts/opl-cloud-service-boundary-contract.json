@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 36,
+  "schemaVersion": 39,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -29,13 +29,6 @@
   "services": {
     "consoleUi": {
       "path": "apps/console-ui",
-      "language": "typescript",
-      "framework": "react",
-      "componentFoundation": "@openai/apps-sdk-ui",
-      "uiContract": "opl-cloud-console-ui-contract.json",
-      "displayContract": "docs/product/console-display-contract-v1.md",
-      "primaryPageCount": 10,
-      "slideCount": 27,
       "persistence": "none",
       "calls": {
         "controlPlane": "http"
@@ -96,20 +89,7 @@
       "operatorProjection": {
         "authorities": ["control_plane", "sub2api", "fabric", "ledger", "runtime"],
         "persistence": "none_request_join_only",
-        "controlPlanePaginationFirst": true,
-        "pageSizeDefault": 20,
-        "pageSizeMax": 50,
-        "sub2apiStrategy": "current_control_plane_page_exact_user_id_reads_and_batch_aggregates",
-        "userAndBalanceRead": "current_page_exact_id_bounded_concurrency_max_4",
-        "usageRead": "current_page_user_ids_batch_required",
-        "workspaceCountRead": "single_control_plane_group_by_for_current_page",
-        "keyCountRead": "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",
-        "keyCountDecodedItemsMax": 1,
-        "scaleInvariant": "same_page_size_request_count_equal_for_100_and_1000_accounts",
-        "fabricStrategy": "current_workspace_page_only_batch_provider_facts",
-        "runtimeStrategy": "bounded_concurrency_independent_timeout",
-        "missingOwnerFact": "source_unavailable_without_zero_or_fallback",
-        "readReplica": false
+        "missingOwnerFact": "source_unavailable_without_zero_or_fallback"
       },
       "accountOwnerAuthorization": {
         "authority": "active_account_owner_graph",
@@ -376,11 +356,9 @@
         "responseDto": {
           "items": ["accountId", "workspaceId", "resourceType", "resourceId", "available", "facts", "errorCode"]
         },
-        "batchSizeMax": 50,
         "readOnly": true,
         "computeAndStorageAuthority": "tencent_describe",
         "attachmentAndRuntimeAuthority": "fabric_and_kubernetes_live_readback",
-        "independentTimeouts": true,
         "unavailableFallback": "none",
         "tencentMutationCount": 0
       },
@@ -389,15 +367,12 @@
         "responseDto": ["total", "ready", "unready"],
         "scope": "operator_dashboard_only",
         "providerAuthority": "single_kubernetes_deployment_and_pod_aggregate_read",
-        "deadlineSeconds": 5,
         "readOnly": true,
         "perWorkspaceItems": false,
         "unavailableFallback": "none",
         "tencentMutationCount": 0
       },
       "freshComputeContinuationReadback": {
-        "workflow": ".github/workflows/deploy-tke-production.yml diagnostics_only",
-        "implementation": "single_inline_redacted_projection_without_source_checkout",
         "scope": "one_existing_workspace.launch.v2_compute_operation",
         "authority": ["GET /fabric/operations", "GET /fabric/compute-allocations/{id}"],
         "selection": "exact_launch_operation_id_plus_:compute_idempotency_key",
@@ -700,8 +675,7 @@
         "periodMonths": 1,
         "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
         "idempotentReadback": true,
-        "customerBillingOwner": "control_plane_workspace_single_operation",
-        "currentBranchScope": "preserved_not_rewritten"
+        "customerBillingOwner": "control_plane_workspace_single_operation"
       }
     }
   },
@@ -730,14 +704,12 @@
         "create and redeem adjustment",
         "mutate owned general keys including group quota IP expiry rate limits and resets with delegated user credentials"
       ],
-      "customerProjection": "strict_allowlist_with_integer_usd_micros_and_no_local_usage_copy",
-      "currentImplementation": "exact_id_current_page_users_batch_usage_bounded_key_counts_and_full_delegated_key_parity_code_complete_local_only"
+      "customerProjection": "strict_allowlist_with_integer_usd_micros_and_no_local_usage_copy"
     }
   },
   "browserBoundary": {
     "onlyCalls": "control_plane_product_apis",
-    "publicEndpointDisplay": "copyable_text_only",
-    "forbidden": ["sub2api_direct", "gflabtoken_link", "iframe", "html_scraping", "raw_admin_dto"]
+    "forbidden": ["sub2api_management_direct", "sub2api_management_redirect", "sub2api_management_iframe", "html_scraping", "raw_admin_dto"]
   },
   "customerMutationBoundary": {
     "payment": false,
