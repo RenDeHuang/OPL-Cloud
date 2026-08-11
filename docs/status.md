@@ -26,6 +26,10 @@ Sub2API management origin and credentials are never exposed to the browser.
 
 ## Implementation Snapshot
 
+- Public and login surfaces present the generic OPL Cloud product in user-task
+  language, preserve the administrator-provisioned Pilot boundary, and use the
+  current responsive Console implementation. This is presentation evidence,
+  not evidence of a new functional capability.
 - Console calls Control Plane product APIs only and projects live Sub2API,
   Fabric, Ledger, and Control Plane facts through customer-safe DTOs.
 - Control Plane, Fabric, and Ledger are separate Go processes and PostgreSQL
