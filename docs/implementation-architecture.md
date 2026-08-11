@@ -6,7 +6,7 @@
 Browser Console
   -> Control Plane product API
        -> Sub2API management API: live balance, account Key/usage, idempotent debit/refund
-       -> Fabric API: CVM, CBS, attachment, runtime, provider facts
+       -> Fabric API: typed compute, storage, attachment, Secret, and runtime stages
        -> Ledger API: receipts and review evidence
 ```
 
@@ -19,12 +19,12 @@ outside this repository's mutation boundary.
 
 The required Core path is
 `Console -> Control Plane -> Workspace launcher/provider -> local Docker`.
-Current source does not complete it: Fabric startup still constructs
-`TencentProvider`, Workspace image defaults remain Tencent TCR-specific, and no
-`local-docker` provider exists. The portable Compose profile starts PostgreSQL,
-Control Plane, Fabric, and Ledger with Workspace launch workers disabled. It is
-therefore a control-service installation check, not Workspace create/readback/
-delete evidence.
+Fabric now implements the local Docker side of that path and defaults to it;
+Tencent/TKE requires explicit instance selection. Fabric also owns typed launch
+stage mutation/readback routes with exact immutable operation bindings. The
+portable Compose profile still starts PostgreSQL, Control Plane, Fabric, and
+Ledger with Workspace launch workers disabled, so Compose health alone remains
+a control-service installation check rather than end-to-end Workspace evidence.
 
 The reusable Gateway side is further ahead: Control Plane already projects
 Sub2API balance, usage, balance history, and Workspace Key operations, and its
@@ -181,9 +181,11 @@ not shared-account or customer-authorization surfaces.
 
 `services/fabric` owns compute, storage, attachments, Secret binding, Workspace
 runtimes, provider-neutral stage-operation bindings, its operation store,
-provider mutations, and provider readback. The current production adapter owns
-Tencent TKE/CVM/CBS and Kubernetes calls. Provider callbacks may update resource
-facts but cannot overwrite Control Plane entitlement state.
+provider mutations, and provider readback. The local Docker and Tencent/TKE
+adapters each own their concrete writes and authoritative readback; Tencent
+TKE/CVM/CBS and Kubernetes names do not enter the typed launch contract.
+Provider callbacks may update resource facts but cannot overwrite Control Plane
+entitlement state.
 
 `services/ledger` owns receipt, evidence, review, reconciliation, and
 continuation references. ReviewPolicy, Artifact, Continuation, retention, and
@@ -198,11 +200,12 @@ Speculative route and object entries remain outside the active contracts.
 
 ## Provider Port
 
-Fabric already exposes a Go `Provider` interface, but Core portability is not yet
-complete: process startup instantiates `TencentProvider`, Control Plane still
-emits `tencent-tke`, and current launch/recovery facts include Tencent, CVM, CBS,
-and NodePool terminology. Therefore the only wired adapter is `tencent-tke`;
-an interface alone is not local-docker or multi-provider evidence.
+Fabric exposes one Go `Provider` port paid by both `local-docker` and
+`tencent-tke`. Process startup defaults to `local-docker` independently of
+`NODE_ENV`; only `OPL_FABRIC_PROVIDER=tencent-tke` selects the Tencent adapter.
+The Fabric CI job enables the real local Docker integration test, which verifies
+the provider writes and owner-authoritative readback rather than treating an
+interface or control-service health check as portability evidence.
 
 The Core port exposes provider-neutral compute, storage, attachment, runtime,
 preflight, readback, renewal, and recovery facts. The selected instance profile
@@ -213,15 +216,18 @@ by both real paths. Control Plane keeps the one Launch business Reconciler and
 selected provider-profile ref; Fabric persists each stage-operation binding and
 the provider resource mapping.
 
-## Current Launch Boundary Gap
+## Launch Boundary Integration
 
-Current `services/control-plane/internal/server/workspace_launch.go` does not yet
-meet the accepted physical boundary. It directly interprets Tencent, NodePool,
-Machine, CVM, `providerData`, and `costTags` facts and derives attachment and
-Secret ownership from Fabric operation listings. These are current source facts,
-not accepted target ownership. They must move behind a typed Fabric public
-contract and Fabric-owned implementation before the single Reconciler can be
-admitted, even when narrower behavior tests pass.
+Fabric exposes `/fabric/workspace-launches/preflight`,
+`/fabric/workspace-launches/stages/read`, and
+`/fabric/workspace-launches/stages/ensure`. The stage DTO contains only the
+provider-neutral binding and resource refs used by the real Control Plane caller.
+Fabric persists the parent binding and a deterministic child record before each
+actual provider write, then reads both by exact operation identity; typed
+readback never scans operation listings or reconstructs Launch ownership from
+suffixes or provider tags. The Control Plane caller and the Fabric source remain
+separately owned changes that must be absorbed serially before claiming the full
+launch boundary or advancing the roadmap P0.
 
 ## Persistence
 

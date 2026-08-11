@@ -24,8 +24,6 @@ var ErrComputeClaimRecoveryIdempotencyConflict = errors.New("compute_claim_recov
 var ErrInvalidComputePoolHeadTerminalization = errors.New("invalid_compute_pool_head_terminalization")
 var ErrComputePoolHeadTerminalizationUnavailable = errors.New("compute_pool_head_terminalization_unavailable")
 var ErrComputePoolHeadTerminalizationConflict = errors.New("compute_pool_head_terminalization_conflict")
-var ErrInvalidWorkspaceActivationTruth = errors.New("invalid_workspace_activation_truth")
-var ErrWorkspaceActivationTruthUnavailable = errors.New("workspace_activation_truth_unavailable")
 var ErrRuntimeHealthSummaryUnavailable = errors.New("runtime_health_summary_unavailable")
 var ErrComputeIdempotencyConflict = errors.New("compute_idempotency_conflict")
 var ErrComputeOperationFailed = errors.New("compute_operation_failed")
@@ -391,16 +389,19 @@ type IngressDomain struct {
 }
 
 type ComputeAllocationInput struct {
-	ID             string `json:"id,omitempty"`
-	AccountID      string `json:"accountId"`
-	WorkspaceID    string `json:"workspaceId"`
-	PackageID      string `json:"packageId"`
-	NodePoolID     string `json:"nodePoolId,omitempty"`
-	IdempotencyKey string `json:"-"`
-	OperationID    string `json:"-"`
-	DryRun         bool   `json:"dryRun,omitempty"`
+	ID             string                       `json:"id,omitempty"`
+	AccountID      string                       `json:"accountId"`
+	WorkspaceID    string                       `json:"workspaceId"`
+	PackageID      string                       `json:"packageId"`
+	NodePoolID     string                       `json:"nodePoolId,omitempty"`
+	IdempotencyKey string                       `json:"-"`
+	OperationID    string                       `json:"-"`
+	LaunchBinding  *WorkspaceLaunchStageBinding `json:"-"`
+	DryRun         bool                         `json:"dryRun,omitempty"`
 }
 
+// ComputeAllocation is the legacy provider-fact model used by existing Fabric
+// resource routes. New Control Plane launch callers use WorkspaceLaunchResources.
 type ComputeAllocation struct {
 	ID                    string                        `json:"id"`
 	OperationID           string                        `json:"operationId,omitempty"`
@@ -482,19 +483,22 @@ type ComputeAllocationExecution struct {
 }
 
 type StorageVolumeInput struct {
-	ID                         string `json:"id,omitempty"`
-	AccountID                  string `json:"accountId"`
-	WorkspaceID                string `json:"workspaceId"`
-	ComputeID                  string `json:"computeId"`
-	Zone                       string `json:"zone"`
-	SizeGB                     int    `json:"sizeGb"`
-	ExpectedRecoveryState      string `json:"expectedRecoveryState,omitempty"`
-	ExpectedProviderResourceID string `json:"expectedProviderResourceId,omitempty"`
-	IdempotencyKey             string `json:"-"`
-	OperationID                string `json:"-"`
-	AllowExistingExactReplay   bool   `json:"-"`
+	ID                         string                       `json:"id,omitempty"`
+	AccountID                  string                       `json:"accountId"`
+	WorkspaceID                string                       `json:"workspaceId"`
+	ComputeID                  string                       `json:"computeId"`
+	Zone                       string                       `json:"zone"`
+	SizeGB                     int                          `json:"sizeGb"`
+	ExpectedRecoveryState      string                       `json:"expectedRecoveryState,omitempty"`
+	ExpectedProviderResourceID string                       `json:"expectedProviderResourceId,omitempty"`
+	IdempotencyKey             string                       `json:"-"`
+	OperationID                string                       `json:"-"`
+	AllowExistingExactReplay   bool                         `json:"-"`
+	LaunchBinding              *WorkspaceLaunchStageBinding `json:"-"`
 }
 
+// StorageVolume remains the legacy provider-fact model. Provider-specific facts
+// are not part of the typed Workspace launch contract.
 type StorageVolume struct {
 	ID                 string            `json:"id"`
 	OperationID        string            `json:"operationId,omitempty"`
@@ -548,11 +552,12 @@ type StorageSnapshot struct {
 }
 
 type StorageAttachmentInput struct {
-	WorkspaceID    string `json:"workspaceId"`
-	ComputeID      string `json:"computeId"`
-	VolumeID       string `json:"volumeId"`
-	IdempotencyKey string `json:"-"`
-	OperationID    string `json:"-"`
+	WorkspaceID    string                       `json:"workspaceId"`
+	ComputeID      string                       `json:"computeId"`
+	VolumeID       string                       `json:"volumeId"`
+	IdempotencyKey string                       `json:"-"`
+	OperationID    string                       `json:"-"`
+	LaunchBinding  *WorkspaceLaunchStageBinding `json:"-"`
 }
 
 type StorageAttachment struct {
@@ -570,16 +575,17 @@ type StorageAttachment struct {
 }
 
 type WorkspaceRuntimeInput struct {
-	WorkspaceID           string `json:"workspaceId"`
-	ComputeID             string `json:"computeId"`
-	VolumeID              string `json:"volumeId"`
-	AttachmentID          string `json:"attachmentId"`
-	AttachmentOperationID string `json:"attachmentOperationId"`
-	RuntimeOperationID    string `json:"runtimeOperationId"`
-	ImageID               string `json:"imageId"`
-	GatewaySecretRef      string `json:"gatewaySecretRef"`
-	IdempotencyKey        string `json:"-"`
-	OperationID           string `json:"-"`
+	WorkspaceID           string                       `json:"workspaceId"`
+	ComputeID             string                       `json:"computeId"`
+	VolumeID              string                       `json:"volumeId"`
+	AttachmentID          string                       `json:"attachmentId"`
+	AttachmentOperationID string                       `json:"attachmentOperationId"`
+	RuntimeOperationID    string                       `json:"runtimeOperationId"`
+	ImageID               string                       `json:"imageId"`
+	GatewaySecretRef      string                       `json:"gatewaySecretRef"`
+	IdempotencyKey        string                       `json:"-"`
+	OperationID           string                       `json:"-"`
+	LaunchBinding         *WorkspaceLaunchStageBinding `json:"-"`
 }
 
 type WorkspaceRuntime struct {
@@ -598,59 +604,6 @@ type WorkspaceRuntime struct {
 	CreatedAt         time.Time         `json:"createdAt"`
 }
 
-type WorkspaceActivationTruthInput struct {
-	LaunchOperationID        string `json:"launchOperationId"`
-	AccountID                string `json:"accountId"`
-	WorkspaceID              string `json:"workspaceId"`
-	ComputeAllocationID      string `json:"computeAllocationId"`
-	ComputeOperationID       string `json:"computeOperationId"`
-	StorageVolumeID          string `json:"storageVolumeId"`
-	StorageOperationID       string `json:"storageOperationId"`
-	AttachmentID             string `json:"attachmentId"`
-	AttachmentOperationID    string `json:"attachmentOperationId"`
-	RuntimeID                string `json:"runtimeId"`
-	RuntimeOperationID       string `json:"runtimeOperationId"`
-	ServiceName              string `json:"serviceName"`
-	WorkspaceImageDigest     string `json:"workspaceImageDigest"`
-	GatewaySecretRef         string `json:"gatewaySecretRef"`
-	WorkspaceAPIKeyID        int64  `json:"workspaceApiKeyId"`
-	GatewaySecretFingerprint string `json:"gatewaySecretFingerprint"`
-}
-
-type WorkspaceActivationRuntimeTruth struct {
-	ID                   string   `json:"id"`
-	OperationID          string   `json:"operationId"`
-	ServiceName          string   `json:"serviceName"`
-	DeploymentName       string   `json:"deploymentName"`
-	RuntimeSecretRef     string   `json:"runtimeSecretRef"`
-	GatewaySecretRef     string   `json:"gatewaySecretRef"`
-	PVName               string   `json:"pvName"`
-	PVCName              string   `json:"pvcName"`
-	VolumeAttachmentName string   `json:"volumeAttachmentName"`
-	PodName              string   `json:"podName"`
-	PodIP                string   `json:"podIp"`
-	NodeName             string   `json:"nodeName"`
-	ImageID              string   `json:"imageId"`
-	EndpointIPs          []string `json:"endpointIps"`
-}
-
-type WorkspaceActivationTruth struct {
-	SchemaVersion           int                             `json:"schemaVersion"`
-	Ready                   bool                            `json:"ready"`
-	Reason                  string                          `json:"reason"`
-	ErrorClass              string                          `json:"errorClass,omitempty"`
-	ComputeState            string                          `json:"computeState"`
-	StorageState            string                          `json:"storageState"`
-	Compute                 ComputeAllocation               `json:"compute"`
-	Storage                 StorageVolume                   `json:"storage"`
-	Attachment              StorageAttachment               `json:"attachment"`
-	Runtime                 WorkspaceActivationRuntimeTruth `json:"runtime"`
-	Checks                  []Check                         `json:"checks"`
-	Sub2APIMutationCount    int                             `json:"sub2apiMutationCount"`
-	TencentMutationCount    int                             `json:"tencentMutationCount"`
-	KubernetesMutationCount int                             `json:"kubernetesMutationCount"`
-}
-
 type RuntimeAccess struct {
 	Username          string    `json:"username,omitempty"`
 	Password          string    `json:"password,omitempty"`
@@ -661,12 +614,13 @@ type RuntimeAccess struct {
 }
 
 type GatewaySecretInput struct {
-	AccountID         string `json:"accountId"`
-	WorkspaceID       string `json:"workspaceId"`
-	WorkspaceAPIKeyID int64  `json:"workspaceApiKeyId"`
-	Fingerprint       string `json:"fingerprint"`
-	GatewayAPIKey     string `json:"gatewayApiKey"`
-	IdempotencyKey    string `json:"-"`
+	AccountID         string                       `json:"accountId"`
+	WorkspaceID       string                       `json:"workspaceId"`
+	WorkspaceAPIKeyID int64                        `json:"workspaceApiKeyId"`
+	Fingerprint       string                       `json:"fingerprint"`
+	GatewayAPIKey     string                       `json:"gatewayApiKey"`
+	IdempotencyKey    string                       `json:"-"`
+	LaunchBinding     *WorkspaceLaunchStageBinding `json:"-"`
 }
 
 type GatewaySecret struct {

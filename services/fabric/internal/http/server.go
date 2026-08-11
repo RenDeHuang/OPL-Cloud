@@ -17,6 +17,37 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("POST /fabric/workspace-launches/preflight", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.WorkspaceLaunchPreflightInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		result, err := service.PreflightWorkspaceLaunch(r.Context(), input)
+		writeWorkspaceLaunchResult(w, result, err)
+	})
+	mux.HandleFunc("POST /fabric/workspace-launches/stages/read", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.WorkspaceLaunchStageInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		result, err := service.ReadWorkspaceLaunchStage(r.Context(), input)
+		writeWorkspaceLaunchResult(w, result, err)
+	})
+	mux.HandleFunc("POST /fabric/workspace-launches/stages/ensure", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.WorkspaceLaunchStageInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		if input.Binding.IdempotencyKey == "" || r.Header.Get("Idempotency-Key") != input.Binding.IdempotencyKey {
+			writeError(w, http.StatusBadRequest, "workspace launch stage idempotency key mismatch")
+			return
+		}
+		result, err := service.EnsureWorkspaceLaunchStage(r.Context(), input)
+		writeWorkspaceLaunchResult(w, result, err)
+	})
 	mux.HandleFunc("GET /fabric/readiness", func(w http.ResponseWriter, r *http.Request) {
 		readiness, err := service.Readiness(r.Context())
 		if err != nil {
@@ -124,93 +155,6 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
-	mux.HandleFunc("GET /fabric/monthly-provider-truth", func(w http.ResponseWriter, r *http.Request) {
-		computeIDs, computeOK := r.URL.Query()["computeAllocationId"]
-		storageIDs, storageOK := r.URL.Query()["storageVolumeId"]
-		if !computeOK || !storageOK || len(computeIDs) != 1 || len(storageIDs) != 1 || strings.TrimSpace(computeIDs[0]) == "" || strings.TrimSpace(storageIDs[0]) == "" ||
-			computeIDs[0] != strings.TrimSpace(computeIDs[0]) || storageIDs[0] != strings.TrimSpace(storageIDs[0]) {
-			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyProviderTruth.Error())
-			return
-		}
-		result, err := service.MonthlyProviderTruth(r.Context(), computeIDs[0], storageIDs[0])
-		if errors.Is(err, fabric.ErrInvalidMonthlyProviderTruth) {
-			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyProviderTruth.Error())
-			return
-		}
-		if err != nil {
-			writeError(w, http.StatusServiceUnavailable, fabric.ErrMonthlyProviderTruthUnavailable.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, result)
-	})
-	mux.HandleFunc("GET /fabric/compute-provider-truth", func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query()
-		keys := []string{"launchOperationId", "accountId", "workspaceId", "computeAllocationId", "storageVolumeId", "packageId", "poolId", "nodePoolId"}
-		if len(query) != len(keys) {
-			writeError(w, http.StatusBadRequest, fabric.ErrInvalidComputeClaimRecovery.Error())
-			return
-		}
-		values := make(map[string]string, len(keys))
-		for _, key := range keys {
-			items, ok := query[key]
-			if !ok || len(items) != 1 || items[0] == "" || items[0] != strings.TrimSpace(items[0]) {
-				writeError(w, http.StatusBadRequest, fabric.ErrInvalidComputeClaimRecovery.Error())
-				return
-			}
-			values[key] = items[0]
-		}
-		input := fabric.ComputeClaimRecoveryInput{
-			LaunchOperationID: values["launchOperationId"], AccountID: values["accountId"], WorkspaceID: values["workspaceId"],
-			ComputeAllocationID: values["computeAllocationId"], StorageVolumeID: values["storageVolumeId"], PackageID: values["packageId"],
-			PoolID: values["poolId"], NodePoolID: values["nodePoolId"], AllowExistingStorageOperation: true,
-		}
-		if input.LaunchOperationID == "" || input.AccountID == "" || input.WorkspaceID == "" || input.ComputeAllocationID == "" ||
-			input.StorageVolumeID == "" || input.PackageID == "" || input.PoolID == "" || input.NodePoolID == "" {
-			writeError(w, http.StatusBadRequest, fabric.ErrInvalidComputeClaimRecovery.Error())
-			return
-		}
-		result, _ := service.ComputeProviderTruth(r.Context(), input)
-		// A normalized unavailable result is still evidence. Keep HTTP 200 so
-		// callers can retain other successful reads instead of losing the whole
-		// Compute snapshot to a later-stage Storage error.
-		writeJSON(w, http.StatusOK, result)
-	})
-	mux.HandleFunc("POST /fabric/workspace-activation-truth", func(w http.ResponseWriter, r *http.Request) {
-		var input fabric.WorkspaceActivationTruthInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
-			return
-		}
-		truth, err := service.WorkspaceActivationTruth(r.Context(), input)
-		writeWorkspaceActivationTruthResult(w, truth, err)
-	})
-	mux.HandleFunc("POST /fabric/workspace-launch-stage-readback/proof", func(w http.ResponseWriter, r *http.Request) {
-		var input fabric.WorkspaceLaunchStageReadbackInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
-			return
-		}
-		proof, err := service.WorkspaceLaunchStageReadbackProof(r.Context(), input)
-		writeWorkspaceLaunchStageReadbackResult(w, proof, err)
-	})
-	mux.HandleFunc("POST /fabric/workspace-launch-stage-readback/converge", func(w http.ResponseWriter, r *http.Request) {
-		var input fabric.WorkspaceLaunchStageReadbackInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
-			return
-		}
-		proof, err := service.ConvergeWorkspaceLaunchStageReadback(r.Context(), input)
-		writeWorkspaceLaunchStageReadbackResult(w, proof, err)
-	})
-	mux.HandleFunc("POST /fabric/compute-claim-recovery/proof", func(w http.ResponseWriter, r *http.Request) {
-		var input fabric.ComputeClaimRecoveryInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
-			return
-		}
-		proof, err := service.ComputeClaimRecoveryProof(r.Context(), input)
-		writeComputeClaimRecoveryResult(w, http.StatusOK, proof, err)
-	})
 	mux.HandleFunc("POST /fabric/compute-claim-recovery/identity-evidence", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.ComputeClaimRecoveryClaimInput
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -224,21 +168,6 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, evidence)
-	})
-	mux.HandleFunc("POST /fabric/compute-claim-recovery/claim", func(w http.ResponseWriter, r *http.Request) {
-		idempotencyKey := r.Header.Get("Idempotency-Key")
-		if strings.TrimSpace(idempotencyKey) == "" || idempotencyKey != strings.TrimSpace(idempotencyKey) {
-			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
-			return
-		}
-		var input fabric.ComputeClaimRecoveryClaimInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
-			return
-		}
-		input.IdempotencyKey = idempotencyKey
-		proof, err := service.ClaimComputeRecovery(r.Context(), input)
-		writeComputeClaimRecoveryResult(w, http.StatusAccepted, proof, err)
 	})
 	mux.HandleFunc("POST /fabric/provider-facts/batch", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.ProviderFactsBatchInput
@@ -521,6 +450,21 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 	return authenticate(mux, token)
 }
 
+func writeWorkspaceLaunchResult(w http.ResponseWriter, result any, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, result)
+	case errors.Is(err, fabric.ErrLaunchStageBindingNotFound), errors.Is(err, fabric.ErrOperationNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, fabric.ErrWorkspaceLaunchInputInvalid), errors.Is(err, fabric.ErrLaunchStageBindingInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, fabric.ErrLaunchStageBindingConflict):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+	}
+}
+
 func authenticate(next http.Handler, token string) http.Handler {
 	want := sha256.Sum256([]byte("Bearer " + token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -583,20 +527,6 @@ func writeComputeAllocationResult(w http.ResponseWriter, allocation fabric.Compu
 	writeResult(w, allocation, err)
 }
 
-func writeComputeClaimRecoveryResult(w http.ResponseWriter, successStatus int, proof fabric.ComputeClaimRecoveryProof, err error) {
-	if err == nil {
-		writeJSON(w, successStatus, proof)
-		return
-	}
-	status := http.StatusConflict
-	if errors.Is(err, fabric.ErrInvalidComputeClaimRecovery) {
-		status = http.StatusBadRequest
-	} else if proof.Reason == "provider_describe" || proof.Reason == "iam_rbac" {
-		status = http.StatusServiceUnavailable
-	}
-	writeJSON(w, status, proof)
-}
-
 func writeComputePoolHeadTerminalizationResult(w http.ResponseWriter, result fabric.ComputePoolHeadTerminalizationReadback, err error) {
 	if err == nil {
 		writeJSON(w, http.StatusOK, result)
@@ -620,32 +550,6 @@ func stableComputePoolHeadTerminalizationError(err error) string {
 	default:
 		return fabric.ErrComputePoolHeadTerminalizationUnavailable.Error()
 	}
-}
-
-func writeWorkspaceActivationTruthResult(w http.ResponseWriter, truth fabric.WorkspaceActivationTruth, err error) {
-	if err == nil {
-		writeJSON(w, http.StatusOK, truth)
-		return
-	}
-	status := http.StatusServiceUnavailable
-	if errors.Is(err, fabric.ErrInvalidWorkspaceActivationTruth) {
-		status = http.StatusBadRequest
-	}
-	writeJSON(w, status, truth)
-}
-
-func writeWorkspaceLaunchStageReadbackResult(w http.ResponseWriter, proof fabric.WorkspaceLaunchStageReadbackProof, err error) {
-	if err == nil {
-		writeJSON(w, http.StatusOK, proof)
-		return
-	}
-	status := http.StatusServiceUnavailable
-	if errors.Is(err, fabric.ErrWorkspaceLaunchStageReadbackInvalid) {
-		status = http.StatusBadRequest
-	} else if errors.Is(err, fabric.ErrRuntimeOperationNotCurrent) {
-		status = http.StatusConflict
-	}
-	writeJSON(w, status, proof)
 }
 
 func writeJobResult(w http.ResponseWriter, status int, body fabric.Job, err error) {

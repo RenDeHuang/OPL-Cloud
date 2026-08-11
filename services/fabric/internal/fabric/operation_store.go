@@ -23,8 +23,11 @@ import (
 	"opl-cloud/services/internal/postgresmigrate"
 )
 
+var ErrOperationNotFound = errors.New("fabric_operation_not_found")
+
 type OperationStore interface {
 	Append(ctx context.Context, operation FabricOperation) error
+	Get(ctx context.Context, id string) (FabricOperation, error)
 	ClaimRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
 	ClaimComputePoolRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
 	ReclaimRuntime(ctx context.Context, id string, priorStartedAt, startedAt time.Time) (FabricOperation, bool, error)
@@ -168,6 +171,17 @@ func (s *MemoryOperationStore) Append(_ context.Context, operation FabricOperati
 	defer s.mu.Unlock()
 	s.operation = append(s.operation, operation)
 	return nil
+}
+
+func (s *MemoryOperationStore) Get(_ context.Context, id string) (FabricOperation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := len(s.operation) - 1; index >= 0; index-- {
+		if s.operation[index].ID == id {
+			return s.operation[index], nil
+		}
+	}
+	return FabricOperation{}, ErrOperationNotFound
 }
 
 func (s *MemoryOperationStore) ClaimRuntime(_ context.Context, operation FabricOperation) (FabricOperation, bool, error) {
@@ -533,6 +547,17 @@ func (s *PostgresOperationStore) Append(ctx context.Context, operation FabricOpe
 		create.SetFinishedAt(operation.FinishedAt)
 	}
 	return create.Exec(ctx)
+}
+
+func (s *PostgresOperationStore) Get(ctx context.Context, id string) (FabricOperation, error) {
+	row, err := s.client.FabricOperation.Get(ctx, id)
+	if fabricent.IsNotFound(err) {
+		return FabricOperation{}, ErrOperationNotFound
+	}
+	if err != nil {
+		return FabricOperation{}, err
+	}
+	return fabricOperationFromEnt(row), nil
 }
 
 func (s *PostgresOperationStore) ClaimMachine(ctx context.Context, ownership MachineOwnership) (MachineOwnership, bool, error) {

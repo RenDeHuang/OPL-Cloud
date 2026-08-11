@@ -2,9 +2,56 @@ package main
 
 import (
 	"net/http"
+	"os"
 	"testing"
 	"time"
 )
+
+func TestSelectedProviderDefaultsLocalOutsideProduction(t *testing.T) {
+	provider, err := selectedProvider(func(string) string { return "" })
+	if err != nil || provider.Descriptor().Name != "local-docker" {
+		t.Fatalf("selected provider = %#v, %v", provider, err)
+	}
+}
+
+func TestSelectedProviderDefaultsLocalInProduction(t *testing.T) {
+	provider, err := selectedProvider(func(key string) string {
+		if key == "NODE_ENV" {
+			return "production"
+		}
+		return ""
+	})
+	if err != nil || provider.Descriptor().Name != "local-docker" {
+		t.Fatalf("selected provider = %#v, %v", provider, err)
+	}
+}
+
+func TestSelectedProviderHonorsExplicitLocalInProduction(t *testing.T) {
+	provider, err := selectedProvider(func(key string) string {
+		switch key {
+		case "NODE_ENV":
+			return "production"
+		case "OPL_FABRIC_PROVIDER":
+			return "local-docker"
+		default:
+			return os.Getenv(key)
+		}
+	})
+	if err != nil || provider.Descriptor().Name != "local-docker" {
+		t.Fatalf("selected provider = %#v, %v", provider, err)
+	}
+}
+
+func TestSelectedProviderRejectsUnknownName(t *testing.T) {
+	if _, err := selectedProvider(func(key string) string {
+		if key == "OPL_FABRIC_PROVIDER" {
+			return "other"
+		}
+		return ""
+	}); err == nil {
+		t.Fatal("unknown provider accepted")
+	}
+}
 
 func TestHTTPServerHasFiniteTimeouts(t *testing.T) {
 	server := newHTTPServer(":8082", http.NotFoundHandler())
