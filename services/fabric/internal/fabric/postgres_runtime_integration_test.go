@@ -221,6 +221,22 @@ type stalePostgresRuntimeProvider struct {
 	readback      WorkspaceRuntime
 }
 
+func (p *stalePostgresRuntimeProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
+	p.calls.Add(1)
+	p.readback = WorkspaceRuntime{
+		ID: "rt_postgres-alpha", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID,
+		Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ImageID: input.ImageID,
+		ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey),
+		CostTags:          oplCostTags("acct-alpha", input.WorkspaceID, "rt_postgres-alpha", input.RuntimeOperationID),
+	}
+	return p.readback, nil
+}
+
+func (p *stalePostgresRuntimeProvider) WorkspaceRuntimeStatus(_ context.Context, _ string) (WorkspaceRuntime, error) {
+	p.readbackCalls.Add(1)
+	return p.readback, nil
+}
+
 func TestPostgresWorkspaceComputeBindingPersistsBeforeProviderWriteAcrossProcessRestart(t *testing.T) {
 	for _, packageID := range []string{"basic", "pro"} {
 		t.Run(packageID, func(t *testing.T) {
@@ -401,9 +417,11 @@ func TestPostgresNormalWorkspaceCBSResponseLossConvergesAcrossProcessRestart(t *
 				if operation.Action != "cbs_create" {
 					continue
 				}
-				var persisted StorageVolume
-				if !decodeOperationResource(operation, &persisted) || persisted.ID != input.ID || persisted.ProviderResourceID != "" {
-					t.Fatalf("pre-restart CBS identity=%#v operation=%#v", persisted, operation)
+				persisted, ok := decodeProviderMutationBinding(operation)
+				if !ok || persisted.Parent != *input.LaunchBinding || persisted.FabricOperationID != childID ||
+					persisted.Action != "cbs_create" || persisted.ResourceKind != "storage_volume" || persisted.ResourceID != input.ID ||
+					persisted.ExpectedResourceBinding != input.ExpectedProviderResourceID {
+					t.Fatalf("pre-restart CBS binding=%#v/%v operation=%#v", persisted, ok, operation)
 				}
 			}
 			if err := firstStore.client.Close(); err != nil {
