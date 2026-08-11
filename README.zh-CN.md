@@ -100,6 +100,12 @@ one-person-lab-cloud/
 
 技术文档统一从 [docs/README.md](docs/README.md) 进入。产品目标、当前实现、实例配置和外部 owner truth 必须保持可区分，不得建立第二个 Cloud writer。
 
+### 参与开发
+
+提交 Pull Request 前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。`main` 由
+`validate` 汇总检查和 owner review 保护；生产与部署结论仍必须通过各自独立的
+证据门禁。
+
 ### 最小检查
 
 ```bash
