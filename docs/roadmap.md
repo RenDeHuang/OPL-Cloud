@@ -34,7 +34,7 @@ external owners.
 | Implementation owner | `unified` | `one-person-lab-cloud` owns Console, Control Plane, Fabric, and Ledger implementation; `opl-cloud` is an internal artifact/service identifier |
 | Instance owner | `initialized_extraction_pending` | `opl-instance-medopl` exists as the first commercial instance owner; its stale implementation-repository identity, co-located Cloud values and missing owner receipts still require migration |
 | Active documentation | `consolidated` | This file owns current gaps/next prompt; public product map stays in the root README and the technical split stays in architecture |
-| Development governance | `strict_ci_with_independent_developers` | Both active developers may merge PRs after current `validate` and resolved conversations; CODEOWNERS is advisory, module source boundaries are machine-checked, and production environments accept protected branches only |
+| Development governance | `strict_ci_with_independent_developers` | Both active developers may merge PRs after current `validate` and resolved conversations; reviews are requested deliberately rather than for every PR, module source boundaries are machine-checked, and production environments accept protected branches only |
 | Source module boundaries | `enforced_in_ci` | Console network ownership, Go cross-service imports and Fabric-only cloud SDK ownership are checked by `tests/contracts/module-physical-boundaries.test.ts` through `npm test` |
 | Whitepaper | `source_and_build_profile_present` | Source/build evidence does not prove publication or Cloud service readiness |
 | Service delivery | `candidate_not_production_proven` | Current state is owned by `docs/status.md`, machine contracts, CI, deployment readback and owner evidence |

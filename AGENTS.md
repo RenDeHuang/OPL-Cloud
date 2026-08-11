@@ -74,8 +74,9 @@ Assign every feature to one primary module before editing:
   the user-visible operation, not in a downstream resource or evidence module.
 
 `gaofeng21cn` and `RenDeHuang` may independently develop and merge ordinary PRs
-after required CI passes and review conversations are resolved. CODEOWNERS is
-advisory ownership routing, not a mandatory approval gate. Production mutation
+after required CI passes and review conversations are resolved. Module owners
+route review when it adds value; the repository does not automatically request
+a reviewer for every PR or require an approving review. Production mutation
 authorization remains separate and is governed by protected GitHub Actions
 environments, exact inputs, and authoritative readback.
 
