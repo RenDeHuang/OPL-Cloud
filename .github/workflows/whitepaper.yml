@@ -28,9 +28,8 @@ permissions:
 
 jobs:
   whitepaper:
-    uses: gaofeng21cn/one-person-lab/.github/workflows/reusable-whitepaper.yml@main
+    uses: gaofeng21cn/one-person-lab/.github/workflows/reusable-whitepaper.yml@4fc18d2634212c28c3a1c4ada8b406e6e2e9f267
     with:
       profile: contracts/whitepaper_profile.json
       output_name: opl-cloud-whitepaper
       publish: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
-    secrets: inherit

@@ -103,8 +103,8 @@ one-person-lab-cloud/
 ### 参与开发
 
 提交 Pull Request 前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。`main` 由
-`validate` 汇总检查和 owner review 保护；生产与部署结论仍必须通过各自独立的
-证据门禁。
+严格的 `validate` 汇总检查和已解决的 review 对话保护；生产与部署结论仍必须
+通过各自独立的授权与证据门禁。
 
 ### 最小检查
 
