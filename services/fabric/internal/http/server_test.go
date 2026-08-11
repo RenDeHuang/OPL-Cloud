@@ -71,8 +71,8 @@ func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 }
 
 func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *testing.T) {
-	service := fabric.NewServiceWithOperationStore(testProvider{}, fabric.NewMemoryOperationStore())
-	imageDigest := "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	service := fabric.NewServiceWithOperationStore(workspaceLaunchHTTPProvider{}, fabric.NewMemoryOperationStore())
+	imageDigest := "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
 	launchRequestHash := strings.Repeat("b", 64)
 	preflight, err := service.PreflightWorkspaceLaunch(context.Background(), fabric.WorkspaceLaunchPreflightInput{
 		SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
@@ -90,7 +90,7 @@ func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *te
 		Binding: binding, ProviderProfileRef: "tencent-tke", PreflightBindingRef: preflight.BindingRef,
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest,
 	}
-	input.Binding.RequestHash = workspaceLaunchStageHTTPHash(input, launchRequestHash)
+	input.Binding.RequestHash = "ddb1c0c5195c4e04c1d23230a493da582a2ca56af528a7abcf67d781f81c3fe1"
 	binding = input.Binding
 	server := NewServer(service, "internal-secret")
 	body, err := json.Marshal(input)
@@ -122,17 +122,13 @@ func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *te
 	}
 }
 
-func workspaceLaunchStageHTTPHash(input fabric.WorkspaceLaunchStageInput, launchRequestHash string) string {
-	payload, _ := json.Marshal(struct {
-		LaunchRequestHash string                          `json:"launchRequestHash"`
-		Action            string                          `json:"action"`
-		PackageID         string                          `json:"packageId"`
-		SizeGB            int                             `json:"sizeGb"`
-		ImageDigest       string                          `json:"imageDigest"`
-		Resources         fabric.WorkspaceLaunchResources `json:"resources"`
-	}{launchRequestHash, input.Binding.Action, input.PackageID, input.SizeGB, input.WorkspaceImageDigest, input.Resources})
-	digest := sha256.Sum256(payload)
-	return fmt.Sprintf("%x", digest)
+type workspaceLaunchHTTPProvider struct {
+	testProvider
+}
+
+func (workspaceLaunchHTTPProvider) ValidateWorkspaceImageReference(value string) bool {
+	const prefix = "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:"
+	return strings.HasPrefix(value, prefix) && len(value) == len(prefix)+64
 }
 
 func (testProvider) EnsureWorkspaceLaunchStage(_ context.Context, request fabric.WorkspaceLaunchProviderRequest) (fabric.WorkspaceLaunchProviderResult, error) {

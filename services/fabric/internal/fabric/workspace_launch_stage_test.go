@@ -2,14 +2,46 @@ package fabric
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+type workspaceLaunchStageHashGoldenVector struct {
+	Stage   string `json:"stage"`
+	Payload struct {
+		LaunchRequestHash string                   `json:"launchRequestHash"`
+		Action            string                   `json:"action"`
+		PackageID         string                   `json:"packageId"`
+		SizeGB            int                      `json:"sizeGb"`
+		ImageDigest       string                   `json:"imageDigest"`
+		Resources         WorkspaceLaunchResources `json:"resources"`
+	} `json:"payload"`
+	SHA256 string `json:"sha256"`
+}
+
+func workspaceLaunchStageHashGoldenVectors(t *testing.T) []workspaceLaunchStageHashGoldenVector {
+	t.Helper()
+	raw, err := os.ReadFile("../../../../packages/contracts/opl-cloud-fabric-launch-binding-contract.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract struct {
+		StageRequestHash struct {
+			GoldenVectors []workspaceLaunchStageHashGoldenVector `json:"goldenVectors"`
+		} `json:"stageRequestHash"`
+	}
+	if err := json.Unmarshal(raw, &contract); err != nil {
+		t.Fatal(err)
+	}
+	if len(contract.StageRequestHash.GoldenVectors) != 5 {
+		t.Fatalf("golden vectors=%d, want 5", len(contract.StageRequestHash.GoldenVectors))
+	}
+	return contract.StageRequestHash.GoldenVectors
+}
 
 type workspaceLaunchRecordingProvider struct {
 	testProvider
@@ -119,7 +151,24 @@ func TestWorkspaceLaunchStageRejectsEveryPreflightIdentityDrift(t *testing.T) {
 	}
 }
 
-func TestWorkspaceLaunchStageRecomputesFiveCanonicalRequestHashesAndRejectsResourceDrift(t *testing.T) {
+func TestWorkspaceLaunchStageRequestHashMatchesOwnerGoldenVectors(t *testing.T) {
+	for _, vector := range workspaceLaunchStageHashGoldenVectors(t) {
+		t.Run(vector.Stage, func(t *testing.T) {
+			input := WorkspaceLaunchStageInput{
+				Binding:              WorkspaceLaunchStageBinding{Stage: vector.Stage, Action: vector.Payload.Action},
+				PackageID:            vector.Payload.PackageID,
+				SizeGB:               vector.Payload.SizeGB,
+				WorkspaceImageDigest: vector.Payload.ImageDigest,
+				Resources:            vector.Payload.Resources,
+			}
+			if got := workspaceLaunchStageRequestHash(input, vector.Payload.LaunchRequestHash); got != vector.SHA256 {
+				t.Fatalf("workspaceLaunchStageRequestHash()=%s, owner golden=%s", got, vector.SHA256)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchStageRejectsRequestHashAndResourceDrift(t *testing.T) {
 	service, _, provider, preflight, image, launchHash := workspaceLaunchStageFixture(t)
 	stages := []struct {
 		stage     string
@@ -135,10 +184,6 @@ func TestWorkspaceLaunchStageRecomputesFiveCanonicalRequestHashesAndRejectsResou
 	for _, stage := range stages {
 		t.Run(stage.stage, func(t *testing.T) {
 			input := workspaceLaunchStageFixtureInput(preflight, image, launchHash, stage.stage, stage.action, stage.resources)
-			input.Binding.RequestHash = workspaceLaunchCallerRequestHash(input, launchHash)
-			if got := workspaceLaunchStageRequestHash(input, launchHash); got != input.Binding.RequestHash {
-				t.Fatalf("Fabric hash=%s caller hash=%s", got, input.Binding.RequestHash)
-			}
 			if err := service.validateWorkspaceLaunchStageInput(context.Background(), input); err != nil {
 				t.Fatalf("canonical input rejected: %v", err)
 			}
@@ -157,19 +202,6 @@ func TestWorkspaceLaunchStageRecomputesFiveCanonicalRequestHashesAndRejectsResou
 			}
 		})
 	}
-}
-
-func workspaceLaunchCallerRequestHash(input WorkspaceLaunchStageInput, launchRequestHash string) string {
-	payload, _ := json.Marshal(struct {
-		LaunchRequestHash string                   `json:"launchRequestHash"`
-		Action            string                   `json:"action"`
-		PackageID         string                   `json:"packageId"`
-		SizeGB            int                      `json:"sizeGb"`
-		ImageDigest       string                   `json:"imageDigest"`
-		Resources         WorkspaceLaunchResources `json:"resources"`
-	}{launchRequestHash, input.Binding.Action, input.PackageID, input.SizeGB, input.WorkspaceImageDigest, input.Resources})
-	digest := sha256.Sum256(payload)
-	return hex.EncodeToString(digest[:])
 }
 
 func TestWorkspaceLaunchExpectedBindingRequiresExactAuthoritativeRecordForFiveStages(t *testing.T) {
