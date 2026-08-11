@@ -108,7 +108,7 @@ These are current implementation facts, not deletion authorization:
 | Cluster | Current implementation fact |
 | --- | --- |
 | Control Plane persistence | Disabled archive/retention and superseded shared-execution models remain; Organization/Membership are one-to-one compatibility storage |
-| Fabric optional verticals | ContentTransfer and Snapshot/Restore have provider/service/store/route/test surfaces but no current in-repo product caller; the Pilot excludes transfer and backup/recovery |
+| Fabric optional verticals | ContentTransfer runtime/API/schema surfaces are retired while historical migrations and data remain; Snapshot/Restore still has provider/service/store/route/test surfaces but no current in-repo product caller and remains excluded from the Pilot |
 | Ledger optional verticals | Artifact, Review, ReviewPolicy, and Continuation APIs exist while current Control Plane callers primarily consume receipts and reconciliation |
 | Indirection and tooling | A large Control Plane facade, repeated CLI parsers, repeated workflow setup/cleanup, and custom static-file behavior create maintenance cost |
 | Active-tree residue | Console styles retain multiple generations after the current UI work; dated execution plans and frozen QA assets were retired from active history |

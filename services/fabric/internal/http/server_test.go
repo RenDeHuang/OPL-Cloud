@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -987,25 +986,6 @@ func TestServerRenewsComputeAllocation(t *testing.T) {
 	}
 }
 
-func TestTransferServiceFailureIsLogged(t *testing.T) {
-	var output bytes.Buffer
-	previous := log.Writer()
-	log.SetOutput(&output)
-	t.Cleanup(func() { log.SetOutput(previous) })
-
-	recorder := httptest.NewRecorder()
-	writeTransferResult(recorder, http.StatusOK, fabric.Transfer{}, errors.New("workspace_content_digest_mismatch expected_sha256=abc actual_sha256=def"))
-
-	if !strings.Contains(output.String(), "workspace_content_digest_mismatch expected_sha256=abc actual_sha256=def") {
-		t.Fatalf("transfer failure log = %q", output.String())
-	}
-	output.Reset()
-	writeTransferResult(httptest.NewRecorder(), http.StatusOK, fabric.Transfer{}, errors.New("database failed with private value"))
-	if output.Len() != 0 {
-		t.Fatalf("non-content failure log = %q", output.String())
-	}
-}
-
 func TestRuntimeOperationConflictsAreHTTPConflict(t *testing.T) {
 	for _, err := range []error{fabric.ErrRuntimeIdempotencyConflict, fabric.ErrRuntimeOperationInProgress, fabric.ErrRuntimeOperationFailed, fabric.ErrGatewaySecretIdempotencyConflict} {
 		recorder := httptest.NewRecorder()
@@ -1013,45 +993,6 @@ func TestRuntimeOperationConflictsAreHTTPConflict(t *testing.T) {
 		if recorder.Code != http.StatusConflict {
 			t.Fatalf("error %v status = %d, want %d", err, recorder.Code, http.StatusConflict)
 		}
-	}
-}
-
-func TestContentTransferHTTPResumesAndDownloads(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
-	body := []byte("workspace bytes")
-	digest := fmt.Sprintf("%x", sha256.Sum256(body))
-	create := testRequest(http.MethodPost, "/fabric/transfers", bytes.NewBufferString(fmt.Sprintf(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","path":"inputs/a.txt","digest":"%s","size":%d,"chunkSize":%d}`, digest, len(body), len(body))))
-	create.Header.Set("Idempotency-Key", "transfer-http")
-	createdRec := httptest.NewRecorder()
-	server.ServeHTTP(createdRec, create)
-	if createdRec.Code != http.StatusCreated {
-		t.Fatalf("create status=%d body=%s", createdRec.Code, createdRec.Body.String())
-	}
-	var transfer fabric.Transfer
-	if err := json.NewDecoder(createdRec.Body).Decode(&transfer); err != nil {
-		t.Fatal(err)
-	}
-
-	put := testRequest(http.MethodPut, "/fabric/transfers/"+transfer.TransferID+"/chunks/0", bytes.NewReader(body))
-	put.Header.Set("X-Chunk-SHA256", digest)
-	putRec := httptest.NewRecorder()
-	server.ServeHTTP(putRec, put)
-	if putRec.Code != http.StatusOK {
-		t.Fatalf("put status=%d body=%s", putRec.Code, putRec.Body.String())
-	}
-	complete := testRequest(http.MethodPost, "/fabric/transfers/"+transfer.TransferID+"/complete", nil)
-	completeRec := httptest.NewRecorder()
-	server.ServeHTTP(completeRec, complete)
-	if completeRec.Code != http.StatusOK {
-		t.Fatalf("complete status=%d body=%s", completeRec.Code, completeRec.Body.String())
-	}
-	download := testRequest(http.MethodGet, "/fabric/contents/"+digest, nil)
-	download.Header.Set("X-Workspace-ID", "workspace-alpha")
-	downloadRec := httptest.NewRecorder()
-	server.ServeHTTP(downloadRec, download)
-	downloaded, _ := io.ReadAll(downloadRec.Body)
-	if downloadRec.Code != http.StatusOK || !bytes.Equal(downloaded, body) {
-		t.Fatalf("download status=%d body=%q", downloadRec.Code, downloaded)
 	}
 }
 
@@ -1464,10 +1405,6 @@ func TestRunnerJobHTTPFailRetryAndConflict(t *testing.T) {
 }
 
 type testProvider struct{}
-
-func (testProvider) PublishWorkspaceContent(_ context.Context, _, _ string, _ []byte) error {
-	return nil
-}
 
 func (testProvider) PrepareComputeAllocation(_ context.Context, input fabric.ComputeAllocationInput) (fabric.ComputeAllocationPreparation, error) {
 	instanceType := "SA5.MEDIUM4"
