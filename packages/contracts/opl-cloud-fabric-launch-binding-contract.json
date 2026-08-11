@@ -15,6 +15,18 @@
     "bindingType": "WorkspaceLaunchStageBinding",
     "ensureIdempotencyHeader": "Idempotency-Key equals binding.idempotencyKey"
   },
+  "preflight": {
+    "mode": "read_only_admission",
+    "configuredProfileSelectionOwner": "opl-instance-medopl",
+    "admittedBindingReadbackOwner": "services/fabric",
+    "responseIdentityFields": [
+      "schemaVersion",
+      "launchOperationId",
+      "requestHash",
+      "providerProfileRef",
+      "bindingRef"
+    ]
+  },
   "launchBinding": {
     "schemaVersion": 1,
     "fields": [
@@ -33,6 +45,8 @@
     "readProtocol": "lookup_by_explicit_fabricOperationId_and_require_exact_binding_match",
     "requestHash": "hash_of_the_stage_specific_provider_neutral_request",
     "expectedResourceBinding": "exact_provider_neutral_binding_ref_when_the_caller_has_an_expected_resource",
+    "stageSemantics": "control_plane_durable_cursor",
+    "actionSemantics": "fabric_mutation_command",
     "immutability": "all_fields_are_immutable_for_one_fabricOperationId"
   },
   "stageOperations": [
@@ -41,19 +55,19 @@
       "action": "ensure_compute_allocation"
     },
     {
-      "stage": "ensure_storage",
+      "stage": "storage",
       "action": "ensure_storage"
     },
     {
-      "stage": "ensure_attachment",
+      "stage": "attachment",
       "action": "ensure_attachment"
     },
     {
-      "stage": "ensure_gateway_secret",
+      "stage": "secret",
       "action": "ensure_gateway_secret"
     },
     {
-      "stage": "ensure_runtime",
+      "stage": "runtime",
       "action": "ensure_runtime"
     }
   ],
@@ -81,8 +95,7 @@
   },
   "notOwned": [
     "launch_business_stage_decision",
-    "provider_profile_selection",
-    "preflight_binding_truth",
+    "provider_profile_configuration_or_instance_selection",
     "package_size_or_image_choice",
     "gateway_credential_value",
     "recovery_authorization_or_mutation_budget",

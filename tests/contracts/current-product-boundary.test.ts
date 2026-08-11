@@ -40,6 +40,7 @@ test("current launch and settlement facts have four focused owners", async () =>
 test("Control Plane durable launch chain keeps preflight outside mutation stages", async () => {
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
+  assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
     "launchOperationId", "accountId", "ownerUserId", "workspaceId", "requestHash"
   ]);
@@ -52,17 +53,30 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
     "key",
     "debit",
     "ensure_compute_allocation",
-    "ensure_storage",
-    "ensure_attachment",
-    "ensure_gateway_secret",
-    "ensure_runtime",
+    "storage",
+    "attachment",
+    "secret",
+    "runtime",
     "activation",
     "receipt",
     "succeeded"
   ]);
+  assert.deepEqual(contract.stageDecision.persistence, {
+    row: "control_plane_runtime_operation",
+    statusField: "status",
+    durableResultControlFields: [
+      "schemaVersion", "version", "stage", "attempts", "observations", "consumedResumeAuthorizations",
+      "resumeAuthorization", "resumeAuthorizationConsumedAt"
+    ],
+    forbiddenResultFields: ["phase", "currentDecision"],
+    cas: "exact_prior_result_and_launch_identity_single_winner"
+  });
   assert.equal(contract.stageDecision.fabricOperationBinding, "opl-cloud-fabric-launch-binding-contract.json");
-  assert.equal(contract.recovery.operation, "continue_original_workspace_launch");
-  assert.equal(contract.recovery.resourceIdentityInput, "forbidden_server_authoritative_readback_only");
+  assert.equal(contract.recovery.route, "POST /api/operator/workspace-launches/{operationId}/resume");
+  assert.deepEqual(contract.recovery.requestFields, ["launchVersion", "authorizedStage", "reason", "mutationBudget"]);
+  assert.equal(contract.recovery.authorizationId, "Idempotency-Key request header");
+  assert.equal(contract.recovery.authorizedBy, "control_plane_operator_session_user_id");
+  assert.equal(contract.recovery.authorizedAt, "control_plane_server_time_or_exact_authorization_replay");
 });
 
 test("Fabric uses explicit immutable launch-stage binding and typed routes", async () => {
@@ -77,6 +91,12 @@ test("Fabric uses explicit immutable launch-stage binding and typed routes", asy
     stageEnsureRoute: "POST /fabric/workspace-launches/stages/ensure",
     bindingType: "WorkspaceLaunchStageBinding",
     ensureIdempotencyHeader: "Idempotency-Key equals binding.idempotencyKey"
+  });
+  assert.deepEqual(contract.preflight, {
+    mode: "read_only_admission",
+    configuredProfileSelectionOwner: "opl-instance-medopl",
+    admittedBindingReadbackOwner: "services/fabric",
+    responseIdentityFields: ["schemaVersion", "launchOperationId", "requestHash", "providerProfileRef", "bindingRef"]
   });
   assert.deepEqual(contract.launchBinding.fields, [
     "schemaVersion",
@@ -94,11 +114,14 @@ test("Fabric uses explicit immutable launch-stage binding and typed routes", asy
   assert.equal(contract.launchBinding.readProtocol, "lookup_by_explicit_fabricOperationId_and_require_exact_binding_match");
   assert.deepEqual(contract.stageOperations, [
     { stage: "ensure_compute_allocation", action: "ensure_compute_allocation" },
-    { stage: "ensure_storage", action: "ensure_storage" },
-    { stage: "ensure_attachment", action: "ensure_attachment" },
-    { stage: "ensure_gateway_secret", action: "ensure_gateway_secret" },
-    { stage: "ensure_runtime", action: "ensure_runtime" }
+    { stage: "storage", action: "ensure_storage" },
+    { stage: "attachment", action: "ensure_attachment" },
+    { stage: "secret", action: "ensure_gateway_secret" },
+    { stage: "runtime", action: "ensure_runtime" }
   ]);
+  assert.equal(contract.launchBinding.stageSemantics, "control_plane_durable_cursor");
+  assert.equal(contract.launchBinding.actionSemantics, "fabric_mutation_command");
+  assert.equal(contract.notOwned.includes("preflight_binding_truth"), false);
   assert.deepEqual(contract.readback.matchFields, contract.launchBinding.fields);
   assert.deepEqual(contract.readback.forbiddenInference, [
     "idempotency_suffix", "unscoped_operation_list", "provider_tag", "provider_resource_name"

@@ -10,7 +10,7 @@
   },
   "launchOperation": {
     "action": "workspace.launch.v2",
-    "resultSchemaVersion": 2,
+    "resultSchemaVersion": 3,
     "identityFields": [
       "launchOperationId",
       "accountId",
@@ -34,40 +34,59 @@
       "key",
       "debit",
       "ensure_compute_allocation",
-      "ensure_storage",
-      "ensure_attachment",
-      "ensure_gateway_secret",
-      "ensure_runtime",
+      "storage",
+      "attachment",
+      "secret",
+      "runtime",
       "activation",
       "receipt",
       "succeeded"
     ],
-    "persistence": "phase_status_and_currentDecision_same_launch_postgresql_cas",
-    "mutationAuthorization": "persisted_currentDecision_only",
+    "persistence": {
+      "row": "control_plane_runtime_operation",
+      "statusField": "status",
+      "durableResultControlFields": [
+        "schemaVersion",
+        "version",
+        "stage",
+        "attempts",
+        "observations",
+        "consumedResumeAuthorizations",
+        "resumeAuthorization",
+        "resumeAuthorizationConsumedAt"
+      ],
+      "forbiddenResultFields": [
+        "phase",
+        "currentDecision"
+      ],
+      "cas": "exact_prior_result_and_launch_identity_single_winner"
+    },
     "fabricOperationBinding": "opl-cloud-fabric-launch-binding-contract.json"
   },
   "recovery": {
     "authority": "services/control-plane",
-    "operation": "continue_original_workspace_launch",
-    "routes": {
-      "diagnose": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/diagnose",
-      "read": "GET /api/operator/workspace-launches/{operationId}/recovery-plan",
-      "validate": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate",
-      "execute": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute"
-    },
-    "operatorInputFields": [
-      "accountId",
-      "launchOperationId",
-      "decision"
+    "operation": "resume_original_workspace_launch_stage",
+    "route": "POST /api/operator/workspace-launches/{operationId}/resume",
+    "requestFields": [
+      "launchVersion",
+      "authorizedStage",
+      "reason",
+      "mutationBudget"
     ],
-    "executeRequestFields": [
-      "planId",
-      "planDigest",
-      "decision",
-      "confirmation"
+    "authorizationFields": [
+      "authorizationId",
+      "launchVersion",
+      "authorizedStage",
+      "authorizedBy",
+      "authorizedAt",
+      "reason",
+      "mutationBudget"
     ],
-    "resourceIdentityInput": "forbidden_server_authoritative_readback_only",
-    "unknownProviderResult": "remain_manual_review",
+    "authorizationId": "Idempotency-Key request header",
+    "authorizedBy": "control_plane_operator_session_user_id",
+    "authorizedAt": "control_plane_server_time_or_exact_authorization_replay",
+    "admission": "manual_review_with_exact_launch_version_current_stage_and_remaining_mutation_budget",
+    "immutability": "same_authorizationId_requires_exact_authorization",
     "secondLaunch": "forbidden"
   },
   "notOwned": [

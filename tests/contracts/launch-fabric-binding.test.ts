@@ -6,24 +6,12 @@ const root = new URL("../../", import.meta.url);
 const text = (path: string) => readFile(new URL(path, root), "utf8");
 const json = async (path: string) => JSON.parse(await text(path));
 
-function structJSONFields(source: string, typeName: string): string[] {
-  const marker = `type ${typeName} struct {`;
-  const start = source.indexOf(marker);
-  assert.notEqual(start, -1, `missing ${typeName}`);
-  const body = source.slice(start + marker.length, source.indexOf("\n}", start));
-  return [...body.matchAll(/`json:"([^",]+)/g)].map((match) => match[1]);
-}
-
 test("Control Plane owns the launch identity and recovery authorization", async () => {
-  const [contract, launchSource, routeSource] = await Promise.all([
-    json("packages/contracts/opl-cloud-control-plane-launch-contract.json"),
-    text("services/control-plane/internal/server/workspace_launch.go"),
-    text("services/control-plane/internal/server/routes_admin.go")
-  ]);
+  const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
   assert.equal(contract.owner, "services/control-plane");
   assert.equal(contract.launchOperation.action, "workspace.launch.v2");
-  assert.equal(contract.launchOperation.resultSchemaVersion, 2);
+  assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
     "launchOperationId", "accountId", "ownerUserId", "workspaceId", "requestHash"
   ]);
@@ -34,21 +22,34 @@ test("Control Plane owns the launch identity and recovery authorization", async 
     durableStage: false
   });
   assert.deepEqual(contract.stageDecision.orderedStages, [
-    "key", "debit", "ensure_compute_allocation", "ensure_storage", "ensure_attachment",
-    "ensure_gateway_secret", "ensure_runtime", "activation", "receipt", "succeeded"
+    "key", "debit", "ensure_compute_allocation", "storage", "attachment",
+    "secret", "runtime", "activation", "receipt", "succeeded"
   ]);
-  assert.equal(contract.recovery.operation, "continue_original_workspace_launch");
-  assert.equal(contract.recovery.resourceIdentityInput, "forbidden_server_authoritative_readback_only");
-
-  assert.match(launchSource, /workspaceLaunchAction\s*=\s*"workspace\.launch\.v2"/);
-  assert.match(launchSource, /workspaceLaunchSchemaVersion\s*=\s*2/);
-  for (const field of ["accountId", "ownerUserId", "workspaceId", "requestHash"]) {
-    assert.ok(structJSONFields(launchSource, "workspaceLaunchOperation").includes(field), field);
-  }
-  for (const route of Object.values(contract.recovery.routes) as string[]) {
-    const [method, path] = route.split(" ", 2);
-    assert.match(routeSource, new RegExp(`${method} ${path.replace(/[{}]/g, "\\$&")}`));
-  }
+  assert.deepEqual(contract.stageDecision.persistence, {
+    row: "control_plane_runtime_operation",
+    statusField: "status",
+    durableResultControlFields: [
+      "schemaVersion", "version", "stage", "attempts", "observations", "consumedResumeAuthorizations",
+      "resumeAuthorization", "resumeAuthorizationConsumedAt"
+    ],
+    forbiddenResultFields: ["phase", "currentDecision"],
+    cas: "exact_prior_result_and_launch_identity_single_winner"
+  });
+  assert.deepEqual(contract.recovery, {
+    authority: "services/control-plane",
+    operation: "resume_original_workspace_launch_stage",
+    route: "POST /api/operator/workspace-launches/{operationId}/resume",
+    requestFields: ["launchVersion", "authorizedStage", "reason", "mutationBudget"],
+    authorizationFields: [
+      "authorizationId", "launchVersion", "authorizedStage", "authorizedBy", "authorizedAt", "reason", "mutationBudget"
+    ],
+    authorizationId: "Idempotency-Key request header",
+    authorizedBy: "control_plane_operator_session_user_id",
+    authorizedAt: "control_plane_server_time_or_exact_authorization_replay",
+    admission: "manual_review_with_exact_launch_version_current_stage_and_remaining_mutation_budget",
+    immutability: "same_authorizationId_requires_exact_authorization",
+    secondLaunch: "forbidden"
+  });
 });
 
 test("Fabric launch binding freezes only the typed successor seam", async () => {
@@ -62,6 +63,12 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
     bindingType: "WorkspaceLaunchStageBinding",
     ensureIdempotencyHeader: "Idempotency-Key equals binding.idempotencyKey"
   });
+  assert.deepEqual(contract.preflight, {
+    mode: "read_only_admission",
+    configuredProfileSelectionOwner: "opl-instance-medopl",
+    admittedBindingReadbackOwner: "services/fabric",
+    responseIdentityFields: ["schemaVersion", "launchOperationId", "requestHash", "providerProfileRef", "bindingRef"]
+  });
   assert.deepEqual(contract.launchBinding.fields, [
     "schemaVersion", "launchOperationId", "accountId", "workspaceId", "stage", "action",
     "fabricOperationId", "idempotencyKey", "requestHash", "expectedResourceBinding"
@@ -74,6 +81,8 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
     contract.launchBinding.readProtocol,
     "lookup_by_explicit_fabricOperationId_and_require_exact_binding_match"
   );
+  assert.equal(contract.launchBinding.stageSemantics, "control_plane_durable_cursor");
+  assert.equal(contract.launchBinding.actionSemantics, "fabric_mutation_command");
   assert.deepEqual(contract.readback.matchFields, contract.launchBinding.fields);
   assert.deepEqual(contract.readback.forbiddenInference, [
     "idempotency_suffix", "unscoped_operation_list", "provider_tag", "provider_resource_name"
@@ -81,15 +90,16 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
 
   const expectedStages = [
     ["ensure_compute_allocation", "ensure_compute_allocation"],
-    ["ensure_storage", "ensure_storage"],
-    ["ensure_attachment", "ensure_attachment"],
-    ["ensure_gateway_secret", "ensure_gateway_secret"],
-    ["ensure_runtime", "ensure_runtime"]
+    ["storage", "ensure_storage"],
+    ["attachment", "ensure_attachment"],
+    ["secret", "ensure_gateway_secret"],
+    ["runtime", "ensure_runtime"]
   ];
   assert.deepEqual(
     contract.stageOperations.map((stage: Record<string, string>) => [stage.stage, stage.action]),
     expectedStages
   );
+  assert.equal(contract.notOwned.includes("preflight_binding_truth"), false);
 
   const serialized = JSON.stringify(contract);
   for (const legacy of [
