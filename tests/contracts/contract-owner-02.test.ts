@@ -29,7 +29,9 @@ test("CONTRACT-OWNER-02 has one current owner for each retained hard boundary", 
 
   assert.equal(fabric.owner, "services/fabric");
   assert.ok(fabric.launchBinding);
+  assert.ok(fabric.workspaceLaunchApi);
   assert.ok(fabric.stageOperations);
+  assert.equal(fabric.stageReadbackApi, undefined);
   assert.equal(fabric.balance, undefined);
   assert.equal(fabric.receipts, undefined);
 

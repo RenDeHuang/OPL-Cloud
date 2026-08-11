@@ -1,133 +1,92 @@
 {
   "schemaVersion": 1,
   "owner": "services/fabric",
-  "purpose": "Bind a Control Plane Workspace launch stage to one durable Fabric operation and its expected resource readback.",
+  "purpose": "Bind one Control Plane Workspace launch stage to one explicit Fabric operation and its expected provider-neutral resource binding.",
   "state": "current",
-  "machineBoundary": "Provider-neutral Control Plane to Fabric operation identity, request hash, resource binding, and readback proof for the current Workspace launch caller.",
+  "machineBoundary": "The typed Control Plane to Fabric preflight, stage read, and stage ensure seam for immutable launch and Fabric operation identity.",
   "lifecycle": {
     "type": "long_term_contract",
-    "removalCondition": "Remove only when no Workspace launch caller consumes Fabric stage operations or their authoritative readback."
+    "removalCondition": "Remove only when no Workspace launch caller submits or reads Fabric stage bindings."
+  },
+  "workspaceLaunchApi": {
+    "preflightRoute": "POST /fabric/workspace-launches/preflight",
+    "stageReadRoute": "POST /fabric/workspace-launches/stages/read",
+    "stageEnsureRoute": "POST /fabric/workspace-launches/stages/ensure",
+    "bindingType": "WorkspaceLaunchStageBinding",
+    "ensureIdempotencyHeader": "Idempotency-Key equals binding.idempotencyKey"
   },
   "launchBinding": {
-    "controlPlaneIdentityFields": [
+    "schemaVersion": 1,
+    "fields": [
+      "schemaVersion",
       "launchOperationId",
-      "launchRequestHash",
       "accountId",
-      "workspaceId"
-    ],
-    "fabricStageIdentityFields": [
+      "workspaceId",
       "stage",
-      "fabricRecordId",
+      "action",
       "fabricOperationId",
       "idempotencyKey",
-      "requestHash"
+      "requestHash",
+      "expectedResourceBinding"
     ],
-    "expectedResourceBindingFields": [
-      "action",
-      "resourceKind",
-      "resourceId",
-      "accountId",
-      "workspaceId"
-    ],
-    "requestHash": "sha256_of_the_action_specific_request_body_must_equal_the_persisted_fabric_operation_requestHash",
-    "matchCardinality": "exactly_one_fabric_operation"
+    "writeProtocol": "control_plane_submits_complete_binding_and_fabric_persists_it_before_provider_write",
+    "readProtocol": "lookup_by_explicit_fabricOperationId_and_require_exact_binding_match",
+    "requestHash": "hash_of_the_stage_specific_provider_neutral_request",
+    "expectedResourceBinding": "exact_provider_neutral_binding_ref_when_the_caller_has_an_expected_resource",
+    "immutability": "all_fields_are_immutable_for_one_fabricOperationId"
   },
   "stageOperations": [
     {
-      "stage": "compute",
-      "action": "create_compute_allocation",
-      "resourceKind": "compute_allocation",
-      "resourceIdField": "computeAllocationId",
-      "idempotencyIdentity": "<launchOperationId>:compute",
-      "readback": "persisted_operation_and_provider_resource_truth"
+      "stage": "ensure_compute_allocation",
+      "action": "ensure_compute_allocation"
     },
     {
       "stage": "storage",
-      "action": "create_storage_volume",
-      "resourceKind": "storage_volume",
-      "resourceIdField": "storageId",
-      "idempotencyIdentity": "<launchOperationId>:storage",
-      "readback": "persisted_operation_and_provider_resource_truth"
+      "action": "ensure_storage"
     },
     {
       "stage": "attachment",
-      "action": "create_storage_attachment",
-      "resourceKind": "storage_attachment",
-      "resourceIdField": "attachmentId",
-      "idempotencyIdentity": "<attachmentOperationId>",
-      "readback": "provider_readback_proof_then_optional_operation_cas"
+      "action": "ensure_attachment"
     },
     {
       "stage": "secret",
-      "action": "upsert_gateway_secret",
-      "resourceKind": "gateway_secret",
-      "resourceIdField": "gatewaySecretRef",
-      "idempotencyIdentity": "<workspaceOperationId>:secret:gateway-secret",
-      "readback": "provider_readback_proof_then_optional_operation_cas"
+      "action": "ensure_gateway_secret"
     },
     {
       "stage": "runtime",
-      "action": "create_workspace_runtime",
-      "resourceKind": "workspace_runtime",
-      "resourceIdField": "workspaceId",
-      "idempotencyIdentity": "<workspaceOperationId>:runtime",
-      "readback": "provider_readback_proof_then_optional_operation_cas"
+      "action": "ensure_runtime"
     }
   ],
-  "stageReadbackApi": {
-    "proofRoute": "POST /fabric/workspace-launch-stage-readback/proof",
-    "convergeRoute": "POST /fabric/workspace-launch-stage-readback/converge",
-    "supportedStages": [
-      "attachment",
-      "secret",
-      "runtime"
-    ],
-    "requestFields": [
-      "stage",
-      "fabricRecordId",
-      "fabricOperationId",
+  "readback": {
+    "identityField": "fabricOperationId",
+    "matchFields": [
+      "schemaVersion",
+      "launchOperationId",
       "accountId",
       "workspaceId",
+      "stage",
+      "action",
+      "fabricOperationId",
       "idempotencyKey",
       "requestHash",
-      "computeId",
-      "storageId",
-      "attachmentId",
-      "attachmentOperationId",
-      "runtimeId",
-      "runtimeOperationId",
-      "imageId",
-      "gatewaySecretRef",
-      "gatewaySecretFingerprint",
-      "workspaceApiKeyId",
-      "expectedBindingDigest"
+      "expectedResourceBinding"
     ],
-    "proofFields": [
-      "schemaVersion",
-      "eligible",
-      "reason",
-      "stage",
-      "priorStatus",
-      "bindingDigest",
-      "operation",
-      "sub2apiMutationCount",
-      "tencentMutationCount",
-      "kubernetesMutationCount",
-      "fabricOperationMutationCount"
-    ],
-    "proofMutationCounts": {
-      "sub2api": 0,
-      "provider": 0,
-      "kubernetes": 0,
-      "fabricOperation": 0
-    },
-    "convergeFabricOperationMutationMaximum": 1,
-    "expectedBindingDigest": "required_to_converge_and_required_when_the_persisted_operation_is_already_succeeded"
+    "resultBinding": "exact_persisted_binding",
+    "forbiddenInference": [
+      "idempotency_suffix",
+      "unscoped_operation_list",
+      "provider_tag",
+      "provider_resource_name"
+    ]
   },
   "notOwned": [
     "launch_business_stage_decision",
+    "provider_profile_selection",
+    "preflight_binding_truth",
+    "package_size_or_image_choice",
+    "gateway_credential_value",
+    "recovery_authorization_or_mutation_budget",
     "customer_balance_or_settlement",
-    "recovery_authorization",
     "ledger_receipt_or_evidence_truth"
   ]
 }

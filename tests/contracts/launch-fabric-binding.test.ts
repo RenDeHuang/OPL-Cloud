@@ -42,52 +42,52 @@ test("Control Plane owns the launch identity and recovery authorization", async 
   }
 });
 
-test("Fabric stage binding matches both typed DTOs and the current HTTP caller", async () => {
-  const [contract, clientSource, fabricSource, serverSource, launchSource] = await Promise.all([
-    json("packages/contracts/opl-cloud-fabric-launch-binding-contract.json"),
-    text("services/control-plane/internal/clients/fabric.go"),
-    text("services/fabric/internal/fabric/workspace_launch_readback.go"),
-    text("services/fabric/internal/http/server.go"),
-    text("services/control-plane/internal/server/workspace_launch.go")
-  ]);
+test("Fabric launch binding freezes only the typed successor seam", async () => {
+  const contract = await json("packages/contracts/opl-cloud-fabric-launch-binding-contract.json");
 
   assert.equal(contract.owner, "services/fabric");
-  assert.deepEqual(contract.launchBinding.controlPlaneIdentityFields, [
-    "launchOperationId", "launchRequestHash", "accountId", "workspaceId"
+  assert.deepEqual(contract.workspaceLaunchApi, {
+    preflightRoute: "POST /fabric/workspace-launches/preflight",
+    stageReadRoute: "POST /fabric/workspace-launches/stages/read",
+    stageEnsureRoute: "POST /fabric/workspace-launches/stages/ensure",
+    bindingType: "WorkspaceLaunchStageBinding",
+    ensureIdempotencyHeader: "Idempotency-Key equals binding.idempotencyKey"
+  });
+  assert.deepEqual(contract.launchBinding.fields, [
+    "schemaVersion", "launchOperationId", "accountId", "workspaceId", "stage", "action",
+    "fabricOperationId", "idempotencyKey", "requestHash", "expectedResourceBinding"
   ]);
-  assert.deepEqual(contract.launchBinding.fabricStageIdentityFields, [
-    "stage", "fabricRecordId", "fabricOperationId", "idempotencyKey", "requestHash"
+  assert.equal(
+    contract.launchBinding.writeProtocol,
+    "control_plane_submits_complete_binding_and_fabric_persists_it_before_provider_write"
+  );
+  assert.equal(
+    contract.launchBinding.readProtocol,
+    "lookup_by_explicit_fabricOperationId_and_require_exact_binding_match"
+  );
+  assert.deepEqual(contract.readback.matchFields, contract.launchBinding.fields);
+  assert.deepEqual(contract.readback.forbiddenInference, [
+    "idempotency_suffix", "unscoped_operation_list", "provider_tag", "provider_resource_name"
   ]);
-  assert.deepEqual(contract.launchBinding.expectedResourceBindingFields, [
-    "action", "resourceKind", "resourceId", "accountId", "workspaceId"
-  ]);
-
-  const requestFields = structJSONFields(clientSource, "WorkspaceLaunchStageReadbackInput");
-  const fabricRequestFields = structJSONFields(fabricSource, "WorkspaceLaunchStageReadbackInput");
-  assert.deepEqual(requestFields, contract.stageReadbackApi.requestFields);
-  assert.deepEqual(fabricRequestFields, requestFields);
-
-  const proofFields = structJSONFields(clientSource, "WorkspaceLaunchStageReadbackProof");
-  const fabricProofFields = structJSONFields(fabricSource, "WorkspaceLaunchStageReadbackProof");
-  assert.deepEqual(proofFields, contract.stageReadbackApi.proofFields);
-  assert.deepEqual(fabricProofFields, proofFields);
-
-  assert.deepEqual(contract.stageReadbackApi.supportedStages, ["attachment", "secret", "runtime"]);
-  assert.match(serverSource, /POST \/fabric\/workspace-launch-stage-readback\/proof/);
-  assert.match(serverSource, /POST \/fabric\/workspace-launch-stage-readback\/converge/);
 
   const expectedStages = [
-    ["compute", "create_compute_allocation", "compute_allocation", "<launchOperationId>:compute"],
-    ["storage", "create_storage_volume", "storage_volume", "<launchOperationId>:storage"],
-    ["attachment", "create_storage_attachment", "storage_attachment", "<attachmentOperationId>"],
-    ["secret", "upsert_gateway_secret", "gateway_secret", "<workspaceOperationId>:secret:gateway-secret"],
-    ["runtime", "create_workspace_runtime", "workspace_runtime", "<workspaceOperationId>:runtime"]
+    ["ensure_compute_allocation", "ensure_compute_allocation"],
+    ["storage", "ensure_storage"],
+    ["attachment", "ensure_attachment"],
+    ["secret", "ensure_gateway_secret"],
+    ["runtime", "ensure_runtime"]
   ];
   assert.deepEqual(
-    contract.stageOperations.map((stage: Record<string, string>) => [stage.stage, stage.action, stage.resourceKind, stage.idempotencyIdentity]),
+    contract.stageOperations.map((stage: Record<string, string>) => [stage.stage, stage.action]),
     expectedStages
   );
-  for (const [, action, resourceKind] of expectedStages) {
-    assert.ok(launchSource.includes(`Action: "${action}", ResourceKind: "${resourceKind}"`), action);
+
+  const serialized = JSON.stringify(contract);
+  for (const legacy of [
+    "stageReadbackApi", "workspace-launch-stage-readback", "proofRoute", "convergeRoute",
+    "fabricRecordId", "sub2apiMutationCount", "tencentMutationCount", "kubernetesMutationCount",
+    "fabricOperationMutationCount", "idempotencyIdentity", "<launchOperationId>"
+  ]) {
+    assert.equal(serialized.includes(legacy), false, legacy);
   }
 });
