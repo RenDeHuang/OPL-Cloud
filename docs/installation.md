@@ -30,6 +30,13 @@ The Compose installation starts PostgreSQL, Ledger, Fabric, and Control Plane
 as separate processes. Only the Control Plane is published to the host. Data is
 stored in the `opl-cloud-postgres` named volume.
 
+This is not yet a complete Workspace installation. The repository currently
+has no `local-docker` Workspace provider, and the Compose profile leaves
+Workspace launch workers disabled. A healthy Compose stack proves only that the
+Cloud control services start; it cannot create, read back, access, or delete an
+OPL App/WebUI Workspace. See [current capability](status.md) and the
+[P0 gap](roadmap.md).
+
 ## Upgrade And Rollback
 
 Set `OPL_CLOUD_IMAGE` to the immutable digest from another release manifest,
@@ -39,14 +46,14 @@ not published.
 
 ## Provider Boundary
 
-The current product includes the Tencent TKE Fabric adapter, but the portable
+The current source includes the Tencent TKE Fabric adapter, but the portable
 Compose profile intentionally does not select or configure an infrastructure
 provider. Console, Control Plane, Fabric, Ledger, persistence, and health checks
 can run on any supported Docker host. Workspace procurement and delivery remain
 disabled until an instance supplies a supported provider profile, credentials,
 network/storage settings, and an immutable Workspace image. A successful
-Compose health check is not evidence that provider-backed Workspace delivery is
-ready.
+Compose health check is not evidence that local Docker or any other
+provider-backed Workspace delivery is ready.
 
 `opl-instance-medopl` is the separate private instance owner for medopl.cn. It
 selects Tencent/TKE, owns production Secrets and deployment workflows, pins an

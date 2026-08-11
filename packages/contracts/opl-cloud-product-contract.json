@@ -79,10 +79,18 @@
     "runtimeReadinessField": "resourceCatalog",
     "consoleSelectableRule": "workspace package must be available=true"
   },
-  "productionHandoff": {
-    "manifestExample": "deploy/production-manifest.example.json",
-    "validateCommand": "npm run validate:production-manifest -- --manifest <manifest.json>",
-    "secretPolicy": "sensitive_values_must_use_secretRef"
+  "providerBoundary": {
+    "selectionOwner": "instance_or_installer_profile",
+    "productIdentityProviderNeutral": true,
+    "providerSpecificFactsStayInAdapter": true,
+    "currentCapabilityOwner": "docs/status.md",
+    "activeGapOwner": "docs/roadmap.md"
+  },
+  "distributionHandoff": {
+    "contract": "packages/contracts/opl-cloud-distribution-contract.json",
+    "instanceDeploymentOwner": "gaofeng21cn/opl-instance-medopl",
+    "cloudDeploysInstances": false,
+    "secretPolicy": "sensitive_values_remain_with_instance_secret_owner"
   },
   "nonGoals": [
     "member_login_for_shared_urls",

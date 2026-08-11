@@ -73,6 +73,14 @@ initial implementation may select one primary adapter per instance while every
 Workspace persists its exact provider binding so later instances can expose
 more than one provider without changing Workspace identity.
 
+`local-docker` is the required Core adapter, but it is not implemented in the
+current source. Fabric startup still selects `TencentProvider`; Tencent/TKE is
+an extension chosen by `opl-instance-medopl`, not proof of portable Core. A
+healthy product Compose stack starts Fabric as a control service only and does
+not prove Workspace create/readback/delete. Current facts belong to
+[status](status.md), and the implementation gap belongs to the
+[roadmap](roadmap.md).
+
 Launch and recovery share one provider-neutral operation state machine. Its
 collector asks the selected adapter for facts; provider-specific recovery does
 not create a second Control Plane state machine or leak Tencent resource names

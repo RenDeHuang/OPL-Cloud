@@ -20,7 +20,7 @@ Machine boundary: 面向用户的产品愿景源文，不持有 Cloud 服务实�
 
 OPL Cloud 是 One Person Lab 面向复杂知识工作的云端产品架构：用户继续围绕问题、材料、阶段、产物和审阅推进工作；系统在背后连接 AI、在线工作空间、账号策略、远端资源、Agent 服务和证据回执。
 
-本仓库承担 **OPL Cloud 目标产品架构与实现族导航**。本文解释为什么采用这样的设计、各部分如何协作，以及这种协作怎样改善用户体验。目标架构与当前交付分别说明；具体能力是否可用、运行到什么程度、如何计费和何时发布，以对应实现仓、机器合同、运行读回与正式公告为准。
+本仓库承担 **OPL Cloud 目标产品架构与实现族导航**。本文解释为什么采用这样的设计、各部分如何协作，以及这种协作怎样改善用户体验。稳定 Core/Extension 技术边界由架构文档持有，当前能力由状态文档持有，gap 与优先级由路线图持有；本文不建立第二份 current truth。
 
 OPL Cloud 希望兑现五个用户结果：
 
@@ -141,7 +141,7 @@ OPL Cloud 负责让判断有来路、结果能复查、工作可接力。运行�
 
 OPL Cloud 产品与某次安装不是同一个对象。`one-person-lab-cloud` 同时持有产品架构、白皮书以及可复用的 Console、Control Plane、Fabric 与 Ledger 实现；`opl-cloud` 只作为内部 package、image、service 与 namespace 标识。具体安装由实例配置物化。第一期商业实例 `medopl` 由 `opl-instance-medopl` 持有域名、provider profile、启用套餐与价格、镜像 pin、secret 引用和部署回执，不复制产品或 runtime 代码。
 
-一个实例可以安装在公有云、本地服务器或 Mac 上。实例选择获准的 Fabric provider profile；`medopl` 首先使用 `tencent-tke`，本地安装可以使用 `local-docker`，自托管集群可以使用通用 `kubernetes`。Launch 与 Recovery 共享一套产品状态机，provider 特有事实、重试和恢复留在对应 adapter 内部。
+目标上，一个实例可以安装在公有云、本地服务器或 Mac 上。实例选择获准的 Fabric provider profile；`medopl` 选择 `tencent-tke` 扩展，本机 Core 目标使用 `local-docker`，自托管集群可使用通用 `kubernetes` 扩展。Launch 与 Recovery 共享一套产品状态机，provider 特有事实、重试和恢复留在对应 adapter 内部。当前仓内尚无 `local-docker` provider；Compose 只能启动 Cloud control services，不能证明 Workspace 的创建、读回或删除已经实现。实现事实与唯一 P0 gap 分别见[状态](../status.md)和[路线图](../roadmap.md)。
 
 ## 从 Agent Package 到对外服务
 

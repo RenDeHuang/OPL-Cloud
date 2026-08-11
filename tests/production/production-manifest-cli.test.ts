@@ -6,21 +6,6 @@ import test from "node:test";
 
 import { runProductionManifestCli } from "../../tools/validate-production-manifest.ts";
 
-test("production manifest CLI validates the example manifest", async () => {
-  let stdout = "";
-  let stderr = "";
-
-  const code = await runProductionManifestCli({
-    argv: ["--manifest", "deploy/production-manifest.example.json"],
-    stdout: { write: (chunk) => { stdout += chunk; } },
-    stderr: { write: (chunk) => { stderr += chunk; } }
-  });
-
-  const report = JSON.parse(stdout);
-  assert.equal(code, 0);
-  assert.equal(report.ok, true);
-  assert.equal(stderr, "");
-});
 
 test("production manifest CLI fails without leaking inline secret values", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-cloud-manifest-"));

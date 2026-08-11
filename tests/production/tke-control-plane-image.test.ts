@@ -1,62 +1,25 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { parse } from "yaml";
 
-const deploymentContractPath = new URL("../../packages/contracts/opl-cloud-deployment-contract.json", import.meta.url);
-
-async function deploymentContract() {
-  return JSON.parse(await readFile(deploymentContractPath, "utf8"));
-}
-
-async function workflow(path) {
-  return parse(await readFile(path, "utf8"));
-}
-
-test("OPL Cloud control-plane image build matches the deployment contract", async () => {
-  const contract = (await deploymentContract()).controlPlaneImage;
-  const dockerfile = await readFile(contract.file, "utf8");
+test("OPL Cloud product image contains all three control-service binaries", async () => {
+  const dockerfile = await readFile("Dockerfile", "utf8");
   const dockerignore = (await readFile(".dockerignore", "utf8"))
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
 
-  assert.ok(dockerfile.includes(`FROM ${contract.baseImage} AS build`));
-  assert.ok(dockerfile.includes(`FROM ${contract.baseImage} AS runtime`));
-  for (const instruction of contract.requiredInstructions) {
-    assert.ok(dockerfile.includes(instruction), `Dockerfile missing ${instruction}`);
+  for (const [buildTarget, binary] of [
+    ["./cmd/control-plane", "opl-control-plane"],
+    ["./cmd/fabric", "opl-fabric"],
+    ["./cmd/ledger", "opl-ledger"]
+  ]) {
+    assert.match(dockerfile, new RegExp(`go build -o /out/${binary.replaceAll("-", "\\-")} ${buildTarget.replaceAll("/", "\\/")}`));
+    assert.match(dockerfile, new RegExp(`COPY --from=.* /out/${binary.replaceAll("-", "\\-")} /usr/local/bin/${binary.replaceAll("-", "\\-")}`));
   }
-  for (const ignored of contract.dockerignore) {
+  assert.match(dockerfile, /ARG TARGETARCH/);
+  assert.match(dockerfile, /linux\/\$\{TARGETARCH\}\/kubectl/);
+  for (const ignored of ["node_modules", "dist", ".runtime", ".git", ".env"]) {
     assert.ok(dockerignore.includes(ignored), `.dockerignore missing ${ignored}`);
-  }
-});
-
-test("OPL Cloud image release workflow matches the deployment contract", async () => {
-  const contract = await deploymentContract();
-  const spec = contract.imageReleaseWorkflow;
-  const currentWorkflow = await workflow(spec.file);
-  const currentJob = currentWorkflow.jobs[spec.job];
-  assert.ok(currentJob, `workflow missing job ${spec.job}`);
-  assert.deepEqual([currentJob["runs-on"]].flat(), spec.runner);
-  assert.equal(currentJob.environment, contract.environment);
-
-  const inputs = Object.keys(currentWorkflow.on.workflow_dispatch.inputs || {});
-  assert.deepEqual(inputs, spec.inputs);
-  for (const [key, value] of Object.entries(spec.env)) {
-    assert.equal(currentJob.env[key], value);
-  }
-
-  const steps = new Map((currentJob.steps || []).map((step) => [step.name, step]));
-  for (const [stepName, tokens] of Object.entries(spec.requiredCommandsByStep)) {
-    const step = steps.get(stepName);
-    assert.ok(step, `${spec.file} missing step ${stepName}`);
-    const text = `${step.run || ""}\n${JSON.stringify({ ...step, run: undefined })}`;
-    for (const token of tokens) {
-      assert.ok(text.includes(token), `${stepName} missing ${token}`);
-    }
-  }
-  const source = JSON.stringify(currentWorkflow);
-  for (const token of spec.forbiddenRunTokens || []) {
-    assert.equal(source.includes(token), false, `${spec.file} contains forbidden ${token}`);
   }
 });

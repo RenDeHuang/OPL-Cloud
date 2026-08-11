@@ -128,6 +128,37 @@ flowchart TB
 | OPL Runway | Invocation/session lifecycle and execution-provider routing | Service identity, package lifecycle and domain verdicts |
 | Domain agent | Domain strategy, evidence judgment, quality verdict and delivery authority | Cloud infrastructure truth |
 
+## Core And Extension Boundary
+
+The MVP Core is one installable vertical product path:
+
+```text
+thin Console
+-> Control Plane
+-> Workspace launcher/provider
+-> local Docker OPL App/WebUI Workspace
+-> Gateway balance, usage, debit/refund authority in Sub2API
+-> minimal Ledger receipts and reconciliation evidence
+```
+
+Core completion requires a real Workspace create, readback, access, and delete
+path on a MacBook or single-server Docker host. Starting the Cloud control
+services with Compose is distribution plumbing and cannot satisfy this
+boundary. Console remains limited to the Workspace, balance, and usage controls
+needed by that path. Sub2API remains the only spendable wallet; Ledger does not
+become a second wallet or accounting engine.
+
+Extensions include Tencent/TKE and generic Kubernetes provider adapters,
+managed or institution-owned resources, OPL Serve, self-service signup,
+payment/top-up, detailed Console refinement, and Ledger evidence verticals not
+required by the Core path. An instance selects extensions without redefining
+the Core product. `opl-instance-medopl` selects the Tencent/TKE extension for
+medopl.cn; Tencent/TKE is not an MVP prerequisite for OPL Cloud itself.
+
+This section owns the stable Core/Extension technical boundary. Current
+capability belongs to [status](status.md), while gaps and priority belong only
+to the [roadmap](roadmap.md).
+
 ## Modularity And Simplification Boundary
 
 Each implementation module is paid for by a current product responsibility,
@@ -211,9 +242,9 @@ or resource is Cloud-hosted or managed. Fabric performs the approved resource
 binding and execution. User-provided local, SSH or HPC resources can use the
 same pattern without becoming Console-billed resources by default.
 
-Fabric exposes a provider-neutral capability interface. An instance selects an
-approved provider profile, such as `tencent-tke`, `local-docker`, or generic
-`kubernetes`. Provider identifiers, diagnostics, retries, and recovery
+Fabric exposes a provider-neutral capability interface. Core requires a real
+`local-docker` profile; an instance may additionally select an extension such
+as `tencent-tke` or generic `kubernetes`. Provider identifiers, diagnostics, retries, and recovery
 mutations stay inside the adapter. The Control Plane persists a provider
 binding per Workspace and uses one launch/recovery state machine; it does not
 hard-code Tencent resource names into product identity.

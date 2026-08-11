@@ -52,21 +52,26 @@ truth.
    authorization, immutable identity, secret handling, mutation bounds,
    readback and rollback gates remain protected while workflow structure moves
    back to executable workflows and focused tests.
-5. Package import and service boundary checks belong in
+5. Portable image and release checks belong in
+   `opl-cloud-distribution-contract.json`. Concrete deployment workflows,
+   manifests, Secrets, rollback, and production receipts belong to the selected
+   instance repository; medopl uses
+   `opl-instance-medopl/contracts/medopl-deployment-contract.json`.
+6. Package import and service boundary checks belong in
    `opl-cloud-service-boundary-contract.json`. Retired package and
    shared-execution machine shapes remain available in Git history only; do not
    reintroduce them as current contracts.
-6. Human target descriptions such as shared execution may remain in their
+7. Human target descriptions such as shared execution may remain in their
    functional/architecture owner without recreating a machine contract before a
    real cross-module caller requires one.
-7. Product reads reuse `SourceEnvelope<T>` and the server-side
+8. Product reads reuse `SourceEnvelope<T>` and the server-side
    `writeSourceEnvelope`; do not create per-product envelope types.
-8. `source`, `status`, `available`, and `fetchedAt` report the actual read. Return
+9. `source`, `status`, `available`, and `fetchedAt` report the actual read. Return
    `sourceUpdatedAt` only when the authority provides it; local time is not a
    substitute.
-9. Delivery levels belong in `docs/status.md` with matching evidence, never as
+10. Delivery levels belong in `docs/status.md` with matching evidence, never as
    mutable booleans inside a long-term machine contract.
-10. `one-person-lab-cloud` is the single current product and implementation
+11. `one-person-lab-cloud` is the single current product and implementation
     repository. Contracts may name Console, Control Plane, Fabric, and Ledger as
     logical service owners and `opl-cloud` as an artifact/service identifier,
     but must not project them as separate current repositories.

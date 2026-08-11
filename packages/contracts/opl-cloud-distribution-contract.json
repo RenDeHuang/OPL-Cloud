@@ -3,6 +3,11 @@
   "owner": "OPL Cloud",
   "purpose": "Portable product distribution and instance handoff boundary.",
   "state": "current",
+  "machineBoundary": "Cloud publishes portable immutable product artifacts without deploying an instance; concrete provider selection and deployment belong to an instance owner.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same distribution and instance-handoff boundary."
+  },
   "productRepository": "gaofeng21cn/one-person-lab-cloud",
   "distribution": {
     "workflow": ".github/workflows/release-opl-cloud-image.yml",
@@ -36,7 +41,15 @@
       "ledger"
     ],
     "persistence": "postgresql",
-    "providerSelection": "instance_or_installer_owned"
+    "providerSelection": "instance_or_installer_owned",
+    "workspaceProviderRequired": true,
+    "composeScope": "cloud_control_services_only",
+    "composeDoesNotProve": [
+      "workspace_create",
+      "workspace_readback",
+      "workspace_access",
+      "workspace_delete"
+    ]
   },
   "instanceHandoff": {
     "repository": "gaofeng21cn/opl-instance-medopl",
@@ -54,11 +67,8 @@
       "production_receipts"
     ]
   },
-  "currentLimitations": {
-    "fabricAdapters": [
-      "tencent-tke"
-    ],
-    "portableComposeConfiguresProvider": false,
-    "workspaceDeliveryRequiresInstanceConfiguration": true
+  "evidenceOwners": {
+    "currentCapability": "docs/status.md",
+    "activeGapsAndPriority": "docs/roadmap.md"
   }
 }

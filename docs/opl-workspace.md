@@ -24,6 +24,20 @@ does not impose a fixed count limit; each creation is admitted independently by
 balance, provider capacity, quota, and policy. Workspace state is keyed by
 `workspace_id`, never by an account singleton.
 
+## MVP Boundary
+
+The first Workspace carrier is an OPL App/WebUI Docker container created and
+managed through the real product chain:
+
+```text
+Console -> Control Plane -> Workspace launcher/provider -> local Docker
+```
+
+Core completion requires create, authoritative readback, access, and delete on
+a MacBook or single-server Docker host. Compose startup of the Cloud control
+services does not satisfy this boundary. The provider is not implemented yet;
+see [current capability](status.md) and the single [P0 gap](roadmap.md).
+
 ## Workspace Product Flow
 
 ```text

@@ -25,7 +25,8 @@ only the gaps between them.
 The current MVP critical path is a thin Console, one real `local-docker`
 Workspace path, and authoritative OPL Gateway accounting. Tencent/TKE belongs to
 the medopl instance extension. Self-service onboarding/payment, refined visual
-work, and broader managed-platform capabilities are intentionally later.
+work, and broader managed-platform capabilities are intentionally later. This
+vertical is the only `P0` lane.
 
 ## Planning Semantics
 
@@ -49,8 +50,7 @@ real production mutation is serialized.
 
 | ID | State | Priority | Current gap | Owner boundary | Acceptance |
 | --- | --- | --- | --- | --- | --- |
-| `FABRIC-PORT-01` | `next` | `P0` | No real `local-docker` adapter yet closes Workspace launch, readback, and recovery | Fabric provider port and only required typed consumers | One `local-docker` Workspace completes the provider-neutral path with owner readback; Tencent/TKE is neither exercised nor required for acceptance |
-| `GATEWAY-ACCOUNTING-01` | `next` | `P0` | The thin Console path lacks one closed authoritative Gateway balance and usage flow | Gateway/Sub2API authority + Control Plane customer projection + thin Console | A user reads owner-authoritative balance and usage without browser admin access, copied business truth, or a second wallet |
+| `MVP-LOCAL-WORKSPACE-GATEWAY-01` | `next` | `P0` | Thin Console and Sub2API-backed balance, usage, Key, debit, and refund paths exist, but no real `local-docker` adapter closes Workspace create, readback, access, delete, and accounting as one path | Fabric provider port + required Control Plane launcher DTOs + Gateway/Sub2API authority + thin Console; Ledger records only required receipts and reconciliation | On a MacBook or single-server Docker host, Console creates, reads back, opens, and deletes one OPL App/WebUI Workspace through Control Plane and `local-docker`; balance, usage, debit, and refund remain Sub2API-authoritative with no second wallet; Tencent/TKE is neither exercised nor required |
 | `DEPLOY-ISOLATION-01` | `planned` | `P2` | Services share a database credential, internal token, and ConfigMap | Reusable deployment plus service startup configuration | Service-specific database roles/URLs and identities prevent cross-owner table writes and caller impersonation |
 | `MODULE-COHESION-01` | `planned` | `P2` | Large service files concentrate unrelated capabilities and create change collisions | One owning Go module per change | Focused capability files preserve package API, state behavior, and full tests without creating shared policy modules |
 | `INSTANCE-MEDOPL-01` | `external_owner` | `P2` | Tencent/TKE profile, provider-specific workflows, and receipts are not fully separated from reusable Cloud | `opl-instance-medopl` | Exact Cloud release refs, provider/Secret owners, values, and deployment receipts are current with no Tencent/TKE prerequisite left in reusable Cloud MVP acceptance |
@@ -79,7 +79,7 @@ Open phases are:
 
 | ID | State | Priority | Phase and scope | Safety retained | Acceptance |
 | --- | --- | --- | --- | --- | --- |
-| `CONTRACT-OWNER-02` | `next` | `P0` | Phase 2: split `opl-cloud-launch-freeze-contract.json` by settlement, launch/recovery, provider, and Ledger owner | debit/refund cardinality, idempotency, recovery, PREPAID, resource protection | Every retained fact has one owning contract and real caller/test; aggregate launch contract and test are deleted |
+| `CONTRACT-OWNER-02` | `next` | `P1` | Phase 2: split `opl-cloud-launch-freeze-contract.json` by settlement, launch/recovery, provider, and Ledger owner | debit/refund cardinality, idempotency, recovery, PREPAID, resource protection | Every retained fact has one owning contract and real caller/test; aggregate launch contract and test are deleted |
 | `CONTRACT-DEDUP-02` | `planned` | `P1` | Phase 2: assign one owner to repeated facts across current machine contracts | public APIs, security, integrity, permissions, irreversible side effects | Other contracts reference the owner or schema; no duplicated mutable implementation/status truth remains |
 | `DEPLOY-CONTRACT-03` | `planned` | `P1` | Phase 3: migrate deployment contract one workflow family at a time | production authorization, runner/identity binding, Secrets, immutable images, mutation bounds, readback, diagnostics, rollback | Focused workflow tests own executable shape; the aggregate deployment migration contract is deleted only after all families cut over |
 

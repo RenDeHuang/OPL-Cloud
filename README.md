@@ -59,6 +59,21 @@ OPL Runway owns Invocation and Session execution lifecycle; domain Agents retain
 professional policy, quality, artifact, and delivery authority. Cloud surfaces
 consume those owner and carrier references without creating competing truth.
 
+## MVP Focus
+
+The first product slice is intentionally narrow: a thin Console for essential
+Workspace, balance, and usage management; a real
+`Console -> Control Plane -> Workspace launcher/provider -> local Docker`
+creation and management path for OPL App/WebUI Workspaces; and authoritative
+Gateway accounting through Sub2API without a second wallet. Self-service
+signup, payment/top-up, and detailed UI refinement are later work.
+
+The repository does not yet contain a `local-docker` Workspace provider. The
+portable Compose asset starts PostgreSQL and the three Cloud control services;
+it does not create, read back, or delete an OPL Workspace. See
+[current capability](docs/status.md) for implementation facts and the
+[roadmap](docs/roadmap.md) for the single P0 gap.
+
 ## One Continuous Work Chain
 
 ```text
@@ -104,6 +119,7 @@ steps; it is not a readiness dashboard.
 - [Read the OPL Cloud whitepaper](https://gaofeng21cn.github.io/one-person-lab-cloud/latest/whitepapers/opl-cloud-whitepaper.html)
 - [Documentation and owner map](docs/README.md)
 - [Architecture and authority boundaries](docs/architecture.md)
+- [Current implementation capability](docs/status.md)
 - [Install a released OPL Cloud application](docs/installation.md)
 - [Current gaps and next steps](docs/roadmap.md)
 - [Workspace identity and external SaaS boundary](docs/workspace-identity-and-external-saas-boundary.md)

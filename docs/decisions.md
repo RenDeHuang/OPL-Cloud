@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-08-11: MVP Core Is Local Workspace Plus Gateway Accounting
+
+OPL Cloud MVP has one Core vertical path: a thin Console for essential
+Workspace, balance, and usage management; a real
+`Console -> Control Plane -> Workspace launcher/provider -> local Docker`
+OPL App/WebUI Workspace lifecycle; and Sub2API-owned balance, usage, debit, and
+refund authority with minimal Ledger receipts and reconciliation evidence.
+
+Self-service signup, payment/top-up, detailed UI refinement, OPL Serve, managed
+resource policy, generic Kubernetes, and nonessential Ledger evidence verticals
+are extensions or later work. Tencent/TKE is an extension adapter selected by
+`opl-instance-medopl`, not an OPL Cloud MVP prerequisite. Compose startup of the
+three control services does not count as a local Docker Workspace provider.
+
 ## 2026-08-11: Product Release And Instance Deployment Are Separate
 
 `one-person-lab-cloud` publishes the installable product: source, contracts,

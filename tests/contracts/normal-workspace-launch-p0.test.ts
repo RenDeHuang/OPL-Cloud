@@ -9,10 +9,9 @@ async function contract(path: string) {
 }
 
 test("normal Workspace launch freezes one POST safety authorities and restart budgets", async () => {
-  const [freeze, boundary, deployment] = await Promise.all([
+  const [freeze, boundary] = await Promise.all([
     contract("packages/contracts/opl-cloud-launch-freeze-contract.json"),
-    contract("packages/contracts/opl-cloud-service-boundary-contract.json"),
-    contract("packages/contracts/opl-cloud-deployment-contract.json")
+    contract("packages/contracts/opl-cloud-service-boundary-contract.json")
   ]);
 
   assert.deepEqual(freeze.workspaceLaunch.normalLaunchSafety, {
@@ -84,12 +83,5 @@ test("normal Workspace launch freezes one POST safety authorities and restart bu
   assert.deepEqual(boundary.services.controlPlane.workspaceComputeClaimAutomaticContinuation.allowedWrites, {
     tencent: 0,
     kubernetesNodePatchMax: 1
-  });
-
-  assert.deepEqual(deployment.normalWorkspaceLaunchImageGate, {
-    source: "OPL_WORKSPACE_IMAGE",
-    requiredFormat: "repository@sha256:<64-lowercase-hex>",
-    timing: "before_control_plane_launch_persistence_debit_and_fabric_write",
-    missingTagOrDriftMutationCounts: { database: 0, sub2api: 0, tencent: 0, kubernetes: 0 }
   });
 });

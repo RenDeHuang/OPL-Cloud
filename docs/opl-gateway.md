@@ -9,6 +9,9 @@ release, or production readiness.
 
 OPL Gateway is the target frontier-AI capability gateway for One Person Lab.
 
+Sub2API is its external backend and the only owner of spendable balance, API
+keys, model routing, and request usage. Cloud integrates those authorities
+through Control Plane; it does not create a second Gateway service or wallet.
 Its target responsibilities are unified AI API access, credential and provider
 configuration, usage metering, and downstream OPL workflow integration.
 
@@ -45,9 +48,11 @@ pay for it.
 
 ## Public Surface
 
-This repository currently defines only the target integration surface. A
-dedicated implementation owner, machine contract, runtime readback, and release
-evidence are required before availability can be claimed.
+This repository contains the Control Plane integration for Sub2API balance,
+usage, balance history, Key lifecycle, and deterministic debit/refund paths.
+That code and its tests are not runtime availability evidence. Current
+capability belongs to [status](status.md); the remaining Core gap belongs to the
+[roadmap](roadmap.md).
 
 ## Positioning
 

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { validateProductionManifest } from "../../services/control-plane/ops/production-manifest.ts";
@@ -18,18 +17,6 @@ const dedicatedNodePoolEnv = {
   OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: { value: "50" }
 };
 
-test("ordinary production manifest omits Acceptance and browser Gateway configuration", async () => {
-  const manifest = JSON.parse(await readFile("deploy/production-manifest.example.json", "utf8"));
-  assert.equal(manifest.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, undefined);
-  assert.equal(manifest.env.OPL_GATEWAY_PUBLIC_BASE_URL, undefined);
-  assert.equal(manifest.env.OPL_CODEX_BASE_URL, undefined);
-  assert.equal(manifest.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE.value, "<approved-basic-2c4g-instance-type>");
-  assert.equal(manifest.env.OPL_PRO_COMPUTE_INSTANCE_TYPE.value, "<approved-pro-8c16g-instance-type>");
-  for (const key of Object.keys(dedicatedNodePoolEnv)) assert.ok(manifest.env[key], key);
-  for (const key of ["OPL_VERIFY_MUTATION_APPROVAL_JSON", "OPL_VERIFY_MUTATION_APPROVAL_ID", "OPL_VERIFY_ALLOW_GATEWAY_WRITE", "OPL_VERIFY_ALLOW_MODEL_WRITE", "OPL_VERIFY_ALLOW_PROVIDER_WRITE"]) {
-    assert.equal(Object.hasOwn(manifest.env, key), false);
-  }
-});
 
 test("production manifest requires deployment secret refs for every launch variable", () => {
   const report = validateProductionManifest({
@@ -111,14 +98,6 @@ test("production manifest validates Tencent TKE fields only", () => {
   ]);
 });
 
-test("ordinary production manifests reject real-verification mutation authority", async () => {
-  const manifest = JSON.parse(await readFile("deploy/production-manifest.example.json", "utf8"));
-  for (const key of ["OPL_VERIFY_MUTATION_APPROVAL_JSON", "OPL_VERIFY_MUTATION_APPROVAL_ID", "OPL_VERIFY_ALLOW_GATEWAY_WRITE", "OPL_VERIFY_ALLOW_MODEL_WRITE", "OPL_VERIFY_ALLOW_PROVIDER_WRITE"]) {
-    const report = validateProductionManifest({ env: { ...manifest.env, [key]: { value: "present" } } });
-    assert.equal(report.ok, false, key);
-    assert.ok(report.failedChecks.includes("verification_mutation_authority"), key);
-  }
-});
 
 test("production manifest rejects protected identity conflicts and implicit NodePool capacity", () => {
   const manifest = {
@@ -138,19 +117,6 @@ test("production manifest rejects protected identity conflicts and implicit Node
   }
 });
 
-test("production manifest accepts explicit non-CVM system identity without a fabricated CVM", async () => {
-  const manifest = JSON.parse(await readFile("deploy/production-manifest.example.json", "utf8"));
-  const report = validateProductionManifest({
-    env: {
-      ...manifest.env,
-      OPL_SYSTEM_COMPUTE_MACHINE_TYPE: { value: "Native" },
-      OPL_SYSTEM_COMPUTE_CVM_ID: { value: "" }
-    }
-  });
-
-  assert.equal(report.ok, true, JSON.stringify(report));
-  assert.equal(report.missingEnv.includes("OPL_SYSTEM_COMPUTE_CVM_ID"), false);
-});
 
 test("production manifest fails closed on missing env and inline secret values", () => {
   const report = validateProductionManifest({

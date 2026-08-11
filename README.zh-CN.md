@@ -51,6 +51,17 @@ Framework 只聚合发现、carrier 委托、Package 状态与通用执行语义
 Invocation 与 Session 执行生命周期；领域 Agent 持有专业策略、质量结论、产物和交付
 权威。Cloud 各产品面只消费 owner 与 carrier 引用，不创建竞争真相。
 
+## MVP 聚焦
+
+第一期产品只做一条克制的纵向链路：极薄 Console 管理必要的 Workspace、余额与用量；
+通过 `Console -> Control Plane -> Workspace launcher/provider -> local Docker`
+真实创建和管理 OPL App/WebUI Workspace；通过 Sub2API 读取和结算 Gateway 权威账目，
+不建第二钱包。自助开户、充值/支付和精细 UI 均后置。
+
+仓内目前没有 `local-docker` Workspace provider。通用 Compose 资产只能启动 PostgreSQL
+和三个 Cloud control services，不能创建、读回或删除 OPL Workspace。当前实现事实以
+[状态](docs/status.md)为准，唯一 P0 gap 与优先级以[路线图](docs/roadmap.md)为准。
+
 ## 一条连续工作链
 
 ```text
@@ -77,6 +88,7 @@ Invocation 与 Session 执行生命周期；领域 Agent 持有专业策略、�
 - [在线阅读 OPL Cloud 白皮书](https://gaofeng21cn.github.io/one-person-lab-cloud/latest/whitepapers/opl-cloud-whitepaper.html)
 - [文档索引与 owner 映射](docs/README.md)
 - [架构与权威边界](docs/architecture.md)
+- [当前实现能力](docs/status.md)
 - [安装独立 OPL Cloud 应用](docs/installation.md)
 - [当前路线图、差距和下一轮 Agent Prompt](docs/roadmap.md)
 - [Workspace 身份与外部 SaaS 边界](docs/workspace-identity-and-external-saas-boundary.md)
