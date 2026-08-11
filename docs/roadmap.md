@@ -99,13 +99,19 @@ These rows are deletion-first candidates, not deletion authorization. A
 `candidate` first proves real callers, target obligations, persisted-data
 handling, external consumers, and rollback.
 
+A `next` simplification row has completed read-only admission only for the
+stated application-code cut; retained database rows, historical migrations,
+provider resources, and cleanup obligations remain outside that authorization.
+An `external_owner` row requires owner-authoritative readback before Cloud may
+resume the deletion.
+
 | ID | State | Priority | Candidate | Risk | Admission or acceptance |
 | --- | --- | --- | --- | --- | --- |
-| `SIMPLIFY-RECOVERY-CLI-01` | `next` | `P1` | Retire the unreachable legacy Recovery CLI path | medium | Prove workflows use accepted entrypoints, then delete the bypassed parser/execution/artifact branch |
-| `SIMPLIFY-CP-ARCHIVE-01` | `candidate` | `P1` | Disabled archive/retention worker, routes, and schemas | high | Resolve retention duties, external callers, and persisted records before coherent removal |
-| `SIMPLIFY-CP-EXEC-01` | `candidate` | `P1` | Superseded shared-execution persistence models | medium | Prove database and external-caller disposition, then delete one bounded persisted-model batch |
-| `SIMPLIFY-FABRIC-TRANSFER-01` | `candidate` | `P1` | Content transfer vertical with no current in-repo product caller | medium | Inventory external Fabric callers and retained data before route/store/schema removal |
-| `SIMPLIFY-FABRIC-SNAPSHOT-01` | `candidate` | `P1` | Snapshot/restore vertical outside the Pilot | medium | Prove no external consumer and preserve provider cleanup/readback obligations |
+| `SIMPLIFY-RECOVERY-CLI-01` | `external_owner` | `P1` | Active medopl recovery workflows still execute the Cloud CLI from a pinned product revision | medium | The Instance owner retires or cuts over all three recovery modes and proves the five workflow references absent; Cloud then deletes the CLI and its self-tests |
+| `SIMPLIFY-CP-ARCHIVE-01` | `next` | `P1` | Delete the terminal-resource Archive application path and merge its unused query/job/scheduling shell while retaining Control Plane-owned audit, support, and ProductionE2E retention | medium | Remove the four archived-resource application models and dead callers without changing historical SQL or tables; any later table drop requires Instance row-count, time-range, external-reference, and non-zero-data disposition readback |
+| `SIMPLIFY-CP-EXEC-01` | `next` | `P1` | Delete the inert `ExecutionRequest` application model while preserving the retired-route tombstone and historical table | low | Remove the schema and generated application code in one Control Plane-owned Ent regeneration; do not change historical SQL or physical data |
+| `SIMPLIFY-FABRIC-TRANSFER-01` | `next` | `P1` | Delete the caller-free ContentTransfer runtime and API while leaving historical transfer rows and Workspace files untouched | medium | Remove the route, service, provider helper, application schema, generated code, and focused tests; preserve hard-cut migrations and perform no table, chunk, temporary-file, or Workspace-data cleanup |
+| `SIMPLIFY-FABRIC-SNAPSHOT-01` | `external_owner` | `P1` | No product caller remains, but Fabric operations and Control Plane backup rows may still bind real `VolumeSnapshot` and restored PVC resources | high | The Instance owner correlates and drains backup rows, Fabric operations, `VolumeSnapshot` objects, and restored PVCs to confirmed-zero before Cloud deletes snapshot/restore creation, synchronization, recovery, and destroy code |
 | `SIMPLIFY-CONSOLE-CSS-01` | `later` | `P3` | Public, login, authenticated, and legacy Console surfaces retain overlapping style layers | medium | Preserve current desktop/mobile behavior and Workspace interaction states while consolidating styles only when it pays for a real Console change |
 | `SIMPLIFY-LEDGER-VERTICAL-01` | `candidate` | `P2` | Artifact/review/policy/continuation surfaces beyond current receipt consumers | high | Resolve `EVIDENCE-CONTINUATION-01` and external callers before shrinking |
 | `SIMPLIFY-CP-IDENTITY-01` | `candidate` | `P2` | Organization/Membership compatibility storage | high | Decide the self-service identity model and migrate persisted identity explicitly |
