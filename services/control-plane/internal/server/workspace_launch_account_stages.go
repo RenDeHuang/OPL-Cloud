@@ -42,8 +42,7 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchKey(ctx con
 
 func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchKey(ctx context.Context, operation workspaceLaunchReconcileOperation, idempotencyKey string) error {
 	userID, groupID := operation.int64Fact("sub2apiUserId"), operation.int64Fact("workspaceKeyGroupId")
-	if idempotencyKey != operation.ID+":workspace-key" || userID <= 0 || groupID <= 0 || a.keyUserID != userID ||
-		strings.TrimSpace(a.keyCredential.Bearer) == "" || !a.keyCredential.ExpiresAt.After(time.Now()) {
+	if idempotencyKey != operation.ID+":workspace-key" || !a.workspaceLaunchKeyMutationCredentialValid(operation) {
 		return errWorkspaceLaunchStageAdapterUnavailable
 	}
 	name := workspaceReservedKeyName(operation.stringFact("workspaceId"))
@@ -64,6 +63,12 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchKey(ctx c
 	}
 	_, err = a.service.UpdateGatewayUserKey(ctx, a.keyCredential, userID, reserved[0].ID, clients.Sub2APIUpdateKeyInput{GroupID: &groupID})
 	return err
+}
+
+func (a *controlPlaneWorkspaceLaunchStageAdapter) workspaceLaunchKeyMutationCredentialValid(operation workspaceLaunchReconcileOperation) bool {
+	userID, groupID := operation.int64Fact("sub2apiUserId"), operation.int64Fact("workspaceKeyGroupId")
+	return a != nil && userID > 0 && groupID > 0 && a.keyUserID == userID && strings.TrimSpace(a.keyCredential.Bearer) != "" &&
+		a.keyCredential.ExpiresAt.After(time.Now())
 }
 
 func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchDebit(ctx context.Context, operation workspaceLaunchReconcileOperation) (workspaceLaunchStageObservation, error) {

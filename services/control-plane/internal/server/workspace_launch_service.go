@@ -38,6 +38,13 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) ReadStage(ctx context.Context,
 	}
 }
 
+func (a *controlPlaneWorkspaceLaunchStageAdapter) CanMutateStage(operation workspaceLaunchReconcileOperation) bool {
+	if a == nil || a.app == nil || a.service == nil {
+		return false
+	}
+	return operation.Stage != "key" || a.workspaceLaunchKeyMutationCredentialValid(operation)
+}
+
 func (a *controlPlaneWorkspaceLaunchStageAdapter) MutateStage(ctx context.Context, operation workspaceLaunchReconcileOperation, idempotencyKey string) error {
 	if a == nil || a.app == nil || a.service == nil || idempotencyKey == "" {
 		return errWorkspaceLaunchStageAdapterUnavailable

@@ -63,6 +63,22 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
 				return
 			}
+			if persisted.Status == "pending" && persisted.Stage == "key" {
+				credentialUser, sub2APIUserID, credential, credentialOK := app.gatewayUserContext(w, r)
+				if !credentialOK {
+					return
+				}
+				if stringValue(credentialUser["accountId"]) != accountID || sub2APIUserID != persisted.int64Fact("sub2apiUserId") {
+					writeError(w, http.StatusForbidden, "account_scope_forbidden")
+					return
+				}
+				continued, reconcileErr := app.workspaceLaunchReconciler(service, credential, sub2APIUserID).Reconcile(r.Context(), persisted.ID)
+				if reconcileErr != nil {
+					writeError(w, http.StatusInternalServerError, "state_persist_failed")
+					return
+				}
+				persisted = continued
+			}
 			app.respondWorkspaceLaunchContinuation(w, r, persisted)
 			return
 		}

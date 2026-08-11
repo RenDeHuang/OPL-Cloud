@@ -214,6 +214,7 @@ type workspaceLaunchReconcileStore interface {
 
 type workspaceLaunchStageAdapter interface {
 	ReadStage(context.Context, workspaceLaunchReconcileOperation) (workspaceLaunchStageObservation, error)
+	CanMutateStage(workspaceLaunchReconcileOperation) bool
 	MutateStage(context.Context, workspaceLaunchReconcileOperation, string) error
 }
 
@@ -248,6 +249,9 @@ func (r *WorkspaceLaunchReconciler) Create(ctx context.Context, command workspac
 		existing, decodeErr := decodeWorkspaceLaunchReconcileOperation(current)
 		if decodeErr != nil || !workspaceLaunchReconcileSubmissionMatches(existing, command) {
 			return workspaceLaunchReconcileOperation{}, err
+		}
+		if existing.Status == "pending" {
+			return r.Reconcile(ctx, command.OperationID)
 		}
 		return existing, nil
 	}
@@ -294,6 +298,9 @@ func (r *WorkspaceLaunchReconciler) Reconcile(ctx context.Context, operationID s
 		return r.persist(ctx, operation)
 	case workspaceLaunchStageUnknown:
 		attempt := operation.Attempts[operation.Stage]
+		if readErr != nil && attempt.Attempted == 0 && attempt.Status == "" {
+			return operation, nil
+		}
 		if attempt.Status == "reserved" {
 			attempt.Unknown = 1
 			attempt.Status = "unknown"
@@ -328,6 +335,9 @@ func (r *WorkspaceLaunchReconciler) Reconcile(ctx context.Context, operationID s
 		operation.consumeResumeAuthorization()
 		operation.Status = "manual_review"
 		return r.persist(ctx, operation)
+	}
+	if !r.adapter.CanMutateStage(operation) {
+		return operation, nil
 	}
 	attempt.Attempted++
 	attempt.Status = "reserved"

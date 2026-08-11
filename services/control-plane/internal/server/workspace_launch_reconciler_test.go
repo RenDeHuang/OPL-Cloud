@@ -53,15 +53,21 @@ type workspaceLaunchUnitAdapter struct {
 	mu               sync.Mutex
 	readyStages      map[string]bool
 	unknownStages    map[string]bool
+	readErrors       map[string]error
 	reads            int
 	mutations        int
 	mutationsByStage map[string]int
+	mutationBlocked  bool
 	barrier          chan struct{}
 }
 
 func (a *workspaceLaunchUnitAdapter) ReadStage(_ context.Context, operation workspaceLaunchReconcileOperation) (workspaceLaunchStageObservation, error) {
 	a.mu.Lock()
 	a.reads++
+	if err := a.readErrors[operation.Stage]; err != nil {
+		a.mu.Unlock()
+		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, err
+	}
 	if a.unknownStages[operation.Stage] {
 		a.mu.Unlock()
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, nil
@@ -79,6 +85,10 @@ func (a *workspaceLaunchUnitAdapter) ReadStage(_ context.Context, operation work
 		<-barrier
 	}
 	return workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, nil
+}
+
+func (a *workspaceLaunchUnitAdapter) CanMutateStage(workspaceLaunchReconcileOperation) bool {
+	return !a.mutationBlocked
 }
 
 func (a *workspaceLaunchUnitAdapter) MutateStage(_ context.Context, operation workspaceLaunchReconcileOperation, _ string) error {
@@ -181,6 +191,51 @@ func TestWorkspaceLaunchCASAllowsOneMutationReservation(t *testing.T) {
 	}
 	if successes != 1 || conflicts != 1 || adapter.mutations != 1 {
 		t.Fatalf("successes=%d conflicts=%d mutations=%d", successes, conflicts, adapter.mutations)
+	}
+}
+
+func TestWorkspaceLaunchPreAttemptReadFailureRemainsPending(t *testing.T) {
+	row := workspaceLaunchManualReviewRow(t)
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Status = "pending"
+	row, err = workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &workspaceLaunchUnitStore{row: row}
+	adapter := &workspaceLaunchUnitAdapter{readErrors: map[string]error{"key": errors.New("transient read failure")}}
+	persistedBefore := stringValue(row["result"])
+
+	got, err := NewWorkspaceLaunchReconciler(store, adapter).Reconcile(context.Background(), operation.ID)
+	if err != nil || got.Status != "pending" || got.Stage != "key" || got.Attempts["key"].Attempted != 0 ||
+		got.ResumeAuthorization != nil || adapter.mutations != 0 || stringValue(store.row["result"]) != persistedBefore {
+		t.Fatalf("pre-attempt read failure changed launch: operation=%s mutations=%d err=%v", workspaceLaunchReconcileResultSummary(got), adapter.mutations, err)
+	}
+}
+
+func TestWorkspaceLaunchAuthorizedMutationWaitsForCapableCaller(t *testing.T) {
+	store := &workspaceLaunchUnitStore{row: workspaceLaunchManualReviewRow(t)}
+	adapter := &workspaceLaunchUnitAdapter{mutationBlocked: true}
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	authorization := workspaceLaunchResumeAuthorization{
+		AuthorizationID: "resume-caller-credential", LaunchVersion: 1, AuthorizedStage: "key", AuthorizedBy: "usr-admin",
+		AuthorizedAt: "2026-08-12T00:01:00Z", Reason: "bounded retry", MutationBudget: 1,
+	}
+
+	waiting, err := reconciler.Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, authorization)
+	if err != nil || waiting.Status != "pending" || waiting.Stage != "key" || waiting.Attempts["key"].Attempted != 0 ||
+		waiting.ResumeAuthorization == nil || *waiting.ResumeAuthorization != authorization || waiting.ResumeAuthorizationConsumedAt != "" || adapter.mutations != 0 {
+		t.Fatalf("blocked caller consumed authorization: operation=%s mutations=%d err=%v", workspaceLaunchReconcileResultSummary(waiting), adapter.mutations, err)
+	}
+
+	adapter.mutationBlocked = false
+	continued, err := reconciler.Reconcile(context.Background(), waiting.ID)
+	if err != nil || continued.Status != "pending" || continued.Stage != "debit" || continued.Attempts["key"].Attempted != 1 ||
+		continued.ResumeAuthorization == nil || *continued.ResumeAuthorization != authorization || continued.ResumeAuthorizationConsumedAt == "" || adapter.mutations != 1 {
+		t.Fatalf("capable caller did not continue launch: operation=%s mutations=%d err=%v", workspaceLaunchReconcileResultSummary(continued), adapter.mutations, err)
 	}
 }
 
