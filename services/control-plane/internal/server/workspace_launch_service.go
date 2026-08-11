@@ -79,7 +79,7 @@ func (app *controlPlaneServer) resumeWorkspaceLaunch(ctx context.Context, servic
 	if err != nil {
 		return workspaceLaunchReconcileOperation{}, err
 	}
-	if existing := operation.ResumeAuthorization; existing != nil && existing.AuthorizationID == authorization.AuthorizationID && authorization.AuthorizedAt == "" {
+	if existing, _, found := operation.resumeAuthorizationByID(authorization.AuthorizationID); found && authorization.AuthorizedAt == "" {
 		authorization.AuthorizedAt = existing.AuthorizedAt
 	}
 	if authorization.AuthorizedAt == "" {

@@ -50,17 +50,23 @@ func (s *workspaceLaunchUnitStore) PersistWorkspaceLaunchReconcile(_ context.Con
 }
 
 type workspaceLaunchUnitAdapter struct {
-	mu        sync.Mutex
-	ready     bool
-	reads     int
-	mutations int
-	barrier   chan struct{}
+	mu               sync.Mutex
+	readyStages      map[string]bool
+	unknownStages    map[string]bool
+	reads            int
+	mutations        int
+	mutationsByStage map[string]int
+	barrier          chan struct{}
 }
 
 func (a *workspaceLaunchUnitAdapter) ReadStage(_ context.Context, operation workspaceLaunchReconcileOperation) (workspaceLaunchStageObservation, error) {
 	a.mu.Lock()
 	a.reads++
-	if a.ready {
+	if a.unknownStages[operation.Stage] {
+		a.mu.Unlock()
+		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, nil
+	}
+	if a.readyStages[operation.Stage] {
 		a.mu.Unlock()
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: workspaceLaunchReadyFacts(operation.Stage)}, nil
 	}
@@ -75,11 +81,18 @@ func (a *workspaceLaunchUnitAdapter) ReadStage(_ context.Context, operation work
 	return workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, nil
 }
 
-func (a *workspaceLaunchUnitAdapter) MutateStage(_ context.Context, _ workspaceLaunchReconcileOperation, _ string) error {
+func (a *workspaceLaunchUnitAdapter) MutateStage(_ context.Context, operation workspaceLaunchReconcileOperation, _ string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.mutations++
-	a.ready = true
+	if a.readyStages == nil {
+		a.readyStages = map[string]bool{}
+	}
+	if a.mutationsByStage == nil {
+		a.mutationsByStage = map[string]int{}
+	}
+	a.readyStages[operation.Stage] = true
+	a.mutationsByStage[operation.Stage]++
 	return nil
 }
 
@@ -193,6 +206,74 @@ func TestWorkspaceLaunchResumeAuthorizationIsImmutable(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchResumeAuthorizationsRotateAcrossStages(t *testing.T) {
+	store := &workspaceLaunchUnitStore{row: workspaceLaunchManualReviewRow(t)}
+	adapter := &workspaceLaunchUnitAdapter{unknownStages: map[string]bool{}}
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	stageA := workspaceLaunchResumeAuthorization{
+		AuthorizationID: "resume-stage-a", LaunchVersion: 1, AuthorizedStage: "key", AuthorizedBy: "usr-admin-a",
+		AuthorizedAt: "2026-08-12T00:01:00Z", Reason: "stage A reviewed", MutationBudget: 1,
+	}
+	afterA, err := reconciler.Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, stageA)
+	if err != nil || afterA.Stage != "debit" || afterA.ResumeAuthorization == nil || *afterA.ResumeAuthorization != stageA || afterA.ResumeAuthorizationConsumedAt == "" {
+		t.Fatalf("stage A resume=%s err=%v", workspaceLaunchReconcileResultSummary(afterA), err)
+	}
+
+	adapter.unknownStages["debit"] = true
+	reviewed, err := reconciler.Reconcile(context.Background(), afterA.ID)
+	if err != nil || reviewed.Status != "manual_review" || reviewed.Stage != "debit" || reviewed.Attempts["debit"].Attempted != 0 {
+		t.Fatalf("stage B review=%s err=%v", workspaceLaunchReconcileResultSummary(reviewed), err)
+	}
+	stageB := workspaceLaunchResumeAuthorization{
+		AuthorizationID: "resume-stage-b", LaunchVersion: reviewed.Version, AuthorizedStage: reviewed.Stage, AuthorizedBy: "usr-admin-b",
+		AuthorizedAt: "2026-08-12T00:02:00Z", Reason: "stage B reviewed", MutationBudget: 1,
+	}
+	adapter.unknownStages["debit"] = false
+	afterB, err := reconciler.Resume(context.Background(), reviewed.ID, stageB)
+	if err != nil || afterB.Stage != "ensure_compute_allocation" || afterB.ResumeAuthorization == nil || *afterB.ResumeAuthorization != stageB || afterB.ResumeAuthorizationConsumedAt == "" ||
+		len(afterB.ConsumedResumeAuthorizations) != 1 || afterB.ConsumedResumeAuthorizations[0].Authorization != stageA || afterB.ConsumedResumeAuthorizations[0].ConsumedAt == "" ||
+		adapter.mutationsByStage["key"] != 1 || adapter.mutationsByStage["debit"] != 1 {
+		t.Fatalf("stage B resume=%s history=%#v mutations=%#v err=%v", workspaceLaunchReconcileResultSummary(afterB), afterB.ConsumedResumeAuthorizations, adapter.mutationsByStage, err)
+	}
+
+	persistedBefore := stringValue(store.row["result"])
+	readsBefore, mutationsBefore := adapter.reads, adapter.mutations
+	for name, authorization := range map[string]workspaceLaunchResumeAuthorization{"stage A": stageA, "stage B": stageB} {
+		got, retryErr := reconciler.Resume(context.Background(), afterB.ID, authorization)
+		if retryErr != nil || got.ResumeAuthorization == nil || *got.ResumeAuthorization != stageB || len(got.ConsumedResumeAuthorizations) != 1 {
+			t.Fatalf("%s exact retry changed authorization: operation=%s err=%v", name, workspaceLaunchReconcileResultSummary(got), retryErr)
+		}
+	}
+	if adapter.reads != readsBefore || adapter.mutations != mutationsBefore || stringValue(store.row["result"]) != persistedBefore {
+		t.Fatalf("exact retry caused work: reads=%d/%d mutations=%d/%d", adapter.reads, readsBefore, adapter.mutations, mutationsBefore)
+	}
+
+	drifts := []struct {
+		name   string
+		mutate func(*workspaceLaunchResumeAuthorization)
+	}{
+		{name: "authorization ID", mutate: func(value *workspaceLaunchResumeAuthorization) { value.AuthorizationID += "-changed" }},
+		{name: "launch version", mutate: func(value *workspaceLaunchResumeAuthorization) { value.LaunchVersion++ }},
+		{name: "stage", mutate: func(value *workspaceLaunchResumeAuthorization) { value.AuthorizedStage = "storage" }},
+		{name: "reviewer", mutate: func(value *workspaceLaunchResumeAuthorization) { value.AuthorizedBy += "-changed" }},
+		{name: "time", mutate: func(value *workspaceLaunchResumeAuthorization) { value.AuthorizedAt = "2026-08-12T00:03:00Z" }},
+		{name: "reason", mutate: func(value *workspaceLaunchResumeAuthorization) { value.Reason += " changed" }},
+		{name: "budget", mutate: func(value *workspaceLaunchResumeAuthorization) { value.MutationBudget = 0 }},
+	}
+	for stageName, authorization := range map[string]workspaceLaunchResumeAuthorization{"stage A": stageA, "stage B": stageB} {
+		for _, drift := range drifts {
+			drifted := authorization
+			drift.mutate(&drifted)
+			if _, driftErr := reconciler.Resume(context.Background(), afterB.ID, drifted); !errors.Is(driftErr, errWorkspaceLaunchGrantConflict) {
+				t.Fatalf("%s %s drift error=%v", stageName, drift.name, driftErr)
+			}
+		}
+	}
+	if adapter.reads != readsBefore || adapter.mutations != mutationsBefore || stringValue(store.row["result"]) != persistedBefore {
+		t.Fatalf("authorization drift changed launch state")
+	}
+}
+
 func TestWorkspaceLaunchResumeWrapperReusesAuthorizedAtOnExactRetry(t *testing.T) {
 	row := workspaceLaunchManualReviewRow(t)
 	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
@@ -203,8 +284,15 @@ func TestWorkspaceLaunchResumeWrapperReusesAuthorizedAtOnExactRetry(t *testing.T
 		AuthorizationID: "resume-route-unit", LaunchVersion: 1, AuthorizedStage: "key", AuthorizedBy: "usr-admin",
 		AuthorizedAt: "2026-08-12T00:01:00Z", Reason: "bounded retry", MutationBudget: 1,
 	}
-	operation.Version = 2
-	operation.ResumeAuthorization = &authorization
+	current := workspaceLaunchResumeAuthorization{
+		AuthorizationID: "resume-route-current", LaunchVersion: 3, AuthorizedStage: "debit", AuthorizedBy: "usr-admin-current",
+		AuthorizedAt: "2026-08-12T00:02:00Z", Reason: "current bounded retry", MutationBudget: 1,
+	}
+	operation.Version = 4
+	operation.Stage = "ensure_compute_allocation"
+	operation.Status = "pending"
+	operation.ConsumedResumeAuthorizations = []workspaceLaunchConsumedResumeAuthorization{{Authorization: authorization, ConsumedAt: "2026-08-12T00:01:30Z"}}
+	operation.ResumeAuthorization = &current
 	operation.ResumeAuthorizationConsumedAt = "2026-08-12T00:02:00Z"
 	row, err = workspaceLaunchReconcileOperationRow(operation)
 	if err != nil {
@@ -215,8 +303,10 @@ func TestWorkspaceLaunchResumeWrapperReusesAuthorizedAtOnExactRetry(t *testing.T
 	app := &controlPlaneServer{tables: store}
 	retry := authorization
 	retry.AuthorizedAt = ""
+	persistedBefore := stringValue(row["result"])
 	got, err := app.resumeWorkspaceLaunch(context.Background(), nil, operation.ID, retry)
-	if err != nil || got.ResumeAuthorization == nil || *got.ResumeAuthorization != authorization || got.ResumeAuthorizationConsumedAt == "" {
+	if err != nil || got.ResumeAuthorization == nil || *got.ResumeAuthorization != current || len(got.ConsumedResumeAuthorizations) != 1 ||
+		got.ConsumedResumeAuthorizations[0].Authorization != authorization || stringValue(store.runtimeOps[0]["result"]) != persistedBefore {
 		t.Fatalf("exact retry changed authorization: operation=%s err=%v", workspaceLaunchReconcileResultSummary(got), err)
 	}
 }

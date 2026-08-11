@@ -151,18 +151,24 @@ type workspaceLaunchResumeAuthorization struct {
 	MutationBudget  int    `json:"mutationBudget"`
 }
 
+type workspaceLaunchConsumedResumeAuthorization struct {
+	Authorization workspaceLaunchResumeAuthorization `json:"authorization"`
+	ConsumedAt    string                             `json:"consumedAt"`
+}
+
 type workspaceLaunchReconcileOperation struct {
-	ID                            string                                     `json:"-"`
-	Status                        string                                     `json:"-"`
-	CreatedAt                     string                                     `json:"-"`
-	PersistedResult               string                                     `json:"-"`
-	SchemaVersion                 int                                        `json:"schemaVersion"`
-	Version                       int                                        `json:"version"`
-	Stage                         string                                     `json:"stage"`
-	Attempts                      map[string]workspaceLaunchStageAttempt     `json:"attempts"`
-	Observations                  map[string]workspaceLaunchStageObservation `json:"observations,omitempty"`
-	ResumeAuthorization           *workspaceLaunchResumeAuthorization        `json:"resumeAuthorization,omitempty"`
-	ResumeAuthorizationConsumedAt string                                     `json:"resumeAuthorizationConsumedAt,omitempty"`
+	ID                            string                                       `json:"-"`
+	Status                        string                                       `json:"-"`
+	CreatedAt                     string                                       `json:"-"`
+	PersistedResult               string                                       `json:"-"`
+	SchemaVersion                 int                                          `json:"schemaVersion"`
+	Version                       int                                          `json:"version"`
+	Stage                         string                                       `json:"stage"`
+	Attempts                      map[string]workspaceLaunchStageAttempt       `json:"attempts"`
+	Observations                  map[string]workspaceLaunchStageObservation   `json:"observations,omitempty"`
+	ConsumedResumeAuthorizations  []workspaceLaunchConsumedResumeAuthorization `json:"consumedResumeAuthorizations,omitempty"`
+	ResumeAuthorization           *workspaceLaunchResumeAuthorization          `json:"resumeAuthorization,omitempty"`
+	ResumeAuthorizationConsumedAt string                                       `json:"resumeAuthorizationConsumedAt,omitempty"`
 	raw                           map[string]json.RawMessage
 }
 
@@ -403,14 +409,17 @@ func (r *WorkspaceLaunchReconciler) Resume(ctx context.Context, operationID stri
 	if err != nil {
 		return workspaceLaunchReconcileOperation{}, err
 	}
-	if operation.ResumeAuthorization != nil {
-		if *operation.ResumeAuthorization != authorization {
+	if existing, consumed, found := operation.resumeAuthorizationByID(authorization.AuthorizationID); found {
+		if existing != authorization {
 			return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchGrantConflict
 		}
-		if operation.ResumeAuthorizationConsumedAt != "" {
+		if consumed {
 			return operation, nil
 		}
 		return r.Reconcile(ctx, operationID)
+	}
+	if operation.ResumeAuthorization != nil && operation.ResumeAuthorizationConsumedAt == "" {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchGrantConflict
 	}
 	attempt, ok := operation.Attempts[operation.Stage]
 	if !ok {
@@ -421,7 +430,14 @@ func (r *WorkspaceLaunchReconciler) Resume(ctx context.Context, operationID stri
 		authorization.LaunchVersion != operation.Version || authorization.AuthorizedStage != operation.Stage || authorization.MutationBudget != remainingBudget {
 		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchGrantConflict
 	}
+	if operation.ResumeAuthorization != nil {
+		operation.ConsumedResumeAuthorizations = append(operation.ConsumedResumeAuthorizations, workspaceLaunchConsumedResumeAuthorization{
+			Authorization: *operation.ResumeAuthorization,
+			ConsumedAt:    operation.ResumeAuthorizationConsumedAt,
+		})
+	}
 	operation.ResumeAuthorization = &authorization
+	operation.ResumeAuthorizationConsumedAt = ""
 	operation.Status = "pending"
 	if _, err := r.persist(ctx, operation); err != nil {
 		return workspaceLaunchReconcileOperation{}, err
@@ -517,6 +533,9 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 	if value := raw["observations"]; len(value) > 0 && json.Unmarshal(value, &operation.Observations) != nil {
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 	}
+	if value := raw["consumedResumeAuthorizations"]; len(value) > 0 && json.Unmarshal(value, &operation.ConsumedResumeAuthorizations) != nil {
+		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	}
 	for stage, observation := range operation.Observations {
 		allowed := workspaceLaunchStageCanonicalFacts[stage]
 		if allowed == nil || observation.State != workspaceLaunchStageReady && observation.State != workspaceLaunchStageAbsent && observation.State != workspaceLaunchStagePending && observation.State != workspaceLaunchStageUnknown ||
@@ -538,14 +557,29 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 	if operation.ResumeAuthorization != nil && !validWorkspaceLaunchResumeAuthorization(*operation.ResumeAuthorization) {
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 	}
+	authorizationIDs := make(map[string]struct{}, len(operation.ConsumedResumeAuthorizations)+1)
+	for _, consumed := range operation.ConsumedResumeAuthorizations {
+		if !validWorkspaceLaunchResumeAuthorization(consumed.Authorization) || !validWorkspaceLaunchResumeAuthorizationConsumedAt(consumed.ConsumedAt) ||
+			consumed.Authorization.LaunchVersion >= operation.Version {
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
+		if _, duplicate := authorizationIDs[consumed.Authorization.AuthorizationID]; duplicate {
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
+		authorizationIDs[consumed.Authorization.AuthorizationID] = struct{}{}
+	}
 	if operation.ResumeAuthorizationConsumedAt != "" {
-		consumedAt, err := time.Parse(time.RFC3339Nano, operation.ResumeAuthorizationConsumedAt)
-		if err != nil || consumedAt.IsZero() || operation.ResumeAuthorization == nil {
+		if !validWorkspaceLaunchResumeAuthorizationConsumedAt(operation.ResumeAuthorizationConsumedAt) || operation.ResumeAuthorization == nil {
 			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 		}
 	}
 	if operation.ResumeAuthorization != nil && operation.ResumeAuthorization.LaunchVersion >= operation.Version {
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	}
+	if operation.ResumeAuthorization != nil {
+		if _, duplicate := authorizationIDs[operation.ResumeAuthorization.AuthorizationID]; duplicate {
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
 	}
 	for _, field := range workspaceLaunchReconcileForbiddenFields {
 		if _, exists := raw[field]; exists {
@@ -585,7 +619,7 @@ func workspaceLaunchReconcileOperationRow(operation workspaceLaunchReconcileOper
 	if operation.raw == nil {
 		return nil, errInvalidWorkspaceLaunchOperation
 	}
-	raw := make(map[string]json.RawMessage, len(operation.raw)+7)
+	raw := make(map[string]json.RawMessage, len(operation.raw)+8)
 	for key, value := range operation.raw {
 		raw[key] = append(json.RawMessage(nil), value...)
 	}
@@ -594,10 +628,11 @@ func workspaceLaunchReconcileOperationRow(operation workspaceLaunchReconcileOper
 	}
 	for key, value := range map[string]any{
 		"schemaVersion": operation.SchemaVersion, "version": operation.Version, "stage": operation.Stage, "attempts": operation.Attempts,
-		"observations": operation.Observations, "resumeAuthorization": operation.ResumeAuthorization,
+		"observations": operation.Observations, "consumedResumeAuthorizations": operation.ConsumedResumeAuthorizations, "resumeAuthorization": operation.ResumeAuthorization,
 		"resumeAuthorizationConsumedAt": operation.ResumeAuthorizationConsumedAt,
 	} {
-		if key == "resumeAuthorization" && operation.ResumeAuthorization == nil || key == "resumeAuthorizationConsumedAt" && operation.ResumeAuthorizationConsumedAt == "" {
+		if key == "consumedResumeAuthorizations" && len(operation.ConsumedResumeAuthorizations) == 0 ||
+			key == "resumeAuthorization" && operation.ResumeAuthorization == nil || key == "resumeAuthorizationConsumedAt" && operation.ResumeAuthorizationConsumedAt == "" {
 			delete(raw, key)
 			continue
 		}
@@ -647,6 +682,18 @@ func (operation *workspaceLaunchReconcileOperation) consumeResumeAuthorization()
 	}
 }
 
+func (operation workspaceLaunchReconcileOperation) resumeAuthorizationByID(authorizationID string) (workspaceLaunchResumeAuthorization, bool, bool) {
+	if operation.ResumeAuthorization != nil && operation.ResumeAuthorization.AuthorizationID == authorizationID {
+		return *operation.ResumeAuthorization, operation.ResumeAuthorizationConsumedAt != "", true
+	}
+	for _, consumed := range operation.ConsumedResumeAuthorizations {
+		if consumed.Authorization.AuthorizationID == authorizationID {
+			return consumed.Authorization, true, true
+		}
+	}
+	return workspaceLaunchResumeAuthorization{}, false, false
+}
+
 func (operation workspaceLaunchReconcileOperation) stringFact(field string) string {
 	var value string
 	_ = json.Unmarshal(operation.raw[field], &value)
@@ -688,6 +735,11 @@ func validWorkspaceLaunchResumeAuthorization(authorization workspaceLaunchResume
 	}
 	authorizedAt, err := time.Parse(time.RFC3339, authorization.AuthorizedAt)
 	return err == nil && !authorizedAt.IsZero()
+}
+
+func validWorkspaceLaunchResumeAuthorizationConsumedAt(value string) bool {
+	consumedAt, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil && !consumedAt.IsZero()
 }
 
 func workspaceLaunchReconcileSubmissionMatches(operation workspaceLaunchReconcileOperation, command workspaceLaunchReconcileCreate) bool {
