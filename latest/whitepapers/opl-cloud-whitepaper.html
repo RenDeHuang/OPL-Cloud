@@ -129,7 +129,7 @@ Machine boundary: 面向用户的产品愿景源文，不持有 Cloud 服务实�
 <blockquote>
 <p>让复杂知识工作跨越本机、私有数据、远端资源与对外服务，仍然保持连续、受控、可复查</p>
 </blockquote>
-<p>发布日期：2026-07-15 最近修订：2026-08-10</p>
+<p>发布日期：2026-07-15 最近修订：2026-08-11</p>
 <p>适用对象：正在使用 AI
 推进科研、基金、汇报、书籍或其他长期知识项目，希望沿用现有工作方式使用在线工作台、协作资源与远端计算，或者把自己开发的
 OPL Agent 提供给外部用户的个人、实验室和机构。</p>
@@ -228,9 +228,10 @@ Agent 服务发布     OPL Serve
 <li>Gateway 让模型接入、路由和用量有稳定入口。</li>
 <li>Serve 把精确 Agent Revision 发布为
 API、嵌入组件或托管界面，并持有服务、部署、端点与流量状态。</li>
-<li>Fabric
-连接计算、存储、环境、数据源与外部系统，并把一次任务绑定到获准资源。</li>
-<li>Console 专注账号、协作角色、额度、策略和批准；日常专业工作留在 App
+<li>Fabric 通过 provider-neutral
+能力接口连接计算、存储、环境、数据源与外部系统，并把一次任务绑定到获准资源；腾讯云只是第一条适配路径。</li>
+<li>Console 是用户与管理员的统一中台，负责账号、Workspace
+集合、余额与费用投影、协作角色、额度、策略和批准；日常专业工作留在 App
 或 Workspace，任务执行由 Runway 与 Fabric 承载，服务运行真相由 Serve
 持有。</li>
 <li>Ledger
@@ -252,11 +253,15 @@ installed/callable readback；OPL Packages 只负责发现、carrier
 <p>这使复杂计算仍然表现为工作的一部分：用户批准“为这项分析使用实验室集群和指定环境”，收到图表、报告和审阅结果；作业编号留在诊断层。</p>
 <h3 id="二本机与云端是同一条工作链">二、本机与云端是同一条工作链</h3>
 <p>本机 OPL App 适合个人控制、敏感材料和日常编辑；在线 OPL Workspace
-适合远程访问、协作和托管执行。两者是同一工作模型的两种载体。一个用户账号拥有一个主
-Workspace。</p>
+适合远程访问、协作和托管执行。两者是同一工作模型的两种载体。一个用户账号可以拥有零个或多个相互独立的
+Workspace；每个 Workspace 本质上是一套带 WebUI 的 OPL App
+容器部署，并拥有独立
+identity、URL、runtime、资源绑定、账期、凭据与回执。产品层不设固定数量上限，每次创建仍受余额、provider
+容量、额度与策略约束。</p>
 <p>用户可以从本机开始，在需要在线访问或更强资源时接入
-Cloud，再把结果带回原项目。环境改变后，任务身份、材料引用、产物关系和继续入口完整保留。一个账号可以发布多个
-Agent Service；Service 属于对外部署资源，与主 Workspace
+Cloud，创建或选择合适的
+Workspace，再把结果带回原项目。环境改变后，任务身份、材料引用、产物关系和继续入口完整保留。一个账号可以发布多个
+Agent Service；Service 属于对外部署资源，与 Workspace
 采用不同的身份边界。</p>
 <h3 id="三先计划再授予资源权力">三、先计划，再授予资源权力</h3>
 <p>正式远端任务先形成资源计划：要访问哪些输入、使用什么环境与计算、写入什么位置、预计消耗什么、如何停止。个人、账号或机构只对可理解的计划授权。</p>
@@ -265,6 +270,11 @@ Agent Service；Service 属于对外部署资源，与主 Workspace
 <p>Console
 服务账号所有者与管理员：协作角色、权限、预算、额度、策略和批准。研究者、作者和设计者仍在
 App 或 Workspace 中完成工作。</p>
+<p>Gateway 持有唯一可消费余额和 AI 实时用量；Console
+持有账号总费用视图、定价与结算策略，并按
+Workspace、按账期发起月费扣款；Fabric 只返回资源与 provider
+事实，余额为零；Ledger 保存收费、退款和资源对账回执。这样既能在 Console
+看到一份总账，又不会产生第二个可变余额真相。</p>
 <p>同样，能力包的 identity 与精确发布 revision 归 Package
 owner，物理安装、更新、移除和 repair 归配置的原生 carrier，Framework
 只委托并聚合 fresh readback；Console 决定账号允许使用或发布哪些 owner
@@ -350,6 +360,21 @@ truth</strong>。Package owner descriptor 与发布 revision
 Agent 判断专业结果，Workspace 展示来自 Serve 的服务状态。Hosted UI
 与嵌入组件统一调用公开 Serve
 API。用户看到一致体验，背后的权威各归其主。</p>
+<h3 id="从产品到具体实例">从产品到具体实例</h3>
+<p>OPL Cloud
+产品与某次安装不是同一个对象。<code>one-person-lab-cloud</code>
+同时持有产品架构、白皮书以及可复用的 Console、Control Plane、Fabric 与
+Ledger 实现；<code>opl-cloud</code> 只作为内部 package、image、service
+与 namespace 标识。具体安装由实例配置物化。第一期商业实例
+<code>medopl</code> 由 <code>opl-instance-medopl</code>
+持有域名、provider profile、启用套餐与价格、镜像 pin、secret
+引用和部署回执，不复制产品或 runtime 代码。</p>
+<p>一个实例可以安装在公有云、本地服务器或 Mac 上。实例选择获准的 Fabric
+provider profile；<code>medopl</code> 首先使用
+<code>tencent-tke</code>，本地安装可以使用
+<code>local-docker</code>，自托管集群可以使用通用
+<code>kubernetes</code>。Launch 与 Recovery 共享一套产品状态机，provider
+特有事实、重试和恢复留在对应 adapter 内部。</p>
 <h2 id="从-agent-package-到对外服务">从 Agent Package 到对外服务</h2>
 <p>OMA 或其他兼容方式可以帮助用户设计 Agent，对外服务从 Package owner
 的精确发布 revision 出发。开发来源、Package、Service
@@ -406,8 +431,8 @@ sandbox、计算、存储、网络、secret 注入和产物收集；Gateway
 保存引用与回执。稳定公网入口统一由 Serve Agent Edge 提供。</p>
 <p>Hosted UI 可以投影发布者名称、Logo、主题、域名、输入输出
 schema、文件上传、进度、产物与支持链接，并聚焦 Agent
-交互模板；服务状态由 Serve 持有。发布者可以拥有多个 Agent
-Service，其账号仍对应一个主 Workspace。</p>
+交互模板；服务状态由 Serve 持有。发布者可以拥有多个 Agent Service
+和多个独立 Workspace，两者仍是不同的产品身份与生命周期。</p>
 <p>第一阶段聚焦 Agent Service 的安全发布与运行，由 OPL 向 Agent
 发布者账号归集服务、模型、执行、存储和纳管连接器用量。面向最终消费者的
 Marketplace、代收款、税务、退款、KYC、分成和订阅管理属于后续商业产品。</p>
