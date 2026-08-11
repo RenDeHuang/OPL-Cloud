@@ -59,6 +59,14 @@ service-credential-enforced. The common image also makes them one release unit,
 which is intentional for the current product repository but not independent
 service release evidence.
 
+Deployment isolation is an independent implementation lane, not a predecessor
+to Console, Control Plane, Fabric, or Ledger development. Reusable manifests and
+service configuration stay in this repository while `opl-instance-medopl`
+applies concrete values and secret references in its own lane. The two owners
+join only when qualifying an exact deployment, rollback, and authoritative
+readback. The common release image may remain shared unless measured release
+blast radius creates a separate requirement.
+
 Internal cohesion is also uneven. Fabric resource, runtime and recovery behavior
 is concentrated in `internal/fabric/service.go`; Control Plane launch/recovery and
 persistence behavior is concentrated in a few multi-thousand-line files. These
@@ -66,6 +74,11 @@ are change-collision and review risks inside the correct owner modules, not a
 reason to introduce cross-service packages. Their split must preserve packages,
 HTTP contracts, state machines and behavior while moving cohesive capabilities
 into focused files.
+
+Cohesion work is also lane-scoped rather than a repository-wide freeze. Splits
+inside different owning modules may proceed concurrently. Work that touches the
+same large file or changes one public contract uses a single short-lived owner
+until that shared change reaches fresh-main CI; other module lanes continue.
 
 ## Repository And Instance Boundary
 

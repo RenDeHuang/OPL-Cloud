@@ -29,8 +29,9 @@ remove the duplicate current writer in the same pull request.
    check open pull requests for an existing owner. The roadmap owns intent and
    acceptance; the pull request owns the live execution attempt.
 2. Select one gap ID and keep its owner/write set explicit in the pull request.
-   Do not combine Console, provider, billing, deployment and evidence changes
-   unless the selected acceptance path requires each one.
+   Multiple `next` gaps may proceed concurrently; `next` is admission to start,
+   not a global queue position. Do not combine Console, provider, billing,
+   deployment and evidence changes unless one acceptance path requires them.
 3. Read the physical dependency map in `docs/implementation-architecture.md`.
    Cross-service behavior uses typed HTTP contracts. Runtime Go imports between
    Control Plane, Fabric and Ledger are forbidden; the narrow PostgreSQL
@@ -38,6 +39,14 @@ remove the duplicate current writer in the same pull request.
 4. Rebase or update from fresh `main` before review. If another pull request has
    entered the same write set, coordinate ownership or split at a contract/API
    boundary before continuing.
+
+Use `parallel_work_serialized_integration`: develop independent module lanes in
+parallel and serialize only an overlapping write set, one shared contract
+revision, canonical `main`, or a real production mutation. A production or
+instance readback is a qualification gate for that exact release, not a reason
+to block unrelated development, CI, or preview work. Reusable deployment code
+and instance-specific application may progress independently and converge at
+deployment qualification.
 
 ## Branch And Pull Request Flow
 

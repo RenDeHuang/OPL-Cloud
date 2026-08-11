@@ -80,6 +80,15 @@ a reviewer for every PR or require an approving review. Production mutation
 authorization remains separate and is governed by protected GitHub Actions
 environments, exact inputs, and authoritative readback.
 
+Development follows `parallel_work_serialized_integration`. Multiple roadmap
+`next` lanes may proceed at once when they have distinct owners and write sets.
+Serialize only changes to the same files, one shared contract revision,
+canonical `main`, or a real production mutation. Production qualification and
+instance receipts apply to the exact release being promoted; they must not
+become prerequisites for unrelated local development, CI, or preview work.
+Reusable deployment code and instance-specific application may progress in
+parallel and converge only for deployment qualification and readback.
+
 Before changing billing, Fabric, Workspace, Gateway, Ledger, deployment, or E2E:
 
 1. Read `docs/invariants.md` completely.
