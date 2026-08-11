@@ -400,36 +400,84 @@ func TestWorkspaceLaunchFabricBindingDriftBecomesUnknown(t *testing.T) {
 	}
 }
 
-func TestWorkspaceLaunchFabricReadAndMutationShareExplicitOperationIdentity(t *testing.T) {
+func TestWorkspaceLaunchFiveFabricStageCallersUseCanonicalHashPayload(t *testing.T) {
 	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation.Stage = "storage"
+	operation.raw["computeAllocationId"] = json.RawMessage(`"compute-unit"`)
+	operation.raw["computeBindingRef"] = json.RawMessage(`"binding-compute"`)
+	operation.raw["storageId"] = json.RawMessage(`"storage-unit"`)
 	operation.raw["storageBindingRef"] = json.RawMessage(`"binding-storage"`)
-	input, err := (&controlPlaneWorkspaceLaunchStageAdapter{}).workspaceLaunchFabricStageInput(context.Background(), operation, false)
-	if err != nil {
-		t.Fatal(err)
+	operation.raw["attachmentId"] = json.RawMessage(`"attachment-unit"`)
+	operation.raw["attachmentBindingRef"] = json.RawMessage(`"binding-attachment"`)
+	operation.raw["gatewaySecretRef"] = json.RawMessage(`"secret-unit"`)
+	operation.raw["gatewaySecretVersion"] = json.RawMessage(`"version-unit"`)
+	operation.raw["secretBindingRef"] = json.RawMessage(`"binding-secret"`)
+	operation.raw["runtimeId"] = json.RawMessage(`"runtime-unit"`)
+	operation.raw["runtimeBindingRef"] = json.RawMessage(`"binding-runtime"`)
+
+	stages := []struct {
+		stage, action, expectedBinding string
+	}{
+		{"ensure_compute_allocation", "ensure_compute_allocation", "binding-compute"},
+		{"storage", "ensure_storage", "binding-storage"},
+		{"attachment", "ensure_attachment", "binding-attachment"},
+		{"secret", "ensure_gateway_secret", "binding-secret"},
+		{"runtime", "ensure_runtime", "binding-runtime"},
 	}
-	if input.Binding.FabricOperationID != operation.ID+":storage" || input.Binding.LaunchOperationID != operation.ID ||
-		input.Binding.AccountID != operation.stringFact("accountId") || input.Binding.WorkspaceID != operation.stringFact("workspaceId") ||
-		input.Binding.Stage != "storage" || input.Binding.Action != "ensure_storage" || input.Binding.IdempotencyKey != operation.ID+":storage" ||
-		input.Binding.RequestHash == "" || input.Binding.ExpectedResourceBinding != "binding-storage" {
-		t.Fatalf("incomplete explicit Fabric binding=%#v", input.Binding)
-	}
-	authorized := operation
-	authorized.ResumeAuthorization = &workspaceLaunchResumeAuthorization{
-		AuthorizationID: "resume-storage", LaunchVersion: operation.Version, AuthorizedStage: operation.Stage,
-		AuthorizedBy: "usr-admin", AuthorizedAt: "2026-08-12T00:01:00Z", Reason: "bounded retry", MutationBudget: 1,
-	}
-	authorizedInput, err := (&controlPlaneWorkspaceLaunchStageAdapter{}).workspaceLaunchFabricStageInput(context.Background(), authorized, false)
-	if err != nil || authorizedInput != input {
-		t.Fatalf("CP continuation authority changed Fabric request: input=%#v authorized=%#v err=%v", input, authorizedInput, err)
-	}
-	changed := input
-	changed.PreflightBindingRef += "-changed"
-	if workspaceLaunchFabricRequestHash(changed) == input.Binding.RequestHash {
-		t.Fatal("stage request hash did not bind provider-neutral preflight identity")
+	for _, stage := range stages {
+		t.Run(stage.stage, func(t *testing.T) {
+			current := operation
+			current.Stage = stage.stage
+			input, err := (&controlPlaneWorkspaceLaunchStageAdapter{}).workspaceLaunchFabricStageInput(context.Background(), current, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			launchRequestHash := current.stringFact("requestHash")
+			if input.ProviderProfileRef != current.stringFact("providerProfileRef") || input.PreflightBindingRef != current.stringFact("preflightBindingRef") ||
+				input.Binding.FabricOperationID != current.ID+":"+stage.stage || input.Binding.LaunchOperationID != current.ID ||
+				input.Binding.AccountID != current.stringFact("accountId") || input.Binding.WorkspaceID != current.stringFact("workspaceId") ||
+				input.Binding.Stage != stage.stage || input.Binding.Action != stage.action || input.Binding.IdempotencyKey != workspaceLaunchStageIdempotencyKey(current, 1) ||
+				input.Binding.RequestHash != workspaceLaunchFabricRequestHash(input, launchRequestHash) || input.Binding.ExpectedResourceBinding != stage.expectedBinding {
+				t.Fatalf("incomplete explicit Fabric stage input=%#v", input)
+			}
+
+			if workspaceLaunchFabricRequestHash(input, strings.Repeat("f", 64)) == input.Binding.RequestHash {
+				t.Fatal("launch request is not bound by stage request hash")
+			}
+			includedMutations := map[string]func(*clients.WorkspaceLaunchStageInput){
+				"action":    func(changed *clients.WorkspaceLaunchStageInput) { changed.Binding.Action += "-changed" },
+				"package":   func(changed *clients.WorkspaceLaunchStageInput) { changed.PackageID += "-changed" },
+				"size":      func(changed *clients.WorkspaceLaunchStageInput) { changed.SizeGB += 10 },
+				"image":     func(changed *clients.WorkspaceLaunchStageInput) { changed.WorkspaceImageDigest += "-changed" },
+				"resources": func(changed *clients.WorkspaceLaunchStageInput) { changed.Resources.RuntimeURL += "-changed" },
+			}
+			for name, mutate := range includedMutations {
+				changed := input
+				mutate(&changed)
+				if workspaceLaunchFabricRequestHash(changed, launchRequestHash) == input.Binding.RequestHash {
+					t.Fatalf("%s is not bound by stage request hash", name)
+				}
+			}
+
+			excluded := input
+			excluded.ProviderProfileRef += "-changed"
+			excluded.PreflightBindingRef += "-changed"
+			excluded.GatewayCredential = &clients.WorkspaceLaunchGatewayCredential{KeyID: 9, Value: "credential-value"}
+			excluded.Binding.SchemaVersion++
+			excluded.Binding.LaunchOperationID += "-changed"
+			excluded.Binding.AccountID += "-changed"
+			excluded.Binding.WorkspaceID += "-changed"
+			excluded.Binding.Stage += "-changed"
+			excluded.Binding.FabricOperationID += "-changed"
+			excluded.Binding.IdempotencyKey += "-changed"
+			excluded.Binding.RequestHash += "-changed"
+			excluded.Binding.ExpectedResourceBinding += "-changed"
+			if workspaceLaunchFabricRequestHash(excluded, launchRequestHash) != input.Binding.RequestHash {
+				t.Fatal("stage request hash included independently validated identity or transient credential")
+			}
+		})
 	}
 }
 
