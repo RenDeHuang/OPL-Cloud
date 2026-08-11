@@ -481,6 +481,61 @@ func TestWorkspaceLaunchFiveFabricStageCallersUseCanonicalHashPayload(t *testing
 	}
 }
 
+func TestWorkspaceLaunchFabricRequestHashMatchesContractGoldenVectors(t *testing.T) {
+	contractPath := filepath.Join("..", "..", "..", "..", "packages", "contracts", "opl-cloud-fabric-launch-binding-contract.json")
+	contractJSON, err := os.ReadFile(contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract struct {
+		StageRequestHash struct {
+			GoldenVectors []struct {
+				Stage   string `json:"stage"`
+				Payload struct {
+					LaunchRequestHash string                           `json:"launchRequestHash"`
+					Action            string                           `json:"action"`
+					PackageID         string                           `json:"packageId"`
+					SizeGB            int                              `json:"sizeGb"`
+					ImageDigest       string                           `json:"imageDigest"`
+					Resources         clients.WorkspaceLaunchResources `json:"resources"`
+				} `json:"payload"`
+				SHA256 string `json:"sha256"`
+			} `json:"goldenVectors"`
+		} `json:"stageRequestHash"`
+	}
+	if err := json.Unmarshal(contractJSON, &contract); err != nil {
+		t.Fatal(err)
+	}
+	expectedStages := map[string]bool{
+		"ensure_compute_allocation": false,
+		"storage":                   false,
+		"attachment":                false,
+		"secret":                    false,
+		"runtime":                   false,
+	}
+	if len(contract.StageRequestHash.GoldenVectors) != len(expectedStages) {
+		t.Fatalf("golden vector count=%d", len(contract.StageRequestHash.GoldenVectors))
+	}
+	for _, vector := range contract.StageRequestHash.GoldenVectors {
+		seen, ok := expectedStages[vector.Stage]
+		if !ok || seen {
+			t.Fatalf("unexpected or duplicate golden vector stage=%q", vector.Stage)
+		}
+		expectedStages[vector.Stage] = true
+		input := clients.WorkspaceLaunchStageInput{
+			Binding:   clients.WorkspaceLaunchStageBinding{Stage: vector.Stage, Action: vector.Payload.Action},
+			PackageID: vector.Payload.PackageID, SizeGB: vector.Payload.SizeGB,
+			WorkspaceImageDigest: vector.Payload.ImageDigest, Resources: vector.Payload.Resources,
+		}
+		if vector.Stage == "secret" {
+			input.GatewayCredential = &clients.WorkspaceLaunchGatewayCredential{KeyID: 9, Value: "transient-secret"}
+		}
+		if got := workspaceLaunchFabricRequestHash(input, vector.Payload.LaunchRequestHash); got != vector.SHA256 {
+			t.Fatalf("stage=%s hash=%s want=%s", vector.Stage, got, vector.SHA256)
+		}
+	}
+}
+
 func TestWorkspaceLaunchFabricReadyWithoutRequiredFactsBecomesUnknown(t *testing.T) {
 	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
 	if err != nil {
