@@ -52,7 +52,6 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.30.8/bin/linux/${TARGETARCH}/kubectl" \
   && chmod +x /usr/local/bin/kubectl \
-  && apt-get purge -y --auto-remove curl \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./

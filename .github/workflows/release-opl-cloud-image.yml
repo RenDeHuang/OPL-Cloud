@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! [[ "$RELEASE_TAG" =~ ^v0\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          if ! [[ "$RELEASE_TAG" =~ ^v0\.[0-9]+\.[0-9]+$ ]]; then
             echo "version must be an immutable v0.x.y tag." >&2
             exit 1
           fi
@@ -74,19 +74,26 @@ jobs:
         shell: bash
         run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
 
+      - name: Verify immutable image tag is unused
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$IMAGE_REPOSITORY:$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "GHCR release tag already exists and will not be overwritten." >&2
+            exit 1
+          fi
+
       - name: Build and push multi-architecture image
         id: image
         shell: bash
         run: |
           set -euo pipefail
-          short_sha="${PRODUCT_SHA:0:12}"
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --label "org.opencontainers.image.source=https://github.com/$PRODUCT_REPOSITORY" \
             --label "org.opencontainers.image.revision=$PRODUCT_SHA" \
             --label "org.opencontainers.image.version=$RELEASE_TAG" \
             --tag "$IMAGE_REPOSITORY:$RELEASE_TAG" \
-            --tag "$IMAGE_REPOSITORY:sha-$short_sha" \
             --push .
           digest="$(docker buildx imagetools inspect "$IMAGE_REPOSITORY:$RELEASE_TAG" --format '{{.Manifest.Digest}}')"
           if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then

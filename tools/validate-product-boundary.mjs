@@ -36,4 +36,12 @@ if (contract.productRepository !== "gaofeng21cn/one-person-lab-cloud" ||
   throw new Error("distribution owner boundary is invalid");
 }
 
+const productContractSource = await readFile(new URL("packages/contracts/opl-cloud-product-contract.json", root), "utf8");
+const productContract = JSON.parse(productContractSource);
+if (productContractSource.includes("medopl.cn") ||
+    productContract.access?.originOwner !== "instance_or_installer_profile" ||
+    productContract.access?.urlPathPattern !== "/w/<workspaceId>/") {
+  throw new Error("product contract contains an instance-owned Workspace origin");
+}
+
 console.log("OPL Cloud product distribution boundary is valid");

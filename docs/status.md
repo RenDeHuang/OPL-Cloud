@@ -63,11 +63,15 @@ prove a real `local-docker` Workspace path, live Gateway accounting, Runtime,
 browser, renewal, rollback, or production behavior. Existing Tencent/TKE
 evidence applies only to its medopl instance path.
 
-An ordinary Cloud rollout has partial deployment readback. Approved Basic
-customer evidence still lacks a complete immutable chain covering exact wallet
-delta, one Workspace purchase, provider resources, Runtime login/WebSocket,
-model Usage, Receipt, renewal, and rollback. Pro provider evidence has not been
-executed for the current product revision.
+The portable Compose asset, GHCR/GitHub Release workflow, and focused
+distribution checks exist at source level. No GitHub Release has yet been
+published from this repository, and source or CI evidence does not prove an
+installed application.
+
+This product repository holds no current instance deployment readback. Earlier
+medopl rollout and provider evidence is migration provenance only; current
+deployment, Runtime, billing, rollback, and receipt evidence belongs to
+`opl-instance-medopl` and must be read back there for one exact Cloud release.
 
 Capacity evidence targets a 1000-provisioned-user data set. It does not claim
 1000 concurrent users, concurrent provisioning, multiple Control Plane

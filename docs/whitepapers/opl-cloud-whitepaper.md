@@ -141,7 +141,7 @@ OPL Cloud 负责让判断有来路、结果能复查、工作可接力。运行�
 
 OPL Cloud 产品与某次安装不是同一个对象。`one-person-lab-cloud` 同时持有产品架构、白皮书以及可复用的 Console、Control Plane、Fabric 与 Ledger 实现；`opl-cloud` 只作为内部 package、image、service 与 namespace 标识。具体安装由实例配置物化。第一期商业实例 `medopl` 由 `opl-instance-medopl` 持有域名、provider profile、启用套餐与价格、镜像 pin、secret 引用和部署回执，不复制产品或 runtime 代码。
 
-目标上，一个实例可以安装在公有云、本地服务器或 Mac 上。实例选择获准的 Fabric provider profile；`medopl` 选择 `tencent-tke` 扩展，本机 Core 目标使用 `local-docker`，自托管集群可使用通用 `kubernetes` 扩展。Launch 与 Recovery 共享一套产品状态机，provider 特有事实、重试和恢复留在对应 adapter 内部。当前仓内尚无 `local-docker` provider；Compose 只能启动 Cloud control services，不能证明 Workspace 的创建、读回或删除已经实现。实现事实与唯一 P0 gap 分别见[状态](../status.md)和[路线图](../roadmap.md)。
+目标上，一个实例可以安装在公有云、本地服务器或 Mac 上。实例选择获准的 Fabric provider profile；`medopl` 选择 `tencent-tke` 扩展，本机 Core 目标使用 `local-docker`，自托管集群可使用通用 `kubernetes` 扩展。Launch 与 Recovery 共享一套产品状态机，provider 特有事实、重试和恢复留在对应 adapter 内部。当前仓内尚无 `local-docker` provider；Compose 只能启动 Cloud control services，不能证明 Workspace 的创建、读回或删除已经实现。实现事实与唯一 P0 gap 分别见[状态](https://github.com/gaofeng21cn/one-person-lab-cloud/blob/main/docs/status.md)和[路线图](https://github.com/gaofeng21cn/one-person-lab-cloud/blob/main/docs/roadmap.md)。
 
 ## 从 Agent Package 到对外服务
 

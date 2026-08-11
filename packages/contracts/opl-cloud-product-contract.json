@@ -45,7 +45,8 @@
     "unpaidExpiry": "deny_access_zero_fabric_or_tencent_mutation_expire_by_provider"
   },
   "access": {
-    "urlPattern": "https://workspace.medopl.cn/w/<workspaceId>/",
+    "originOwner": "instance_or_installer_profile",
+    "urlPathPattern": "/w/<workspaceId>/",
     "mode": "runtime_password",
     "requiresLogin": true,
     "workspaceQuestions": ["url", "username", "passwordRevealCopy", "workspaceKeyRevealCopy"]

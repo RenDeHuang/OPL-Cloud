@@ -29,7 +29,9 @@ test("product contract treats app image as runtime template, not commercial reso
     { id: "pro", cpu: 8, memoryGb: 16, diskGb: 100, targetPackage: true }
   ]);
   assert.equal(product.defaultPackages.some((plan) => "available" in plan), false);
-  assert.equal(product.access.urlPattern, "https://workspace.medopl.cn/w/<workspaceId>/");
+  assert.equal(product.access.originOwner, "instance_or_installer_profile");
+  assert.equal(product.access.urlPathPattern, "/w/<workspaceId>/");
+  assert.equal(product.access.urlPattern, undefined);
   assert.equal(product.access.mode, "runtime_password");
   assert.equal(product.access.requiresLogin, true);
   assert.equal(product.access.tokenLifetime, undefined);
