@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 45,
+  "schemaVersion": 46,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -1749,7 +1749,8 @@
     "file": "Dockerfile",
     "baseImage": "node:22-bookworm-slim",
     "requiredInstructions": [
-      "FROM golang:1.22-bookworm AS provisioner-build",
+      "FROM golang:1.25-bookworm AS provisioner-build",
+      "FROM golang:1.25-bookworm AS fabric-build",
       "go build -o /out/opl-tencent-provisioner ./cmd/opl-tencent-provisioner",
       "go build -o /out/opl-control-plane ./cmd/control-plane",
       "npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000",
