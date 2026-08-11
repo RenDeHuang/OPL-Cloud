@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 43,
+  "schemaVersion": 44,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -12,6 +12,43 @@
     "releaseVerificationCodeComplete": true,
     "identityDeploymentCutover": "code_complete_local_verification",
     "productionEvidence": "pending"
+  },
+  "immutableGithubDependencies": {
+    "actions/checkout": {
+      "kind": "action",
+      "version": "v7.0.1",
+      "ref": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    },
+    "actions/setup-node": {
+      "kind": "action",
+      "version": "v7.0.0",
+      "ref": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
+    },
+    "actions/setup-go": {
+      "kind": "action",
+      "version": "v7.0.0",
+      "ref": "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+    },
+    "actions/upload-artifact": {
+      "kind": "action",
+      "version": "v7.0.1",
+      "ref": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    },
+    "actions/download-artifact": {
+      "kind": "action",
+      "version": "v8.0.1",
+      "ref": "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+    },
+    "docker/setup-buildx-action": {
+      "kind": "action",
+      "version": "v4.2.0",
+      "ref": "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c"
+    },
+    "gaofeng21cn/one-person-lab/.github/workflows/reusable-whitepaper.yml": {
+      "kind": "reusable_workflow",
+      "version": "4fc18d2634212c28c3a1c4ada8b406e6e2e9f267",
+      "ref": "gaofeng21cn/one-person-lab/.github/workflows/reusable-whitepaper.yml@4fc18d2634212c28c3a1c4ada8b406e6e2e9f267"
+    }
   },
   "identityDeploymentCutover": {
     "retiredInput": "OPL_CONSOLE_USERS_JSON",
@@ -433,7 +470,7 @@
         "node-storage-preflight.json"
       ],
       "Upload rollback image set": [
-        "actions/upload-artifact@v4",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
         "production-rollback-images",
         "previous-images"
       ],
@@ -1485,7 +1522,7 @@
         "production-rollout-diagnostics"
       ],
       "Upload failed rollout diagnostics": [
-        "actions/upload-artifact@v4",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
         "production-rollout-diagnostics",
         "retention-days"
       ],
@@ -1541,7 +1578,7 @@
         "TENCENT_DEPLOY_KUBECONFIG"
       ],
       "Download rollback image set": [
-        "actions/download-artifact@v4",
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
         "production-rollback-images"
       ],
       "Restore previous Cloud images and ConfigMap": [
@@ -1610,7 +1647,7 @@
         "workspace_image_tag=\"${workspace_app_sha:0:12}-${workspace_shell_sha:0:12}-${workspace_framework_sha:0:12}\""
       ],
       "Set up Node": [
-        "actions/setup-node@v4",
+        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
         "node-version"
       ],
       "Prepare Workspace App source": [
