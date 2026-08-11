@@ -1,5 +1,33 @@
 # Decisions
 
+## 2026-08-11: Modularity And Deletion-First Work Proceed In Parallel
+
+The immediate execution portfolio gives module cohesion, physical deployment
+isolation, contract-owner slimdown, and deletion-first simplification the same
+high-leverage `P1` attention as other accepted structural work. This promotes
+`MODULE-COHESION-01` and `DEPLOY-ISOLATION-01` to `next/P1` without making either
+one a prerequisite for the P0 local Workspace vertical.
+
+Implementation is divided by physical owner and exact write set: Fabric Core,
+Control Plane Launch coordination, thin Console, cross-module contracts, legacy
+Recovery tooling, and deployment configuration may progress independently.
+Only one owner changes a shared public contract or the same large source file at
+a time, and canonical `main` integration remains serialized.
+
+Simplification is deletion-first rather than refactor-first. The unreachable
+Recovery CLI may proceed once its accepted workflow callers are proven. Archive,
+shared-execution, ContentTransfer, and Snapshot/Restore candidates begin with
+read-only caller, persisted-data, external-consumer, and cleanup-obligation
+admission. If admitted for deletion, their implementation returns to the owning
+Control Plane or Fabric lane; a second writer does not first modularize code that
+should be removed.
+
+Internal cohesion work splits only retained live capabilities inside their
+existing module and package. It does not create a shared domain package, a
+universal contract, a second Reconciler, or a cross-service implementation
+import. Deployment isolation remains independently deliverable and does not
+force separate product images without measured release-blast-radius evidence.
+
 ## 2026-08-11: MVP Core Is Local Workspace Plus Gateway Accounting
 
 OPL Cloud MVP has one Core vertical path: a thin Console for essential
