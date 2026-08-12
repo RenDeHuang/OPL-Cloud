@@ -33,7 +33,7 @@ RUN go mod download
 COPY services/fabric ./
 RUN go build -o /out/opl-fabric ./cmd/fabric
 
-FROM docker:27.5.1-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c AS docker-cli
+FROM docker:29.7.1-cli@sha256:27a51d5ab1cd38d9eeaba7b415b8c07bc10c31e1cf1ec8d78f6413fcfab3f44f AS docker-cli
 
 FROM node:22-bookworm-slim AS build
 
