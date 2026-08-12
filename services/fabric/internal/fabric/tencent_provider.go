@@ -86,7 +86,14 @@ func (*TencentProvider) Descriptor() ProviderDescriptor {
 }
 
 func (*TencentProvider) ValidateComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {
-	if allocation.Provider != "tencent-tke" || prepared.NodePoolID == "" || allocation.NodePoolID != prepared.NodePoolID || allocation.PoolID != prepared.PoolID || allocation.PackageID != prepared.PackageID ||
+	if allocation.Provider != "tencent-tke" {
+		return fmt.Errorf("compute_provider_readback_mismatch")
+	}
+	return validateTencentComputeAllocationIdentity(allocation, prepared)
+}
+
+func validateTencentComputeAllocationIdentity(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {
+	if prepared.NodePoolID == "" || allocation.NodePoolID != prepared.NodePoolID || allocation.PoolID != prepared.PoolID || allocation.PackageID != prepared.PackageID ||
 		allocation.InstanceType != prepared.InstanceType || allocation.MachineName == "" || !strings.HasPrefix(firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), "ins-") ||
 		allocation.NodeName == "" || allocation.PrivateIP == "" || allocation.Zone == "" || allocation.ChargeType != "PREPAID" ||
 		allocation.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || allocation.Deadline == "" {
