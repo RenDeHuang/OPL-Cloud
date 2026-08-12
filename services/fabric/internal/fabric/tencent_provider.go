@@ -928,7 +928,8 @@ func (p *TencentProvider) ProveComputeClaimRecovery(ctx context.Context, allocat
 		RenewFlag: response.ProviderData["renewFlag"], Deadline: response.ProviderData["deadline"],
 		CVMOwnershipState: response.ProviderData["cvmOwnershipState"],
 	}
-	if periodErr != nil || proof.Status != "proven" || proof.MachineName != allocation.MachineName || proof.NodeName != allocation.NodeName ||
+	if periodErr != nil || proof.Status != "proven" || response.PoolID != prepared.PoolID || response.NodePoolID != prepared.NodePoolID ||
+		proof.MachineName != allocation.MachineName || proof.NodeName != allocation.NodeName ||
 		proof.CVMInstanceID != instanceID || proof.PrivateIP != allocation.PrivateIP || proof.InstanceType != prepared.InstanceType || proof.Zone != allocation.Zone ||
 		proof.ChargeType != "PREPAID" || proof.PeriodMonths != 1 || proof.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || proof.Deadline != allocation.Deadline ||
 		(proof.CVMOwnershipState != "recoverable" && proof.CVMOwnershipState != "target_owned") {
