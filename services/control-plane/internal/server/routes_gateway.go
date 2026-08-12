@@ -970,55 +970,12 @@ func (app *controlPlaneServer) completeGatewayKeyCommand(r *http.Request, operat
 	return app.saveGatewayKeyCommand(r.Context(), operationID, accountID, resourceID, action, "succeeded", result) == nil
 }
 
-func optionalInt(value *int) string {
-	if value == nil {
-		return "unset"
-	}
-	return strconv.Itoa(*value)
-}
-
-func optionalInt64(value *int64) string {
-	if value == nil {
-		return "unset"
-	}
-	return strconv.FormatInt(*value, 10)
-}
-
-func optionalString(value *string) string {
-	if value == nil {
-		return "unset"
-	}
-	return *value
-}
-
-func optionalBool(value *bool) string {
-	if value == nil {
-		return "unset"
-	}
-	return strconv.FormatBool(*value)
-}
-
 func writeGatewayUserKeyError(w http.ResponseWriter, err error) {
 	if errors.Is(err, clients.ErrSub2APIKeyNotFound) {
 		writeError(w, http.StatusNotFound, "gateway_key_not_found")
 		return
 	}
 	writeGatewaySourceError(w, err)
-}
-
-func writeGatewayKeyError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, errWorkspaceCodexGroupUnavailable):
-		writeError(w, http.StatusConflict, "apiKey.codexGroupUnavailable")
-	case errors.Is(err, errWorkspaceCodexGroupMutationUnknown):
-		writeError(w, http.StatusConflict, "apiKey.codexGroupMutationUnknown")
-	case errors.Is(err, clients.ErrSub2APIWorkspaceKeyMissing):
-		writeError(w, http.StatusConflict, "gateway_key_missing")
-	case errors.Is(err, clients.ErrSub2APIWorkspaceKeyAmbiguous):
-		writeError(w, http.StatusConflict, "gateway_key_ambiguous")
-	default:
-		writeUpstreamError(w, err)
-	}
 }
 
 func writeGatewaySourceError(w http.ResponseWriter, err error) {
@@ -1041,17 +998,4 @@ func (app *controlPlaneServer) gatewaySub2APIUserID(w http.ResponseWriter, r *ht
 		return 0, false
 	}
 	return userID, true
-}
-
-func (app *controlPlaneServer) mappedSub2APIUserID(w http.ResponseWriter, r *http.Request, accountID string) (int64, bool) {
-	userID, err := app.sub2APIUserID(r.Context(), accountID)
-	if err == nil {
-		return userID, true
-	}
-	if errors.Is(err, errMonthlyAccountUnmapped) {
-		writeError(w, http.StatusConflict, errMonthlyAccountUnmapped.Error())
-	} else {
-		writeError(w, http.StatusInternalServerError, "state_read_failed")
-	}
-	return 0, false
 }
