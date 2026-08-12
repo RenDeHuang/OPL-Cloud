@@ -33,6 +33,8 @@ RUN go mod download
 COPY services/fabric ./
 RUN go build -o /out/opl-fabric ./cmd/fabric
 
+FROM docker:27.5.1-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c AS docker-cli
+
 FROM node:22-bookworm-slim AS build
 
 WORKDIR /app
@@ -62,6 +64,7 @@ COPY --from=provisioner-build /out/opl-tencent-provisioner /usr/local/bin/opl-te
 COPY --from=control-plane-build /out/opl-control-plane /usr/local/bin/opl-control-plane
 COPY --from=ledger-build /out/opl-ledger /usr/local/bin/opl-ledger
 COPY --from=fabric-build /out/opl-fabric /usr/local/bin/opl-fabric
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 RUN mkdir -p /app/.runtime && chown -R node:node /app/.runtime
 
 USER node
