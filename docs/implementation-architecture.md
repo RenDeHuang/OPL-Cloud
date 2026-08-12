@@ -336,9 +336,25 @@ security-model change is authorized by this document.
 
 Cloud publishes one multi-architecture GHCR image and GitHub Release containing
 Compose, an environment template, and a release manifest. Product release uses
-no production environment and performs no instance deployment. The image is
+no instance production environment and performs no instance deployment. The
+current release workflow still combines build and publication in one job with
+repository and package write authority; the target split and protected
+`cloud-release` environment remain open roadmap work. The image is
 identified by a version tag, exact product SHA, and immutable digest; mutable
 `latest` and `stable` tags are forbidden.
+
+Repository security automation currently uses GitHub-managed CodeQL default
+setup rather than a second workflow-owned CodeQL configuration. Pull requests
+have a dedicated read-only Dependency Review job, and Dependabot covers
+GitHub Actions, npm, all four Go modules, and the root Dockerfile on a bounded
+monthly schedule. These scanners produce evidence for triage; they do not
+change product or vulnerability status by themselves.
+
+GitHub's repository `Agents` tab is the Copilot cloud-agent task surface. No
+repository custom agent profile or automation is part of the current Cloud
+implementation. If adopted later, it remains a PR-producing development tool
+with no direct canonical, release, deployment, or production authority; OPL
+product Agents and domain agents are separate concepts.
 
 The private `opl-instance-medopl` repository owns the current medopl/TKE
 configuration, production environment, deployment workflow, rollback, canaries,

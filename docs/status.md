@@ -82,6 +82,11 @@ Sub2API management origin and credentials are never exposed to the browser.
   fields, with retained read compatibility for older projections. A separate
   legacy provider-acceptance surface still contains Tencent-specific client and
   projection knowledge.
+- The zero-caller `ReapplyWorkspaceRuntime` Control Plane facade method is
+  removed. This application-code cut neither rewrites nor deletes historical
+  `runtime_apply` rows and does not mutate or retire Fabric resources. The real
+  Control Plane `Service` and capability boundaries remain; broader facade and
+  unabsorbed `server/app_state` dead-helper simplification remain open.
 - The authenticated Workspace owner can issue one durable, resumable delete
   command. Control Plane coordinates Runtime, attachment, storage, and compute
   cleanup through existing typed Fabric HTTP routes; partial or unknown results
@@ -133,6 +138,39 @@ exact four-asset GitHub Release readback. Fresh GitHub owner readback shows no
 OPL Cloud tag, Release, or GHCR package, and no clean-host installation evidence
 exists. Source and CI evidence therefore do not prove a published immutable
 product or an installed application.
+
+GitHub security controls were read back on 2026-08-12 for
+`main@ce0fc6f4fe182491d5bf5dbdfb2061a3478d2dc8`. Private vulnerability
+reporting, Dependabot alerts and security updates, secret scanning and push
+protection, Actions full-SHA pin enforcement, and branch-protection admin
+enforcement are enabled. CodeQL default setup is configured weekly for Actions,
+Go, and JavaScript/TypeScript; run `31562369252` completed successfully at
+`1ea5540736c0f2cae5b51fc983e18509b20bea49`. The repository has zero open
+secret-scanning alerts and zero open Dependabot alerts. Secret validity checks
+remain disabled after the attempted setting change did not take effect. Actions
+allow GitHub-owned and verified creators plus the SHA-pinned reusable whitepaper
+workflow; other action sources are denied and full-SHA pinning remains required.
+The default workflow token is read-only and cannot approve pull requests.
+`main` strictly requires the GitHub Actions `validate` and `dependency-review`
+contexts, resolves review conversations, and forbids force pushes and deletion.
+
+CodeQL success did not produce a zero-alert baseline. Fresh API readback reports
+15 open alerts: two allocation-size-overflow results and thirteen weak-hash
+results across product source, tools, and tests. They are scanner leads pending
+boundary-specific triage; this snapshot does not classify them as 15 confirmed
+vulnerabilities or dismiss them as false positives. A separate sealed,
+risk-based static scan of revision
+`24a065d4427b53d65ba0df9cb70b1a36327fb6af` reported three medium and seven low
+findings with partial coverage and no runtime exercise. None is recorded as
+fixed by the scan, by enabling GitHub controls, or by this documentation.
+
+The repository has no `cloud-release` Environment, tag ruleset, immutable
+release enforcement, repository custom coding-agent profile, or coding-agent
+automation. This revision adds a read-only Dependency Review job and expanded
+monthly Dependabot coverage. GitHub executed `dependency-review` successfully at
+exact source SHA `811a459c157fcb22d5935409e6636cace5bff1af` before its context was added
+to strict branch protection; that hosted success is check evidence, not evidence
+that the source revision is already canonical or that dependency risk is zero.
 
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production
