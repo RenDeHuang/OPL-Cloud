@@ -43,6 +43,9 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		writeSourceEnvelope(w, http.StatusOK, "control-plane", status, map[string]any{"items": items, "total": workspacePage.Total, "page": page, "pageSize": pageSize})
 	}))
+	mux.HandleFunc("DELETE /api/workspaces/{workspaceId}", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		app.deleteWorkspace(w, r, service)
+	}))
 	mux.HandleFunc("GET /api/workspaces/{workspaceId}/runtime-status", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		workspaceID := strings.TrimSpace(r.PathValue("workspaceId"))
 		user, ok := app.sessionUserContext(r)

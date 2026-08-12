@@ -191,6 +191,65 @@ func TestFabricHTTPClientRenewsMonthlyResourcesWithNeutralMutationReceipt(t *tes
 	}
 }
 
+func TestFabricHTTPClientUsesTypedWorkspaceDeleteRoutes(t *testing.T) {
+	requests := []string{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path+" "+r.Header.Get("Idempotency-Key"))
+		if r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "POST /fabric/workspace-runtimes/ws-alpha/destroy":
+			_ = json.NewEncoder(w).Encode(WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: "ws-alpha", Status: "destroyed"})
+		case "POST /fabric/storage-attachments/attachment-alpha/detach":
+			_ = json.NewEncoder(w).Encode(StorageAttachment{ID: "attachment-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", Status: "detached"})
+		case "POST /fabric/storage-volumes/storage-alpha/destroy":
+			_ = json.NewEncoder(w).Encode(StorageVolume{ID: "storage-alpha", WorkspaceID: "ws-alpha", Status: "destroyed"})
+		case "POST /fabric/compute-allocations/compute-alpha/destroy":
+			_ = json.NewEncoder(w).Encode(ComputeAllocation{ID: "compute-alpha", WorkspaceID: "ws-alpha", Status: "destroying"})
+		case "GET /fabric/compute-allocations/compute-alpha":
+			if r.Header.Get("Idempotency-Key") != "" {
+				t.Fatalf("readback sent Idempotency-Key = %q", r.Header.Get("Idempotency-Key"))
+			}
+			_ = json.NewEncoder(w).Encode(ComputeAllocation{ID: "compute-alpha", WorkspaceID: "ws-alpha", Status: "destroyed"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	client, ok := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricWorkspaceDeleteClient)
+	if !ok {
+		t.Fatal("Fabric HTTP client must implement Workspace delete capability")
+	}
+	ctx := context.Background()
+	if _, err := client.DestroyWorkspaceRuntime(ctx, "ws-alpha", "delete-intent:runtime"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DetachStorageAttachment(ctx, "attachment-alpha", "delete-intent:attachment"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DestroyStorageVolume(ctx, "storage-alpha", "delete-intent:storage"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DestroyComputeAllocation(ctx, "compute-alpha", "delete-intent:compute"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ReadComputeAllocation(ctx, "compute-alpha"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"POST /fabric/workspace-runtimes/ws-alpha/destroy delete-intent:runtime",
+		"POST /fabric/storage-attachments/attachment-alpha/detach delete-intent:attachment",
+		"POST /fabric/storage-volumes/storage-alpha/destroy delete-intent:storage",
+		"POST /fabric/compute-allocations/compute-alpha/destroy delete-intent:compute",
+		"GET /fabric/compute-allocations/compute-alpha ",
+	}
+	if strings.Join(requests, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("Workspace delete requests = %#v, want %#v", requests, want)
+	}
+}
+
 func TestFabricClientReturnsErrorOnUpstreamFailure(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "fabric unavailable", http.StatusServiceUnavailable)
