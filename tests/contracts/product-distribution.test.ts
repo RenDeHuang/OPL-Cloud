@@ -101,16 +101,58 @@ test("portable distribution is product-owned and instance-neutral", async () => 
 test("Cloud release publishes GHCR and GitHub Release without production deployment", async () => {
   const source = await readFile(".github/workflows/release-opl-cloud-image.yml", "utf8");
   const workflow = YAML.parse(source);
-  const steps = workflow.jobs.release.steps as Array<{ name: string; run?: string }>;
-  const stepRun = (name: string) => {
+  const build = workflow.jobs.build;
+  const publish = workflow.jobs.publish;
+  assert.deepEqual(Object.keys(workflow.jobs).sort(), ["build", "publish"]);
+  assert.deepEqual(build.permissions, { contents: "read" });
+  assert.equal(build.environment, undefined);
+  assert.equal(build.env.GH_TOKEN, undefined);
+  assert.equal(build.steps.find((step: { name?: string }) => step.name === "Checkout exact product source")?.with?.["persist-credentials"], false);
+  assert.deepEqual(publish.permissions, { actions: "read", contents: "write", packages: "write" });
+  assert.equal(publish.environment, "cloud-release");
+  assert.equal(publish.needs, "build");
+
+  const buildSteps = build.steps as Array<{ id?: string; name?: string; run?: string; uses?: string; with?: Record<string, unknown> }>;
+  const publishSteps = publish.steps as Array<{ id?: string; name?: string; run?: string; uses?: string; with?: Record<string, unknown> }>;
+  const stepRun = (steps: typeof buildSteps, name: string) => {
     const run = steps.find((step) => step.name === name)?.run;
     assert.ok(run, `missing run script for ${name}`);
     return run;
   };
-  const validationRun = stepRun("Validate portable product boundary");
-  const manifestRun = stepRun("Create release manifest");
-  const publishRun = stepRun("Publish GitHub Release");
-  const readbackRun = stepRun("Read back release");
+  const validationRun = stepRun(buildSteps, "Validate portable product boundary");
+  const imageBuildRun = stepRun(buildSteps, "Build multi-architecture image artifact");
+  const manifestRun = stepRun(buildSteps, "Create release manifest");
+  const artifactVerificationRun = stepRun(publishSteps, "Verify immutable build artifact");
+  const imagePublishRun = stepRun(publishSteps, "Publish multi-architecture image");
+  const publishRun = stepRun(publishSteps, "Publish GitHub Release");
+  const readbackRun = stepRun(publishSteps, "Read back release");
+
+  const checkoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
+  const uploadAction = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02";
+  assert.equal(buildSteps.find((step) => step.name === "Checkout exact product source")?.uses, checkoutAction);
+  const upload = buildSteps.find((step) => step.id === "release_artifact");
+  assert.equal(upload?.uses, uploadAction);
+  assert.equal(upload?.with?.["if-no-files-found"], "error");
+  assert.equal(build.outputs.artifact_id, "${{ steps.release_artifact.outputs.artifact-id }}");
+  assert.equal(build.outputs.artifact_digest, "${{ steps.release_artifact.outputs.artifact-digest }}");
+  assert.equal(build.outputs.image_digest, "${{ steps.image.outputs.digest }}");
+
+  const buildCommands = buildSteps.map((step) => step.run ?? "").join("\n");
+  const publishCommands = publishSteps.map((step) => step.run ?? "").join("\n");
+  assert.doesNotMatch(buildCommands, /docker login|--push|gh release create|docker buildx imagetools create/);
+  assert.match(imageBuildRun, /--output "type=oci,dest=artifacts\/image,tar=false,name=\$IMAGE_REPOSITORY:\$RELEASE_TAG"/);
+  assert.match(imageBuildRun, /oci-layout:\/\/\$PWD\/artifacts\/image:\$RELEASE_TAG/);
+  assert.equal(publishSteps.some((step) => step.uses), false);
+  assert.doesNotMatch(publishCommands, /npm (ci|run)|docker buildx build|\.\/tools\//);
+  assert.match(stepRun(publishSteps, "Log in to GHCR"), /docker buildx version/);
+  assert.match(artifactVerificationRun, /actions\/artifacts\/\$ARTIFACT_ID/);
+  assert.match(artifactVerificationRun, /\.workflow_run\.id == \(\$run_id \| tonumber\)/);
+  assert.match(artifactVerificationRun, /\^\[0-9a-f\]\{64\}\$/);
+  assert.match(artifactVerificationRun, /\.digest == \$digest or \.digest == \("sha256:" \+ \$digest\)/);
+  assert.match(artifactVerificationRun, /sha256sum --check --status/);
+  assert.match(imagePublishRun, /docker buildx imagetools create/);
+  assert.match(imagePublishRun, /oci-layout:\/\/\$PWD\/artifacts\/image:\$RELEASE_TAG/);
+  assert.match(imagePublishRun, /published_digest.*expected_digest/);
 
   assert.match(source, /ghcr\.io\/\$\{\{ github\.repository \}\}/);
   assert.match(source, /--platform linux\/amd64,linux\/arm64/);
@@ -136,11 +178,11 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
   const publishedAssetPaths = publishRun
     .split("\n")
     .map((line) => line.trim().replace(/ \\$/, ""))
-    .filter((line) => /^(compose\.yaml|deploy\/portable\/|artifacts\/release\/)/.test(line));
+    .filter((line) => /^artifacts\/release\//.test(line));
   assert.deepEqual(publishedAssetPaths, [
-    "compose.yaml",
-    "deploy/portable/compose.local-workspace.yaml",
-    "deploy/portable/opl-cloud.env.example",
+    "artifacts/release/compose.yaml",
+    "artifacts/release/compose.local-workspace.yaml",
+    "artifacts/release/opl-cloud.env.example",
     "artifacts/release/opl-cloud-release.json"
   ]);
 

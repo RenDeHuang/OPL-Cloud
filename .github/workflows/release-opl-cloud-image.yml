@@ -13,20 +13,24 @@ on:
         type: string
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: opl-cloud-release-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Publish portable product release
+  build:
+    name: Build portable product release
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.release_artifact.outputs.artifact-id }}
+      artifact_digest: ${{ steps.release_artifact.outputs.artifact-digest }}
+      image_digest: ${{ steps.image.outputs.digest }}
     env:
-      GH_TOKEN: ${{ github.token }}
       PRODUCT_REPOSITORY: ${{ github.repository }}
       PRODUCT_SHA: ${{ inputs.ref }}
       RELEASE_TAG: ${{ inputs.version }}
@@ -38,6 +42,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify release identity
         shell: bash
@@ -51,13 +56,9 @@ jobs:
             echo "ref must be the exact checked-out 40-character product SHA." >&2
             exit 1
           fi
-          git fetch --no-tags origin main:refs/remotes/release-source/main
+          git fetch --no-tags "https://github.com/$PRODUCT_REPOSITORY.git" main:refs/remotes/release-source/main
           if ! git merge-base --is-ancestor "$PRODUCT_SHA" refs/remotes/release-source/main; then
             echo "Product SHA is not merged into main." >&2
-            exit 1
-          fi
-          if [ -n "$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")" ] || gh release view "$RELEASE_TAG" --repo "$PRODUCT_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release tag already exists." >&2
             exit 1
           fi
 
@@ -71,9 +72,151 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Log in to GHCR
+      - name: Build multi-architecture image artifact
+        id: image
         shell: bash
-        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/image
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --label "org.opencontainers.image.source=https://github.com/$PRODUCT_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$PRODUCT_SHA" \
+            --label "org.opencontainers.image.version=$RELEASE_TAG" \
+            --output "type=oci,dest=artifacts/image,tar=false,name=$IMAGE_REPOSITORY:$RELEASE_TAG" \
+            .
+          manifest="$(docker buildx imagetools inspect "oci-layout://$PWD/artifacts/image:$RELEASE_TAG" --format '{{json .Manifest}}')"
+          digest="$(jq -r '.digest' <<< "$manifest")"
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "OCI image digest readback failed." >&2
+            exit 1
+          fi
+          jq -e '
+            [.manifests[] | select(.platform.os == "linux") | (.platform.os + "/" + .platform.architecture)]
+            | sort == ["linux/amd64", "linux/arm64"]
+          ' <<< "$manifest" >/dev/null
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Create release manifest
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/release
+          cp compose.yaml artifacts/release/compose.yaml
+          cp deploy/portable/compose.local-workspace.yaml artifacts/release/compose.local-workspace.yaml
+          cp deploy/portable/opl-cloud.env.example artifacts/release/opl-cloud.env.example
+          jq -n \
+            --arg repository "$PRODUCT_REPOSITORY" \
+            --arg tag "$RELEASE_TAG" \
+            --arg sha "$PRODUCT_SHA" \
+            --arg image "$IMAGE_REPOSITORY@$IMAGE_DIGEST" \
+            --arg digest "$IMAGE_DIGEST" \
+            '{schemaVersion:1,product:"OPL Cloud",productRepository:$repository,releaseTag:$tag,productSha:$sha,image:{ref:$image,digest:$digest,platforms:["linux/amd64","linux/arm64"]},assets:["compose.yaml","compose.local-workspace.yaml","opl-cloud.env.example"]}' \
+            > artifacts/release/opl-cloud-release.json
+
+      - name: Upload immutable release artifact
+        id: release_artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opl-cloud-release-${{ inputs.ref }}
+          path: artifacts/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    name: Publish portable product release
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment: cloud-release
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+    env:
+      PRODUCT_REPOSITORY: ${{ github.repository }}
+      PRODUCT_SHA: ${{ inputs.ref }}
+      RELEASE_TAG: ${{ inputs.version }}
+      IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
+      ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
+      ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact_digest }}
+      EXPECTED_IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
+
+    steps:
+      - name: Verify release identity and unused targets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_TAG" =~ ^v0\.[0-9]+\.[0-9]+$ ]] || ! [[ "$PRODUCT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release identity is invalid." >&2
+            exit 1
+          fi
+          comparison="$(gh api --hostname github.com "repos/$PRODUCT_REPOSITORY/compare/$PRODUCT_SHA...main")"
+          jq -e --arg sha "$PRODUCT_SHA" '
+            (.status == "ahead" or .status == "identical") and .merge_base_commit.sha == $sha
+          ' <<< "$comparison" >/dev/null
+          if gh api --hostname github.com "repos/$PRODUCT_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1 || \
+             gh release view "$RELEASE_TAG" --repo "$PRODUCT_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release tag already exists." >&2
+            exit 1
+          fi
+
+      - name: Verify immutable build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]] || ! [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "build artifact identity is invalid." >&2
+            exit 1
+          fi
+          metadata="$(gh api --hostname github.com "repos/$PRODUCT_REPOSITORY/actions/artifacts/$ARTIFACT_ID")"
+          jq -e \
+            --arg id "$ARTIFACT_ID" \
+            --arg name "opl-cloud-release-$PRODUCT_SHA" \
+            --arg digest "$ARTIFACT_DIGEST" \
+            --arg run_id "$GITHUB_RUN_ID" '
+              (.id | tostring) == $id and .name == $name and .expired == false and
+              .workflow_run.id == ($run_id | tonumber) and
+              (.digest == $digest or .digest == ("sha256:" + $digest))
+            ' <<< "$metadata" >/dev/null
+          artifact_zip="$RUNNER_TEMP/release-artifact.zip"
+          gh api --hostname github.com "repos/$PRODUCT_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$artifact_zip"
+          printf '%s  %s\n' "$ARTIFACT_DIGEST" "$artifact_zip" | sha256sum --check --status
+          mkdir -p artifacts
+          unzip -q "$artifact_zip" -d artifacts
+          test -f artifacts/image/oci-layout
+          test -f artifacts/image/index.json
+          for asset in compose.yaml compose.local-workspace.yaml opl-cloud.env.example opl-cloud-release.json; do
+            test -f "artifacts/release/$asset"
+          done
+          jq -e \
+            --arg repository "$PRODUCT_REPOSITORY" \
+            --arg tag "$RELEASE_TAG" \
+            --arg sha "$PRODUCT_SHA" \
+            --arg image "$IMAGE_REPOSITORY@$EXPECTED_IMAGE_DIGEST" \
+            --arg digest "$EXPECTED_IMAGE_DIGEST" '
+              .schemaVersion == 1 and .product == "OPL Cloud" and
+              .productRepository == $repository and .releaseTag == $tag and .productSha == $sha and
+              .image.ref == $image and .image.digest == $digest and
+              .image.platforms == ["linux/amd64", "linux/arm64"] and
+              .assets == ["compose.yaml", "compose.local-workspace.yaml", "opl-cloud.env.example"]
+            ' artifacts/release/opl-cloud-release.json >/dev/null
+
+      - name: Log in to GHCR
+        env:
+          PACKAGES_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx version
+          printf '%s' "$PACKAGES_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
 
       - name: Verify immutable image tag is unused
         shell: bash
@@ -84,44 +227,32 @@ jobs:
             exit 1
           fi
 
-      - name: Build and push multi-architecture image
-        id: image
+      - name: Publish multi-architecture image
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --label "org.opencontainers.image.source=https://github.com/$PRODUCT_REPOSITORY" \
-            --label "org.opencontainers.image.revision=$PRODUCT_SHA" \
-            --label "org.opencontainers.image.version=$RELEASE_TAG" \
-            --tag "$IMAGE_REPOSITORY:$RELEASE_TAG" \
-            --push .
-          digest="$(docker buildx imagetools inspect "$IMAGE_REPOSITORY:$RELEASE_TAG" --format '{{.Manifest.Digest}}')"
-          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "GHCR digest readback failed." >&2
+          local_image="oci-layout://$PWD/artifacts/image:$RELEASE_TAG"
+          local_manifest="$(docker buildx imagetools inspect "$local_image" --format '{{json .Manifest}}')"
+          local_digest="$(jq -r '.digest' <<< "$local_manifest")"
+          if [ "$local_digest" != "$EXPECTED_IMAGE_DIGEST" ]; then
+            echo "OCI artifact digest does not match the build output." >&2
             exit 1
           fi
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "image=$IMAGE_REPOSITORY@$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Create release manifest
-        env:
-          IMAGE: ${{ steps.image.outputs.image }}
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/release
-          jq -n \
-            --arg repository "$PRODUCT_REPOSITORY" \
-            --arg tag "$RELEASE_TAG" \
-            --arg sha "$PRODUCT_SHA" \
-            --arg image "$IMAGE" \
-            --arg digest "$IMAGE_DIGEST" \
-            '{schemaVersion:1,product:"OPL Cloud",productRepository:$repository,releaseTag:$tag,productSha:$sha,image:{ref:$image,digest:$digest,platforms:["linux/amd64","linux/arm64"]},assets:["compose.yaml","compose.local-workspace.yaml","opl-cloud.env.example"]}' \
-            > artifacts/release/opl-cloud-release.json
+          jq -e '
+            [.manifests[] | select(.platform.os == "linux") | (.platform.os + "/" + .platform.architecture)]
+            | sort == ["linux/amd64", "linux/arm64"]
+          ' <<< "$local_manifest" >/dev/null
+          docker buildx imagetools create --tag "$IMAGE_REPOSITORY:$RELEASE_TAG" "$local_image"
+          published_digest="$(docker buildx imagetools inspect "$IMAGE_REPOSITORY:$RELEASE_TAG" --format '{{.Manifest.Digest}}')"
+          expected_digest="$EXPECTED_IMAGE_DIGEST"
+          if [ "$published_digest" != "$expected_digest" ]; then
+            echo "GHCR digest readback does not match the build artifact." >&2
+            exit 1
+          fi
 
       - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -130,14 +261,14 @@ jobs:
             --target "$PRODUCT_SHA" \
             --title "OPL Cloud $RELEASE_TAG" \
             --generate-notes \
-            compose.yaml \
-            deploy/portable/compose.local-workspace.yaml \
-            deploy/portable/opl-cloud.env.example \
+            artifacts/release/compose.yaml \
+            artifacts/release/compose.local-workspace.yaml \
+            artifacts/release/opl-cloud.env.example \
             artifacts/release/opl-cloud-release.json
 
       - name: Read back release
         env:
-          EXPECTED_IMAGE: ${{ steps.image.outputs.image }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -146,4 +277,4 @@ jobs:
             .tagName == $tag and .targetCommitish == $sha and
             ([.assets[].name] | sort) == (["compose.local-workspace.yaml","compose.yaml","opl-cloud-release.json","opl-cloud.env.example"] | sort)
           ' artifacts/release/readback.json >/dev/null
-          printf 'Published %s at %s\n' "$EXPECTED_IMAGE" "$RELEASE_TAG"
+          printf 'Published %s at %s\n' "$IMAGE_REPOSITORY@$EXPECTED_IMAGE_DIGEST" "$RELEASE_TAG"
