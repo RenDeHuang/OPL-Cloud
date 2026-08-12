@@ -75,8 +75,10 @@ func workspaceLaunchActivationRow(operation workspaceLaunchReconcileOperation) (
 func workspaceLaunchProjectionMatches(operation workspaceLaunchReconcileOperation, workspace map[string]any) bool {
 	return firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) == operation.stringFact("accountId") &&
 		stringValue(workspace["ownerUserId"]) == operation.stringFact("ownerUserId") && stringValue(workspace["id"]) == operation.stringFact("workspaceId") &&
-		stringValue(workspace["computeAllocationId"]) == operation.stringFact("computeAllocationId") && stringValue(workspace["storageId"]) == operation.stringFact("storageId") &&
-		stringValue(workspace["attachmentId"]) == operation.stringFact("attachmentId") && stringValue(workspace["runtimeId"]) == operation.stringFact("runtimeId") &&
+		firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])) == operation.stringFact("computeAllocationId") &&
+		stringValue(workspace["storageId"]) == operation.stringFact("storageId") &&
+		firstNonEmpty(stringValue(workspace["currentAttachmentId"]), stringValue(workspace["attachmentId"])) == operation.stringFact("attachmentId") &&
+		stringValue(workspace["runtimeId"]) == operation.stringFact("runtimeId") &&
 		stringValue(nested(workspace, "runtime", "serviceName")) == operation.stringFact("runtimeServiceName") &&
 		firstNonEmpty(stringValue(workspace["state"]), stringValue(workspace["status"])) == "running"
 }
