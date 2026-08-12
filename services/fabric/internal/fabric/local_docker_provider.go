@@ -318,6 +318,20 @@ func (p *LocalDockerProvider) ReadComputeAllocation(ctx context.Context, allocat
 	return allocation, nil
 }
 
+func (p *LocalDockerProvider) ReadComputeProviderFacts(ctx context.Context, allocation ComputeAllocation) (ProviderResourceFacts, error) {
+	readback, err := p.ReadComputeAllocation(ctx, allocation)
+	if err != nil {
+		return ProviderResourceFacts{}, err
+	}
+	return ProviderResourceFacts{
+		PackageOrSpec: readback.InstanceType,
+		ProviderID:    readback.ProviderResourceID,
+		Zone:          readback.Zone,
+		Status:        readback.Status,
+		ExpiresAt:     readback.Deadline,
+	}, nil
+}
+
 func (p *LocalDockerProvider) SyncComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
 	return p.ReadComputeAllocation(ctx, allocation)
 }
@@ -406,6 +420,20 @@ func (p *LocalDockerProvider) ReadStorageVolume(ctx context.Context, volume Stor
 	return volume, nil
 }
 
+func (p *LocalDockerProvider) ReadStorageProviderFacts(ctx context.Context, volume StorageVolume) (ProviderResourceFacts, error) {
+	readback, err := p.ReadStorageVolume(ctx, volume)
+	if err != nil {
+		return ProviderResourceFacts{}, err
+	}
+	return ProviderResourceFacts{
+		PackageOrSpec: firstNonEmpty(readback.DiskType, readback.StorageClass),
+		ProviderID:    readback.ProviderResourceID,
+		Zone:          readback.Zone,
+		Status:        readback.Status,
+		ExpiresAt:     readback.Deadline,
+	}, nil
+}
+
 func (p *LocalDockerProvider) ReadStorageVolumeStatus(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
 	return p.ReadStorageVolume(ctx, volume)
 }
@@ -462,6 +490,14 @@ func (p *LocalDockerProvider) ReadStorageAttachment(ctx context.Context, attachm
 	attachment.ProviderAttachmentID = "docker/" + localDockerName("opl-compute", compute.ID) + "/" + localDockerName("opl-storage", volume.ID)
 	attachment.ProviderRequestID = providerRequestID("docker-attachment-read", attachment.OperationID)
 	return attachment, nil
+}
+
+func (p *LocalDockerProvider) ReadStorageAttachmentProviderFacts(ctx context.Context, attachment StorageAttachment, compute ComputeAllocation, volume StorageVolume) (ProviderResourceFacts, error) {
+	readback, err := p.ReadStorageAttachment(ctx, attachment, compute, volume)
+	if err != nil {
+		return ProviderResourceFacts{}, err
+	}
+	return ProviderResourceFacts{PackageOrSpec: "/data", ProviderID: readback.ProviderAttachmentID, Status: readback.Status}, nil
 }
 
 func (*LocalDockerProvider) DetachStorageAttachment(_ context.Context, attachment StorageAttachment) (StorageAttachment, error) {
