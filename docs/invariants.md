@@ -208,6 +208,15 @@ schemas, workflows, and focused tests.
 
 ## Deployment And Release Safety
 
+- Pull-request and build jobs default to read-only repository permissions.
+  Publication credentials exist only in the smallest publish boundary after
+  the exact source and artifacts have passed independent validation.
+- Third-party Actions are pinned to immutable commit SHAs. Dependency and code
+  scanner output is triaged against the supported boundary before it is called
+  a vulnerability, false positive, or fix.
+- A container digest proves immutable bytes, not an authorized publisher.
+  Provider execution accepts only both an immutable digest and an approved
+  image identity or release-manifest binding.
 - Production mutation runs only through approved GitHub Actions environments and
   authorized runners. Local development cannot directly access production
   private endpoints, clusters, databases, or services.
@@ -222,6 +231,9 @@ schemas, workflows, and focused tests.
 - Deployment captures authoritative diagnostics before rollback. Rollback
   restores the prior approved images and configuration without inventing a new
   product or billing state.
+- A coding agent may propose changes only through a task branch and pull
+  request. It cannot bypass branch protection, approve its own authority,
+  publish a release, deploy an instance, or become a product/domain owner.
 
 ## Evidence Levels
 
