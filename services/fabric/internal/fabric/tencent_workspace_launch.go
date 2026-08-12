@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 )
 
@@ -38,7 +37,11 @@ func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, reques
 	switch binding.Stage {
 	case "ensure_compute_allocation":
 		computeID := firstNonEmpty(resources.ComputeAllocationID, workspaceLaunchComputeID(binding))
-		poolID := p.Descriptor().DefaultComputePoolIDs[input.PackageID]
+		pool, err := configuredPackageNodePool(input.PackageID)
+		if err != nil {
+			return WorkspaceLaunchProviderResult{}, err
+		}
+		poolID := pool.NodePoolID
 		allocation := ComputeAllocation{
 			ID: computeID, OperationID: binding.FabricOperationID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID,
 			PackageID: input.PackageID, NodePoolID: poolID, Status: "provisioning", Provider: p.Descriptor().Name,
@@ -158,7 +161,7 @@ func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request 
 		}
 		readback, err := p.DiscoverComputeAllocation(ctx, *state.Compute, *state.ComputePlan)
 		if err != nil || p.ValidateComputeAllocation(readback, *state.ComputePlan) != nil || !isReadyResourceStatus(readback.Status) ||
-			p.readWorkspaceLaunchComputeOwnership(ctx, readback, *state.ComputePlan, *state.Ownership, true) != nil {
+			p.readComputeMachineOwnership(ctx, readback, *state.ComputePlan, *state.Ownership, true) != nil {
 			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchPending)
 		}
 		state.Compute = &readback
@@ -226,53 +229,21 @@ func (p *TencentProvider) ensureWorkspaceLaunchComputeOwnership(ctx context.Cont
 		allocation.NodeName == "" || firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) == "" {
 		return MachineOwnership{}, ErrLaunchStageBindingConflict
 	}
-	machine := ProviderMachine{
-		MachineID: allocation.MachineName, InstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), NodeName: allocation.NodeName,
-		PrivateIP: allocation.PrivateIP, PublicIP: allocation.PublicIP, InstanceType: allocation.InstanceType, Zone: allocation.Zone,
-		ChargeType: allocation.ChargeType, RenewFlag: allocation.RenewFlag, Deadline: allocation.Deadline, Ready: true,
-	}
+	instanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
 	requested := MachineOwnership{
 		ID: "owner_" + stableSuffix(allocation.ID, allocation.MachineName)[:16], ResourceID: allocation.ID, AccountID: allocation.AccountID,
 		WorkspaceID: allocation.WorkspaceID, PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID,
-		MachineID: machine.MachineID, InstanceID: machine.InstanceID, NodeName: machine.NodeName, Status: "claimed",
+		MachineID: allocation.MachineName, InstanceID: instanceID, NodeName: allocation.NodeName, Status: "claimed",
 		ProviderRequestID: allocation.ProviderRequestID, ClaimedAt: journal.now(),
 	}
 	ownership, _, err := journal.operations.ClaimMachine(ctx, requested)
 	if err != nil {
 		return MachineOwnership{}, err
 	}
-	cvmAttempt, err := beginProviderMutation(ctx, "tencent_cvm_ownership_tag", "compute_binding", ownership.ResourceID, machine.InstanceID)
-	if err == nil {
-		if cvmAttempt == nil || cvmAttempt.Fresh {
-			err = p.TagComputeMachineCVM(ctx, machine, ownership)
-		} else {
-			err = p.readWorkspaceLaunchComputeOwnership(ctx, allocation, prepared, ownership, false)
-		}
-	}
+	err = p.convergeComputeMachineOwnership(ctx, allocation, prepared, ownership)
 	if err != nil {
-		_ = cvmAttempt.complete(ctx, ownership.ProviderRequestID, ownership, err)
 		ownership.Status = "quarantined"
 		_ = journal.operations.SaveMachineOwnership(ctx, ownership)
-		return ownership, err
-	}
-	if err := cvmAttempt.complete(ctx, ownership.ProviderRequestID, ownership, nil); err != nil {
-		return ownership, err
-	}
-	nodeAttempt, err := beginProviderMutation(ctx, "tencent_kubernetes_node_claim", "compute_binding", ownership.ResourceID, machine.NodeName)
-	if err == nil {
-		if nodeAttempt == nil || nodeAttempt.Fresh {
-			err = p.ClaimComputeNode(ctx, allocation, ownership)
-		} else {
-			err = p.readWorkspaceLaunchComputeOwnership(ctx, allocation, prepared, ownership, true)
-		}
-	}
-	if err != nil {
-		_ = nodeAttempt.complete(ctx, ownership.ProviderRequestID, ownership, err)
-		ownership.Status = "quarantined"
-		_ = journal.operations.SaveMachineOwnership(ctx, ownership)
-		return ownership, err
-	}
-	if err := nodeAttempt.complete(ctx, ownership.ProviderRequestID, ownership, nil); err != nil {
 		return ownership, err
 	}
 	ownership.Status = "active"
@@ -281,15 +252,6 @@ func (p *TencentProvider) ensureWorkspaceLaunchComputeOwnership(ctx context.Cont
 	}
 	return ownership, nil
 }
-
-func (p *TencentProvider) readWorkspaceLaunchComputeOwnership(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership, requireNode bool) error {
-	proof, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
-	if err != nil || proof.CVMOwnershipState != "target_owned" || requireNode && proof.NodeOwnershipState != "target_owned" {
-		return firstNonNil(err, fmt.Errorf("compute_machine_ownership_readback_mismatch"))
-	}
-	return nil
-}
-
 func (p *TencentProvider) tencentWorkspaceLaunchComputeStateFromMutation(ctx context.Context, binding WorkspaceLaunchStageBinding, packageID string) (tencentWorkspaceLaunchState, error) {
 	journal := providerMutationJournalFromContext(ctx)
 	if journal == nil {
