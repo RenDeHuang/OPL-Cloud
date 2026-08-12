@@ -1,0 +1,14 @@
+services:
+  fabric:
+    user: root
+    environment:
+      OPL_FABRIC_PROVIDER: local-docker
+    volumes:
+      - type: bind
+        source: ${OPL_DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+
+  control-plane:
+    environment:
+      OPL_WORKSPACE_IMAGE: ${OPL_WORKSPACE_IMAGE:?Set OPL_WORKSPACE_IMAGE to an immutable Workspace image digest}
+      OPL_WORKSPACE_LAUNCH_WORKER_ENABLED: "1"
