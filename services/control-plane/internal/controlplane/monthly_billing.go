@@ -3,9 +3,17 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 
 	"opl-cloud/services/control-plane/internal/clients"
 )
+
+// ProviderAcceptanceLaunchZone preserves the legacy create-only configuration
+// until the Instance caller cutover. ProviderFactsBatch remains readback authority.
+func ProviderAcceptanceLaunchZone() string {
+	return strings.TrimSpace(os.Getenv("OPL_TENCENT_ZONE"))
+}
 
 func (s *Service) Sub2APIBalance(ctx context.Context, userID int64) (clients.Sub2APIBalance, error) {
 	if s.sub2API == nil {
@@ -41,10 +49,6 @@ func (s *Service) PrepareMonthlyCompute(ctx context.Context, input clients.Compu
 	return s.fabric.CreateComputeAllocation(ctx, input, key)
 }
 
-func (s *Service) SyncMonthlyCompute(ctx context.Context, id string) (clients.ComputeAllocation, error) {
-	return s.fabric.SyncComputeAllocation(ctx, id)
-}
-
 func (s *Service) RenewMonthlyCompute(ctx context.Context, id, key string) (clients.ProviderResourceMutation, error) {
 	client, ok := s.fabric.(clients.FabricRenewalClient)
 	if !ok {
@@ -57,8 +61,29 @@ func (s *Service) PrepareMonthlyStorage(ctx context.Context, input clients.Stora
 	return s.fabric.CreateStorageVolume(ctx, input, key)
 }
 
-func (s *Service) SyncMonthlyStorage(ctx context.Context, id string) (clients.StorageVolume, error) {
-	return s.fabric.SyncStorageVolume(ctx, id)
+// PrepareProviderAcceptanceRuntime is a create-only compatibility bridge for the
+// legacy operator route. Runtime readiness is read separately through ProviderFactsBatch.
+func (s *Service) PrepareProviderAcceptanceRuntime(ctx context.Context, input CreateWorkspaceInput, key string) (clients.WorkspaceRuntime, error) {
+	if input.WorkspaceID == "" || input.AccountID == "" || input.Sub2APIUserID <= 0 || input.ComputeID == "" || input.VolumeID == "" ||
+		input.AttachmentID == "" || input.AttachmentOperationID == "" || input.RuntimeOperationID == "" || input.RuntimeOperationID != key+":runtime" {
+		return clients.WorkspaceRuntime{}, errors.New("provider_acceptance_runtime_input_required")
+	}
+	secretRef, err := s.gatewaySecretRef(ctx, input.AccountID, input.WorkspaceID, input.Sub2APIUserID, key)
+	if err != nil {
+		return clients.WorkspaceRuntime{}, err
+	}
+	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{
+		WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
+		AttachmentID: input.AttachmentID, AttachmentOperationID: input.AttachmentOperationID, RuntimeOperationID: input.RuntimeOperationID,
+		ImageID: "one-person-lab-app", GatewaySecretRef: secretRef,
+	}, input.RuntimeOperationID)
+	if err != nil {
+		return runtime, err
+	}
+	if runtime.ID == "" || runtime.WorkspaceID != input.WorkspaceID || runtime.OperationID != "" && runtime.OperationID != input.RuntimeOperationID {
+		return clients.WorkspaceRuntime{}, ErrWorkspaceRuntimeIdentityMismatch
+	}
+	return runtime, nil
 }
 
 func (s *Service) RenewMonthlyStorage(ctx context.Context, id, key string) (clients.ProviderResourceMutation, error) {
