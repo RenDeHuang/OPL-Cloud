@@ -50,6 +50,10 @@ Sub2API management origin and credentials are never exposed to the browser.
   removed; the active typed Workspace Launch binding path, identity evidence,
   pool-head terminalization, historical migrations/data, and local-Docker gate
   remain.
+- Typed Tencent Workspace Launch and the existing `TagComputeMachine` port now
+  share one adapter-private compute-ownership core for deterministic CVM tagging,
+  Kubernetes node claim, child operations, and authoritative replay readback.
+  Provider-neutral Fabric and Control Plane boundaries are unchanged.
 - Workspace file bodies stay in provider-owned storage: a local Docker volume for
   the local adapter or CBS for the Tencent adapter. Platform PostgreSQL stores
   identity, operation, reference, and evidence facts rather than file bodies.
@@ -57,6 +61,11 @@ Sub2API management origin and credentials are never exposed to the browser.
   stages call the typed Fabric HTTP contract and consume the same six-field
   request-hash vectors as Fabric. A separate legacy provider-acceptance surface
   still contains Tencent-specific client and projection knowledge.
+- The authenticated Workspace owner can issue one durable, resumable delete
+  command. Control Plane coordinates Runtime, attachment, storage, and compute
+  cleanup through existing typed Fabric HTTP routes; partial or unknown results
+  remain unconfirmed, and success requires authoritative Workspace-list
+  readback. This is source and CI evidence, not a complete live installation.
 - ContentTransfer application runtime/API/Ent schema, Archive application models,
   and `ExecutionRequest` application code are retired; historical migrations,
   tables, and data were not dropped. Snapshot/Restore remains an extension
