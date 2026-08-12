@@ -228,10 +228,6 @@ func (s *Service) MonthlyPreflight(ctx context.Context, input MonthlyPreflightIn
 	return result, nil
 }
 
-func workspaceLaunchResourceLockKey(launchOperationID string) string {
-	return "workspace-launch-resources:" + strings.TrimSpace(launchOperationID)
-}
-
 func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocation, error) {
 	if input.PackageID != "basic" && input.PackageID != "pro" {
 		return ComputeAllocation{}, ErrUnsupportedComputePackage
@@ -246,9 +242,6 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 		return ComputeAllocation{}, fmt.Errorf("compute_idempotency_key_required")
 	}
 	requestHash := hashInput(input)
-	if input.LaunchBinding != nil {
-		requestHash = input.LaunchBinding.RequestHash
-	}
 	now := s.now()
 	id := firstNonEmpty(input.ID, "ca_"+stableSuffix("create_compute_allocation", input.IdempotencyKey)[:18])
 	input.ID = id
@@ -270,9 +263,6 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 	operation.ComputePoolKey = allocation.NodePoolID
 	allocation.OperationID = operation.OperationID
 	fillOperationResource(&operation, allocation)
-	if err := bindLaunchStageOperation(&operation, input.LaunchBinding); err != nil {
-		return ComputeAllocation{}, err
-	}
 	stored, claimed, err := s.operations.ClaimComputePoolRuntime(ctx, operation)
 	if err != nil {
 		return ComputeAllocation{}, err
@@ -1065,7 +1055,7 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 	compute := s.computes[input.ComputeID]
 	s.mu.Unlock()
 	computeZone := strings.TrimSpace(compute.Zone)
-	if input.LaunchBinding == nil && computeZone == "" {
+	if computeZone == "" {
 		computeZone = strings.TrimSpace(compute.ProviderData["zone"])
 	}
 	if compute.ID == "" || compute.AccountID != input.AccountID || compute.WorkspaceID != input.WorkspaceID ||
@@ -1073,75 +1063,32 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 		return StorageVolume{}, fmt.Errorf("storage_compute_zone_mismatch")
 	}
 	requestHash := hashInput(input)
-	if input.LaunchBinding != nil {
-		requestHash = input.LaunchBinding.RequestHash
-	}
 	var volume StorageVolume
 	lockKey := "storage-create:" + firstNonEmpty(input.IdempotencyKey, input.ID)
-	if input.LaunchBinding != nil {
-		lockKey = workspaceLaunchResourceLockKey(input.LaunchBinding.LaunchOperationID)
-	}
 	err := s.operations.WithPoolLock(ctx, lockKey, func(lockCtx context.Context) error {
 		var err error
 		operation := newOperation("create_storage_volume", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, s.now())
-		if err := bindLaunchStageOperation(&operation, input.LaunchBinding); err != nil {
+		operations, err := s.operations.List(lockCtx)
+		if err != nil {
 			return err
 		}
-		typedLaunch := input.LaunchBinding != nil
-		if typedLaunch {
-			stored, getErr := s.operations.Get(lockCtx, operation.ID)
-			switch {
-			case getErr == nil:
-				persisted, ok := decodeLaunchStageBinding(stored)
-				if !ok || persisted != *input.LaunchBinding || stored.Action != operation.Action || stored.ResourceKind != operation.ResourceKind ||
-					stored.ResourceID != operation.ResourceID || stored.RequestHash != requestHash {
-					return ErrLaunchStageBindingConflict
-				}
-				if stored.Status == "succeeded" && decodeOperationResource(stored, &volume) {
-					return nil
-				}
-				if stored.Status != "started" && stored.Status != "failed" {
-					return ErrLaunchStageBindingConflict
-				}
-				operation = stored
-				input.AllowExistingExactReplay = true
-			case errors.Is(getErr, ErrOperationNotFound):
-				operation.Status, operation.CreatedAt = "started", s.now()
-				fillOperationResource(&operation, StorageVolume{
-					ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
-					Provider: s.provider.Descriptor().Name, ProviderRequestID: providerRequestID("storage", input.IdempotencyKey),
-				})
-				if err := s.operations.Append(lockCtx, operation); err != nil {
-					return err
-				}
-			default:
-				return getErr
+		for index := len(operations) - 1; index >= 0; index-- {
+			candidate := operations[index]
+			if candidate.Action != "create_storage_volume" || candidate.IdempotencyKey != input.IdempotencyKey || candidate.ResourceID != input.ID {
+				continue
 			}
-		} else {
-			operations, err := s.operations.List(lockCtx)
-			if err != nil {
-				return err
+			if candidate.RequestHash != requestHash {
+				return fmt.Errorf("storage_create_idempotency_conflict")
 			}
-			for index := len(operations) - 1; index >= 0; index-- {
-				candidate := operations[index]
-				if candidate.Action != "create_storage_volume" || candidate.IdempotencyKey != input.IdempotencyKey || candidate.ResourceID != input.ID {
-					continue
-				}
-				if candidate.RequestHash != requestHash {
-					return fmt.Errorf("storage_create_idempotency_conflict")
-				}
-				if candidate.Status == "succeeded" && decodeOperationResource(candidate, &volume) {
-					return nil
-				}
-				input.AllowExistingExactReplay = true
-				break
+			if candidate.Status == "succeeded" && decodeOperationResource(candidate, &volume) {
+				return nil
 			}
+			input.AllowExistingExactReplay = true
+			break
 		}
 		input.OperationID = operation.OperationID
-		if !typedLaunch {
-			if err := s.recordOperation(lockCtx, operation, "started", StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: s.provider.Descriptor().Name, ProviderRequestID: providerRequestID("storage", input.IdempotencyKey)}, nil); err != nil {
-				return err
-			}
+		if err := s.recordOperation(lockCtx, operation, "started", StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: s.provider.Descriptor().Name, ProviderRequestID: providerRequestID("storage", input.IdempotencyKey)}, nil); err != nil {
+			return err
 		}
 		volume, err = s.provider.CreateStorageVolume(s.providerMutationContext(lockCtx, operation), input)
 		volume.ID = input.ID
@@ -1158,16 +1105,7 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 			if knownCBS {
 				volume.Status = "quarantined"
 			}
-			if typedLaunch {
-				if operation.Status == "started" {
-					next := operation
-					next.Status, next.ErrorCode, next.FinishedAt = "failed", errorCode(err), s.now()
-					fillOperationResource(&next, volume)
-					if saveErr := s.operations.SaveRuntime(lockCtx, next); saveErr != nil {
-						return saveErr
-					}
-				}
-			} else if recordErr := s.recordOperation(lockCtx, operation, "failed", volume, err); recordErr != nil {
+			if recordErr := s.recordOperation(lockCtx, operation, "failed", volume, err); recordErr != nil {
 				return recordErr
 			}
 			if knownCBS {
@@ -1177,24 +1115,7 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 			}
 			return err
 		}
-		if typedLaunch {
-			next := operation
-			next.Status, next.ErrorCode, next.FinishedAt = "succeeded", "", s.now()
-			fillOperationResource(&next, volume)
-			if operation.Status == "started" {
-				if err := s.operations.SaveRuntime(lockCtx, next); err != nil {
-					return err
-				}
-			} else {
-				converger, ok := s.operations.(runtimeReadbackConverger)
-				if !ok {
-					return ErrRuntimeOperationNotCurrent
-				}
-				if err := converger.ConvergeRuntimeReadback(lockCtx, operation, next); err != nil {
-					return err
-				}
-			}
-		} else if err := s.recordOperation(lockCtx, operation, "succeeded", volume, nil); err != nil {
+		if err := s.recordOperation(lockCtx, operation, "succeeded", volume, nil); err != nil {
 			return err
 		}
 		s.mu.Lock()
@@ -1562,9 +1483,6 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 	operation.Status = "started"
 	operation.CreatedAt = now
 	fillOperationResource(&operation, StorageAttachment{ID: attachmentID, OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: s.provider.Descriptor().Name, ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)})
-	if err := bindLaunchStageOperation(&operation, input.LaunchBinding); err != nil {
-		return StorageAttachment{}, err
-	}
 	input.OperationID = input.IdempotencyKey
 	stored, claimed, err := s.claimRuntimeOperation(ctx, operation)
 	if err != nil {
@@ -1687,18 +1605,12 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 		action = "update_workspace_runtime"
 	}
 	requestHash := hashInput(input)
-	if input.LaunchBinding != nil {
-		requestHash = input.LaunchBinding.RequestHash
-	}
 	now := s.now()
 	operation := newOperation(action, "workspace_runtime", input.WorkspaceID, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
 	operation.ID = "fop_runtime_claim_" + stableSuffix(action, input.IdempotencyKey)
 	operation.Status = "started"
 	operation.CreatedAt = now
 	fillOperationResource(&operation, WorkspaceRuntime{ID: original.ID, OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)})
-	if err := bindLaunchStageOperation(&operation, input.LaunchBinding); err != nil {
-		return WorkspaceRuntime{}, err
-	}
 	input.OperationID = input.IdempotencyKey
 	stored, claimed, err := s.claimRuntimeOperation(ctx, operation)
 	if err != nil {
@@ -1874,9 +1786,6 @@ func (s *Service) UpsertGatewaySecret(ctx context.Context, input GatewaySecretIn
 		return GatewaySecret{}, fmt.Errorf("gateway_secret_fingerprint_mismatch")
 	}
 	requestHash := hashInput(map[string]any{"accountId": input.AccountID, "workspaceId": input.WorkspaceID, "workspaceApiKeyId": input.WorkspaceAPIKeyID, "fingerprint": input.Fingerprint})
-	if input.LaunchBinding != nil {
-		requestHash = input.LaunchBinding.RequestHash
-	}
 	now := s.now()
 	secretRef := gatewaySecretName(input.WorkspaceID)
 	operation := newOperation("upsert_gateway_secret", "gateway_secret", secretRef, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
@@ -1885,9 +1794,6 @@ func (s *Service) UpsertGatewaySecret(ctx context.Context, input GatewaySecretIn
 	operation.CreatedAt = now
 	operation.ProviderRequestID = providerRequestID("gateway-secret", input.IdempotencyKey)
 	operation.RedactedProviderPayload = map[string]any{"resource": GatewaySecret{SecretRef: secretRef}, "keyDigest": keyDigest}
-	if err := bindLaunchStageOperation(&operation, input.LaunchBinding); err != nil {
-		return GatewaySecret{}, err
-	}
 	stored, claimed, err := s.claimRuntimeOperation(ctx, operation)
 	if err != nil {
 		return GatewaySecret{}, err

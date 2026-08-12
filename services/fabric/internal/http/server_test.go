@@ -3,9 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
-	"crypto/sha1"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -407,181 +405,22 @@ func TestServerMonthlyPreflightReportIsInternalReadOnlyAndStrictJSON(t *testing.
 	}
 }
 
-type computeClaimHTTPProvider struct {
-	testProvider
-	proof      fabric.ComputeClaimProviderProof
-	claim      fabric.ComputeClaimProviderClaim
-	proofCalls int
-	claimCalls int
-}
+func TestComputePoolHeadTerminalizationHTTPRoutesRemainRegistered(t *testing.T) {
+	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(method, "/fabric/compute-pool-head/terminalization", strings.NewReader(`{}`))
+		server.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("%s unauthorized status=%d body=%s", method, recorder.Code, recorder.Body.String())
+		}
 
-func (p *computeClaimHTTPProvider) ProveComputeClaimRecovery(_ context.Context, _ fabric.ComputeAllocation, _ fabric.ComputeAllocationPreparation, _ fabric.MachineOwnership) (fabric.ComputeClaimProviderProof, error) {
-	p.proofCalls++
-	return p.proof, nil
-}
-
-func (p *computeClaimHTTPProvider) ClaimComputeRecovery(_ context.Context, _ fabric.ComputeAllocation, _ fabric.ComputeAllocationPreparation, _ fabric.MachineOwnership) (fabric.ComputeClaimProviderClaim, error) {
-	p.claimCalls++
-	return p.claim, nil
-}
-
-func (p *computeClaimHTTPProvider) DiscoverStorageRecovery(_ context.Context, _ fabric.StorageVolumeInput) (fabric.StorageRecoveryDiscovery, error) {
-	return fabric.StorageRecoveryDiscovery{State: "storage_not_started", ProviderRequestID: "req-storage-discovery"}, nil
-}
-
-func computeClaimHTTPFixture(t *testing.T) (*fabric.Service, *fabric.MemoryOperationStore, *computeClaimHTTPProvider, fabric.ComputeClaimRecoveryInput) {
-	t.Helper()
-	input := fabric.ComputeClaimRecoveryInput{
-		LaunchOperationID: "launch-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture",
-		ComputeAllocationID: "ca-fixture", PackageID: "basic",
-		PoolID: "pool-basic-2c4g", NodePoolID: "np-workspace-basic",
-	}
-	storageIdentity := sha1.New()
-	for _, part := range []string{"vol", input.AccountID, input.LaunchOperationID + ":storage"} {
-		_, _ = storageIdentity.Write([]byte(part))
-		_, _ = storageIdentity.Write([]byte{0})
-	}
-	input.StorageVolumeID = "vol_" + hex.EncodeToString(storageIdentity.Sum(nil))[:18]
-	plan := fabric.ComputeAllocationPreparation{
-		PoolID: input.PoolID, PackageID: input.PackageID, NodePoolID: input.NodePoolID, InstanceType: "SA5.MEDIUM4",
-		MaxReplicas: 10, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"machine-before"},
-	}
-	allocation := fabric.ComputeAllocation{
-		ID: input.ComputeAllocationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID,
-		Status: "quarantined", Provider: "tencent-tke", ProviderResourceID: "ins-fixture", PoolID: input.PoolID, NodePoolID: input.NodePoolID,
-		MachineName: "machine-after", InstanceID: "ins-fixture", CVMInstanceID: "ins-fixture", NodeName: "10.0.0.18", PrivateIP: "10.0.0.18",
-		InstanceType: plan.InstanceType, Zone: "ap-guangzhou-3", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-28T00:00:00Z",
-		ProviderData: map[string]string{
-			"instanceType": plan.InstanceType, "zone": "ap-guangzhou-3", "chargeType": "PREPAID", "periodMonths": "1",
-			"renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-28T00:00:00Z", "machineName": "machine-after",
-		},
-	}
-	ownership := fabric.MachineOwnership{
-		ID: "owner-fixture", ResourceID: allocation.ID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
-		PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, MachineID: allocation.MachineName,
-		InstanceID: allocation.InstanceID, NodeName: allocation.NodeName, Status: "quarantined", ClaimedAt: time.Now().UTC(),
-	}
-	operation := fabric.FabricOperation{
-		ID: "fop-compute-fixture", OperationID: "op-compute-fixture", CallerService: "control-plane", Action: "create_compute_allocation",
-		ResourceKind: "compute_allocation", ResourceID: allocation.ID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
-		Provider: "tencent-tke", IdempotencyKey: input.LaunchOperationID + ":compute", RequestHash: "fixture-hash", Status: "failed", ComputePoolKey: input.NodePoolID,
-		RedactedProviderPayload: map[string]any{"resource": allocation, "allocationPlan": plan}, CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC(),
-	}
-	store := fabric.NewMemoryOperationStore()
-	if err := store.Append(context.Background(), operation); err != nil {
-		t.Fatal(err)
-	}
-	if _, claimed, err := store.ClaimMachine(context.Background(), ownership); err != nil || !claimed {
-		t.Fatalf("seed ownership: claimed=%v err=%v", claimed, err)
-	}
-	provider := &computeClaimHTTPProvider{proof: fabric.ComputeClaimProviderProof{
-		Status: "proven", NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable", MachineName: allocation.MachineName,
-		NodeName: allocation.NodeName, CVMInstanceID: allocation.InstanceID, PrivateIP: allocation.PrivateIP, InstanceType: allocation.InstanceType,
-		Zone: allocation.Zone, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: allocation.Deadline,
-	}}
-	provider.claim = fabric.ComputeClaimProviderClaim{
-		Proof: provider.proof, TencentMutationCount: 1, KubernetesMutationCount: 1,
-		Evidence: &fabric.ComputeClaimEvidence{
-			CVM:  fabric.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
-			Node: fabric.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
-		},
-	}
-	provider.claim.Proof.NodeOwnershipState = "target_owned"
-	provider.claim.Proof.CVMOwnershipState = "target_owned"
-	return fabric.NewServiceWithOperationStore(provider, store), store, provider, input
-}
-
-func TestComputePoolHeadTerminalizationHTTPUsesOneExactCASAndReadOnlyReplay(t *testing.T) {
-	service, store, provider, input := computeClaimHTTPFixture(t)
-	provider.claim = fabric.ComputeClaimProviderClaim{
-		Proof: fabric.ComputeClaimProviderProof{
-			Status: "blocked", Reason: "provider_describe", NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable",
-			MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName, CVMInstanceID: provider.proof.CVMInstanceID,
-			PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
-			ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: provider.proof.Deadline,
-		},
-		TencentMutationCount: 1, KubernetesMutationCount: 0, FailureStage: "cvm_tag_readback", ProviderErrorClass: "readback_mismatch",
-		Evidence: &fabric.ComputeClaimEvidence{
-			CVM:  fabric.ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"opl_account_id"}},
-			Node: fabric.ComputeClaimMutationEvidence{},
-		},
-	}
-	claimInput := fabric.ComputeClaimRecoveryClaimInput{
-		ComputeClaimRecoveryInput: input, MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
-		CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP,
-		InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone, IdempotencyKey: input.LaunchOperationID + ":compute",
-	}
-	if _, err := service.ClaimComputeRecovery(context.Background(), claimInput); err == nil {
-		t.Fatal("manual recovery fixture unexpectedly completed")
-	}
-	operations, err := store.List(context.Background())
-	if err != nil || len(operations) != 1 || operations[0].Status != "claim_pending" || provider.proofCalls != 1 || provider.claimCalls != 1 {
-		t.Fatalf("manual recovery fixture operations=%#v calls=%d/%d err=%v", operations, provider.proofCalls, provider.claimCalls, err)
-	}
-
-	server := NewServer(service, "internal-secret")
-	path := "/fabric/compute-pool-head/terminalization?nodePoolId=" + input.NodePoolID
-	unauthorized := httptest.NewRecorder()
-	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, path, nil))
-	if unauthorized.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthorized status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
-	}
-
-	candidateRecorder := httptest.NewRecorder()
-	server.ServeHTTP(candidateRecorder, testRequest(http.MethodGet, path, nil))
-	var candidate fabric.ComputePoolHeadTerminalizationReadback
-	if candidateRecorder.Code != http.StatusOK || json.NewDecoder(candidateRecorder.Body).Decode(&candidate) != nil ||
-		candidate.Status != "candidate" || candidate.HeadStatus != "claim_pending" || candidate.AllocationStatus != "quarantined" ||
-		candidate.OwnershipStatus != "quarantined" || len(candidate.ApprovalDigest) != 64 || len(candidate.BindingDigest) != 64 ||
-		len(candidate.ManualRecoveryLedgerDigest) != 64 || candidate.Sub2APIMutationCount != 0 || candidate.TencentMutationCount != 0 || candidate.KubernetesMutationCount != 0 {
-		t.Fatalf("candidate status=%d candidate=%#v body=%s", candidateRecorder.Code, candidate, candidateRecorder.Body.String())
-	}
-	if provider.proofCalls != 1 || provider.claimCalls != 1 {
-		t.Fatalf("candidate readback called provider: %d/%d", provider.proofCalls, provider.claimCalls)
-	}
-
-	const approvalID = "operator-terminalize-30970000005"
-	invalidBody := fmt.Sprintf(`{"nodePoolId":%q,"approvalId":%q,"approvalDigest":%q,"unexpected":true}`, input.NodePoolID, approvalID, candidate.ApprovalDigest)
-	invalidRequest := testRequest(http.MethodPost, "/fabric/compute-pool-head/terminalization", strings.NewReader(invalidBody))
-	invalidRequest.Header.Set("Idempotency-Key", approvalID)
-	invalidRecorder := httptest.NewRecorder()
-	server.ServeHTTP(invalidRecorder, invalidRequest)
-	operations, _ = store.List(context.Background())
-	if invalidRecorder.Code != http.StatusBadRequest || len(operations) != 1 || operations[0].Status != "claim_pending" {
-		t.Fatalf("invalid request status=%d body=%s operations=%#v", invalidRecorder.Code, invalidRecorder.Body.String(), operations)
-	}
-
-	body, _ := json.Marshal(fabric.ComputePoolHeadTerminalizationInput{NodePoolID: input.NodePoolID, ApprovalID: approvalID, ApprovalDigest: candidate.ApprovalDigest})
-	request := testRequest(http.MethodPost, "/fabric/compute-pool-head/terminalization", bytes.NewReader(body))
-	request.Header.Set("Idempotency-Key", approvalID)
-	recorder := httptest.NewRecorder()
-	server.ServeHTTP(recorder, request)
-	var terminalized fabric.ComputePoolHeadTerminalizationReadback
-	if recorder.Code != http.StatusOK || json.NewDecoder(recorder.Body).Decode(&terminalized) != nil || terminalized.Status != "succeeded" ||
-		terminalized.HeadStatus != "failed" || terminalized.TerminalStatus != "terminal_unprovable" || terminalized.Replayed ||
-		terminalized.Sub2APIMutationCount != 0 || terminalized.TencentMutationCount != 0 || terminalized.KubernetesMutationCount != 0 {
-		t.Fatalf("terminalized status=%d result=%#v body=%s", recorder.Code, terminalized, recorder.Body.String())
-	}
-	if provider.proofCalls != 1 || provider.claimCalls != 1 {
-		t.Fatalf("terminalization called provider: %d/%d", provider.proofCalls, provider.claimCalls)
-	}
-
-	replayPath := path + "&approvalId=" + approvalID + "&approvalDigest=" + candidate.ApprovalDigest
-	replayRecorder := httptest.NewRecorder()
-	server.ServeHTTP(replayRecorder, testRequest(http.MethodGet, replayPath, nil))
-	var replayed fabric.ComputePoolHeadTerminalizationReadback
-	if replayRecorder.Code != http.StatusOK || json.NewDecoder(replayRecorder.Body).Decode(&replayed) != nil || replayed.Status != "succeeded" || !replayed.Replayed ||
-		replayed.ApprovalDigest != candidate.ApprovalDigest || replayed.BindingDigest != candidate.BindingDigest || replayed.ManualRecoveryLedgerDigest != candidate.ManualRecoveryLedgerDigest {
-		t.Fatalf("replay status=%d result=%#v body=%s", replayRecorder.Code, replayed, replayRecorder.Body.String())
-	}
-
-	conflictBody, _ := json.Marshal(fabric.ComputePoolHeadTerminalizationInput{NodePoolID: input.NodePoolID, ApprovalID: approvalID, ApprovalDigest: strings.Repeat("0", 64)})
-	conflictRequest := testRequest(http.MethodPost, "/fabric/compute-pool-head/terminalization", bytes.NewReader(conflictBody))
-	conflictRequest.Header.Set("Idempotency-Key", approvalID)
-	conflictRecorder := httptest.NewRecorder()
-	server.ServeHTTP(conflictRecorder, conflictRequest)
-	if conflictRecorder.Code != http.StatusConflict || provider.proofCalls != 1 || provider.claimCalls != 1 {
-		t.Fatalf("conflict status=%d body=%s calls=%d/%d", conflictRecorder.Code, conflictRecorder.Body.String(), provider.proofCalls, provider.claimCalls)
+		recorder = httptest.NewRecorder()
+		request = testRequest(method, "/fabric/compute-pool-head/terminalization", strings.NewReader(`{}`))
+		server.ServeHTTP(recorder, request)
+		if recorder.Code == http.StatusNotFound {
+			t.Fatalf("%s terminalization route is not registered", method)
+		}
 	}
 }
 

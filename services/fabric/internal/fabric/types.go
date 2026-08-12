@@ -137,24 +137,6 @@ type MonthlyProviderTruth struct {
 	ErrorCode         string            `json:"errorCode,omitempty"`
 }
 
-// ComputeProviderTruth is the compute-stage projection of provider truth.
-// It intentionally does not require a StorageVolume record; Storage remains a
-// later stage and is reported independently as unknown/not-started.
-type ComputeProviderTruth struct {
-	SchemaVersion      int                        `json:"schemaVersion"`
-	State              string                     `json:"state"`
-	Reason             string                     `json:"reason,omitempty"`
-	ComputeState       string                     `json:"computeState"`
-	StorageState       string                     `json:"storageState"`
-	Compute            ComputeAllocation          `json:"compute"`
-	NodeOwnershipState string                     `json:"nodeOwnershipState"`
-	CVMOwnershipState  string                     `json:"cvmOwnershipState"`
-	ProviderRequestID  string                     `json:"providerRequestId,omitempty"`
-	FailureStage       string                     `json:"failureStage,omitempty"`
-	ProviderErrorClass string                     `json:"providerErrorClass,omitempty"`
-	Proof              *ComputeClaimRecoveryProof `json:"proof,omitempty"`
-}
-
 type ComputeClaimRecoveryInput struct {
 	LaunchOperationID   string `json:"launchOperationId"`
 	AccountID           string `json:"accountId"`
@@ -205,23 +187,6 @@ type ComputeClaimProviderIdentityFailure struct {
 	Predicate      string `json:"predicate"`
 	ExpectedDigest string `json:"expectedDigest"`
 	ActualDigest   string `json:"actualDigest"`
-}
-
-type ComputeClaimProviderClaim struct {
-	Proof                   ComputeClaimProviderProof `json:"proof"`
-	TencentMutationCount    int                       `json:"tencentMutationCount"`
-	KubernetesMutationCount int                       `json:"kubernetesMutationCount"`
-	FailureStage            string                    `json:"failureStage,omitempty"`
-	ProviderErrorClass      string                    `json:"providerErrorClass,omitempty"`
-	Evidence                *ComputeClaimEvidence     `json:"evidence,omitempty"`
-}
-
-type StorageRecoveryDiscovery struct {
-	State              string `json:"state"`
-	ProviderResourceID string `json:"providerResourceId,omitempty"`
-	ProviderRequestID  string `json:"providerRequestId,omitempty"`
-	Reason             string `json:"reason,omitempty"`
-	MutationCount      int    `json:"mutationCount"`
 }
 
 // ComputeClaimMutationEvidence separates calls attempted from mutations that
@@ -389,15 +354,14 @@ type IngressDomain struct {
 }
 
 type ComputeAllocationInput struct {
-	ID             string                       `json:"id,omitempty"`
-	AccountID      string                       `json:"accountId"`
-	WorkspaceID    string                       `json:"workspaceId"`
-	PackageID      string                       `json:"packageId"`
-	NodePoolID     string                       `json:"nodePoolId,omitempty"`
-	IdempotencyKey string                       `json:"-"`
-	OperationID    string                       `json:"-"`
-	LaunchBinding  *WorkspaceLaunchStageBinding `json:"-"`
-	DryRun         bool                         `json:"dryRun,omitempty"`
+	ID             string `json:"id,omitempty"`
+	AccountID      string `json:"accountId"`
+	WorkspaceID    string `json:"workspaceId"`
+	PackageID      string `json:"packageId"`
+	NodePoolID     string `json:"nodePoolId,omitempty"`
+	IdempotencyKey string `json:"-"`
+	OperationID    string `json:"-"`
+	DryRun         bool   `json:"dryRun,omitempty"`
 }
 
 // ComputeAllocation is the legacy provider-fact model used by existing Fabric
@@ -483,18 +447,17 @@ type ComputeAllocationExecution struct {
 }
 
 type StorageVolumeInput struct {
-	ID                         string                       `json:"id,omitempty"`
-	AccountID                  string                       `json:"accountId"`
-	WorkspaceID                string                       `json:"workspaceId"`
-	ComputeID                  string                       `json:"computeId"`
-	Zone                       string                       `json:"zone"`
-	SizeGB                     int                          `json:"sizeGb"`
-	ExpectedRecoveryState      string                       `json:"expectedRecoveryState,omitempty"`
-	ExpectedProviderResourceID string                       `json:"expectedProviderResourceId,omitempty"`
-	IdempotencyKey             string                       `json:"-"`
-	OperationID                string                       `json:"-"`
-	AllowExistingExactReplay   bool                         `json:"-"`
-	LaunchBinding              *WorkspaceLaunchStageBinding `json:"-"`
+	ID                         string `json:"id,omitempty"`
+	AccountID                  string `json:"accountId"`
+	WorkspaceID                string `json:"workspaceId"`
+	ComputeID                  string `json:"computeId"`
+	Zone                       string `json:"zone"`
+	SizeGB                     int    `json:"sizeGb"`
+	ExpectedRecoveryState      string `json:"expectedRecoveryState,omitempty"`
+	ExpectedProviderResourceID string `json:"expectedProviderResourceId,omitempty"`
+	IdempotencyKey             string `json:"-"`
+	OperationID                string `json:"-"`
+	AllowExistingExactReplay   bool   `json:"-"`
 }
 
 // StorageVolume remains the legacy provider-fact model. Provider-specific facts
@@ -552,12 +515,11 @@ type StorageSnapshot struct {
 }
 
 type StorageAttachmentInput struct {
-	WorkspaceID    string                       `json:"workspaceId"`
-	ComputeID      string                       `json:"computeId"`
-	VolumeID       string                       `json:"volumeId"`
-	IdempotencyKey string                       `json:"-"`
-	OperationID    string                       `json:"-"`
-	LaunchBinding  *WorkspaceLaunchStageBinding `json:"-"`
+	WorkspaceID    string `json:"workspaceId"`
+	ComputeID      string `json:"computeId"`
+	VolumeID       string `json:"volumeId"`
+	IdempotencyKey string `json:"-"`
+	OperationID    string `json:"-"`
 }
 
 type StorageAttachment struct {
@@ -575,17 +537,16 @@ type StorageAttachment struct {
 }
 
 type WorkspaceRuntimeInput struct {
-	WorkspaceID           string                       `json:"workspaceId"`
-	ComputeID             string                       `json:"computeId"`
-	VolumeID              string                       `json:"volumeId"`
-	AttachmentID          string                       `json:"attachmentId"`
-	AttachmentOperationID string                       `json:"attachmentOperationId"`
-	RuntimeOperationID    string                       `json:"runtimeOperationId"`
-	ImageID               string                       `json:"imageId"`
-	GatewaySecretRef      string                       `json:"gatewaySecretRef"`
-	IdempotencyKey        string                       `json:"-"`
-	OperationID           string                       `json:"-"`
-	LaunchBinding         *WorkspaceLaunchStageBinding `json:"-"`
+	WorkspaceID           string `json:"workspaceId"`
+	ComputeID             string `json:"computeId"`
+	VolumeID              string `json:"volumeId"`
+	AttachmentID          string `json:"attachmentId"`
+	AttachmentOperationID string `json:"attachmentOperationId"`
+	RuntimeOperationID    string `json:"runtimeOperationId"`
+	ImageID               string `json:"imageId"`
+	GatewaySecretRef      string `json:"gatewaySecretRef"`
+	IdempotencyKey        string `json:"-"`
+	OperationID           string `json:"-"`
 }
 
 type WorkspaceRuntime struct {
@@ -614,13 +575,12 @@ type RuntimeAccess struct {
 }
 
 type GatewaySecretInput struct {
-	AccountID         string                       `json:"accountId"`
-	WorkspaceID       string                       `json:"workspaceId"`
-	WorkspaceAPIKeyID int64                        `json:"workspaceApiKeyId"`
-	Fingerprint       string                       `json:"fingerprint"`
-	GatewayAPIKey     string                       `json:"gatewayApiKey"`
-	IdempotencyKey    string                       `json:"-"`
-	LaunchBinding     *WorkspaceLaunchStageBinding `json:"-"`
+	AccountID         string `json:"accountId"`
+	WorkspaceID       string `json:"workspaceId"`
+	WorkspaceAPIKeyID int64  `json:"workspaceApiKeyId"`
+	Fingerprint       string `json:"fingerprint"`
+	GatewayAPIKey     string `json:"gatewayApiKey"`
+	IdempotencyKey    string `json:"-"`
 }
 
 type GatewaySecret struct {
