@@ -9,6 +9,7 @@ import * as productionLiveQa from "../../tools/production-live-qa.ts";
 
 import {
   LIVE_QA_CONFIRMATION,
+  resourceIds,
   runProductionLiveQaEntrypoint,
   runProductionLiveQaCli,
   verifyProductionLiveQa
@@ -154,6 +155,22 @@ test("stage-aware compute readback keeps Node ownership first when storage is at
   assert.equal(result.storage.nextAction, undefined);
   assert.equal(result.node.resourceVersion, "418");
   assert.equal(result.node.taint.value, "unallocated");
+});
+
+test("rollout QA resource ids normalize missing legacy projections without weakening canonical ids", () => {
+  assert.deepEqual(resourceIds({ slot: {
+    computeProviderResourceId: "ins-slot-1",
+    storageProviderResourceId: "disk-slot-1"
+  } }), {
+    cvmInstanceId: "ins-slot-1",
+    cbsDiskId: "disk-slot-1",
+    nodePoolId: "",
+    persistentVolumeId: ""
+  });
+  assert.throws(() => resourceIds({ slot: {
+    computeProviderResourceId: "",
+    storageProviderResourceId: "disk-slot-1"
+  } }), /production_live_qa_resource_ids_required/);
 });
 
 test("compute claim readback preserves a canonical evaluator storage approval predicate", () => {
@@ -7253,6 +7270,7 @@ function readOnlyFixture({
 
 function liveFixture({
   changedResourceIds = false,
+  changedLegacyResourceIds = false,
   changedProviderOperations = false,
   changedLaunchOperation = false,
   changedRuntimeOperation = false,
@@ -7297,14 +7315,15 @@ function liveFixture({
   };
   const resourceState = () => {
     state.stateReads += 1;
-    const suffix = changedResourceIds && state.stateReads > 1 ? "changed" : "1";
+    const canonicalSuffix = changedResourceIds && state.stateReads > 1 ? "changed" : "1";
+    const legacySuffix = changedLegacyResourceIds && state.stateReads > 1 ? "changed" : "1";
     const result = {
       computeAllocations: [{
         id: "compute-slot-1",
         accountId: BASIC_ACCOUNT_ID,
         workspaceId: "workspace-slot-1",
-        providerResourceId: "ins-slot-1",
-        nodePoolId: `np-slot-${suffix}`,
+        providerResourceId: `ins-slot-${canonicalSuffix}`,
+        nodePoolId: `np-slot-${legacySuffix}`,
         status: "running",
         costTags: { opl_account_id: BASIC_ACCOUNT_ID, opl_workspace_id: "workspace-slot-1", opl_resource_id: "compute-slot-1" },
         providerData: { instanceType: "SA5.MEDIUM4", zone: "ap-guangzhou-3", chargeType: "PREPAID", periodMonths: "1", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline }
@@ -7313,11 +7332,11 @@ function liveFixture({
         id: "storage-slot-1",
         accountId: BASIC_ACCOUNT_ID,
         workspaceId: "workspace-slot-1",
-        providerResourceId: "disk-slot-1",
+        providerResourceId: `disk-slot-${canonicalSuffix}`,
         sizeGb: 10,
         status: "available",
         costTags: { opl_account_id: BASIC_ACCOUNT_ID, opl_workspace_id: "workspace-slot-1", opl_resource_id: "storage-slot-1" },
-        providerData: { diskChargeType: "PREPAID", periodMonths: "1", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline, zone: "ap-guangzhou-3", pvName: "pv-slot-1" }
+        providerData: { diskChargeType: "PREPAID", periodMonths: "1", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline, zone: "ap-guangzhou-3", pvName: `pv-slot-${legacySuffix}` }
       }],
       workspaces: [{
         id: "workspace-slot-1",
@@ -7622,6 +7641,17 @@ test("rollout QA fails closed when any retained provider resource id changes", a
   const fixture = liveFixture({ changedResourceIds: true });
   await assert.rejects(() => verifyProductionLiveQa(options(fixture)), /production_live_qa_resource_ids_changed/);
   assert.equal(fixture.state.modelRequests, 1);
+});
+
+test("rollout QA ignores changes to response-only legacy resource projections", async () => {
+  const fixture = liveFixture({ changedLegacyResourceIds: true });
+  const result = await verifyProductionLiveQa(options(fixture));
+  assert.equal(result.ok, true);
+  assert.equal(result.resourceIds.unchanged, true);
+  assert.notEqual(result.resourceIds.before.nodePoolId, result.resourceIds.after.nodePoolId);
+  assert.notEqual(result.resourceIds.before.persistentVolumeId, result.resourceIds.after.persistentVolumeId);
+  assert.equal(result.resourceIds.before.cvmInstanceId, result.resourceIds.after.cvmInstanceId);
+  assert.equal(result.resourceIds.before.cbsDiskId, result.resourceIds.after.cbsDiskId);
 });
 
 test("rollout QA CLI requires explicit one-request confirmation before network access", async () => {
