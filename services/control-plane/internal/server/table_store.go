@@ -271,6 +271,7 @@ type controlPlaneTableStore interface {
 	PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error
 	ActivateWorkspaceLaunchProjection(ctx context.Context, row map[string]any) (map[string]any, error)
 	ClaimWorkspaceCreate(ctx context.Context, workspace map[string]any, operation map[string]any) error
+	ApplyWorkspaceDelete(ctx context.Context, mutation workspaceDeleteStoreMutation) error
 	DeleteWorkspace(ctx context.Context, id string) error
 
 	ListAuditEvents(ctx context.Context, accountID string) ([]map[string]any, error)

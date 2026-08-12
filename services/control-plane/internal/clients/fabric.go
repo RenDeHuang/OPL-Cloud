@@ -48,6 +48,14 @@ type FabricMonthlyPreflightClient interface {
 	MonthlyPreflight(context.Context, MonthlyPreflightInput) (MonthlyPreflight, error)
 }
 
+type FabricWorkspaceDeleteClient interface {
+	DestroyWorkspaceRuntime(context.Context, string, string) (WorkspaceRuntime, error)
+	DetachStorageAttachment(context.Context, string, string) (StorageAttachment, error)
+	DestroyStorageVolume(context.Context, string, string) (StorageVolume, error)
+	DestroyComputeAllocation(context.Context, string, string) (ComputeAllocation, error)
+	ReadComputeAllocation(context.Context, string) (ComputeAllocation, error)
+}
+
 type FabricHTTPError struct {
 	StatusCode int
 	Body       string
@@ -345,6 +353,18 @@ func (c *fabricHTTPClient) RenewComputeAllocation(ctx context.Context, id, idemp
 	return result, err
 }
 
+func (c *fabricHTTPClient) DestroyComputeAllocation(ctx context.Context, id, idempotencyKey string) (ComputeAllocation, error) {
+	var result ComputeAllocation
+	err := c.post(ctx, "/fabric/compute-allocations/"+url.PathEscape(id)+"/destroy", map[string]any{}, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) ReadComputeAllocation(ctx context.Context, id string) (ComputeAllocation, error) {
+	var result ComputeAllocation
+	err := c.get(ctx, "/fabric/compute-allocations/"+url.PathEscape(id), &result)
+	return result, err
+}
+
 func (c *fabricHTTPClient) CreateStorageVolume(ctx context.Context, input StorageVolumeInput, idempotencyKey string) (StorageVolume, error) {
 	var result StorageVolume
 	err := c.post(ctx, "/fabric/storage-volumes", input, idempotencyKey, &result)
@@ -363,9 +383,21 @@ func (c *fabricHTTPClient) RenewStorageVolume(ctx context.Context, id, idempoten
 	return result, err
 }
 
+func (c *fabricHTTPClient) DestroyStorageVolume(ctx context.Context, id, idempotencyKey string) (StorageVolume, error) {
+	var result StorageVolume
+	err := c.post(ctx, "/fabric/storage-volumes/"+url.PathEscape(id)+"/destroy", map[string]any{}, idempotencyKey, &result)
+	return result, err
+}
+
 func (c *fabricHTTPClient) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (StorageAttachment, error) {
 	var result StorageAttachment
 	err := c.post(ctx, "/fabric/storage-attachments", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) DetachStorageAttachment(ctx context.Context, id, idempotencyKey string) (StorageAttachment, error) {
+	var result StorageAttachment
+	err := c.post(ctx, "/fabric/storage-attachments/"+url.PathEscape(id)+"/detach", map[string]any{}, idempotencyKey, &result)
 	return result, err
 }
 
@@ -411,6 +443,12 @@ func (c *fabricHTTPClient) RuntimeHealthSummary(ctx context.Context) (RuntimeHea
 func (c *fabricHTTPClient) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, idempotencyKey string) (WorkspaceRuntime, error) {
 	var result WorkspaceRuntime
 	err := c.post(ctx, "/fabric/workspace-runtimes", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) DestroyWorkspaceRuntime(ctx context.Context, workspaceID, idempotencyKey string) (WorkspaceRuntime, error) {
+	var result WorkspaceRuntime
+	err := c.post(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(workspaceID)+"/destroy", map[string]any{}, idempotencyKey, &result)
 	return result, err
 }
 
