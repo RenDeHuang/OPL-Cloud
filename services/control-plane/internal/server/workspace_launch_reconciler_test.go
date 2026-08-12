@@ -591,6 +591,31 @@ func TestWorkspaceLaunchActivationWritesProjectionWithoutFabricRows(t *testing.T
 	}
 }
 
+func TestWorkspaceLaunchProjectionMatchesCanonicalCurrentResourceFields(t *testing.T) {
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for field, value := range map[string]string{
+		"computeAllocationId": "compute-fabric", "storageId": "storage-fabric", "attachmentId": "attachment-fabric",
+		"runtimeId": "runtime-fabric", "runtimeServiceName": "runtime-service",
+	} {
+		operation.raw[field], _ = json.Marshal(value)
+	}
+	workspace := map[string]any{
+		"id": operation.stringFact("workspaceId"), "accountId": operation.stringFact("accountId"), "ownerUserId": operation.stringFact("ownerUserId"),
+		"currentComputeAllocationId": "compute-fabric", "storageId": "storage-fabric", "currentAttachmentId": "attachment-fabric",
+		"runtimeId": "runtime-fabric", "runtime": map[string]any{"serviceName": "runtime-service"}, "state": "running",
+	}
+	if !workspaceLaunchProjectionMatches(operation, workspace) {
+		t.Fatalf("canonical PostgreSQL Workspace projection did not match: %#v", workspace)
+	}
+	workspace["currentAttachmentId"] = "attachment-other"
+	if workspaceLaunchProjectionMatches(operation, workspace) {
+		t.Fatalf("drifted attachment matched: %#v", workspace)
+	}
+}
+
 func TestCurrentWorkspaceImageDigestRequiresRepository(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	t.Setenv("OPL_WORKSPACE_IMAGE", "@"+digest)

@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -74,9 +76,25 @@ func storeDatabaseURL(getenv func(string) string) (string, error) {
 		return "", errors.New("DATABASE_URL is required for production Ledger persistence")
 	}
 	if databaseURL != "" {
-		if err := postgresmigrate.ValidateTLS(databaseURL); err != nil {
+		if err := postgresmigrate.ValidateTLS(databaseURL); err != nil && !localPostgresTestDatabaseURL(getenv, databaseURL) {
 			return "", err
 		}
 	}
 	return databaseURL, nil
+}
+
+func localPostgresTestDatabaseURL(getenv func(string) string, databaseURL string) bool {
+	if getenv("NODE_ENV") == "production" || getenv("OPL_POSTGRES_TESTS") != "1" {
+		return false
+	}
+	parsed, err := url.Parse(databaseURL)
+	if err != nil || parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" || parsed.Host == "" || parsed.Fragment != "" {
+		return false
+	}
+	query := parsed.Query()
+	if len(query["sslmode"]) != 1 || query.Get("sslmode") != "disable" || query.Has("host") {
+		return false
+	}
+	address := net.ParseIP(parsed.Hostname())
+	return address != nil && address.IsLoopback()
 }
