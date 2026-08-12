@@ -991,137 +991,6 @@ func newComputeClaimProviderIdentityFailure(predicate string, expected, actual a
 	return value
 }
 
-func (p *TencentProvider) ClaimComputeRecovery(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderClaim, error) {
-	result := ComputeClaimProviderClaim{Evidence: &ComputeClaimEvidence{}}
-	proof, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
-	result.Proof = proof
-	if err != nil {
-		return result, err
-	}
-	target := protectedresource.Target{
-		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: ownership.MachineID,
-		NodeName: ownership.NodeName, CVMID: ownership.InstanceID,
-	}
-	if err := protectedresource.FromEnv().Check(target); err != nil {
-		result.Proof.Reason = "identity_mismatch"
-		return result, err
-	}
-	if proof.CVMOwnershipState == "recoverable" {
-		nodeRaw, nodeReadErr := p.callKubectl(ctx, []string{"get", "node/" + allocation.NodeName, "-o", "json"}, nil, protectedresource.Target{})
-		if nodeReadErr != nil {
-			result.Proof.Reason = computeClaimKubectlReason(nodeReadErr)
-			result.FailureStage, result.ProviderErrorClass = "node_pre_cvm_read", computeClaimKubectlErrorClass(nodeReadErr)
-			return result, computeClaimProviderError(result.Proof.Reason)
-		}
-		nodeState, nodeOK := computeClaimNodeOwnershipState(nodeRaw, allocation, ownership)
-		if !nodeOK {
-			result.Proof.Reason = "node_ownership_conflict"
-			if nodeState == "identity_mismatch" {
-				result.Proof.Reason = "identity_mismatch"
-			}
-			result.FailureStage, result.ProviderErrorClass = "node_pre_cvm_read", "ownership_conflict"
-			return result, computeClaimProviderError(result.Proof.Reason)
-		}
-		result.Proof.NodeOwnershipState = nodeState
-		response, provisionErr := p.provision(ctx, computeClaimProvisionerRequest("claim_compute_machine", allocation, prepared, ownership))
-		result.TencentMutationCount = max(0, response.MutationCount)
-		if response.MutationEvidence != nil {
-			result.Evidence.CVM = cloneComputeClaimMutationEvidence(*response.MutationEvidence)
-		}
-		if provisionErr != nil {
-			result.Proof.Reason = "provider_describe"
-			result.FailureStage, result.ProviderErrorClass = "cvm_provisioner_transport", "transport_error"
-			if response.MutationEvidence == nil {
-				result.TencentMutationCount = 5
-				result.Evidence.CVM = ComputeClaimMutationEvidence{
-					Attempted: 5,
-					Unknown:   5,
-					Missing:   []string{"instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"},
-				}
-			}
-			return result, computeClaimProviderError(result.Proof.Reason)
-		}
-		if response.FailureStage != "" || response.ProviderErrorClass != "" {
-			result.FailureStage, result.ProviderErrorClass = response.FailureStage, response.ProviderErrorClass
-		}
-		if !response.OK || response.Status != "claimed" || response.InstanceID != firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) ||
-			response.ProviderData["cvmOwnershipState"] != "target_owned" || !validConfirmedComputeClaimMutation(response.MutationEvidence, response.MutationCount, 5) {
-			result.Proof.Reason = safeComputeClaimRecoveryReason(response.ErrorCode, "identity_mismatch")
-			if result.FailureStage == "" {
-				result.FailureStage, result.ProviderErrorClass = "cvm_mutation_evidence", "evidence_incomplete"
-			}
-			return result, computeClaimProviderError(result.Proof.Reason)
-		}
-	}
-	if proof.NodeOwnershipState != "target_owned" {
-		nodeEvidence, nodeErr := p.convergeComputeClaimNode(ctx, allocation, ownership, target)
-		result.KubernetesMutationCount = nodeEvidence.Attempted
-		result.Evidence.Node = cloneComputeClaimMutationEvidence(nodeEvidence)
-		if nodeErr != nil {
-			result.Proof.Reason = safeComputeClaimRecoveryReason(nodeErr.Reason, "provider_describe")
-			result.FailureStage, result.ProviderErrorClass = nodeErr.Stage, nodeErr.ProviderClass
-			return result, computeClaimProviderError(result.Proof.Reason)
-		}
-	}
-	readback, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
-	result.Proof = readback
-	if err != nil || readback.CVMOwnershipState != "target_owned" || readback.NodeOwnershipState != "target_owned" {
-		if result.Proof.Reason == "" {
-			result.Proof.Reason = "identity_mismatch"
-		}
-		if result.FailureStage == "" {
-			result.FailureStage, result.ProviderErrorClass = "claim_final_readback", "readback_mismatch"
-		}
-		return result, computeClaimProviderError(result.Proof.Reason)
-	}
-	return result, nil
-}
-
-func (p *TencentProvider) ClaimComputeRecoveryNodeOnly(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderClaim, error) {
-	result := ComputeClaimProviderClaim{Evidence: &ComputeClaimEvidence{}}
-	proof, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
-	result.Proof = proof
-	if err != nil {
-		return result, err
-	}
-	target := protectedresource.Target{
-		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: ownership.MachineID,
-		NodeName: ownership.NodeName, CVMID: ownership.InstanceID,
-	}
-	if err := protectedresource.FromEnv().Check(target); err != nil {
-		result.Proof.Reason = "identity_mismatch"
-		return result, err
-	}
-	if proof.CVMOwnershipState != "recoverable" && proof.CVMOwnershipState != "target_owned" ||
-		proof.NodeOwnershipState != "unallocated" && proof.NodeOwnershipState != "target_owned" {
-		result.Proof.Reason = "identity_mismatch"
-		return result, computeClaimProviderError(result.Proof.Reason)
-	}
-	initialCVMOwnershipState := proof.CVMOwnershipState
-	if proof.NodeOwnershipState != "target_owned" {
-		nodeEvidence, nodeErr := p.convergeComputeClaimNode(ctx, allocation, ownership, target)
-		result.KubernetesMutationCount = nodeEvidence.Attempted
-		result.Evidence.Node = cloneComputeClaimMutationEvidence(nodeEvidence)
-		if nodeErr != nil {
-			result.Proof.Reason = safeComputeClaimRecoveryReason(nodeErr.Reason, "provider_describe")
-			result.FailureStage, result.ProviderErrorClass = nodeErr.Stage, nodeErr.ProviderClass
-			return result, computeClaimProviderError(result.Proof.Reason)
-		}
-	}
-	readback, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
-	result.Proof = readback
-	if err != nil || readback.CVMOwnershipState != initialCVMOwnershipState || readback.NodeOwnershipState != "target_owned" {
-		if result.Proof.Reason == "" {
-			result.Proof.Reason = "identity_mismatch"
-		}
-		if result.FailureStage == "" {
-			result.FailureStage, result.ProviderErrorClass = "claim_final_readback", "readback_mismatch"
-		}
-		return result, computeClaimProviderError(result.Proof.Reason)
-	}
-	return result, nil
-}
-
 func cloneComputeClaimMutationEvidence(value ComputeClaimMutationEvidence) ComputeClaimMutationEvidence {
 	value.Missing = append([]string(nil), value.Missing...)
 	return value
@@ -1243,23 +1112,6 @@ func computeClaimKubectlClientRejectedBeforeAPI(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "must specify --patch or --patch-file containing the contents of the patch")
-}
-
-func computeClaimProvisionerRequest(action string, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) provisionerRequest {
-	plan := packagePlan(allocation.PackageID)
-	return provisionerRequest{
-		Action: action, AccountID: allocation.AccountID, PackageID: allocation.PackageID, Zone: allocation.Zone,
-		Tags: oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, ownership.ID),
-		Pool: provisionerPool{
-			ID: prepared.PoolID, PackageID: prepared.PackageID, InstanceType: prepared.InstanceType, CPU: uint64(plan.CPU), MemoryGB: uint64(plan.MemoryGB),
-			NodePoolID: prepared.NodePoolID, MaxReplicas: prepared.MaxReplicas, BaselineReplicas: prepared.BaselineReplicas,
-			TargetReplicas: prepared.TargetReplicas, BeforeMachineNames: append([]string(nil), prepared.BeforeMachineNames...),
-		},
-		Allocation: provisionerAllocation{
-			ID: allocation.ID, InstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), MachineName: allocation.MachineName,
-			NodeName: allocation.NodeName, PrivateIP: allocation.PrivateIP, PublicIP: allocation.PublicIP, Deadline: allocation.Deadline,
-		},
-	}
 }
 
 func computeClaimKubectlReason(err error) string {
@@ -1786,14 +1638,23 @@ func (p *TencentProvider) ReadCBSVolume(ctx context.Context, input StorageVolume
 		return persisted, fmt.Errorf("storage_cbs_readback_identity_required")
 	}
 	if !strings.HasPrefix(persisted.ProviderResourceID, "disk-") {
-		discovery, discoverErr := p.DiscoverStorageRecovery(ctx, input)
-		if discoverErr != nil || discovery.State != "storage_existing_exact" || !strings.HasPrefix(discovery.ProviderResourceID, "disk-") {
+		if input.OperationID == "" {
+			return persisted, fmt.Errorf("storage_cbs_readback_identity_required")
+		}
+		diskType := firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")
+		discovery, discoverErr := p.provision(ctx, provisionerRequest{
+			Action: "discover_storage_volume", AccountID: input.AccountID,
+			Tags:    oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID),
+			Storage: provisionerStorage{ID: input.ID, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType},
+		})
+		if discoverErr != nil || !discovery.OK || discovery.MutationCount != 0 || discovery.StorageState != "storage_existing_exact" ||
+			!strings.HasPrefix(discovery.StorageVolumeID, "disk-") {
 			if discoverErr != nil {
 				return persisted, discoverErr
 			}
 			return persisted, fmt.Errorf("storage_cbs_readback_identity_required")
 		}
-		persisted.ProviderResourceID = discovery.ProviderResourceID
+		persisted.ProviderResourceID = discovery.StorageVolumeID
 		persisted.ProviderRequestID = firstNonEmpty(discovery.ProviderRequestID, persisted.ProviderRequestID)
 	}
 	readback, err := p.ReadStorageVolume(ctx, persisted)
@@ -1905,63 +1766,6 @@ func validateStaticStorageBindingInput(volume StorageVolume) error {
 		return fmt.Errorf("storage_static_binding_names_required")
 	}
 	return nil
-}
-
-func (p *TencentProvider) DiscoverStorageRecovery(ctx context.Context, input StorageVolumeInput) (StorageRecoveryDiscovery, error) {
-	discovery := StorageRecoveryDiscovery{State: "unknown"}
-	if input.ID == "" || input.AccountID == "" || input.WorkspaceID == "" || input.OperationID == "" || input.Zone == "" || input.SizeGB <= 0 {
-		discovery.Reason = "identity_mismatch"
-		return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
-	}
-	diskType := firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")
-	response, err := p.provision(ctx, provisionerRequest{
-		Action: "discover_storage_volume", AccountID: input.AccountID,
-		Tags:    oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID),
-		Storage: provisionerStorage{ID: input.ID, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType},
-	})
-	discovery.ProviderRequestID = response.ProviderRequestID
-	discovery.MutationCount = response.MutationCount
-	if err != nil {
-		discovery.Reason = "provider_describe"
-		return discovery, fmt.Errorf("storage_recovery_provider_describe")
-	}
-	if response.MutationCount != 0 {
-		discovery.Reason = "identity_mismatch"
-		return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
-	}
-	if !response.OK {
-		discovery.Reason = storageRecoveryReason(response.ErrorCode)
-		return discovery, fmt.Errorf("storage_recovery_%s", discovery.Reason)
-	}
-	discovery.State = response.StorageState
-	discovery.ProviderResourceID = response.StorageVolumeID
-	switch discovery.State {
-	case "storage_not_started":
-		if discovery.ProviderResourceID != "" {
-			discovery.State, discovery.Reason = "unknown", "identity_mismatch"
-			return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
-		}
-	case "storage_existing_exact":
-		if !strings.HasPrefix(discovery.ProviderResourceID, "disk-") {
-			discovery.State, discovery.Reason = "unknown", "identity_mismatch"
-			return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
-		}
-	default:
-		discovery.State, discovery.Reason = "unknown", "identity_mismatch"
-		return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
-	}
-	return discovery, nil
-}
-
-func storageRecoveryReason(errorCode string) string {
-	switch errorCode {
-	case "tencent_cbs_multiple_candidate":
-		return "multiple_candidate"
-	case "tencent_cbs_identity_mismatch", "tencent_cbs_input_invalid", "tencent_cbs_approval_drift", "tencent_cbs_approval_invalid":
-		return "identity_mismatch"
-	default:
-		return "provider_describe"
-	}
 }
 
 func (p *TencentProvider) SyncStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {

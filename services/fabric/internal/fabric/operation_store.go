@@ -39,7 +39,6 @@ type OperationStore interface {
 	List(ctx context.Context) ([]FabricOperation, error)
 	ClaimMachine(ctx context.Context, ownership MachineOwnership) (MachineOwnership, bool, error)
 	SaveMachineOwnership(ctx context.Context, ownership MachineOwnership) error
-	ActivateComputeClaimRecoveryOwnership(ctx context.Context, ownership MachineOwnership) error
 	MachineOwnership(ctx context.Context, resourceID string) (MachineOwnership, error)
 	ListMachineOwnerships(ctx context.Context) ([]MachineOwnership, error)
 	WithPoolLock(ctx context.Context, poolKey string, fn func(context.Context) error) error
@@ -126,23 +125,6 @@ func (s *MemoryOperationStore) SaveMachineOwnership(_ context.Context, ownership
 		return ErrMachineOwnershipNotFound
 	}
 	s.machineOwnerships[ownership.ResourceID] = ownership
-	return nil
-}
-
-func (s *MemoryOperationStore) ActivateComputeClaimRecoveryOwnership(_ context.Context, ownership MachineOwnership) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	current, ok := s.machineOwnerships[ownership.ResourceID]
-	if !ok {
-		return ErrMachineOwnershipNotFound
-	}
-	if ownership.Status != "active" || ownership.ReleasedAt != nil || !sameComputeClaimRecoveryOwnership(current, ownership) ||
-		(current.Status != "quarantined" && current.Status != "active") || current.ReleasedAt != nil {
-		return ErrMachineOwnershipConflict
-	}
-	current.Status = "active"
-	current.ReleasedAt = nil
-	s.machineOwnerships[current.ResourceID] = current
 	return nil
 }
 
@@ -643,42 +625,6 @@ func (s *PostgresOperationStore) SaveMachineOwnership(ctx context.Context, owner
 	} else {
 		return err
 	}
-}
-
-func (s *PostgresOperationStore) ActivateComputeClaimRecoveryOwnership(ctx context.Context, ownership MachineOwnership) error {
-	if ownership.Status != "active" || ownership.ReleasedAt != nil {
-		return ErrMachineOwnershipConflict
-	}
-	updated, err := s.client.MachineOwnership.Update().Where(
-		machineownership.ID(ownership.ID), machineownership.ResourceID(ownership.ResourceID),
-		machineownership.AccountID(ownership.AccountID), machineownership.WorkspaceID(ownership.WorkspaceID),
-		machineownership.PackageID(ownership.PackageID), machineownership.NodePoolID(ownership.NodePoolID),
-		machineownership.MachineID(ownership.MachineID), machineownership.InstanceID(ownership.InstanceID),
-		machineownership.NodeName(ownership.NodeName), machineownership.ProviderRequestID(ownership.ProviderRequestID),
-		machineownership.ClaimedAt(ownership.ClaimedAt), machineownership.Status("quarantined"),
-		machineownership.ReleasedAtIsNil(),
-	).SetStatus("active").ClearReleasedAt().Save(ctx)
-	if err != nil {
-		return err
-	}
-	if updated == 1 {
-		return nil
-	}
-	current, err := s.MachineOwnership(ctx, ownership.ResourceID)
-	if err != nil {
-		return err
-	}
-	if current.Status == "active" && current.ReleasedAt == nil && sameComputeClaimRecoveryOwnership(current, ownership) {
-		return nil
-	}
-	return ErrMachineOwnershipConflict
-}
-
-func sameComputeClaimRecoveryOwnership(current, target MachineOwnership) bool {
-	return current.ID == target.ID && current.ResourceID == target.ResourceID && current.AccountID == target.AccountID &&
-		current.WorkspaceID == target.WorkspaceID && current.PackageID == target.PackageID && current.NodePoolID == target.NodePoolID &&
-		current.MachineID == target.MachineID && current.InstanceID == target.InstanceID && current.NodeName == target.NodeName &&
-		current.ProviderRequestID == target.ProviderRequestID && current.ClaimedAt.Equal(target.ClaimedAt)
 }
 
 func (s *PostgresOperationStore) MachineOwnership(ctx context.Context, resourceID string) (MachineOwnership, error) {
