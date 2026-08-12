@@ -33,14 +33,27 @@ Sub2API management origin and credentials are never exposed to the browser.
 - Console calls Control Plane product APIs only and projects live Sub2API,
   Fabric, Ledger, and Control Plane facts through customer-safe DTOs.
 - Control Plane, Fabric, and Ledger are separate Go processes and PostgreSQL
-  schema owners. Portable Compose source now creates separate service databases
-  and roles and maps three distinct service tokens, but no post-split real
-  installation or current production instance readback proves those controls are
-  effective.
+  schema owners. Portable Compose creates separate service databases and roles
+  and maps three distinct service tokens. A local-Workspace Compose smoke has
+  started PostgreSQL, Ledger, and Fabric with those boundaries and proved that
+  Fabric can reach the explicitly mounted host Docker Engine; Control Plane then
+  failed closed at the required external Sub2API authentication boundary. No
+  complete installation or current production instance readback proves the full
+  boundary effective.
 - Fabric defaults to a real `local-docker` adapter and keeps Tencent/TKE behind
   explicit instance selection. CI exercises local compute, storage, attachment,
   Secret binding, Runtime, and authoritative readback; this is Fabric evidence,
   not a complete Console-to-Workspace installation.
+- Fabric's unused recovery proof/claim Service, provider, and operation-store
+  mutation shell is retired. Five legacy resource inputs no longer carry
+  unassigned `LaunchBinding` branches, and the orphan launch-binding readback is
+  removed; the active typed Workspace Launch binding path, identity evidence,
+  pool-head terminalization, historical migrations/data, and local-Docker gate
+  remain.
+- Typed Tencent Workspace Launch and the existing `TagComputeMachine` port now
+  share one adapter-private compute-ownership core for deterministic CVM tagging,
+  Kubernetes node claim, child operations, and authoritative replay readback.
+  Provider-neutral Fabric and Control Plane boundaries are unchanged.
 - Workspace file bodies stay in provider-owned storage: a local Docker volume for
   the local adapter or CBS for the Tencent adapter. Platform PostgreSQL stores
   identity, operation, reference, and evidence facts rather than file bodies.
@@ -48,6 +61,11 @@ Sub2API management origin and credentials are never exposed to the browser.
   stages call the typed Fabric HTTP contract and consume the same six-field
   request-hash vectors as Fabric. A separate legacy provider-acceptance surface
   still contains Tencent-specific client and projection knowledge.
+- The authenticated Workspace owner can issue one durable, resumable delete
+  command. Control Plane coordinates Runtime, attachment, storage, and compute
+  cleanup through existing typed Fabric HTTP routes; partial or unknown results
+  remain unconfirmed, and success requires authoritative Workspace-list
+  readback. This is source and CI evidence, not a complete live installation.
 - ContentTransfer application runtime/API/Ent schema, Archive application models,
   and `ExecutionRequest` application code are retired; historical migrations,
   tables, and data were not dropped. Snapshot/Restore remains an extension
@@ -68,22 +86,40 @@ Current delivery levels remain:
 
 Focused local and CI evidence exists for the single Workspace Launch Reconciler,
 immutable Resume authorization, typed Fabric stage binding, idempotent settlement,
-real local-Docker Fabric stages, source envelopes, and Console behavior. The
-portable Compose profile still disables the Launch worker and provides no Docker
-authority or immutable Workspace image, so this does not prove the complete
-local Workspace, live Gateway accounting, browser, renewal, rollback, or
-production path. Existing Tencent/TKE evidence applies only to medopl instance
+real local-Docker Fabric stages, source envelopes, and Console behavior. The base
+Compose profile remains a low-authority control-services path. The explicit
+`compose.local-workspace.yaml` profile now enables the Launch worker, mounts a
+configured Docker socket only into Fabric, and requires an immutable Workspace
+image. Its real smoke reached the host Docker Engine but stopped at the required
+external Sub2API authentication boundary, so it does not prove the complete
+Console-to-Workspace path, live Gateway accounting, browser, renewal, rollback,
+or production path. Existing Tencent/TKE evidence applies only to medopl instance
 provenance.
 
-The portable Compose asset, GHCR/GitHub Release workflow, and focused
-distribution checks exist at source level. No GitHub Release has yet been
-published from this repository, and source or CI evidence does not prove an
-installed application.
+The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
+workflow, and focused distribution checks exist at source level. GitHub currently
+has no OPL Cloud tag or Release. The release workflow's published asset set also
+omits `compose.local-workspace.yaml`, so the current workflow cannot yet
+distribute the same local-Workspace profile that exists in source. Source or CI
+evidence does not prove an installed application.
 
-This product repository holds no current instance deployment readback. Earlier
-medopl rollout and provider evidence is migration provenance only; current
-deployment, Runtime, billing, rollback, and receipt evidence belongs to
-`opl-instance-medopl` and must be read back there for one exact Cloud release.
+This product repository holds no current instance deployment readback. The
+`opl-instance-medopl` repository now owns the medopl profile and production
+workflow source, but GitHub currently reports no Instance Environment or
+Deployment, and the tracked profile remains `deployed_unverified` with no product
+SHA, release tag, image digest, or receipt. Earlier medopl rollout and provider
+evidence is migration provenance only; current deployment, Runtime, billing,
+rollback, and receipt evidence must be read back from the Instance owner for one
+exact Cloud release.
+
+The Cloud GitHub repository still carries the legacy production authority. It
+has six Environments and 2,084 historical Deployment records; 2,079 records name
+the `production` environment, whose current configuration exposes 23 Secret names
+and 31 variables. These records include every Actions job that declared an
+environment and are not evidence of 2,079 server rollouts. The residual authority
+is migration state, not evidence that Cloud still owns medopl deployment, and it
+cannot be retired until the Instance successor and one exact deployment receipt
+are proven.
 
 Capacity evidence targets a 1000-provisioned-user data set. It does not claim
 1000 concurrent users, concurrent provisioning, multiple Control Plane
