@@ -161,12 +161,16 @@ The default workflow token is read-only and cannot approve pull requests.
 `main` strictly requires the GitHub Actions `validate` and `dependency-review`
 contexts, resolves review conversations, and forbids force pushes and deletion.
 
-CodeQL success did not produce a zero-alert baseline. Fresh API readback reports
-15 open alerts: two allocation-size-overflow results and thirteen weak-hash
-results across product source, tools, and tests. They are scanner leads pending
-boundary-specific triage; this snapshot does not classify them as 15 confirmed
-vulnerabilities or dismiss them as false positives. A separate sealed,
-risk-based static scan of revision
+CodeQL success did not produce a zero-alert baseline. Fresh controller and API
+readback for `main@1fd5419081ffbc56b87ec7ee439561a44704cc32` reports that
+`SECURITY-CODEQL-TRIAGE-01` completed with `mutation_zero`: all 15 high-security-
+severity alerts were individually classified `not_actionable`, with zero
+`confirmed` and zero `needs_review`. The alerts cover
+`go/weak-sensitive-data-hashing`, `js/weak-cryptographic-algorithm`, and
+`go/allocation-size-overflow`. Alerts `#1` through `#15` remain open; no alert
+dismissal, fix, setting mutation, or code write was performed. This triage
+result therefore does not establish a fix, dismissal, zero-alert baseline, or
+product readiness. A separate sealed, risk-based static scan of revision
 `24a065d4427b53d65ba0df9cb70b1a36327fb6af` reported three medium and seven low
 findings with partial coverage and no runtime exercise. None is recorded as
 fixed by the scan, by enabling GitHub controls, or by this documentation.
@@ -181,6 +185,22 @@ protection rule and has no Secrets or variables. No tag ruleset, immutable
 release enforcement, repository custom coding-agent profile, or coding-agent
 automation exists. These controls and checks do not prove dependency risk is
 zero or that a release has run.
+
+Security currentness now includes the absorbed and owner-cleaned S1 and Gateway
+lanes. PR `#271` (`1635a949b0e9440de841e5163e7eb1980e4bd10d`) merged the split
+read-only build and publish-only release workflow; its owner cleanup is complete.
+This closes the S1 implementation lane only: no release, tag, GHCR publication,
+or immutable-product readback has run. PR `#272`
+(`1fd5419081ffbc56b87ec7ee439561a44704cc32`) merged the dead Gateway helper
+removal; its owner cleanup is complete, while the live external Gateway path and
+the broader Workspace evidence gap remain separate.
+
+`SECURITY-S2-CROSS-OWNER-CAPABILITY-01` has one `ACTIVE` official lifecycle
+receipt under its Cloud controller and exact executor. The receipt records active
+implementation work, not a fixed capability boundary or product readiness.
+Trusted local image admission (S3) remains an admitted lane; the S3 control is
+not implemented here. CodeQL triage is terminal at the classification layer only,
+with alert disposition explicitly unperformed as recorded above.
 
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production
