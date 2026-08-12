@@ -11,3 +11,71 @@ updates:
         patterns:
           - "*"
     open-pull-requests-limit: 1
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+      time: "03:00"
+      timezone: Asia/Shanghai
+    groups:
+      npm:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: gomod
+    directory: /services/control-plane
+    schedule:
+      interval: monthly
+      time: "03:00"
+      timezone: Asia/Shanghai
+    groups:
+      go-modules:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 1
+
+  - package-ecosystem: gomod
+    directory: /services/fabric
+    schedule:
+      interval: monthly
+      time: "03:00"
+      timezone: Asia/Shanghai
+    groups:
+      go-modules:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 1
+
+  - package-ecosystem: gomod
+    directory: /services/internal/postgresmigrate
+    schedule:
+      interval: monthly
+      time: "03:00"
+      timezone: Asia/Shanghai
+    groups:
+      go-modules:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 1
+
+  - package-ecosystem: gomod
+    directory: /services/ledger
+    schedule:
+      interval: monthly
+      time: "03:00"
+      timezone: Asia/Shanghai
+    groups:
+      go-modules:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 1
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 1

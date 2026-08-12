@@ -11,6 +11,7 @@ active gaps, support detail and history.
 | 1. Product concept | Why does OPL Cloud exist and what is in scope? | [project.md](./project.md) and the [whitepaper](./whitepapers/opl-cloud-whitepaper.md) | Long term |
 | 2. Target architecture | What should the product become and who owns each authority? | [architecture.md](./architecture.md) and durable [decisions.md](./decisions.md) | Long term |
 | 3. Durable invariants | Which safety, integrity and ownership facts must survive refactors? | [invariants.md](./invariants.md) and eligible machine contracts | Infrequent |
+| Security policy | Which boundaries are supported and how are vulnerabilities reported? | [`SECURITY.md`](../SECURITY.md) | Infrequent |
 | 4. Current implementation | What paths, schemas and module boundaries exist now? | [implementation-architecture.md](./implementation-architecture.md), source, schemas and focused tests | Frequent |
 | 5. Functional modules | What user capability does each product surface provide? | `docs/opl-*.md`, `docs/product/**` and public API schemas | Feature paced |
 | 6. Status and plan | What is proven now, what is missing and what comes next? | [status.md](./status.md) for evidence; [roadmap.md](./roadmap.md) for gaps, priority and acceptance | Continuous |
@@ -35,6 +36,9 @@ cannot yet follow is an explicit roadmap gap, not a competing SSOT.
 - Machine contracts exist only when a cross-module, public-interface, security,
   data-integrity or irreversible-side-effect fact needs deterministic
   enforcement. Visual preference and ordinary implementation shape stay out.
+- `SECURITY.md` owns disclosure scope and reporting policy. Scanner artifacts,
+  GitHub alerts, Issues, pull requests, and agent sessions are evidence or work
+  surfaces; they do not become a second security, product, or status owner.
 - `one-person-lab` owns the reusable development method. Instance identity,
   provider profile and deployment receipts belong to the instance repository;
   `opl-cloud` remains an internal artifact identifier.

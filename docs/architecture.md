@@ -59,6 +59,22 @@ deployment receipts. An instance may run on a hosted cloud, a local server, or
 a Mac. Secrets remain in the selected secret owner, never in the instance
 repository.
 
+## Development And Supply-Chain Authority
+
+GitHub Actions, dependency scanners, code scanners, and cloud coding agents are
+development and evidence surfaces. They do not own OPL Cloud product intent,
+module policy, runtime state, release identity, or instance production
+authorization. Their output enters the repository through the same protected
+branch, review-conversation, focused-test, and canonical-readback boundaries as
+human-authored work.
+
+The release trust boundary separates untrusted source, dependency, and image
+build activity from the credentials that publish GHCR images and GitHub
+Releases. Cloud owns the portable release and its verifiable identity. An
+Instance consumes an exact Cloud release and independently owns deployment
+approval and production readback. A content digest establishes immutability; an
+approved repository or release manifest establishes source trust.
+
 ## Current MVP Cut
 
 The current reusable Cloud MVP is deliberately narrow: a thin Console, one
