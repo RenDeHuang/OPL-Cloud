@@ -31,7 +31,7 @@ func (s *Service) ReadComputePoolHead(ctx context.Context, nodePoolID string) (C
 	var allocation ComputeAllocation
 	plan, hasPlan := decodeComputeAllocationPlan(head)
 	if !decodeOperationResource(head, &allocation) || !hasPlan || head.ComputePoolKey != nodePoolID || allocation.NodePoolID != nodePoolID ||
-		validateComputeAllocationPreparation(plan, allocation, packagePlan(allocation.PackageID)) != nil || validateNewComputeAllocation(allocation, plan) != nil {
+		validateComputeAllocationPreparation(plan, allocation, packagePlan(allocation.PackageID)) != nil || validateTencentComputeAllocationIdentity(allocation, plan) != nil {
 		return result, nil
 	}
 	if head.Status == "started" {
@@ -126,7 +126,7 @@ func (s *Service) computePoolHeadTerminalizationCandidate(ctx context.Context, n
 	plan, hasPlan := decodeComputeAllocationPlan(operation)
 	if !decodeOperationResource(operation, &allocation) || !hasPlan || allocation.ID != operation.ResourceID || allocation.NodePoolID != nodePoolID ||
 		(allocation.Status != "compute_claim_pending" && allocation.Status != "quarantined") ||
-		validateComputeAllocationPreparation(plan, allocation, packagePlan(allocation.PackageID)) != nil || validateNewComputeAllocation(allocation, plan) != nil {
+		validateComputeAllocationPreparation(plan, allocation, packagePlan(allocation.PackageID)) != nil || validateTencentComputeAllocationIdentity(allocation, plan) != nil {
 		return computePoolHeadTerminalizationCandidate{}, fmt.Errorf("%w: allocation_identity_invalid", ErrComputePoolHeadTerminalizationUnavailable)
 	}
 	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
