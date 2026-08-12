@@ -44,6 +44,12 @@ Sub2API management origin and credentials are never exposed to the browser.
   explicit instance selection. CI exercises local compute, storage, attachment,
   Secret binding, Runtime, and authoritative readback; this is Fabric evidence,
   not a complete Console-to-Workspace installation.
+- Fabric's unused recovery proof/claim Service, provider, and operation-store
+  mutation shell is retired. Five legacy resource inputs no longer carry
+  unassigned `LaunchBinding` branches, and the orphan launch-binding readback is
+  removed; the active typed Workspace Launch binding path, identity evidence,
+  pool-head terminalization, historical migrations/data, and local-Docker gate
+  remain.
 - Workspace file bodies stay in provider-owned storage: a local Docker volume for
   the local adapter or CBS for the Tencent adapter. Platform PostgreSQL stores
   identity, operation, reference, and evidence facts rather than file bodies.
@@ -84,9 +90,9 @@ provenance.
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
 workflow, and focused distribution checks exist at source level. GitHub currently
 has no OPL Cloud tag or Release. The release workflow's published asset set also
-omits the local-Workspace override, so the current workflow cannot yet distribute
-the same local-Workspace profile that exists in source. Source or CI evidence does
-not prove an installed application.
+omits `compose.local-workspace.yaml`, so the current workflow cannot yet
+distribute the same local-Workspace profile that exists in source. Source or CI
+evidence does not prove an installed application.
 
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production
