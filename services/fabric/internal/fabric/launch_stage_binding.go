@@ -1,7 +1,6 @@
 package fabric
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -33,13 +32,6 @@ type WorkspaceLaunchStageBinding struct {
 type persistedLaunchStageBinding struct {
 	Binding WorkspaceLaunchStageBinding `json:"binding"`
 	Digest  string                      `json:"digest"`
-}
-
-type LaunchStageBindingReadback struct {
-	Available bool                        `json:"available"`
-	Status    string                      `json:"status"`
-	Binding   WorkspaceLaunchStageBinding `json:"binding"`
-	Operation FabricOperation             `json:"operation"`
 }
 
 func workspaceLaunchStageAction(stage string) (string, bool) {
@@ -120,24 +112,4 @@ func preserveLaunchStageBinding(next, current map[string]any) map[string]any {
 		next[launchStageBindingPayloadKey] = binding
 	}
 	return next
-}
-
-func (s *Service) LaunchStageBindingReadback(ctx context.Context, expected WorkspaceLaunchStageBinding) (LaunchStageBindingReadback, error) {
-	if !validWorkspaceLaunchStageBinding(expected) {
-		return LaunchStageBindingReadback{}, ErrLaunchStageBindingInvalid
-	}
-	operation, err := s.operations.Get(ctx, expected.FabricOperationID)
-	if errors.Is(err, ErrOperationNotFound) {
-		return LaunchStageBindingReadback{}, ErrLaunchStageBindingNotFound
-	}
-	if err != nil {
-		return LaunchStageBindingReadback{}, err
-	}
-	binding, ok := decodeLaunchStageBinding(operation)
-	if !ok || binding != expected {
-		return LaunchStageBindingReadback{}, ErrLaunchStageBindingConflict
-	}
-	return LaunchStageBindingReadback{
-		Available: operation.Status == "succeeded", Status: operation.Status, Binding: binding, Operation: operation,
-	}, nil
 }
