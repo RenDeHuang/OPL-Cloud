@@ -2,8 +2,12 @@ package server
 
 import (
 	"errors"
+	"mime"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
+	"strings"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -11,6 +15,9 @@ import (
 
 func registerAuthRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		if !validLoginRequest(w, r) {
+			return
+		}
 		if !limitJSONBody(w, r) {
 			return
 		}
@@ -76,4 +83,63 @@ func registerAuthRoutes(mux *http.ServeMux, app *controlPlaneServer, service *co
 		http.SetCookie(w, sessionCookie("", -1))
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
+}
+
+func validLoginRequest(w http.ResponseWriter, r *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || !strings.EqualFold(mediaType, "application/json") {
+		writeError(w, http.StatusUnsupportedMediaType, "json_content_type_required")
+		return false
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	referer := strings.TrimSpace(r.Header.Get("Referer"))
+	if origin == "" && referer == "" {
+		return true
+	}
+	expected, ok := loginRequestOrigin(r)
+	if !ok || origin != "" && !sameWebOrigin(origin, expected) || referer != "" && !sameWebOrigin(referer, expected) {
+		writeError(w, http.StatusForbidden, "login_origin_forbidden")
+		return false
+	}
+	return true
+}
+
+func loginRequestOrigin(r *http.Request) (*url.URL, bool) {
+	if configured := strings.TrimSpace(os.Getenv("OPL_PUBLIC_URL")); configured != "" {
+		parsed, err := url.Parse(configured)
+		if err != nil || !validWebOrigin(parsed) {
+			return nil, false
+		}
+		return parsed, true
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	parsed := &url.URL{Scheme: scheme, Host: r.Host}
+	return parsed, validWebOrigin(parsed)
+}
+
+func sameWebOrigin(raw string, expected *url.URL) bool {
+	actual, err := url.Parse(raw)
+	if err != nil || !validWebOrigin(actual) || !validWebOrigin(expected) {
+		return false
+	}
+	return strings.EqualFold(actual.Scheme, expected.Scheme) &&
+		strings.EqualFold(actual.Hostname(), expected.Hostname()) &&
+		webOriginPort(actual) == webOriginPort(expected)
+}
+
+func validWebOrigin(value *url.URL) bool {
+	return value != nil && value.User == nil && value.Hostname() != "" && (strings.EqualFold(value.Scheme, "http") || strings.EqualFold(value.Scheme, "https"))
+}
+
+func webOriginPort(value *url.URL) string {
+	if port := value.Port(); port != "" {
+		return port
+	}
+	if strings.EqualFold(value.Scheme, "https") {
+		return "443"
+	}
+	return "80"
 }

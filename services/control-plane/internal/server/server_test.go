@@ -1854,6 +1854,77 @@ func TestLoginSessionMeAndLogoutUseRemotePassword(t *testing.T) {
 	}
 }
 
+func TestLoginRejectsCrossSiteRequestsBeforeSessionIssuance(t *testing.T) {
+	t.Setenv("OPL_PUBLIC_URL", "https://cloud.example")
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	if _, err := createIdentityUser(server, map[string]any{
+		"email": "login-csrf@example.com", "accountId": "acct-login-csrf", "password": "CorrectHorseBatteryStaple!",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"email":"login-csrf@example.com","password":"CorrectHorseBatteryStaple!"}`
+
+	for _, test := range []struct {
+		name        string
+		contentType string
+		origin      string
+		referer     string
+		publicURL   string
+		wantStatus  int
+	}{
+		{name: "cross-site form", contentType: "text/plain", origin: "https://attacker.example", wantStatus: http.StatusUnsupportedMediaType},
+		{name: "cross-origin JSON", contentType: "application/json", origin: "https://attacker.example", wantStatus: http.StatusForbidden},
+		{name: "opaque origin JSON", contentType: "application/json", origin: "null", wantStatus: http.StatusForbidden},
+		{name: "wrong origin port", contentType: "application/json", origin: "https://cloud.example:444", wantStatus: http.StatusForbidden},
+		{name: "cross-origin referer", contentType: "application/json", referer: "https://attacker.example/login", wantStatus: http.StatusForbidden},
+		{name: "invalid configured origin", contentType: "application/json", origin: "https://cloud.example", publicURL: "://invalid", wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.publicURL != "" {
+				t.Setenv("OPL_PUBLIC_URL", test.publicURL)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", test.contentType)
+			if test.origin != "" {
+				req.Header.Set("Origin", test.origin)
+			}
+			if test.referer != "" {
+				req.Header.Set("Referer", test.referer)
+			}
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, test.wantStatus, rec.Body.String())
+			}
+			if len(rec.Result().Cookies()) != 0 || rec.Header().Get("x-opl-csrf-token") != "" {
+				t.Fatalf("rejected login issued session material: cookies=%#v csrf=%q", rec.Result().Cookies(), rec.Header().Get("x-opl-csrf-token"))
+			}
+		})
+	}
+	sessions, err := server.(*controlPlaneHTTPHandler).app.tables.ListSessions(context.Background())
+	if err != nil || len(sessions) != 0 {
+		t.Fatalf("rejected logins persisted sessions: sessions=%#v err=%v", sessions, err)
+	}
+}
+
+func TestLoginAcceptsSameOriginJSONRequest(t *testing.T) {
+	t.Setenv("OPL_PUBLIC_URL", "https://cloud.example")
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	if _, err := createIdentityUser(server, map[string]any{
+		"email": "same-origin@example.com", "accountId": "acct-same-origin", "password": "CorrectHorseBatteryStaple!",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(`{"email":"same-origin@example.com","password":"CorrectHorseBatteryStaple!"}`))
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Origin", "https://cloud.example")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || len(rec.Result().Cookies()) == 0 || rec.Header().Get("x-opl-csrf-token") == "" {
+		t.Fatalf("same-origin login status=%d cookies=%#v csrf=%q body=%s", rec.Code, rec.Result().Cookies(), rec.Header().Get("x-opl-csrf-token"), rec.Body.String())
+	}
+}
+
 func TestLoginRateLimitBlocksRepeatedFailuresAndResetsAfterSuccess(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	if _, err := createIdentityUser(server, map[string]any{
