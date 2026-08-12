@@ -76,6 +76,28 @@ func TestOutboundServiceTokensRejectPartialDevelopmentConfiguration(t *testing.T
 	}
 }
 
+func TestFabricCapabilityKeyIsRequiredAndSeparatedInProduction(t *testing.T) {
+	values := map[string]string{
+		"NODE_ENV": "production", "OPL_FABRIC_CAPABILITY_KEY": "capability-key-with-at-least-32-characters",
+	}
+	getenv := func(key string) string { return values[key] }
+	key, err := fabricCapabilityKeyFromEnv(getenv, "fabric-transport-token")
+	if err != nil || key != values["OPL_FABRIC_CAPABILITY_KEY"] {
+		t.Fatalf("Fabric capability key=%q err=%v", key, err)
+	}
+	delete(values, "OPL_FABRIC_CAPABILITY_KEY")
+	if _, err := fabricCapabilityKeyFromEnv(getenv, "fabric-transport-token"); err == nil {
+		t.Fatal("production Control Plane accepted a missing Fabric capability key")
+	}
+	values["OPL_FABRIC_CAPABILITY_KEY"] = "same-secret-with-at-least-32-characters"
+	if _, err := fabricCapabilityKeyFromEnv(getenv, values["OPL_FABRIC_CAPABILITY_KEY"]); err == nil {
+		t.Fatal("Control Plane accepted a Fabric capability key reused as a transport token")
+	}
+	if _, err := fabricCapabilityKeyFromEnv(func(string) string { return "" }, "configured-development-transport"); err == nil {
+		t.Fatal("Control Plane accepted configured Fabric transport without a capability key")
+	}
+}
+
 func TestSub2APIConfigRequiredAndBoundedInProduction(t *testing.T) {
 	values := map[string]string{
 		"NODE_ENV":                       "production",

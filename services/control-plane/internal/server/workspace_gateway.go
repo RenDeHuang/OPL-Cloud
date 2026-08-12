@@ -501,7 +501,7 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 			}
 		case "runtime_bind":
 			binding, err := service.BindWorkspaceRuntimeGatewaySecret(ctx, clients.WorkspaceRuntimeGatewaySecretInput{
-				WorkspaceID: workspaceID, WorkspaceAPIKeyID: operation.NewKeyID,
+				AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: operation.NewKeyID,
 				SecretRef: operation.SecretRef, Fingerprint: operation.Fingerprint,
 			}, operationID+":runtime-bind")
 			if err != nil {

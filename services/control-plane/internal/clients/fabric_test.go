@@ -2,13 +2,82 @@ package clients
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+func newFabricHTTPClientForTest(baseURL, token string, client *http.Client) FabricClient {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	return &fabricHTTPClient{baseURL: baseURL, token: token, client: client}
+}
+
+func TestFabricHTTPClientSignsShortLivedOperationBoundMutationCapability(t *testing.T) {
+	const capabilityKey = "test-capability-key"
+	before := time.Now().Unix()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts := strings.Split(r.Header.Get(FabricCapabilityHeader), ".")
+		if len(parts) != 2 {
+			t.Fatalf("capability format=%q", r.Header.Get(FabricCapabilityHeader))
+		}
+		mac := hmac.New(sha256.New, []byte(capabilityKey))
+		_, _ = mac.Write([]byte(parts[0]))
+		signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil || !hmac.Equal(signature, mac.Sum(nil)) {
+			t.Fatalf("capability integrity invalid: %v", err)
+		}
+		payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var claims struct {
+			Version      int    `json:"version"`
+			Caller       string `json:"caller"`
+			AccountID    string `json:"accountId"`
+			WorkspaceID  string `json:"workspaceId"`
+			ResourceKind string `json:"resourceKind"`
+			ResourceID   string `json:"resourceId"`
+			Action       string `json:"action"`
+			OperationID  string `json:"operationId"`
+			ExpiresAt    int64  `json:"expiresAt"`
+			BodySHA256   string `json:"bodySha256"`
+		}
+		if err := json.Unmarshal(payload, &claims); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(body)
+		if claims.Version != 1 || claims.Caller != "control-plane" || claims.AccountID != "acct-alpha" || claims.WorkspaceID != "ws-alpha" ||
+			claims.ResourceKind != "compute_allocation" || claims.ResourceID != "compute-alpha" || claims.Action != "create_compute_allocation" ||
+			claims.OperationID != "operation-alpha" || claims.BodySHA256 != hex.EncodeToString(digest[:]) || claims.ExpiresAt <= before || claims.ExpiresAt > before+120 {
+			t.Fatalf("capability claims=%#v", claims)
+		}
+		_ = json.NewEncoder(w).Encode(ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "provisioning"})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClientWithCapability(upstream.URL, "internal-secret", capabilityKey, upstream.Client())
+	_, err := client.CreateComputeAllocation(context.Background(), ComputeAllocationInput{
+		ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic",
+	}, "operation-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestFabricHTTPClientWritesWorkspaceScopedGatewaySecret(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -27,7 +96,7 @@ func TestFabricHTTPClientWritesWorkspaceScopedGatewaySecret(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client())
 	var input GatewaySecretWriteInput
 	if err := json.Unmarshal([]byte(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","workspaceApiKeyId":19,"fingerprint":"sha256:workspace-key","gatewayApiKey":"workspace-key-secret"}`), &input); err != nil {
 		t.Fatal(err)
@@ -45,7 +114,7 @@ func TestFabricHTTPClientGatewaySecretErrorDoesNotLeakKey(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client())
 	_, err := client.WriteGatewaySecret(context.Background(), GatewaySecretWriteInput{
 		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19,
 		Fingerprint: "sha256:20ad99c323ffc5eeac19c3a9b148f5911acb6b12826eaa089e09204e15ead7d5", GatewayAPIKey: secret,
@@ -78,7 +147,7 @@ func TestFabricHTTPClientPreflightsMonthlyResourceWithoutIdempotencyKey(t *testi
 	}))
 	defer upstream.Close()
 
-	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricMonthlyPreflightClient)
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client()).(FabricMonthlyPreflightClient)
 	result, err := client.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "storage", PackageID: "pro", SizeGB: 100, Zone: "ap-guangzhou-3"})
 	if err != nil || !result.Available || result.ProviderPriceCNY != 12.34 {
 		t.Fatalf("monthly preflight = %#v err=%v", result, err)
@@ -97,7 +166,7 @@ func TestFabricHTTPClientReadsRuntimeHealthSummaryWithoutMutation(t *testing.T) 
 	}))
 	defer upstream.Close()
 
-	client, ok := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricRuntimeHealthClient)
+	client, ok := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client()).(FabricRuntimeHealthClient)
 	if !ok {
 		t.Fatal("Fabric HTTP client must implement Runtime health summary capability")
 	}
@@ -127,7 +196,7 @@ func TestFabricHTTPClientCreatesZonedPrepaidStorage(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client())
 	volume, err := client.CreateStorageVolume(context.Background(), StorageVolumeInput{
 		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-shanghai-2", SizeGB: 10,
 	}, "storage-once")
@@ -149,7 +218,7 @@ func TestFabricHTTPClientPreservesComputeAllocationOnConflict(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client())
 	allocation, err := client.CreateComputeAllocation(context.Background(), ComputeAllocationInput{
 		ID: "compute-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture", PackageID: "basic",
 	}, "launch-fixture:compute")
@@ -160,11 +229,19 @@ func TestFabricHTTPClientPreservesComputeAllocationOnConflict(t *testing.T) {
 }
 
 func TestFabricHTTPClientRenewsMonthlyResourcesWithNeutralMutationReceipt(t *testing.T) {
+	const capabilityKey = "test-capability-key"
 	paths := []string{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		if r.Method != http.MethodPost || r.Header.Get("Idempotency-Key") != "renew-once" {
 			t.Fatalf("unexpected renewal request: %s %s key=%q", r.Method, r.URL.Path, r.Header.Get("Idempotency-Key"))
+		}
+		var input map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input["accountId"] != "acct-alpha" || input["workspaceId"] != "workspace-alpha" {
+			t.Fatalf("renewal identity=%#v err=%v", input, err)
+		}
+		if r.Header.Get(FabricCapabilityHeader) == "" {
+			t.Fatal("renewal capability is missing")
 		}
 		switch r.URL.Path {
 		case "/fabric/compute-allocations/compute-alpha/renew":
@@ -177,12 +254,12 @@ func TestFabricHTTPClientRenewsMonthlyResourcesWithNeutralMutationReceipt(t *tes
 	}))
 	defer upstream.Close()
 
-	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricRenewalClient)
-	compute, err := client.RenewComputeAllocation(context.Background(), "compute-alpha", "renew-once")
+	client := NewFabricHTTPClientWithCapability(upstream.URL, "internal-secret", capabilityKey, upstream.Client()).(FabricRenewalClient)
+	compute, err := client.RenewComputeAllocation(context.Background(), "acct-alpha", "workspace-alpha", "compute-alpha", "renew-once")
 	if err != nil || compute.ID != "compute-alpha" || compute.OperationID != "operation-compute-renew" || compute.AccountID != "acct-alpha" || compute.WorkspaceID != "workspace-alpha" || compute.Status != "running" || compute.ProviderRequestID != "compute-renew" {
 		t.Fatalf("compute renewal = %#v err=%v", compute, err)
 	}
-	storage, err := client.RenewStorageVolume(context.Background(), "storage-alpha", "renew-once")
+	storage, err := client.RenewStorageVolume(context.Background(), "acct-alpha", "workspace-alpha", "storage-alpha", "renew-once")
 	if err != nil || storage.ID != "storage-alpha" || storage.OperationID != "operation-storage-renew" || storage.AccountID != "acct-alpha" || storage.WorkspaceID != "workspace-alpha" || storage.Status != "available" || storage.ProviderRequestID != "storage-renew" {
 		t.Fatalf("storage renewal = %#v err=%v", storage, err)
 	}
@@ -192,11 +269,21 @@ func TestFabricHTTPClientRenewsMonthlyResourcesWithNeutralMutationReceipt(t *tes
 }
 
 func TestFabricHTTPClientUsesTypedWorkspaceDeleteRoutes(t *testing.T) {
+	const capabilityKey = "test-capability-key"
 	requests := []string{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path+" "+r.Header.Get("Idempotency-Key"))
 		if r.Header.Get("Authorization") != "Bearer internal-secret" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		if r.Method == http.MethodPost {
+			var input map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input["accountId"] != "acct-alpha" || input["workspaceId"] != "ws-alpha" {
+				t.Fatalf("delete identity=%#v err=%v", input, err)
+			}
+			if r.Header.Get(FabricCapabilityHeader) == "" {
+				t.Fatal("delete capability is missing")
+			}
 		}
 		switch r.Method + " " + r.URL.Path {
 		case "POST /fabric/workspace-runtimes/ws-alpha/destroy":
@@ -218,21 +305,21 @@ func TestFabricHTTPClientUsesTypedWorkspaceDeleteRoutes(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	client, ok := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricWorkspaceDeleteClient)
+	client, ok := NewFabricHTTPClientWithCapability(upstream.URL, "internal-secret", capabilityKey, upstream.Client()).(FabricWorkspaceDeleteClient)
 	if !ok {
 		t.Fatal("Fabric HTTP client must implement Workspace delete capability")
 	}
 	ctx := context.Background()
-	if _, err := client.DestroyWorkspaceRuntime(ctx, "ws-alpha", "delete-intent:runtime"); err != nil {
+	if _, err := client.DestroyWorkspaceRuntime(ctx, "acct-alpha", "ws-alpha", "delete-intent:runtime"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.DetachStorageAttachment(ctx, "attachment-alpha", "delete-intent:attachment"); err != nil {
+	if _, err := client.DetachStorageAttachment(ctx, "acct-alpha", "ws-alpha", "attachment-alpha", "delete-intent:attachment"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.DestroyStorageVolume(ctx, "storage-alpha", "delete-intent:storage"); err != nil {
+	if _, err := client.DestroyStorageVolume(ctx, "acct-alpha", "ws-alpha", "storage-alpha", "delete-intent:storage"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.DestroyComputeAllocation(ctx, "compute-alpha", "delete-intent:compute"); err != nil {
+	if _, err := client.DestroyComputeAllocation(ctx, "acct-alpha", "ws-alpha", "compute-alpha", "delete-intent:compute"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.ReadComputeAllocation(ctx, "compute-alpha"); err != nil {
@@ -256,7 +343,7 @@ func TestFabricClientReturnsErrorOnUpstreamFailure(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client())
 	if _, err := client.Catalog(context.Background()); err == nil || !strings.Contains(err.Error(), "status 503") {
 		t.Fatalf("expected upstream status error, got %v", err)
 	}

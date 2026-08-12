@@ -2,9 +2,11 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"opl-cloud/services/fabric/internal/fabric"
@@ -22,7 +24,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	token, err := internalServiceToken(os.Getenv)
+	authConfig, err := fabricServerAuthFromEnv(os.Getenv)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -38,7 +40,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	handler := fabrichttp.NewServer(fabric.NewServiceWithOperationStore(provider, operationStore), token)
+	handler := fabrichttp.NewServerWithAuth(fabric.NewServiceWithOperationStore(provider, operationStore), authConfig)
 	log.Printf("fabric listening on %s", addr)
 	if err := newHTTPServer(addr, handler).ListenAndServe(); err != nil {
 		log.Fatal(err)
@@ -68,12 +70,37 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
-func internalServiceToken(getenv func(string) string) (string, error) {
-	token := getenv("OPL_INTERNAL_SERVICE_TOKEN")
-	if getenv("NODE_ENV") == "production" && token == "" {
-		return "", errors.New("OPL_INTERNAL_SERVICE_TOKEN is required in production")
+func fabricServerAuthFromEnv(getenv func(string) string) (fabrichttp.ServerAuthConfig, error) {
+	config := fabrichttp.ServerAuthConfig{
+		ControlPlaneToken: strings.TrimSpace(getenv("OPL_INTERNAL_SERVICE_TOKEN")),
+		RunnerToken:       strings.TrimSpace(getenv("OPL_FABRIC_RUNNER_SERVICE_TOKEN")),
+		CapabilityKey:     strings.TrimSpace(getenv("OPL_FABRIC_CAPABILITY_KEY")),
 	}
-	return token, nil
+	configured := 0
+	for _, value := range []string{config.ControlPlaneToken, config.RunnerToken, config.CapabilityKey} {
+		if value != "" {
+			configured++
+		}
+	}
+	if getenv("NODE_ENV") == "production" || configured > 0 {
+		missing := make([]string, 0, 3)
+		if config.ControlPlaneToken == "" {
+			missing = append(missing, "OPL_INTERNAL_SERVICE_TOKEN")
+		}
+		if config.RunnerToken == "" {
+			missing = append(missing, "OPL_FABRIC_RUNNER_SERVICE_TOKEN")
+		}
+		if len(config.CapabilityKey) < 32 {
+			missing = append(missing, "OPL_FABRIC_CAPABILITY_KEY (32+ characters)")
+		}
+		if len(missing) > 0 {
+			return fabrichttp.ServerAuthConfig{}, fmt.Errorf("missing required Fabric authorization configuration: %s", strings.Join(missing, ", "))
+		}
+	}
+	if config.ControlPlaneToken != "" && (config.ControlPlaneToken == config.RunnerToken || config.ControlPlaneToken == config.CapabilityKey || config.RunnerToken == config.CapabilityKey) {
+		return fabrichttp.ServerAuthConfig{}, errors.New("Fabric transport, runner, and capability credentials must be distinct")
+	}
+	return config, nil
 }
 
 func operationStoreDatabaseURL(getenv func(string) string) (string, error) {

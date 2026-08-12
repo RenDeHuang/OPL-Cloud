@@ -37,7 +37,7 @@ func (f *workspaceDeleteFabric) call(stage, id, key string) error {
 	return nil
 }
 
-func (f *workspaceDeleteFabric) DestroyWorkspaceRuntime(_ context.Context, workspaceID, key string) (clients.WorkspaceRuntime, error) {
+func (f *workspaceDeleteFabric) DestroyWorkspaceRuntime(_ context.Context, _, workspaceID, key string) (clients.WorkspaceRuntime, error) {
 	if err := f.call("runtime", workspaceID, key); err != nil {
 		return clients.WorkspaceRuntime{}, err
 	}
@@ -51,7 +51,7 @@ func (f *workspaceDeleteFabric) DestroyWorkspaceRuntime(_ context.Context, works
 	return clients.WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: workspaceID, Status: status}, nil
 }
 
-func (f *workspaceDeleteFabric) DetachStorageAttachment(_ context.Context, attachmentID, key string) (clients.StorageAttachment, error) {
+func (f *workspaceDeleteFabric) DetachStorageAttachment(_ context.Context, _, _, attachmentID, key string) (clients.StorageAttachment, error) {
 	if err := f.call("attachment", attachmentID, key); err != nil {
 		return clients.StorageAttachment{}, err
 	}
@@ -66,7 +66,7 @@ func (f *workspaceDeleteFabric) DetachStorageAttachment(_ context.Context, attac
 	return clients.StorageAttachment{ID: attachmentID, WorkspaceID: workspaceID, ComputeID: "compute-alpha", VolumeID: "storage-alpha", Status: status}, nil
 }
 
-func (f *workspaceDeleteFabric) DestroyStorageVolume(_ context.Context, storageID, key string) (clients.StorageVolume, error) {
+func (f *workspaceDeleteFabric) DestroyStorageVolume(_ context.Context, _, _, storageID, key string) (clients.StorageVolume, error) {
 	if err := f.call("storage", storageID, key); err != nil {
 		return clients.StorageVolume{}, err
 	}
@@ -84,7 +84,7 @@ func (f *workspaceDeleteFabric) DestroyStorageVolume(_ context.Context, storageI
 	return clients.StorageVolume{ID: storageID, WorkspaceID: workspaceID, Status: status}, nil
 }
 
-func (f *workspaceDeleteFabric) DestroyComputeAllocation(_ context.Context, computeID, key string) (clients.ComputeAllocation, error) {
+func (f *workspaceDeleteFabric) DestroyComputeAllocation(_ context.Context, _, _, computeID, key string) (clients.ComputeAllocation, error) {
 	if err := f.call("compute", computeID, key); err != nil {
 		return clients.ComputeAllocation{}, err
 	}

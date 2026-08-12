@@ -3,10 +3,14 @@ package clients
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +50,7 @@ func TestWorkspaceLaunchStageInputDoesNotProjectContinuationAuthority(t *testing
 }
 
 func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T) {
+	const capabilityKey = "test-capability-key"
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
@@ -67,6 +72,18 @@ func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T)
 			if r.URL.Path == "/fabric/workspace-launches/stages/ensure" && r.Header.Get("Idempotency-Key") != input.Binding.IdempotencyKey {
 				t.Fatalf("Idempotency-Key=%q", r.Header.Get("Idempotency-Key"))
 			}
+			if r.URL.Path == "/fabric/workspace-launches/stages/ensure" {
+				parts := strings.Split(r.Header.Get(FabricCapabilityHeader), ".")
+				if len(parts) != 2 {
+					t.Fatalf("missing ensure capability")
+				}
+				mac := hmac.New(sha256.New, []byte(capabilityKey))
+				_, _ = mac.Write([]byte(parts[0]))
+				signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+				if err != nil || !hmac.Equal(signature, mac.Sum(nil)) {
+					t.Fatalf("ensure capability integrity invalid: %v", err)
+				}
+			}
 			_ = json.NewEncoder(w).Encode(WorkspaceLaunchStageResult{SchemaVersion: 1, State: "pending", Reason: "none", Binding: input.Binding, Resources: input.Resources})
 		default:
 			http.NotFound(w, r)
@@ -74,7 +91,7 @@ func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T)
 	}))
 	defer server.Close()
 
-	client := NewFabricHTTPClient(server.URL, "fabric-token", server.Client()).(FabricWorkspaceLaunchClient)
+	client := NewFabricHTTPClientWithCapability(server.URL, "fabric-token", capabilityKey, server.Client()).(FabricWorkspaceLaunchClient)
 	preflightInput := WorkspaceLaunchPreflightInput{SchemaVersion: 1, LaunchOperationID: "launch-1", AccountID: "acct-1", WorkspaceID: "ws-1", PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: "repo@sha256:digest", RequestHash: "request"}
 	if _, err := client.PreflightWorkspaceLaunch(context.Background(), preflightInput); err != nil {
 		t.Fatal(err)
@@ -108,7 +125,7 @@ func TestFabricWorkspaceLaunchHTTPClientReturnsTypedReadError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewFabricHTTPClient(server.URL, "fabric-token", server.Client()).(FabricWorkspaceLaunchClient)
+	client := newFabricHTTPClientForTest(server.URL, "fabric-token", server.Client()).(FabricWorkspaceLaunchClient)
 	_, err := client.ReadWorkspaceLaunchStage(context.Background(), WorkspaceLaunchStageInput{})
 	var upstream *FabricHTTPError
 	if !errors.As(err, &upstream) || upstream.StatusCode != http.StatusServiceUnavailable || upstream.Body != `{"error":"fabric_unavailable"}` {

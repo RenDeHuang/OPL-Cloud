@@ -893,7 +893,7 @@ func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, servic
 func (app *controlPlaneServer) renewWorkspaceProvider(ctx context.Context, service *controlplane.Service, operation *workspaceRenewalOperation) error {
 	switch operation.Phase {
 	case "provider_compute":
-		result, err := service.RenewMonthlyCompute(ctx, operation.ComputeID, operation.ID+":compute")
+		result, err := service.RenewMonthlyCompute(ctx, operation.AccountID, operation.WorkspaceID, operation.ComputeID, operation.ID+":compute")
 		operation.ComputeRenewal, operation.Phase = providerResourceMutationEvidence(result), "verify_compute"
 		if err != nil {
 			operation.ErrorCode = "fabric_compute_renewal_unconfirmed"
@@ -916,7 +916,7 @@ func (app *controlPlaneServer) renewWorkspaceProvider(ctx context.Context, servi
 		operation.Phase, operation.ErrorCode = "provider_storage", ""
 		return app.persistWorkspaceRenewal(ctx, operation, nil)
 	case "provider_storage":
-		result, err := service.RenewMonthlyStorage(ctx, operation.StorageID, operation.ID+":storage")
+		result, err := service.RenewMonthlyStorage(ctx, operation.AccountID, operation.WorkspaceID, operation.StorageID, operation.ID+":storage")
 		operation.StorageRenewal, operation.Phase = providerResourceMutationEvidence(result), "verify_storage"
 		if err != nil {
 			operation.ErrorCode = "fabric_storage_renewal_unconfirmed"
