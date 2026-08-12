@@ -47,8 +47,16 @@ Sub2API management origin and credentials are never exposed to the browser.
   production evidence.
 - Fabric defaults to a real `local-docker` adapter and keeps Tencent/TKE behind
   explicit instance selection. CI exercises local compute, storage, attachment,
-  Secret binding, Runtime, and authoritative readback; this is Fabric evidence,
-  not a complete Console-to-Workspace installation.
+  Secret binding, Runtime, and authoritative readback. The generic provider-facts
+  Service path now performs only identity validation, adapter delegation, error
+  projection, and `LastReadAt` stamping. Tencent `InstanceType`, `providerData`,
+  CVM/CBS, NodePool, and `costTags` interpretation belongs to the Tencent adapter;
+  the local-Docker adapter has compute, storage, attachment, and Runtime fact
+  parity. The typed `POST /fabric/provider-facts/batch` wire remains compatible
+  and fails closed on identity or readback errors. Focused tests prove this path
+  is read-only, with no provider mutation or Fabric operation write. This is
+  source and CI evidence, not a complete Console-to-Workspace installation or
+  the completion of the wider Provider Acceptance migration.
 - Fabric's unused recovery proof/claim Service, provider, and operation-store
   mutation shell is retired. Five legacy resource inputs no longer carry
   unassigned `LaunchBinding` branches, and the orphan launch-binding readback is
