@@ -5029,17 +5029,21 @@ async function waitFor(check, timeoutMs, error) {
   throw new Error(error);
 }
 
-function resourceIds(result) {
+export function resourceIds(result) {
   const ids = {
-    cvmInstanceId: result?.slot?.computeProviderResourceId,
-    cbsDiskId: result?.slot?.storageProviderResourceId,
-    nodePoolId: result?.slot?.nodePoolId,
-    persistentVolumeId: result?.slot?.persistentVolumeId
+    cvmInstanceId: String(result?.slot?.computeProviderResourceId || "").trim(),
+    cbsDiskId: String(result?.slot?.storageProviderResourceId || "").trim(),
+    nodePoolId: String(result?.slot?.nodePoolId || "").trim(),
+    persistentVolumeId: String(result?.slot?.persistentVolumeId || "").trim()
   };
-  if (!/^ins-/.test(ids.cvmInstanceId || "") || !/^disk-/.test(ids.cbsDiskId || "") || !/^np-/.test(ids.nodePoolId || "") || !ids.persistentVolumeId) {
+  if (!/^ins-/.test(ids.cvmInstanceId) || !/^disk-/.test(ids.cbsDiskId)) {
     throw new Error("production_live_qa_resource_ids_required");
   }
   return ids;
+}
+
+function canonicalResourceIds(ids) {
+  return { cvmInstanceId: ids.cvmInstanceId, cbsDiskId: ids.cbsDiskId };
 }
 
 async function gatewayUsageSnapshot(requestOptions, auth, keyId) {
@@ -5348,7 +5352,7 @@ export async function verifyProductionLiveQa(options = {}) {
   const after = await verifyProductionChain(verifierOptions);
   if (!after.ok || after.status !== "reused") throw new Error("production_live_qa_reusable_slot_required");
   const afterIds = resourceIds(after);
-  if (JSON.stringify(beforeIds) !== JSON.stringify(afterIds)) throw new Error("production_live_qa_resource_ids_changed");
+  if (JSON.stringify(canonicalResourceIds(beforeIds)) !== JSON.stringify(canonicalResourceIds(afterIds))) throw new Error("production_live_qa_resource_ids_changed");
   if (JSON.stringify(before.ledgerReceipt) !== JSON.stringify(after.ledgerReceipt)) throw new Error("production_live_qa_ledger_receipt_changed");
   if (JSON.stringify(before.runtimeOperations) !== JSON.stringify(after.runtimeOperations)) throw new Error("production_live_qa_runtime_operations_changed");
 

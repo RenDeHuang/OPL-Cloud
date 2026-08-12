@@ -18,9 +18,14 @@ export const PROVIDER_ACCEPTANCE_SLOTS = Object.freeze({
   })
 });
 
-const PROVIDER_ACCEPTANCE_SLOT_KEYS = Object.freeze([
+const PROVIDER_ACCEPTANCE_CANONICAL_SLOT_KEYS = Object.freeze([
   "id", "accountId", "workspaceId", "workspaceUrl", "computeAllocationId", "computeProviderId",
-  "nodePoolId", "storageId", "storageProviderId", "persistentVolumeId", "attachmentId"
+  "storageId", "storageProviderId", "attachmentId"
+]);
+const PROVIDER_ACCEPTANCE_LEGACY_SLOT_KEYS = Object.freeze(["nodePoolId", "persistentVolumeId"]);
+const PROVIDER_ACCEPTANCE_SLOT_KEYS = Object.freeze([
+  ...PROVIDER_ACCEPTANCE_CANONICAL_SLOT_KEYS,
+  ...PROVIDER_ACCEPTANCE_LEGACY_SLOT_KEYS
 ]);
 const PROVIDER_ACCEPTANCE_MANUAL_REVIEW_REASONS = new Set([
   "provider_acceptance_compute_result_unknown",
@@ -43,6 +48,13 @@ function sleep(ms) {
 function hasExactKeys(value, keys) {
   return value !== null && typeof value === "object" && !Array.isArray(value) &&
     Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+
+function hasAllowedKeys(value, requiredKeys, optionalKeys = []) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const allowed = new Set([...requiredKeys, ...optionalKeys]);
+  const keys = Object.keys(value);
+  return requiredKeys.every((key) => Object.hasOwn(value, key)) && keys.every((key) => allowed.has(key));
 }
 
 async function postAcceptance({ fetchImpl, origin, acceptanceToken, slotId, slot, accountId, confirmation, environmentApproved, purchaseBudget, maxApprovedProviderCost, signal, timeoutMs }) {
@@ -71,12 +83,12 @@ function validatedAcceptanceResponse(payload, slotId, accountId) {
   const status = payload?.status;
   const manualReview = status === "manual_review";
   const responseKeys = manualReview ? ["ok", "status", "slot", "reason"] : ["ok", "status", "slot"];
-  if (!hasExactKeys(payload, responseKeys) || !hasExactKeys(payload.slot, PROVIDER_ACCEPTANCE_SLOT_KEYS)) return null;
+  if (!hasExactKeys(payload, responseKeys) || !hasAllowedKeys(payload.slot, PROVIDER_ACCEPTANCE_CANONICAL_SLOT_KEYS, PROVIDER_ACCEPTANCE_LEGACY_SLOT_KEYS)) return null;
 
-  const slot = Object.fromEntries(PROVIDER_ACCEPTANCE_SLOT_KEYS.map((key) => [key, payload.slot[key]]));
-  if (slot.id !== slotId || slot.accountId !== accountId || PROVIDER_ACCEPTANCE_SLOT_KEYS.some((key) => typeof slot[key] !== "string")) return null;
+  if (slotId !== payload.slot.id || accountId !== payload.slot.accountId || PROVIDER_ACCEPTANCE_SLOT_KEYS.some((key) => Object.hasOwn(payload.slot, key) && typeof payload.slot[key] !== "string")) return null;
+  const slot = Object.fromEntries(PROVIDER_ACCEPTANCE_SLOT_KEYS.map((key) => [key, payload.slot[key] ?? ""]));
   if (["ready", "reused"].includes(status)) {
-    if (payload.ok !== true || PROVIDER_ACCEPTANCE_SLOT_KEYS.slice(2).some((key) => slot[key].trim() === "")) return null;
+    if (payload.ok !== true || PROVIDER_ACCEPTANCE_CANONICAL_SLOT_KEYS.slice(2).some((key) => slot[key].trim() === "")) return null;
     return { ok: true, status, slot };
   }
   if (status === "in_progress") return payload.ok === false ? { ok: false, status, slot } : null;
