@@ -229,17 +229,13 @@ func TestWorkspaceDeleteOwnerCommandIsOrderedDurableAndIdempotent(t *testing.T) 
 		t.Fatalf("decoded operation=%#v err=%v", decoded, err)
 	}
 
-	replayed := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, key)
+	replayed := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, key+":new-session")
 	if replayed.Code != http.StatusOK || len(fabric.recordedCalls()) != len(wantCalls) {
 		t.Fatalf("replay status=%d body=%s calls=%#v", replayed.Code, replayed.Body.String(), fabric.recordedCalls())
 	}
-	conflict := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, key+":other")
-	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), errIdempotencyConflict.Error()) {
-		t.Fatalf("conflict status=%d body=%s", conflict.Code, conflict.Body.String())
-	}
 }
 
-func TestWorkspaceDeletePartialFabricResultStaysManualReviewAndResumes(t *testing.T) {
+func TestWorkspaceDeletePartialFabricResultResumesWithNewTransportKey(t *testing.T) {
 	fabric := &workspaceDeleteFabric{failStage: "storage", failures: 1}
 	fixture := newWorkspaceDeleteFixture(t, newMemoryTableStore(), fabric)
 	key := "workspace-delete:ws-alpha:resume"
@@ -256,15 +252,13 @@ func TestWorkspaceDeletePartialFabricResultStaysManualReviewAndResumes(t *testin
 	if err != nil || !found || decodeErr != nil || operation.Status != "manual_review" || operation.Phase != "attachment_detached" {
 		t.Fatalf("partial operation=%#v found=%v err=%v decode=%v", operation, found, err, decodeErr)
 	}
-	beforeConflict := len(fabric.recordedCalls())
-	conflict := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, key+":other")
-	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), errIdempotencyConflict.Error()) || len(fabric.recordedCalls()) != beforeConflict {
-		t.Fatalf("conflicting retry status=%d body=%s calls=%#v", conflict.Code, conflict.Body.String(), fabric.recordedCalls())
-	}
-
-	second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, key)
+	second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, key+":new-session")
 	if second.Code != http.StatusOK {
 		t.Fatalf("resume status=%d body=%s", second.Code, second.Body.String())
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(second.Body).Decode(&payload); err != nil || payload["operationId"] != operation.OperationID || payload["status"] != "deleted" {
+		t.Fatalf("resumed operation payload=%#v err=%v", payload, err)
 	}
 	calls := fabric.recordedCalls()
 	if len(calls) != 6 || !strings.HasPrefix(calls[2], "storage:") || !strings.HasPrefix(calls[3], "storage:") || calls[2] != calls[3] ||

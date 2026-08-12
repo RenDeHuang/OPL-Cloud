@@ -47,7 +47,7 @@ type workspaceDeleteStoreMutation struct {
 }
 
 func (app *controlPlaneServer) deleteWorkspace(w http.ResponseWriter, r *http.Request, service *controlplane.Service) {
-	key, ok := requiredMutationKey(w, r)
+	_, ok := requiredMutationKey(w, r)
 	if !ok {
 		return
 	}
@@ -90,7 +90,7 @@ func (app *controlPlaneServer) deleteWorkspace(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusForbidden, "workspace_owner_required")
 			return
 		}
-		operation = newWorkspaceDeleteOperation(workspace, key, time.Now().UTC())
+		operation = newWorkspaceDeleteOperation(workspace, time.Now().UTC())
 		if err := app.tables.ApplyWorkspaceDelete(r.Context(), workspaceDeleteStoreMutation{
 			Create: true, DesiredOperation: workspaceDeleteOperationRow(operation),
 		}); errors.Is(err, errWorkspaceDeleteCASConflict) {
@@ -105,7 +105,7 @@ func (app *controlPlaneServer) deleteWorkspace(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	requestHash := workspaceDeleteRequestHash(operation.AccountID, operation.OwnerUserID, workspaceID, key)
+	requestHash := workspaceDeleteRequestHash(operation.AccountID, operation.OwnerUserID, workspaceID)
 	if operation.AccountID != stringValue(user["accountId"]) || operation.OwnerUserID != stringValue(user["id"]) {
 		writeError(w, http.StatusForbidden, "workspace_owner_required")
 		return
@@ -136,13 +136,13 @@ func (app *controlPlaneServer) workspaceDeleteOperation(ctx context.Context, wor
 	return operation, err == nil, err
 }
 
-func newWorkspaceDeleteOperation(workspace map[string]any, key string, now time.Time) workspaceDeleteOperation {
+func newWorkspaceDeleteOperation(workspace map[string]any, now time.Time) workspaceDeleteOperation {
 	workspaceID := stringValue(workspace["id"])
 	accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
 	ownerUserID := firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"]))
 	return workspaceDeleteOperation{
 		OperationID: workspaceDeleteOperationID(workspaceID),
-		RequestHash: workspaceDeleteRequestHash(accountID, ownerUserID, workspaceID, key),
+		RequestHash: workspaceDeleteRequestHash(accountID, ownerUserID, workspaceID),
 		AccountID:   accountID, OwnerUserID: ownerUserID, WorkspaceID: workspaceID,
 		ComputeID:    firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])),
 		StorageID:    stringValue(workspace["storageId"]),
@@ -155,8 +155,8 @@ func workspaceDeleteOperationID(workspaceID string) string {
 	return "workspace-delete-" + stableID(workspaceDeleteAction, workspaceID)[:18]
 }
 
-func workspaceDeleteRequestHash(accountID, ownerUserID, workspaceID, key string) string {
-	return stableID(workspaceDeleteAction, accountID, ownerUserID, workspaceID, key)
+func workspaceDeleteRequestHash(accountID, ownerUserID, workspaceID string) string {
+	return stableID(workspaceDeleteAction, accountID, ownerUserID, workspaceID)
 }
 
 func workspaceDeleteStageKey(operation workspaceDeleteOperation, stage string) string {
