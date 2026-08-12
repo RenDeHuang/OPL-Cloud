@@ -23,6 +23,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	fabricCapabilityKey, err := fabricCapabilityKeyFromEnv(os.Getenv, outboundTokens.Fabric)
+	if err != nil {
+		log.Fatal(err)
+	}
 	sub2APIConfig, err := sub2APIConfigFromEnv(os.Getenv)
 	if err != nil {
 		log.Fatal(err)
@@ -37,7 +41,7 @@ func main() {
 
 	service := controlplane.NewService(
 		clients.NewLedgerHTTPClient(ledgerURL, outboundTokens.Ledger, nil),
-		clients.NewFabricHTTPClient(fabricURL, outboundTokens.Fabric, nil),
+		clients.NewFabricHTTPClientWithCapability(fabricURL, outboundTokens.Fabric, fabricCapabilityKey, nil),
 		sub2API,
 	)
 	store, err := controlserver.StateStoreFromEnv()
@@ -132,6 +136,17 @@ func internalServiceTokensFromEnv(getenv func(string) string) (internalServiceTo
 		return internalServiceTokens{}, errors.New("Fabric and Ledger outbound service tokens must be distinct")
 	}
 	return tokens, nil
+}
+
+func fabricCapabilityKeyFromEnv(getenv func(string) string, fabricTransportToken string) (string, error) {
+	key := strings.TrimSpace(getenv("OPL_FABRIC_CAPABILITY_KEY"))
+	if (getenv("NODE_ENV") == "production" || fabricTransportToken != "" || key != "") && len(key) < 32 {
+		return "", errors.New("OPL_FABRIC_CAPABILITY_KEY must contain at least 32 characters when Fabric transport is configured")
+	}
+	if key != "" && key == fabricTransportToken {
+		return "", errors.New("Fabric capability key must be distinct from its transport token")
+	}
+	return key, nil
 }
 
 func controlPlaneAddr() string {

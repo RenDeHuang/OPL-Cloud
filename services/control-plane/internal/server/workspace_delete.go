@@ -213,7 +213,7 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 		}
 		switch operation.Phase {
 		case "claimed":
-			runtime, err := service.DestroyWorkspaceRuntime(ctx, operation.WorkspaceID, workspaceDeleteStageKey(operation, "runtime"))
+			runtime, err := service.DestroyWorkspaceRuntime(ctx, operation.AccountID, operation.WorkspaceID, workspaceDeleteStageKey(operation, "runtime"))
 			if err != nil || runtime.WorkspaceID != operation.WorkspaceID || runtime.Status != "destroyed" {
 				return app.markWorkspaceDeleteUnconfirmed(ctx, operation)
 			}
@@ -224,7 +224,7 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 			}
 			operation = next
 		case "runtime_destroyed":
-			attachment, err := service.DetachWorkspaceStorage(ctx, operation.AttachmentID, workspaceDeleteStageKey(operation, "attachment"))
+			attachment, err := service.DetachWorkspaceStorage(ctx, operation.AccountID, operation.WorkspaceID, operation.AttachmentID, workspaceDeleteStageKey(operation, "attachment"))
 			if err != nil || !workspaceDeleteAttachmentMatches(operation, attachment) {
 				return app.markWorkspaceDeleteUnconfirmed(ctx, operation)
 			}
@@ -235,7 +235,7 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 			}
 			operation = next
 		case "attachment_detached":
-			storage, err := service.DestroyWorkspaceStorage(ctx, operation.StorageID, workspaceDeleteStageKey(operation, "storage"))
+			storage, err := service.DestroyWorkspaceStorage(ctx, operation.AccountID, operation.WorkspaceID, operation.StorageID, workspaceDeleteStageKey(operation, "storage"))
 			if err != nil || !workspaceDeleteStorageMatches(operation, storage) {
 				return app.markWorkspaceDeleteUnconfirmed(ctx, operation)
 			}
@@ -246,7 +246,7 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 			}
 			operation = next
 		case "storage_destroyed":
-			compute, err := service.DestroyWorkspaceCompute(ctx, operation.ComputeID, workspaceDeleteStageKey(operation, "compute"))
+			compute, err := service.DestroyWorkspaceCompute(ctx, operation.AccountID, operation.WorkspaceID, operation.ComputeID, workspaceDeleteStageKey(operation, "compute"))
 			if err != nil || !workspaceDeleteComputeStartMatches(operation, compute) {
 				return app.markWorkspaceDeleteUnconfirmed(ctx, operation)
 			}

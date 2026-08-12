@@ -398,7 +398,7 @@ func (s *Service) PrepareWorkspace(ctx context.Context, input CreateWorkspaceInp
 		imageID = "one-person-lab-app"
 	}
 	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{
-		WorkspaceID: workspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
+		AccountID: input.AccountID, WorkspaceID: workspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
 		AttachmentID: input.AttachmentID, AttachmentOperationID: input.AttachmentOperationID, RuntimeOperationID: input.RuntimeOperationID,
 		ImageID: imageID, GatewaySecretRef: gatewaySecretRef,
 	}, input.RuntimeOperationID)
@@ -578,7 +578,7 @@ func (s *Service) RotateWorkspaceCredential(ctx context.Context, input RotateWor
 	}
 	operationKey := "runtime-credential-rotate:" + input.WorkspaceID + ":" + idempotencyKey
 	applied, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{
-		WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
 		AttachmentID: input.AttachmentID, AttachmentOperationID: input.AttachmentOperationID, RuntimeOperationID: input.RuntimeOperationID,
 		ImageID: "one-person-lab-app", GatewaySecretRef: input.GatewaySecretRef,
 	}, operationKey+":runtime")

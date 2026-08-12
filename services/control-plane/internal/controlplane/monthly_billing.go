@@ -49,12 +49,12 @@ func (s *Service) PrepareMonthlyCompute(ctx context.Context, input clients.Compu
 	return s.fabric.CreateComputeAllocation(ctx, input, key)
 }
 
-func (s *Service) RenewMonthlyCompute(ctx context.Context, id, key string) (clients.ProviderResourceMutation, error) {
+func (s *Service) RenewMonthlyCompute(ctx context.Context, accountID, workspaceID, id, key string) (clients.ProviderResourceMutation, error) {
 	client, ok := s.fabric.(clients.FabricRenewalClient)
 	if !ok {
 		return clients.ProviderResourceMutation{}, errors.New("fabric_renewal_unavailable")
 	}
-	return client.RenewComputeAllocation(ctx, id, key)
+	return client.RenewComputeAllocation(ctx, accountID, workspaceID, id, key)
 }
 
 func (s *Service) PrepareMonthlyStorage(ctx context.Context, input clients.StorageVolumeInput, key string) (clients.StorageVolume, error) {
@@ -73,7 +73,7 @@ func (s *Service) PrepareProviderAcceptanceRuntime(ctx context.Context, input Cr
 		return clients.WorkspaceRuntime{}, err
 	}
 	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{
-		WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
 		AttachmentID: input.AttachmentID, AttachmentOperationID: input.AttachmentOperationID, RuntimeOperationID: input.RuntimeOperationID,
 		ImageID: "one-person-lab-app", GatewaySecretRef: secretRef,
 	}, input.RuntimeOperationID)
@@ -86,12 +86,12 @@ func (s *Service) PrepareProviderAcceptanceRuntime(ctx context.Context, input Cr
 	return runtime, nil
 }
 
-func (s *Service) RenewMonthlyStorage(ctx context.Context, id, key string) (clients.ProviderResourceMutation, error) {
+func (s *Service) RenewMonthlyStorage(ctx context.Context, accountID, workspaceID, id, key string) (clients.ProviderResourceMutation, error) {
 	client, ok := s.fabric.(clients.FabricRenewalClient)
 	if !ok {
 		return clients.ProviderResourceMutation{}, errors.New("fabric_renewal_unavailable")
 	}
-	return client.RenewStorageVolume(ctx, id, key)
+	return client.RenewStorageVolume(ctx, accountID, workspaceID, id, key)
 }
 
 func (s *Service) RecordMonthlyReceipt(ctx context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {

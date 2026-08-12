@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 40,
+  "schemaVersion": 41,
   "owner": "OPL Platform Architecture",
   "purpose": "Enforce the physical boundaries between Console UI, Control Plane, Fabric, Ledger, and external Sub2API while pointing launch and settlement facts to their focused owners.",
   "state": "current",
@@ -10,6 +10,26 @@
   },
   "physicalBoundaries": {
     "crossServiceTransport": "typed_public_http_contracts_only",
+    "fabricMutationAuthorization": {
+      "issuer": "services/control-plane",
+      "verifier": "services/fabric",
+      "integrity": "hmac_sha256",
+      "shortLived": true,
+      "boundFields": [
+        "caller",
+        "accountId",
+        "workspaceId",
+        "resourceKind",
+        "resourceId",
+        "action",
+        "operationId",
+        "expiresAt",
+        "bodySha256"
+      ],
+      "verificationOrder": "before_operation_store_or_provider_mutation",
+      "transportCredentialReuse": "forbidden",
+      "runnerScope": "job_read_and_lease_mutations_only"
+    },
     "crossServiceSourceImports": "forbidden",
     "crossServiceDatabaseAccess": "forbidden",
     "consoleRuntimeImports": "forbidden_control_plane_product_api_only",

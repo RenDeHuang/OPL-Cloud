@@ -36,7 +36,9 @@ test("portable distribution is product-owned and instance-neutral", async () => 
     "OPL_INTERNAL_SERVICE_TOKEN",
     "OPL_CONTROL_PLANE_SERVICE_TOKEN",
     "OPL_FABRIC_SERVICE_TOKEN",
-    "OPL_LEDGER_SERVICE_TOKEN"
+    "OPL_LEDGER_SERVICE_TOKEN",
+    "OPL_FABRIC_RUNNER_SERVICE_TOKEN",
+    "OPL_FABRIC_CAPABILITY_KEY"
   ]) assert.equal(compose["x-opl-cloud-common"].environment[token], undefined);
   const controlPlaneEnvironment = compose.services["control-plane"].environment;
   const serverTokens = [
@@ -52,6 +54,15 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   assert.equal(new Set(serverTokens).size, 3);
   assert.equal(controlPlaneEnvironment.OPL_FABRIC_SERVICE_TOKEN, serverTokens[1]);
   assert.equal(controlPlaneEnvironment.OPL_LEDGER_SERVICE_TOKEN, serverTokens[2]);
+  assert.equal(
+    compose.services.fabric.environment.OPL_FABRIC_RUNNER_SERVICE_TOKEN,
+    "${OPL_FABRIC_RUNNER_SERVICE_TOKEN:?Set OPL_FABRIC_RUNNER_SERVICE_TOKEN}"
+  );
+  assert.equal(
+    compose.services.fabric.environment.OPL_FABRIC_CAPABILITY_KEY,
+    "${OPL_FABRIC_CAPABILITY_KEY:?Set OPL_FABRIC_CAPABILITY_KEY}"
+  );
+  assert.equal(controlPlaneEnvironment.OPL_FABRIC_CAPABILITY_KEY, compose.services.fabric.environment.OPL_FABRIC_CAPABILITY_KEY);
   const portableEnvironment = await readFile("deploy/portable/opl-cloud.env.example", "utf8");
   assert.doesNotMatch(portableEnvironment, /^OPL_INTERNAL_SERVICE_TOKEN=/m);
   const exampleTokens: string[] = [];
@@ -62,6 +73,13 @@ test("portable distribution is product-owned and instance-neutral", async () => 
     exampleTokens.push(match[1]);
   }
   assert.equal(new Set(exampleTokens).size, 3);
+  for (const name of ["FABRIC_RUNNER_SERVICE_TOKEN", "FABRIC_CAPABILITY_KEY"]) {
+    const match = portableEnvironment.match(new RegExp(`^OPL_${name}=(.+)$`, "m"));
+    assert.ok(match);
+    assert.match(match[1], /^<replace-with-independent-fabric-(runner|capability)-32-plus-random-chars>$/);
+    exampleTokens.push(match[1]);
+  }
+  assert.equal(new Set(exampleTokens).size, 5);
   assert.match(portableEnvironment, /^OPL_WORKSPACE_IMAGE=registry\.example\.com\/your-owner\/opl-workspace@sha256:<64-hex-digest>$/m);
   assert.match(portableEnvironment, /^OPL_DOCKER_SOCKET_PATH=\/var\/run\/docker\.sock$/m);
   const postgresInit = compose.configs["opl-postgres-init"].content as string;

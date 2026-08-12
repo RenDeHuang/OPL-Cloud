@@ -421,7 +421,7 @@ func providerFactFromStorageFixture(input clients.ProviderFactInput, row clients
 	return fact
 }
 
-func (f *monthlyFabric) RenewComputeAllocation(_ context.Context, id, key string) (clients.ProviderResourceMutation, error) {
+func (f *monthlyFabric) RenewComputeAllocation(_ context.Context, accountID, workspaceID, id, key string) (clients.ProviderResourceMutation, error) {
 	*f.events = append(*f.events, "fabric.compute.renew")
 	f.computeRenewKeys = append(f.computeRenewKeys, key)
 	if f.computeDestroyed {
@@ -429,17 +429,17 @@ func (f *monthlyFabric) RenewComputeAllocation(_ context.Context, id, key string
 	}
 	result := f.computeRenew
 	if result.ID == "" {
-		result = clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Status: "running", ProviderResourceID: "provider-" + id, ProviderRequestID: "renew-" + id, Zone: "provider-zone", Deadline: "2026-09-30T09:30:00Z"}
+		result = clients.ComputeAllocation{ID: id, AccountID: accountID, WorkspaceID: workspaceID, PackageID: "basic", Status: "running", ProviderResourceID: "provider-" + id, ProviderRequestID: "renew-" + id, Zone: "provider-zone", Deadline: "2026-09-30T09:30:00Z"}
 	}
 	return providerResourceMutationFixture(result.ID, result.OperationID, result.AccountID, result.WorkspaceID, result.Status, result.ProviderRequestID), f.computeRenewErr
 }
 
-func (f *monthlyFabric) RenewStorageVolume(_ context.Context, id, key string) (clients.ProviderResourceMutation, error) {
+func (f *monthlyFabric) RenewStorageVolume(_ context.Context, accountID, workspaceID, id, key string) (clients.ProviderResourceMutation, error) {
 	*f.events = append(*f.events, "fabric.storage.renew")
 	f.storageRenewKeys = append(f.storageRenewKeys, key)
 	result := f.storageRenew
 	if result.ID == "" {
-		result = clients.StorageVolume{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "available", ProviderResourceID: "provider-" + id, ProviderRequestID: "renew-" + id, SizeGB: 10, Zone: "provider-zone", Deadline: "2026-09-30T09:30:00Z"}
+		result = clients.StorageVolume{ID: id, AccountID: accountID, WorkspaceID: workspaceID, Status: "available", ProviderResourceID: "provider-" + id, ProviderRequestID: "renew-" + id, SizeGB: 10, Zone: "provider-zone", Deadline: "2026-09-30T09:30:00Z"}
 	}
 	return providerResourceMutationFixture(result.ID, result.OperationID, result.AccountID, result.WorkspaceID, result.Status, result.ProviderRequestID), f.storageRenewErr
 }

@@ -109,14 +109,30 @@ func TestOperationStoreDatabaseURLRequiresVerifyFullTLS(t *testing.T) {
 	}
 }
 
-func TestInternalServiceTokenRequiredInProduction(t *testing.T) {
-	getenv := func(key string) string {
-		if key == "NODE_ENV" {
-			return "production"
-		}
-		return ""
+func TestFabricServerAuthorizationIsRequiredAndSeparatedInProduction(t *testing.T) {
+	values := map[string]string{
+		"NODE_ENV": "production", "OPL_INTERNAL_SERVICE_TOKEN": "control-plane-transport",
+		"OPL_FABRIC_RUNNER_SERVICE_TOKEN": "runner-transport", "OPL_FABRIC_CAPABILITY_KEY": "capability-key-with-at-least-32-characters",
 	}
-	if _, err := internalServiceToken(getenv); err == nil {
-		t.Fatal("production Fabric must reject missing OPL_INTERNAL_SERVICE_TOKEN")
+	getenv := func(key string) string { return values[key] }
+	config, err := fabricServerAuthFromEnv(getenv)
+	if err != nil || config.ControlPlaneToken != values["OPL_INTERNAL_SERVICE_TOKEN"] || config.RunnerToken != values["OPL_FABRIC_RUNNER_SERVICE_TOKEN"] {
+		t.Fatalf("Fabric auth config=%#v err=%v", config, err)
+	}
+	for _, key := range []string{"OPL_INTERNAL_SERVICE_TOKEN", "OPL_FABRIC_RUNNER_SERVICE_TOKEN", "OPL_FABRIC_CAPABILITY_KEY"} {
+		t.Run("missing "+key, func(t *testing.T) {
+			if _, err := fabricServerAuthFromEnv(func(candidate string) string {
+				if candidate == key {
+					return ""
+				}
+				return values[candidate]
+			}); err == nil {
+				t.Fatalf("production Fabric accepted missing %s", key)
+			}
+		})
+	}
+	values["OPL_FABRIC_RUNNER_SERVICE_TOKEN"] = values["OPL_INTERNAL_SERVICE_TOKEN"]
+	if _, err := fabricServerAuthFromEnv(getenv); err == nil {
+		t.Fatal("Fabric accepted one bearer for Control Plane and runner")
 	}
 }

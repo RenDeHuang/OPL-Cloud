@@ -15,36 +15,36 @@ func (s *Service) workspaceDeleteFabric() (clients.FabricWorkspaceDeleteClient, 
 	return client, nil
 }
 
-func (s *Service) DestroyWorkspaceRuntime(ctx context.Context, workspaceID, idempotencyKey string) (clients.WorkspaceRuntime, error) {
+func (s *Service) DestroyWorkspaceRuntime(ctx context.Context, accountID, workspaceID, idempotencyKey string) (clients.WorkspaceRuntime, error) {
 	client, err := s.workspaceDeleteFabric()
 	if err != nil {
 		return clients.WorkspaceRuntime{}, err
 	}
-	return client.DestroyWorkspaceRuntime(ctx, workspaceID, idempotencyKey)
+	return client.DestroyWorkspaceRuntime(ctx, accountID, workspaceID, idempotencyKey)
 }
 
-func (s *Service) DetachWorkspaceStorage(ctx context.Context, attachmentID, idempotencyKey string) (clients.StorageAttachment, error) {
+func (s *Service) DetachWorkspaceStorage(ctx context.Context, accountID, workspaceID, attachmentID, idempotencyKey string) (clients.StorageAttachment, error) {
 	client, err := s.workspaceDeleteFabric()
 	if err != nil {
 		return clients.StorageAttachment{}, err
 	}
-	return client.DetachStorageAttachment(ctx, attachmentID, idempotencyKey)
+	return client.DetachStorageAttachment(ctx, accountID, workspaceID, attachmentID, idempotencyKey)
 }
 
-func (s *Service) DestroyWorkspaceStorage(ctx context.Context, storageID, idempotencyKey string) (clients.StorageVolume, error) {
+func (s *Service) DestroyWorkspaceStorage(ctx context.Context, accountID, workspaceID, storageID, idempotencyKey string) (clients.StorageVolume, error) {
 	client, err := s.workspaceDeleteFabric()
 	if err != nil {
 		return clients.StorageVolume{}, err
 	}
-	return client.DestroyStorageVolume(ctx, storageID, idempotencyKey)
+	return client.DestroyStorageVolume(ctx, accountID, workspaceID, storageID, idempotencyKey)
 }
 
-func (s *Service) DestroyWorkspaceCompute(ctx context.Context, computeID, idempotencyKey string) (clients.ComputeAllocation, error) {
+func (s *Service) DestroyWorkspaceCompute(ctx context.Context, accountID, workspaceID, computeID, idempotencyKey string) (clients.ComputeAllocation, error) {
 	client, err := s.workspaceDeleteFabric()
 	if err != nil {
 		return clients.ComputeAllocation{}, err
 	}
-	return client.DestroyComputeAllocation(ctx, computeID, idempotencyKey)
+	return client.DestroyComputeAllocation(ctx, accountID, workspaceID, computeID, idempotencyKey)
 }
 
 func (s *Service) WorkspaceDeleteComputeStatus(ctx context.Context, computeID string) (clients.ComputeAllocation, error) {

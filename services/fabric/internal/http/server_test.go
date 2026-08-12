@@ -3,7 +3,10 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,13 +37,328 @@ type runtimeHealthSummaryHTTPProvider struct {
 	calls int
 }
 
+const testFabricCapabilityKey = "test-fabric-capability-key-not-a-transport-token"
+
+func newTestServer(service *fabric.Service, token string) http.Handler {
+	want := sha256.Sum256([]byte("Bearer " + token))
+	next := newFabricMux(service)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
+		if token == "" || !hmac.Equal(got[:], want[:]) {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type fabricCapabilityClaimsForTest struct {
+	Version      int    `json:"version"`
+	Caller       string `json:"caller"`
+	AccountID    string `json:"accountId"`
+	WorkspaceID  string `json:"workspaceId"`
+	ResourceKind string `json:"resourceKind"`
+	ResourceID   string `json:"resourceId"`
+	Action       string `json:"action"`
+	OperationID  string `json:"operationId"`
+	ExpiresAt    int64  `json:"expiresAt"`
+	BodySHA256   string `json:"bodySha256"`
+}
+
+func fabricCapabilityForTest(t *testing.T, claims fabricCapabilityClaimsForTest, body []byte) string {
+	t.Helper()
+	digest := sha256.Sum256(body)
+	claims.BodySHA256 = hex.EncodeToString(digest[:])
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	mac := hmac.New(sha256.New, []byte(testFabricCapabilityKey))
+	_, _ = mac.Write([]byte(encoded))
+	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+type capabilityBoundaryProvider struct {
+	testProvider
+	computeCreates atomic.Int32
+}
+
+func (p *capabilityBoundaryProvider) CreateComputeAllocation(ctx context.Context, input fabric.ComputeAllocationExecution) (fabric.ComputeAllocation, error) {
+	p.computeCreates.Add(1)
+	return p.testProvider.CreateComputeAllocation(ctx, input)
+}
+
+func TestFabricMutationAuthorizationRejectsBeforeOperationOrProviderSideEffects(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		claims     fabricCapabilityClaimsForTest
+		capability bool
+		signedBody string
+		corrupt    bool
+	}{
+		{
+			name: "missing authorization",
+			body: `{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"basic","nodePoolId":"np-basic"}`,
+		},
+		{
+			name: "account and workspace mismatch",
+			body: `{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"basic","nodePoolId":"np-basic"}`,
+			claims: fabricCapabilityClaimsForTest{
+				Version: 1, Caller: "control-plane", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+				ResourceKind: "compute_allocation", ResourceID: "compute-beta", Action: "create_compute_allocation", OperationID: "operation-beta",
+				ExpiresAt: time.Now().Add(time.Minute).Unix(),
+			},
+			capability: true,
+		},
+		{
+			name: "expired authorization",
+			body: `{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"basic","nodePoolId":"np-basic"}`,
+			claims: fabricCapabilityClaimsForTest{
+				Version: 1, Caller: "control-plane", AccountID: "acct-beta", WorkspaceID: "ws-beta",
+				ResourceKind: "compute_allocation", ResourceID: "compute-beta", Action: "create_compute_allocation", OperationID: "operation-beta",
+				ExpiresAt: time.Now().Add(-time.Second).Unix(),
+			},
+			capability: true,
+		},
+		{
+			name: "caller mismatch",
+			body: `{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"basic","nodePoolId":"np-basic"}`,
+			claims: fabricCapabilityClaimsForTest{
+				Version: 1, Caller: "runner", AccountID: "acct-beta", WorkspaceID: "ws-beta",
+				ResourceKind: "compute_allocation", ResourceID: "compute-beta", Action: "create_compute_allocation", OperationID: "operation-beta",
+				ExpiresAt: time.Now().Add(time.Minute).Unix(),
+			},
+			capability: true,
+		},
+		{
+			name: "resource mismatch",
+			body: `{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"basic","nodePoolId":"np-basic"}`,
+			claims: fabricCapabilityClaimsForTest{
+				Version: 1, Caller: "control-plane", AccountID: "acct-beta", WorkspaceID: "ws-beta",
+				ResourceKind: "compute_allocation", ResourceID: "compute-alpha", Action: "create_compute_allocation", OperationID: "operation-beta",
+				ExpiresAt: time.Now().Add(time.Minute).Unix(),
+			},
+			capability: true,
+		},
+		{
+			name: "action mismatch",
+			body: `{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"basic","nodePoolId":"np-basic"}`,
+			claims: fabricCapabilityClaimsForTest{
+				Version: 1, Caller: "control-plane", AccountID: "acct-beta", WorkspaceID: "ws-beta",
+				ResourceKind: "compute_allocation", ResourceID: "compute-beta", Action: "destroy_compute_allocation", OperationID: "operation-beta",
+				ExpiresAt: time.Now().Add(time.Minute).Unix(),
+			},
+			capability: true,
+		},
+		{
+			name: "operation mismatch",
+			body: `{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"basic","nodePoolId":"np-basic"}`,
+			claims: fabricCapabilityClaimsForTest{
+				Version: 1, Caller: "control-plane", AccountID: "acct-beta", WorkspaceID: "ws-beta",
+				ResourceKind: "compute_allocation", ResourceID: "compute-beta", Action: "create_compute_allocation", OperationID: "operation-alpha",
+				ExpiresAt: time.Now().Add(time.Minute).Unix(),
+			},
+			capability: true,
+		},
+		{
+			name: "body mismatch",
+			body: `{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"basic","nodePoolId":"np-basic"}`,
+			claims: fabricCapabilityClaimsForTest{
+				Version: 1, Caller: "control-plane", AccountID: "acct-beta", WorkspaceID: "ws-beta",
+				ResourceKind: "compute_allocation", ResourceID: "compute-beta", Action: "create_compute_allocation", OperationID: "operation-beta",
+				ExpiresAt: time.Now().Add(time.Minute).Unix(),
+			},
+			capability: true,
+			signedBody: `{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"pro","nodePoolId":"np-basic"}`,
+		},
+		{
+			name: "invalid integrity",
+			body: `{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"basic","nodePoolId":"np-basic"}`,
+			claims: fabricCapabilityClaimsForTest{
+				Version: 1, Caller: "control-plane", AccountID: "acct-beta", WorkspaceID: "ws-beta",
+				ResourceKind: "compute_allocation", ResourceID: "compute-beta", Action: "create_compute_allocation", OperationID: "operation-beta",
+				ExpiresAt: time.Now().Add(time.Minute).Unix(),
+			},
+			capability: true,
+			corrupt:    true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &capabilityBoundaryProvider{}
+			store := fabric.NewMemoryOperationStore()
+			server := NewServerWithAuth(fabric.NewServiceWithOperationStore(provider, store), ServerAuthConfig{
+				ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey,
+			})
+			body := []byte(tt.body)
+			req := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewReader(body))
+			req.Header.Set("Idempotency-Key", "operation-beta")
+			if tt.capability {
+				signedBody := body
+				if tt.signedBody != "" {
+					signedBody = []byte(tt.signedBody)
+				}
+				capability := fabricCapabilityForTest(t, tt.claims, signedBody)
+				if tt.corrupt {
+					capability += "x"
+				}
+				req.Header.Set("X-OPL-Fabric-Capability", capability)
+			}
+			rec := httptest.NewRecorder()
+
+			server.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			operations, err := store.List(context.Background())
+			if err != nil || len(operations) != 0 || provider.computeCreates.Load() != 0 {
+				t.Fatalf("rejected request changed Fabric state: operations=%#v providerCalls=%d err=%v", operations, provider.computeCreates.Load(), err)
+			}
+		})
+	}
+}
+
+func TestFabricMutationAuthorizationAcceptsMatchingControlPlaneRequest(t *testing.T) {
+	provider := &capabilityBoundaryProvider{}
+	store := fabric.NewMemoryOperationStore()
+	server := NewServerWithAuth(fabric.NewServiceWithOperationStore(provider, store), ServerAuthConfig{
+		ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey,
+	})
+	body := []byte(`{"id":"compute-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","nodePoolId":"np-basic"}`)
+	claims := fabricCapabilityClaimsForTest{
+		Version: 1, Caller: "control-plane", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		ResourceKind: "compute_allocation", ResourceID: "compute-alpha", Action: "create_compute_allocation", OperationID: "operation-alpha",
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	req := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewReader(body))
+	req.Header.Set("Idempotency-Key", "operation-alpha")
+	req.Header.Set("X-OPL-Fabric-Capability", fabricCapabilityForTest(t, claims, body))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].AccountID != "acct-alpha" || operations[0].WorkspaceID != "ws-alpha" {
+		t.Fatalf("legal request operation=%#v err=%v", operations, err)
+	}
+}
+
+func TestFabricMutationAuthorizationDerivesRuntimeUpdateAction(t *testing.T) {
+	body := []byte(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":"compute-alpha","volumeId":"storage-alpha","attachmentId":"attachment-alpha","attachmentOperationId":"attach-alpha","runtimeOperationId":"runtime-original","imageId":"one-person-lab-app","gatewaySecretRef":"secret-alpha"}`)
+	req := httptest.NewRequest(http.MethodPost, "/fabric/workspace-runtimes", nil)
+	req.Header.Set("Idempotency-Key", "runtime-credential-rotate:ws-alpha:once:runtime")
+
+	scope, ok := fabricMutationScopeForRequest(req, body)
+
+	if !ok || scope.Action != "update_workspace_runtime" || scope.OperationID != "runtime-credential-rotate:ws-alpha:once:runtime" {
+		t.Fatalf("runtime update scope=%#v ok=%v", scope, ok)
+	}
+}
+
+func TestFabricStrictAuthorizationPreservesTransportAuthenticationError(t *testing.T) {
+	server := NewServerWithAuth(fabric.NewService(testProvider{}), ServerAuthConfig{
+		ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/fabric/compute-allocations", strings.NewReader(`{"id":"compute-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic"}`))
+	req.Header.Set("Idempotency-Key", "operation-alpha")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFabricRunnerAuthorizationIsLimitedToJobLeaseRoutes(t *testing.T) {
+	provider := &capabilityBoundaryProvider{}
+	store := fabric.NewMemoryOperationStore()
+	service := fabric.NewServiceWithOperationStore(provider, store)
+	job, err := service.CreateJob(context.Background(), fabric.JobInput{
+		OrganizationID: "org-alpha", WorkspaceID: "ws-alpha", ProjectID: "project-alpha", TaskID: "task-alpha",
+		RequestID: "request-alpha", ApprovalID: "approval-alpha", IdempotencyKey: "job-alpha",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServerWithAuth(service, ServerAuthConfig{
+		ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey,
+	})
+
+	claim := httptest.NewRequest(http.MethodPost, "/fabric/jobs/"+job.JobID+"/claim", strings.NewReader(`{"runnerId":"runner-alpha"}`))
+	claim.Header.Set("Authorization", "Bearer runner-secret")
+	claim.Header.Set("Idempotency-Key", "claim-alpha")
+	claimRec := httptest.NewRecorder()
+	server.ServeHTTP(claimRec, claim)
+	if claimRec.Code != http.StatusAccepted {
+		t.Fatalf("runner claim status=%d body=%s", claimRec.Code, claimRec.Body.String())
+	}
+	var claimed fabric.Job
+	if err := json.NewDecoder(claimRec.Body).Decode(&claimed); err != nil || claimed.LeaseToken == "" {
+		t.Fatalf("runner claim result=%#v err=%v", claimed, err)
+	}
+	get := httptest.NewRequest(http.MethodGet, "/fabric/jobs/"+job.JobID, nil)
+	get.Header.Set("Authorization", "Bearer runner-secret")
+	getRec := httptest.NewRecorder()
+	server.ServeHTTP(getRec, get)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("runner job read status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+	heartbeat := httptest.NewRequest(http.MethodPost, "/fabric/jobs/"+job.JobID+"/heartbeat", strings.NewReader(`{"runnerId":"runner-alpha","leaseToken":"`+claimed.LeaseToken+`"}`))
+	heartbeat.Header.Set("Authorization", "Bearer runner-secret")
+	heartbeat.Header.Set("Idempotency-Key", "heartbeat-alpha")
+	heartbeatRec := httptest.NewRecorder()
+	server.ServeHTTP(heartbeatRec, heartbeat)
+	if heartbeatRec.Code != http.StatusAccepted {
+		t.Fatalf("runner heartbeat status=%d body=%s", heartbeatRec.Code, heartbeatRec.Body.String())
+	}
+	baselineOperations, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"id":"compute-beta","accountId":"acct-beta","workspaceId":"ws-beta","packageId":"basic","nodePoolId":"np-basic"}`)
+	mutation := httptest.NewRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewReader(body))
+	mutation.Header.Set("Authorization", "Bearer runner-secret")
+	mutation.Header.Set("Idempotency-Key", "operation-beta")
+	mutationRec := httptest.NewRecorder()
+	server.ServeHTTP(mutationRec, mutation)
+	if mutationRec.Code != http.StatusForbidden {
+		t.Fatalf("runner mutation status=%d body=%s", mutationRec.Code, mutationRec.Body.String())
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != len(baselineOperations) || provider.computeCreates.Load() != 0 {
+		t.Fatalf("runner mutation changed Fabric state: operations=%#v providerCalls=%d err=%v", operations, provider.computeCreates.Load(), err)
+	}
+	for _, path := range []string{"/fabric/jobs", "/fabric/jobs/" + job.JobID + "/cancel", "/fabric/jobs/" + job.JobID + "/retry"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		req.Header.Set("Authorization", "Bearer runner-secret")
+		req.Header.Set("Idempotency-Key", "runner-forbidden")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("runner route %s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func (p *runtimeHealthSummaryHTTPProvider) RuntimeHealthSummary(context.Context) (fabric.RuntimeHealthSummary, error) {
 	p.calls++
 	return fabric.RuntimeHealthSummary{Total: 1000, Ready: 999, Unready: 1}, nil
 }
 
 func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	tests := []struct {
 		name          string
 		method        string
@@ -90,7 +409,7 @@ func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *te
 	}
 	input.Binding.RequestHash = "ddb1c0c5195c4e04c1d23230a493da582a2ca56af528a7abcf67d781f81c3fe1"
 	binding = input.Binding
-	server := NewServer(service, "internal-secret")
+	server := newTestServer(service, "internal-secret")
 	body, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +462,7 @@ func (testProvider) ReadWorkspaceLaunchStage(ctx context.Context, request fabric
 func TestRuntimeHealthSummaryHTTPIsAuthenticatedAndReadOnly(t *testing.T) {
 	provider := &runtimeHealthSummaryHTTPProvider{}
 	service := fabric.NewService(provider)
-	server := NewServer(service, "internal-secret")
+	server := newTestServer(service, "internal-secret")
 
 	unauthorized := httptest.NewRecorder()
 	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/fabric/runtime-health-summary", nil))
@@ -191,7 +510,7 @@ func TestProviderFactsBatchHTTPPreservesTypedWireShape(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	server := NewServer(service, "internal-secret")
+	server := newTestServer(service, "internal-secret")
 	body := fmt.Sprintf(`{"items":[{"accountId":"acct-alpha","workspaceId":"workspace-alpha","resourceType":"compute","resourceId":%q}]}`, compute.ID)
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, testRequest(http.MethodPost, "/fabric/provider-facts/batch", strings.NewReader(body)))
@@ -228,7 +547,7 @@ func TestMachineOwnershipHTTPIsAuthenticatedExactAndNotFound(t *testing.T) {
 	if _, _, err := store.ClaimMachine(context.Background(), active); err != nil {
 		t.Fatal(err)
 	}
-	server := NewServer(fabric.NewServiceWithOperationStore(testProvider{}, store), "internal-secret")
+	server := newTestServer(fabric.NewServiceWithOperationStore(testProvider{}, store), "internal-secret")
 
 	unauthorized := httptest.NewRecorder()
 	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/fabric/machine-ownerships/compute-alpha", nil))
@@ -264,7 +583,7 @@ func TestMachineOwnershipHTTPIsAuthenticatedExactAndNotFound(t *testing.T) {
 }
 
 func TestTencentOperatorIdentityEvidenceRouteIsRetainedWithoutLegacyMutationRoutes(t *testing.T) {
-	server := NewServer(fabric.NewServiceWithOperationStore(testProvider{}, fabric.NewMemoryOperationStore()), "internal-secret")
+	server := newTestServer(fabric.NewServiceWithOperationStore(testProvider{}, fabric.NewMemoryOperationStore()), "internal-secret")
 	unauthorized := httptest.NewRecorder()
 	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/fabric/compute-claim-recovery/identity-evidence", bytes.NewBufferString("{}")))
 	if unauthorized.Code != http.StatusUnauthorized {
@@ -322,7 +641,7 @@ func createReadyCompute(t *testing.T, service *fabric.Service, server http.Handl
 }
 
 func TestServerDestroysWorkspaceRuntime(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	req := httptest.NewRequest(http.MethodPost, "/fabric/workspace-runtimes/workspace-alpha/destroy", nil)
 	req.Header.Set("Authorization", "Bearer internal-secret")
 	req.Header.Set("Idempotency-Key", "runtime-destroy-once")
@@ -336,7 +655,7 @@ func TestServerDestroysWorkspaceRuntime(t *testing.T) {
 }
 
 func TestServerWritesGatewaySecretWithoutReturningRawKey(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	req := testRequest(http.MethodPost, "/fabric/gateway-secrets", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","workspaceApiKeyId":19,"fingerprint":"sha256:12982dcaf26b60cde5b6b68b01556e591badb2768ac9b71525619cb4ebc646f0","gatewayApiKey":"raw-gateway-key"}`))
 	req.Header.Set("Idempotency-Key", "gateway-once")
 	rec := httptest.NewRecorder()
@@ -354,7 +673,7 @@ func TestServerWritesGatewaySecretWithoutReturningRawKey(t *testing.T) {
 
 func TestServerMonthlyPreflightNeedsNoIdempotencyKeyAndRecordsNoOperation(t *testing.T) {
 	store := fabric.NewMemoryOperationStore()
-	server := NewServer(fabric.NewServiceWithOperationStore(testProvider{}, store), "internal-secret")
+	server := newTestServer(fabric.NewServiceWithOperationStore(testProvider{}, store), "internal-secret")
 	req := testRequest(http.MethodPost, "/fabric/monthly-preflight", bytes.NewBufferString(`{"resourceType":"storage","packageId":"basic","sizeGb":10,"zone":"na-siliconvalley-1"}`))
 	rec := httptest.NewRecorder()
 
@@ -392,7 +711,7 @@ func TestServerMonthlyPreflightFailsClosedWithStableErrors(t *testing.T) {
 		{name: "provider unavailable", provider: unavailablePreflightProvider{}, body: `{"resourceType":"storage","packageId":"basic","sizeGb":10,"zone":"na-siliconvalley-1"}`, want: http.StatusServiceUnavailable, message: "monthly_preflight_unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			server := NewServer(fabric.NewService(tc.provider), "internal-secret")
+			server := newTestServer(fabric.NewService(tc.provider), "internal-secret")
 			recorder := httptest.NewRecorder()
 			server.ServeHTTP(recorder, testRequest(http.MethodPost, "/fabric/monthly-preflight", bytes.NewBufferString(tc.body)))
 			if recorder.Code != tc.want || !strings.Contains(recorder.Body.String(), tc.message) || strings.Contains(recorder.Body.String(), "private Tencent response") {
@@ -416,7 +735,7 @@ func (monthlyPreflightReportHTTPProvider) MonthlyPreflightReport(context.Context
 }
 
 func TestServerMonthlyPreflightReportIsInternalReadOnlyAndStrictJSON(t *testing.T) {
-	server := NewServer(fabric.NewService(monthlyPreflightReportHTTPProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(monthlyPreflightReportHTTPProvider{}), "internal-secret")
 	unauthorized := httptest.NewRecorder()
 	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/fabric/monthly-preflight-report?zone=na-siliconvalley-1", nil))
 	if unauthorized.Code != http.StatusUnauthorized {
@@ -449,7 +768,7 @@ func TestServerMonthlyPreflightReportIsInternalReadOnlyAndStrictJSON(t *testing.
 }
 
 func TestComputePoolHeadTerminalizationHTTPRoutesRemainRegistered(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(method, "/fabric/compute-pool-head/terminalization", strings.NewReader(`{}`))
@@ -480,7 +799,7 @@ func TestServerRenewsComputeAllocation(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	server := NewServer(service, "internal-secret")
+	server := newTestServer(service, "internal-secret")
 	req := testRequest(http.MethodPost, "/fabric/compute-allocations/compute-alpha/renew", bytes.NewBufferString(`{}`))
 	req.Header.Set("Idempotency-Key", "compute-renew-once")
 	rec := httptest.NewRecorder()
@@ -505,7 +824,7 @@ func TestRuntimeOperationConflictsAreHTTPConflict(t *testing.T) {
 }
 
 func TestCatalogHTTP(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	req := testRequest(http.MethodGet, "/fabric/catalog", nil)
 	rec := httptest.NewRecorder()
 
@@ -525,7 +844,7 @@ func TestCatalogHTTP(t *testing.T) {
 
 func TestStorageSnapshotHTTPCreateRestoreAndDestroy(t *testing.T) {
 	service := fabric.NewService(testProvider{})
-	server := NewServer(service, "internal-secret")
+	server := newTestServer(service, "internal-secret")
 	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "snapshot-compute")
 	createVolume := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(fmt.Sprintf(`{"id":"vol-source","accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)))
 	createVolume.Header.Set("Idempotency-Key", "volume-once")
@@ -581,7 +900,7 @@ func TestWriteComputeAllocationResultPreservesTerminalEvidence(t *testing.T) {
 }
 
 func TestCreateComputeAllocationHTTPRequiresIdempotencyKey(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	body := bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","dryRun":true}`)
 	req := testRequest(http.MethodPost, "/fabric/compute-allocations", body)
 	rec := httptest.NewRecorder()
@@ -594,7 +913,7 @@ func TestCreateComputeAllocationHTTPRequiresIdempotencyKey(t *testing.T) {
 }
 
 func TestResourceBoundaryHTTPReturnsBadRequest(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	for _, tc := range []struct{ name, path, body string }{
 		{name: "package", path: "/fabric/compute-allocations", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"enterprise"}`},
 		{name: "storage", path: "/fabric/storage-volumes", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":15}`},
@@ -631,7 +950,7 @@ func TestSyncComputeAllocationHTTPWaitsForMachineOwnership(t *testing.T) {
 	provider := &blockingComputeCreateHTTPProvider{entered: make(chan struct{}), release: make(chan struct{})}
 	defer close(provider.release)
 	service := fabric.NewService(provider)
-	server := NewServer(service, "internal-secret")
+	server := newTestServer(service, "internal-secret")
 	create := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","nodePoolId":"np-basic"}`))
 	create.Header.Set("Idempotency-Key", "sync-http-create")
 	createRec := httptest.NewRecorder()
@@ -666,7 +985,7 @@ func TestSyncComputeAllocationHTTPWaitsForMachineOwnership(t *testing.T) {
 
 func TestSyncStorageVolumeHTTPRefreshesProviderState(t *testing.T) {
 	service := fabric.NewService(testProvider{})
-	server := NewServer(service, "internal-secret")
+	server := newTestServer(service, "internal-secret")
 	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "sync-storage-compute")
 	create := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(fmt.Sprintf(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)))
 	create.Header.Set("Idempotency-Key", "sync-http-storage")
@@ -698,7 +1017,7 @@ func TestSyncStorageVolumeHTTPRefreshesProviderState(t *testing.T) {
 
 func TestGetStorageVolumeHTTPIsReadOnly(t *testing.T) {
 	service := fabric.NewService(testProvider{})
-	server := NewServer(service, "internal-secret")
+	server := newTestServer(service, "internal-secret")
 	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "get-storage-compute")
 	create := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(fmt.Sprintf(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)))
 	create.Header.Set("Idempotency-Key", "get-http-storage")
@@ -734,7 +1053,7 @@ func TestGetStorageVolumeHTTPIsReadOnly(t *testing.T) {
 
 func TestOperationsHTTPReturnsFabricAuditFacts(t *testing.T) {
 	service := fabric.NewService(testProvider{})
-	server := NewServer(service, "internal-secret")
+	server := newTestServer(service, "internal-secret")
 	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "ops-storage-compute")
 
 	create := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(fmt.Sprintf(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)))
@@ -767,7 +1086,7 @@ func TestOperationsHTTPReturnsFabricAuditFacts(t *testing.T) {
 }
 
 func TestJobHTTPLifecycle(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	create := testRequest(http.MethodPost, "/fabric/jobs", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","requestId":"request-alpha","approvalId":"approval-alpha","environmentRef":"environment-alpha"}`))
 	create.Header.Set("Idempotency-Key", "http-job-once")
 	createRec := httptest.NewRecorder()
@@ -804,7 +1123,7 @@ func TestJobHTTPLifecycle(t *testing.T) {
 }
 
 func TestJobHTTPReturnsNotFound(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	req := testRequest(http.MethodGet, "/fabric/jobs/job-missing", nil)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -814,7 +1133,7 @@ func TestJobHTTPReturnsNotFound(t *testing.T) {
 }
 
 func TestJobHTTPRequiresCanonicalIdentity(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	req := testRequest(http.MethodPost, "/fabric/jobs", bytes.NewBufferString(`{}`))
 	req.Header.Set("Idempotency-Key", "invalid-job")
 	rec := httptest.NewRecorder()
@@ -825,7 +1144,7 @@ func TestJobHTTPRequiresCanonicalIdentity(t *testing.T) {
 }
 
 func TestRunnerJobHTTPCompletionLifecycle(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	create := testRequest(http.MethodPost, "/fabric/jobs", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","requestId":"request-alpha","approvalId":"approval-alpha"}`))
 	create.Header.Set("Idempotency-Key", "http-runner-job")
 	createRec := httptest.NewRecorder()
@@ -869,7 +1188,7 @@ func TestRunnerJobHTTPCompletionLifecycle(t *testing.T) {
 }
 
 func TestRunnerJobHTTPFailRetryAndConflict(t *testing.T) {
-	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	create := testRequest(http.MethodPost, "/fabric/jobs", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","requestId":"request-alpha","approvalId":"approval-alpha"}`))
 	create.Header.Set("Idempotency-Key", "http-fail-job")
 	createRec := httptest.NewRecorder()

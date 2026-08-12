@@ -1,18 +1,39 @@
 package http
 
 import (
+	"bytes"
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"opl-cloud/services/fabric/internal/fabric"
 )
 
-func NewServer(service *fabric.Service, token string) http.Handler {
+const fabricCapabilityHeader = "X-OPL-Fabric-Capability"
+
+type ServerAuthConfig struct {
+	ControlPlaneToken string
+	RunnerToken       string
+	CapabilityKey     string
+	Now               func() time.Time
+}
+
+func NewServerWithAuth(service *fabric.Service, config ServerAuthConfig) http.Handler {
+	if config.Now == nil {
+		config.Now = time.Now
+	}
+	return authorizeFabricRequests(newFabricMux(service), config)
+}
+
+func newFabricMux(service *fabric.Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -447,7 +468,211 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		secret, err := service.UpsertGatewaySecret(r.Context(), input)
 		writeResult(w, secret, err)
 	})
-	return authenticate(mux, token)
+	return mux
+}
+
+type fabricCapabilityClaims struct {
+	Version      int    `json:"version"`
+	Caller       string `json:"caller"`
+	AccountID    string `json:"accountId"`
+	WorkspaceID  string `json:"workspaceId"`
+	ResourceKind string `json:"resourceKind"`
+	ResourceID   string `json:"resourceId"`
+	Action       string `json:"action"`
+	OperationID  string `json:"operationId"`
+	ExpiresAt    int64  `json:"expiresAt"`
+	BodySHA256   string `json:"bodySha256"`
+}
+
+type fabricMutationScope struct {
+	AccountID    string
+	WorkspaceID  string
+	ResourceKind string
+	ResourceID   string
+	Action       string
+	OperationID  string
+}
+
+func authorizeFabricRequests(next http.Handler, config ServerAuthConfig) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		identity := fabricTransportIdentity(r.Header.Get("Authorization"), config)
+		if identity == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if identity == "runner" {
+			if !runnerJobLeaseRoute(r) {
+				writeError(w, http.StatusForbidden, "forbidden")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !isFabricMutation(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		scope, ok := fabricMutationScopeForRequest(r, body)
+		if !ok {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if !verifyFabricCapability(r.Header.Get(fabricCapabilityHeader), config.CapabilityKey, scope, body, config.Now()) {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func fabricTransportIdentity(header string, config ServerAuthConfig) string {
+	if config.ControlPlaneToken != "" && constantTimeBearerMatch(header, config.ControlPlaneToken) {
+		return "control-plane"
+	}
+	if config.RunnerToken != "" && constantTimeBearerMatch(header, config.RunnerToken) {
+		return "runner"
+	}
+	return ""
+}
+
+func constantTimeBearerMatch(header, token string) bool {
+	want := sha256.Sum256([]byte("Bearer " + token))
+	got := sha256.Sum256([]byte(header))
+	return subtle.ConstantTimeCompare(got[:], want[:]) == 1
+}
+
+func runnerJobLeaseRoute(r *http.Request) bool {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) == 3 && parts[0] == "fabric" && parts[1] == "jobs" && parts[2] != "" {
+		return r.Method == http.MethodGet
+	}
+	if len(parts) != 4 || parts[0] != "fabric" || parts[1] != "jobs" || parts[2] == "" || r.Method != http.MethodPost {
+		return false
+	}
+	switch parts[3] {
+	case "claim", "heartbeat", "complete", "fail":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFabricMutation(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	if r.URL.Path == "/fabric/compute-allocations" || r.URL.Path == "/fabric/storage-volumes" || r.URL.Path == "/fabric/workspace-runtimes" ||
+		r.URL.Path == "/fabric/gateway-secrets" || r.URL.Path == "/fabric/workspace-launches/stages/ensure" {
+		return true
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 4 || parts[0] != "fabric" || parts[2] == "" {
+		return false
+	}
+	switch parts[1] + "/" + parts[3] {
+	case "compute-allocations/renew", "compute-allocations/destroy", "storage-volumes/renew", "storage-volumes/destroy", "storage-attachments/detach", "workspace-runtimes/destroy", "workspace-runtimes/gateway-secret":
+		return true
+	default:
+		return false
+	}
+}
+
+func fabricMutationScopeForRequest(r *http.Request, body []byte) (fabricMutationScope, bool) {
+	var input map[string]any
+	if len(body) == 0 || json.Unmarshal(body, &input) != nil {
+		return fabricMutationScope{}, false
+	}
+	value := func(name string) string {
+		result, _ := input[name].(string)
+		return strings.TrimSpace(result)
+	}
+	scope := fabricMutationScope{AccountID: value("accountId"), WorkspaceID: value("workspaceId"), OperationID: strings.TrimSpace(r.Header.Get("Idempotency-Key"))}
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
+	switch {
+	case r.URL.Path == "/fabric/compute-allocations":
+		scope.ResourceKind, scope.ResourceID, scope.Action = "compute_allocation", value("id"), "create_compute_allocation"
+	case r.URL.Path == "/fabric/storage-volumes":
+		scope.ResourceKind, scope.ResourceID, scope.Action = "storage_volume", value("id"), "create_storage_volume"
+	case r.URL.Path == "/fabric/workspace-runtimes":
+		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime", scope.WorkspaceID, "create_workspace_runtime"
+		if value("runtimeOperationId") != scope.OperationID {
+			scope.Action = "update_workspace_runtime"
+		}
+	case r.URL.Path == "/fabric/gateway-secrets":
+		scope.ResourceKind, scope.ResourceID, scope.Action = "gateway_secret", scope.WorkspaceID, "upsert_gateway_secret"
+	case r.URL.Path == "/fabric/workspace-launches/stages/ensure":
+		binding, _ := input["binding"].(map[string]any)
+		bindingValue := func(name string) string {
+			result, _ := binding[name].(string)
+			return strings.TrimSpace(result)
+		}
+		scope.AccountID, scope.WorkspaceID = bindingValue("accountId"), bindingValue("workspaceId")
+		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_launch_stage", bindingValue("expectedResourceBinding"), bindingValue("action")
+		scope.OperationID = bindingValue("idempotencyKey")
+	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "compute-allocations" && parts[2] != "":
+		scope.ResourceKind, scope.ResourceID = "compute_allocation", parts[2]
+		switch parts[3] {
+		case "renew":
+			scope.Action = "renew_compute_allocation"
+		case "destroy":
+			scope.Action = "destroy_compute_allocation"
+		}
+	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "storage-volumes" && parts[2] != "":
+		scope.ResourceKind, scope.ResourceID = "storage_volume", parts[2]
+		switch parts[3] {
+		case "renew":
+			scope.Action = "renew_storage_volume"
+		case "destroy":
+			scope.Action = "destroy_storage_volume"
+		}
+	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "storage-attachments" && parts[2] != "" && parts[3] == "detach":
+		scope.ResourceKind, scope.ResourceID, scope.Action = "storage_attachment", parts[2], "detach_storage_attachment"
+	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "destroy":
+		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime", parts[2], "destroy_workspace_runtime"
+	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "gateway-secret":
+		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime_gateway_secret", parts[2], "bind_workspace_runtime_gateway_secret"
+	}
+	return scope, scope.AccountID != "" && scope.WorkspaceID != "" && scope.ResourceKind != "" && scope.ResourceID != "" && scope.Action != "" && scope.OperationID != ""
+}
+
+func verifyFabricCapability(raw, key string, expected fabricMutationScope, body []byte, now time.Time) bool {
+	parts := strings.Split(raw, ".")
+	if key == "" || len(parts) != 2 {
+		return false
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(key))
+	_, _ = mac.Write([]byte(parts[0]))
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return false
+	}
+	var claims fabricCapabilityClaims
+	if json.Unmarshal(payload, &claims) != nil {
+		return false
+	}
+	digest := sha256.Sum256(body)
+	return claims.Version == 1 && claims.Caller == "control-plane" && claims.AccountID == expected.AccountID &&
+		claims.WorkspaceID == expected.WorkspaceID && claims.ResourceKind == expected.ResourceKind && claims.ResourceID == expected.ResourceID &&
+		claims.Action == expected.Action && claims.OperationID == expected.OperationID && claims.ExpiresAt > now.Unix() &&
+		claims.ExpiresAt <= now.Add(2*time.Minute).Unix() && claims.BodySHA256 == hex.EncodeToString(digest[:])
 }
 
 func writeWorkspaceLaunchResult(w http.ResponseWriter, result any, err error) {
@@ -463,22 +688,6 @@ func writeWorkspaceLaunchResult(w http.ResponseWriter, result any, err error) {
 	default:
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 	}
-}
-
-func authenticate(next http.Handler, token string) http.Handler {
-	want := sha256.Sum256([]byte("Bearer " + token))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
-		if token == "" || subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func decodeWrite(w http.ResponseWriter, r *http.Request, idempotencyKey *string, body any) bool {
