@@ -23,141 +23,36 @@ const (
 var errProviderAcceptanceStateRead = errors.New("provider_acceptance_state_read_failed")
 
 type providerAcceptanceSlot struct {
-	ID           string
-	AccountID    string
-	OwnerEmail   string
-	Key          string
-	PackageID    string
-	InstanceType string
-	StorageGB    int
-	OperationID  string
+	ID          string
+	AccountID   string
+	OwnerEmail  string
+	Key         string
+	PackageID   string
+	StorageGB   int
+	OperationID string
 }
 
 var providerAcceptanceSlots = map[string]providerAcceptanceSlot{
 	"verification-slot-basic-01": {
 		ID: "verification-slot-basic-01", AccountID: "acct-verification-slot-basic-01", OwnerEmail: "verification-slot-basic-01@fenggaolab.org",
-		Key: "provider-acceptance:verification-slot-basic-01", PackageID: "basic", InstanceType: "SA5.MEDIUM4", StorageGB: 10,
+		Key: "provider-acceptance:verification-slot-basic-01", PackageID: "basic", StorageGB: 10,
 		OperationID: "provider-acceptance-verification-slot-basic-01",
 	},
 	"verification-slot-pro-01": {
 		ID: "verification-slot-pro-01", AccountID: "acct-verification-slot-pro-01", OwnerEmail: "verification-slot-pro-01@fenggaolab.org",
-		Key: "provider-acceptance:verification-slot-pro-01", PackageID: "pro", InstanceType: "SA5.2XLARGE16", StorageGB: 100,
+		Key: "provider-acceptance:verification-slot-pro-01", PackageID: "pro", StorageGB: 100,
 		OperationID: "provider-acceptance-verification-slot-pro-01",
 	},
 }
 
-// The medopl Instance still calls this legacy operator route. Keep its provider
-// interpretation physically scoped here until INSTANCE-PROVIDER-ACCEPTANCE-MIGRATION
-// moves the workflow to the generic Workspace/Fabric contract.
-func providerDataValue(row map[string]any, key string) string {
-	switch data := row["providerData"].(type) {
-	case map[string]any:
-		return stringValue(data[key])
-	case map[string]string:
-		return data[key]
-	default:
-		return ""
-	}
-}
-
-func monthlyComputeLaunchZone() string { return strings.TrimSpace(os.Getenv("OPL_TENCENT_ZONE")) }
-
-func monthlyComputeInstanceType(packageID string) string {
-	if packageID == "pro" {
-		return strings.TrimSpace(os.Getenv("OPL_PRO_COMPUTE_INSTANCE_TYPE"))
-	}
-	if packageID == "basic" {
-		return strings.TrimSpace(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE"))
-	}
-	return ""
-}
-
-func monthlyProviderDeadline(row map[string]any) (time.Time, error) {
-	value := strings.TrimSpace(firstNonEmpty(stringValue(row["deadline"]), providerDataValue(row, "deadline")))
-	deadline, err := time.Parse(time.RFC3339, value)
-	return deadline.UTC(), err
-}
-
-func monthlyResourcePrepared(resourceType string, row map[string]any) bool {
-	status := stringValue(row["status"])
-	if resourceType == "storage" {
-		return (status == "available" || status == "ready") && stringValue(row["providerResourceId"]) != ""
-	}
-	return (status == "running" || status == "ready") && firstNonEmpty(stringValue(row["providerResourceId"]), stringValue(row["instanceId"]), stringValue(row["cvmInstanceId"])) != ""
-}
-
-func monthlyPurchaseReadbackConfirmed(resourceType string, row, facts map[string]any) bool {
-	if !monthlyResourcePrepared(resourceType, facts) || stringValue(facts["providerRequestId"]) == "" {
-		return false
-	}
-	deadline, err := monthlyProviderDeadline(facts)
-	periodStart, startErr := time.Parse(time.RFC3339, stringValue(row["periodStart"]))
-	paidThrough, paidErr := time.Parse(time.RFC3339, stringValue(row["paidThrough"]))
-	minimumDeadline := time.Date(paidThrough.Year(), paidThrough.Month(), paidThrough.Day(), 0, 0, 0, 0, time.UTC)
-	zone := firstNonEmpty(stringValue(facts["zone"]), providerDataValue(facts, "zone"))
-	chargeType := firstNonEmpty(stringValue(facts["chargeType"]), providerDataValue(facts, "chargeType"))
-	renewFlag := firstNonEmpty(stringValue(facts["renewFlag"]), providerDataValue(facts, "renewFlag"))
-	if err != nil || startErr != nil || paidErr != nil || !deadline.After(periodStart) || deadline.Before(minimumDeadline) || zone == "" || zone != stringValue(row["zone"]) || chargeType != "PREPAID" || renewFlag != "NOTIFY_AND_MANUAL_RENEW" {
-		return false
-	}
-	if resourceType == "compute" {
-		instanceType, providerInstanceType := stringValue(facts["instanceType"]), providerDataValue(facts, "instanceType")
-		expectedInstanceType := monthlyComputeInstanceType(stringValue(row["packageId"]))
-		return stringValue(facts["providerResourceId"]) != "" && stringValue(facts["packageId"]) == stringValue(row["packageId"]) &&
-			firstNonEmpty(stringValue(facts["instanceId"]), stringValue(facts["cvmInstanceId"])) != "" &&
-			expectedInstanceType != "" && instanceType == expectedInstanceType && providerInstanceType == expectedInstanceType
-	}
-	return strings.HasPrefix(stringValue(facts["providerResourceId"]), "disk-") && stringValue(facts["diskType"]) != "" &&
-		(stringValue(facts["cbsStatus"]) == "UNATTACHED" || stringValue(facts["cbsStatus"]) == "ATTACHED") &&
-		int(numberField(facts, "sizeGb", 0)) == int(numberField(row, "sizeGb", 0))
-}
-
-func computeResponse(row map[string]any) map[string]any {
-	if row == nil {
-		row = map[string]any{}
-	}
-	row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]))
-	row["provider"] = firstNonEmpty(stringValue(row["provider"]), "tencent-tke")
-	row["status"] = firstNonEmpty(stringValue(row["status"]), "running")
-	if stringValue(row["billingStatus"]) != "" {
-		row["billingStatus"] = billingStatusFor(row)
-	} else {
-		delete(row, "billingStatus")
-	}
-	row["cvmInstanceId"] = firstNonEmpty(stringValue(row["cvmInstanceId"]), stringValue(row["instanceId"]))
-	return row
-}
-
-func storageResponse(row map[string]any) map[string]any {
-	if row == nil {
-		row = map[string]any{}
-	}
-	row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]))
-	row["provider"] = firstNonEmpty(stringValue(row["provider"]), "tencent-tke")
-	if stringValue(row["status"]) == "ready" {
-		row["status"] = "available"
-	}
-	row["status"] = firstNonEmpty(stringValue(row["status"]), "available")
-	if stringValue(row["billingStatus"]) != "" {
-		row["billingStatus"] = billingStatusFor(row)
-	} else {
-		delete(row, "billingStatus")
-	}
-	if numberField(row, "sizeGb", 0) == 0 {
-		row["sizeGb"] = 10
-	}
-	return row
-}
-
-func attachmentResponse(row map[string]any, input map[string]any) map[string]any {
+func providerAcceptanceAttachmentRow(row map[string]any, input map[string]any) map[string]any {
 	if row == nil {
 		row = map[string]any{}
 	}
 	row["computeAllocationId"] = firstNonEmpty(stringValue(row["computeAllocationId"]), stringValue(row["computeId"]), stringField(input, "computeAllocationId", ""))
 	row["storageId"] = firstNonEmpty(stringValue(row["storageId"]), stringValue(row["volumeId"]), stringField(input, "storageId", ""))
 	row["mountPath"] = firstNonEmpty(stringValue(row["mountPath"]), stringField(input, "mountPath", "/data"))
-	row["provider"] = firstNonEmpty(stringValue(row["provider"]), "tencent-tke")
-	row["status"] = firstNonEmpty(stringValue(row["status"]), "attached")
+	row["provider"] = "fabric"
 	return row
 }
 
@@ -227,20 +122,24 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 		identitiesValid := providerAcceptanceResourceInventoryValid(computes, slot, providerAcceptanceComputeID(slot), ownerID) &&
 			providerAcceptanceResourceInventoryValid(storages, slot, providerAcceptanceStorageID(slot), ownerID)
 		workspaceIdentityValid := workspace == nil || providerAcceptanceWorkspaceCandidateValid(workspace, slot, ownerID)
-		attachmentInventoryValid := attachmentCount == 0 || (attachmentCount == 1 && providerAcceptanceAttachmentValid(attachment, slot))
+		attachmentInventoryValid := attachmentCount == 0 || (attachmentCount == 1 && providerAcceptanceAttachmentIdentityValid(attachment, slot))
 		emptyInventory := workspace == nil && len(computes) == 0 && len(storages) == 0 && attachmentCount == 0
-		now := time.Now().UTC()
 		completeInventory := providerAcceptanceWorkspaceCandidateValid(workspace, slot, ownerID) && len(computes) == 1 && len(storages) == 1 &&
-			providerAcceptanceComputeValid(computes[0], slot, ownerID, now) && providerAcceptanceStorageValid(storages[0], slot, ownerID, now) &&
-			attachmentCount == 1 && providerAcceptanceAttachmentValid(attachment, slot)
+			providerAcceptanceComputeIdentityValid(computes[0], slot, ownerID) && providerAcceptanceStorageIdentityValid(storages[0], slot, ownerID) &&
+			attachmentCount == 1 && providerAcceptanceAttachmentIdentityValid(attachment, slot)
 		invalidOperation := operationExists && !providerAcceptanceOperationValid(operation, slot)
 		unclaimedAmbiguousInventory := !operationExists && !emptyInventory && !completeInventory
 		if !workspaceIdentityValid || !identitiesValid || !attachmentInventoryValid || invalidOperation || unclaimedAmbiguousInventory {
 			writeError(w, http.StatusConflict, "provider_acceptance_inventory_ambiguous")
 			return
 		}
+		providerFacts, err := providerAcceptanceReadFacts(r.Context(), service, slot, workspace, computes, storages, attachment)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
 		if operationExists && stringValue(operation["status"]) == "manual_review" {
-			summary, err := app.providerAcceptanceSlotSummary(r.Context(), slot)
+			summary, err := app.providerAcceptanceSlotSummary(r.Context(), slot, providerFacts)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "state_read_failed")
 				return
@@ -248,7 +147,7 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 			writeJSON(w, http.StatusOK, providerAcceptanceResponse("manual_review", stringValue(operation["errorCode"]), summary))
 			return
 		}
-		summary, ready, err := app.providerAcceptanceReadySlot(r.Context(), slot, ownerID, time.Now().UTC())
+		summary, ready, err := app.providerAcceptanceReadySlot(r.Context(), slot, ownerID, providerFacts, time.Now().UTC())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
@@ -270,7 +169,7 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 			return
 		}
 		if operationExists && stringValue(operation["status"]) == "succeeded" {
-			app.writeProviderAcceptanceManualReview(w, r, operation, slot, "provider_acceptance_state_ambiguous")
+			app.writeProviderAcceptanceManualReview(w, r, operation, slot, providerFacts, "provider_acceptance_state_ambiguous")
 			return
 		}
 		approved, _ := input["environmentApproved"].(bool)
@@ -321,7 +220,7 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 			}
 		}
 
-		status, reason, err := app.advanceProviderAcceptance(r.Context(), service, slot, ownerID, sub2APIUserID, computePreflight, storagePreflight)
+		status, reason, err := app.advanceProviderAcceptance(r.Context(), service, slot, ownerID, sub2APIUserID, computePreflight, storagePreflight, providerFacts)
 		if err != nil {
 			if errors.Is(err, errProviderAcceptanceStateRead) {
 				writeError(w, http.StatusInternalServerError, "state_read_failed")
@@ -331,10 +230,10 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 			return
 		}
 		if reason != "" {
-			app.writeProviderAcceptanceManualReview(w, r, operation, slot, reason)
+			app.writeProviderAcceptanceManualReview(w, r, operation, slot, providerFacts, reason)
 			return
 		}
-		summary, err = app.providerAcceptanceSlotSummary(r.Context(), slot)
+		summary, err = app.providerAcceptanceSlotSummary(r.Context(), slot, providerFacts)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
@@ -343,7 +242,7 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 			operation["status"] = "succeeded"
 			operation["result"] = string(mustJSON(providerAcceptanceResponse("ready", "", summary)))
 			if err := app.appendAuditEvent(r, "operator.provider_acceptance", "verification_slot", slot.ID, slot.AccountID, nil, summary, "succeeded"); err != nil {
-				app.writeProviderAcceptanceManualReview(w, r, operation, slot, "provider_acceptance_audit_failed")
+				app.writeProviderAcceptanceManualReview(w, r, operation, slot, providerFacts, "provider_acceptance_audit_failed")
 				return
 			}
 			if err := app.tables.SaveRuntimeOperation(r.Context(), operation); err != nil {
@@ -431,7 +330,7 @@ func providerAcceptanceWorkspaceClaim(ownerID string, slot providerAcceptanceSlo
 	workspaceID := primaryWorkspaceID(slot.AccountID)
 	return map[string]any{
 		"id": workspaceID, "accountId": slot.AccountID, "ownerAccountId": slot.AccountID, "ownerUserId": ownerID,
-		"name": slot.ID, "packageId": slot.PackageID, "provider": "tencent-tke", "state": "provisioning", "status": "provisioning",
+		"name": slot.ID, "packageId": slot.PackageID, "provider": "fabric", "state": "provisioning", "status": "provisioning",
 		"computeAllocationId": providerAcceptanceComputeID(slot), "currentComputeAllocationId": providerAcceptanceComputeID(slot), "storageId": providerAcceptanceStorageID(slot),
 		"verificationSlotId": slot.ID, "customerProduct": false,
 	}
@@ -441,7 +340,7 @@ func providerAcceptanceOperationRow(status string, slot providerAcceptanceSlot) 
 	workspaceID := primaryWorkspaceID(slot.AccountID)
 	return map[string]any{
 		"id": slot.OperationID, "operationId": slot.OperationID, "accountId": slot.AccountID, "workspaceId": workspaceID,
-		"resourceId": slot.ID, "resourceKind": "verification_slot", "action": "provider_acceptance", "provider": "tencent-tke",
+		"resourceId": slot.ID, "resourceKind": "verification_slot", "action": "provider_acceptance", "provider": "fabric",
 		"status": status, "result": "{}", "computeAllocationId": providerAcceptanceComputeID(slot), "storageId": providerAcceptanceStorageID(slot),
 	}
 }
@@ -465,8 +364,8 @@ func providerAcceptanceOperationValid(operation map[string]any, slot providerAcc
 }
 
 func providerAcceptancePreflight(ctx context.Context, service *controlplane.Service, slot providerAcceptanceSlot) (clients.MonthlyPreflight, clients.MonthlyPreflight, bool) {
-	zone := monthlyComputeLaunchZone()
-	if zone == "" || monthlyComputeInstanceType(slot.PackageID) != slot.InstanceType {
+	zone := controlplane.ProviderAcceptanceLaunchZone()
+	if zone == "" {
 		return clients.MonthlyPreflight{}, clients.MonthlyPreflight{}, false
 	}
 	compute, err := service.PreflightMonthlyResource(ctx, clients.MonthlyPreflightInput{ResourceType: "compute", PackageID: slot.PackageID, Zone: zone})
@@ -587,7 +486,7 @@ func (app *controlPlaneServer) providerAcceptanceStorageExact(ctx context.Contex
 	return cloneMap(rows[0]), true, false, nil
 }
 
-func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, service *controlplane.Service, slot providerAcceptanceSlot, ownerID string, sub2APIUserID int64, computePreflight, storagePreflight clients.MonthlyPreflight) (string, string, error) {
+func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, service *controlplane.Service, slot providerAcceptanceSlot, ownerID string, sub2APIUserID int64, computePreflight, storagePreflight clients.MonthlyPreflight, facts map[string]clients.ProviderFact) (string, string, error) {
 	workspaceID := primaryWorkspaceID(slot.AccountID)
 	computeID := providerAcceptanceComputeID(slot)
 	compute, exists, conflict, err := app.providerAcceptanceComputeExact(ctx, slot)
@@ -599,28 +498,28 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 	}
 	if !exists {
 		created, createErr := service.PrepareMonthlyCompute(ctx, clients.ComputeAllocationInput{ID: computeID, AccountID: slot.AccountID, WorkspaceID: workspaceID, PackageID: slot.PackageID}, slot.Key+":compute")
-		compute = providerAcceptanceComputeRow(structToMap(created), slot, ownerID, computePreflight)
+		compute = providerAcceptanceComputeRow(map[string]any{
+			"id": created.ID, "accountId": created.AccountID, "workspaceId": created.WorkspaceID, "packageId": created.PackageID,
+			"status": created.Status, "providerRequestId": created.ProviderRequestID,
+		}, slot, ownerID)
 		if err := app.saveComputeFact(compute); err != nil {
 			return "", "", err
 		}
 		if createErr != nil {
 			return "", "provider_acceptance_compute_result_unknown", nil
 		}
-	} else if monthlyResourceInProgress(compute) {
-		synced, syncErr := service.SyncMonthlyCompute(ctx, computeID)
-		compute = providerAcceptanceComputeRow(mergeMaps(compute, structToMap(synced)), slot, ownerID, computePreflight)
-		if err := app.saveComputeFact(compute); err != nil {
-			return "", "", err
-		}
-		if syncErr != nil {
-			return "", "provider_acceptance_compute_result_unknown", nil
-		}
-	}
-	if monthlyResourceInProgress(compute) {
 		return "in_progress", "", nil
 	}
-	if !providerAcceptanceComputeValid(compute, slot, ownerID, time.Now().UTC()) {
+	if !providerAcceptanceComputeIdentityValid(compute, slot, ownerID) {
 		return "", "provider_acceptance_compute_state_ambiguous", nil
+	}
+	computeInput := providerAcceptanceFactInput(slot, "compute", computeID)
+	computeFact := facts[providerFactKey(computeInput)]
+	if !providerAcceptanceFactReady(computeInput, computeFact, time.Now().UTC()) {
+		if providerFactConfirmedAbsent(computeInput, computeFact) {
+			return "", "provider_acceptance_compute_state_ambiguous", nil
+		}
+		return "in_progress", "", nil
 	}
 
 	storageID := providerAcceptanceStorageID(slot)
@@ -633,40 +532,40 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 	}
 	if !exists {
 		created, createErr := service.PrepareMonthlyStorage(ctx, clients.StorageVolumeInput{ID: storageID, AccountID: slot.AccountID, WorkspaceID: workspaceID, ComputeID: computeID, Zone: storagePreflight.Zone, SizeGB: slot.StorageGB}, slot.Key+":storage")
-		storage = providerAcceptanceStorageRow(structToMap(created), slot, ownerID, storagePreflight)
+		storage = providerAcceptanceStorageRow(map[string]any{
+			"id": created.ID, "accountId": created.AccountID, "workspaceId": created.WorkspaceID, "status": created.Status,
+			"providerRequestId": created.ProviderRequestID, "sizeGb": created.SizeGB,
+		}, slot, ownerID)
 		if err := app.saveStorageFact(storage); err != nil {
 			return "", "", err
 		}
 		if createErr != nil {
 			return "", "provider_acceptance_storage_result_unknown", nil
 		}
-	} else if monthlyResourceInProgress(storage) {
-		synced, syncErr := service.SyncMonthlyStorage(ctx, storageID)
-		storage = providerAcceptanceStorageRow(mergeMaps(storage, structToMap(synced)), slot, ownerID, storagePreflight)
-		if err := app.saveStorageFact(storage); err != nil {
-			return "", "", err
-		}
-		if syncErr != nil {
-			return "", "provider_acceptance_storage_result_unknown", nil
-		}
-	}
-	if monthlyResourceInProgress(storage) {
 		return "in_progress", "", nil
 	}
-	if !providerAcceptanceStorageValid(storage, slot, ownerID, time.Now().UTC()) {
+	if !providerAcceptanceStorageIdentityValid(storage, slot, ownerID) {
 		return "", "provider_acceptance_storage_state_ambiguous", nil
+	}
+	storageInput := providerAcceptanceFactInput(slot, "storage", storageID)
+	storageFact := facts[providerFactKey(storageInput)]
+	if !providerAcceptanceFactReady(storageInput, storageFact, time.Now().UTC()) {
+		if providerFactConfirmedAbsent(storageInput, storageFact) {
+			return "", "provider_acceptance_storage_state_ambiguous", nil
+		}
+		return "in_progress", "", nil
 	}
 
 	attachment, attachmentCount, err := app.providerAcceptanceAttachment(ctx, slot)
 	if err != nil {
 		return "", "", err
 	}
-	if attachmentCount > 1 || (attachmentCount == 1 && !providerAcceptanceAttachmentValid(attachment, slot)) {
+	if attachmentCount > 1 || (attachmentCount == 1 && !providerAcceptanceAttachmentIdentityValid(attachment, slot)) {
 		return "", "provider_acceptance_attachment_state_ambiguous", nil
 	}
 	if attachmentCount == 0 {
 		created, createErr := service.CreateStorageAttachment(ctx, controlplane.StorageAttachmentInput{WorkspaceID: workspaceID, ComputeID: computeID, VolumeID: storageID}, slot.Key+":attachment")
-		attachment = attachmentResponse(structToMap(created), map[string]any{"computeAllocationId": computeID, "storageId": storageID, "mountPath": "/data"})
+		attachment = providerAcceptanceAttachmentRow(structToMap(created), map[string]any{"computeAllocationId": computeID, "storageId": storageID, "mountPath": "/data"})
 		attachment["accountId"], attachment["ownerAccountId"] = slot.AccountID, slot.AccountID
 		if err := app.saveAttachmentFact(attachment, attachment); err != nil {
 			return "", "", err
@@ -674,8 +573,17 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 		if createErr != nil {
 			return "", "provider_acceptance_attachment_result_unknown", nil
 		}
+		return "in_progress", "", nil
 	}
-	if !providerAcceptanceAttachmentValid(attachment, slot) {
+	attachmentInput := providerAcceptanceFactInput(slot, "attachment", stringValue(attachment["id"]))
+	attachmentFact := facts[providerFactKey(attachmentInput)]
+	if !providerAcceptanceFactReady(attachmentInput, attachmentFact, time.Now().UTC()) {
+		if providerFactConfirmedAbsent(attachmentInput, attachmentFact) {
+			return "", "provider_acceptance_attachment_state_ambiguous", nil
+		}
+		return "in_progress", "", nil
+	}
+	if !providerAcceptanceAttachmentIdentityValid(attachment, slot) {
 		return "", "provider_acceptance_attachment_state_ambiguous", nil
 	}
 
@@ -688,7 +596,7 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 	}
 	var projection domain.WorkspaceProjection
 	if stringValue(workspace["runtimeId"]) == "" {
-		prepared, prepareErr := service.PrepareWorkspace(ctx, controlplane.CreateWorkspaceInput{
+		created, prepareErr := service.PrepareProviderAcceptanceRuntime(ctx, controlplane.CreateWorkspaceInput{
 			WorkspaceID: workspaceID, AccountID: slot.AccountID, Sub2APIUserID: sub2APIUserID, OwnerID: ownerID,
 			Name: slot.ID, PackageID: slot.PackageID, AttachmentID: stringValue(attachment["id"]),
 			AttachmentOperationID: slot.Key + ":attachment", RuntimeOperationID: slot.Key + ":workspace:runtime",
@@ -697,21 +605,26 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 		if prepareErr != nil {
 			return "", "provider_acceptance_runtime_result_unknown", nil
 		}
-		projection = prepared
-	} else {
-		runtime, runtimeErr := service.WorkspaceRuntimeStatus(ctx, workspaceID)
-		if runtimeErr != nil {
-			return "", "provider_acceptance_runtime_result_unknown", nil
+		projection = providerAcceptanceCreatedWorkspaceProjection(workspace, created, slot)
+		workspace = providerAcceptanceWorkspaceRow(projection, slot)
+		if err := app.tables.SaveWorkspace(ctx, workspace); err != nil {
+			return "", "", err
 		}
-		projection = providerAcceptanceWorkspaceProjection(workspace, runtime, slot)
+		return "in_progress", "", nil
+	} else {
+		runtimeInput := providerAcceptanceFactInput(slot, "runtime", stringValue(workspace["runtimeId"]))
+		runtimeFact := facts[providerFactKey(runtimeInput)]
+		if !providerAcceptanceFactReady(runtimeInput, runtimeFact, time.Now().UTC()) {
+			if providerFactConfirmedAbsent(runtimeInput, runtimeFact) {
+				return "", "provider_acceptance_workspace_state_ambiguous", nil
+			}
+			return "in_progress", "", nil
+		}
+		projection = providerAcceptanceWorkspaceProjection(workspace, runtimeFact, slot)
 	}
-	projection.Provider = "tencent-tke"
 	workspace = providerAcceptanceWorkspaceRow(projection, slot)
 	if err := app.tables.SaveWorkspace(ctx, workspace); err != nil {
 		return "", "", err
-	}
-	if !projection.RuntimeReady {
-		return "in_progress", "", nil
 	}
 	if projection.ReceiptID == "" {
 		withReceipt, receiptErr := service.RecordWorkspaceCreatedReceipt(ctx, projection, slot.Key+":workspace")
@@ -723,7 +636,7 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 			return "", "", err
 		}
 	}
-	if _, ready, err := app.providerAcceptanceReadySlot(ctx, slot, ownerID, time.Now().UTC()); err != nil {
+	if _, ready, err := app.providerAcceptanceReadySlot(ctx, slot, ownerID, facts, time.Now().UTC()); err != nil {
 		return "", "", err
 	} else if !ready {
 		return "", "provider_acceptance_state_ambiguous", nil
@@ -731,68 +644,106 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 	return "ready", "", nil
 }
 
-func providerAcceptanceComputeRow(row map[string]any, slot providerAcceptanceSlot, ownerID string, preflight clients.MonthlyPreflight) map[string]any {
-	row = computeResponse(row)
+func providerAcceptanceComputeRow(row map[string]any, slot providerAcceptanceSlot, ownerID string) map[string]any {
+	if row == nil {
+		row = map[string]any{}
+	}
 	row["id"], row["accountId"], row["ownerAccountId"], row["ownerUserId"] = providerAcceptanceComputeID(slot), slot.AccountID, slot.AccountID, ownerID
 	row["workspaceId"], row["packageId"], row["name"] = primaryWorkspaceID(slot.AccountID), slot.PackageID, slot.ID
 	row["verificationSlotId"], row["customerProduct"] = slot.ID, false
-	row["requestedPeriodMonths"], row["periodMonths"], row["chargeType"], row["renewFlag"] = preflight.PeriodMonths, preflight.PeriodMonths, preflight.ChargeType, preflight.RenewFlag
 	row["billingOperationId"], row["monthlyPriceCnyCents"], row["chargeUsdMicros"] = slot.OperationID, int64(0), int64(0)
-	row["zone"] = firstNonEmpty(stringValue(row["zone"]), providerDataValue(row, "zone"), preflight.Zone)
-	row["instanceType"] = firstNonEmpty(stringValue(row["instanceType"]), providerDataValue(row, "instanceType"))
-	providerAcceptanceEntitlement(row)
+	row["provider"] = "fabric"
 	return row
 }
 
-func providerAcceptanceStorageRow(row map[string]any, slot providerAcceptanceSlot, ownerID string, preflight clients.MonthlyPreflight) map[string]any {
-	row = storageResponse(row)
+func providerAcceptanceStorageRow(row map[string]any, slot providerAcceptanceSlot, ownerID string) map[string]any {
+	if row == nil {
+		row = map[string]any{}
+	}
 	row["id"], row["accountId"], row["ownerAccountId"], row["ownerUserId"] = providerAcceptanceStorageID(slot), slot.AccountID, slot.AccountID, ownerID
 	row["workspaceId"], row["packageId"], row["name"] = primaryWorkspaceID(slot.AccountID), slot.PackageID, slot.ID
 	row["computeAllocationId"], row["sizeGb"] = providerAcceptanceComputeID(slot), slot.StorageGB
 	row["verificationSlotId"], row["customerProduct"] = slot.ID, false
-	row["requestedPeriodMonths"], row["periodMonths"], row["chargeType"], row["renewFlag"] = preflight.PeriodMonths, preflight.PeriodMonths, preflight.ChargeType, preflight.RenewFlag
 	row["billingOperationId"], row["monthlyPriceCnyCents"], row["chargeUsdMicros"] = slot.OperationID, int64(0), int64(0)
-	row["zone"] = firstNonEmpty(stringValue(row["zone"]), providerDataValue(row, "zone"), preflight.Zone)
-	row["pvName"] = firstNonEmpty(stringValue(row["pvName"]), providerDataValue(row, "pvName"))
-	row["persistentVolumeName"] = firstNonEmpty(stringValue(row["persistentVolumeName"]), stringValue(row["pvName"]))
-	providerAcceptanceEntitlement(row)
+	row["provider"] = "fabric"
 	return row
 }
 
-func providerAcceptanceEntitlement(row map[string]any) {
-	if monthlyResourcePrepared("compute", row) || monthlyResourcePrepared("storage", row) {
-		row["billingStatus"], row["providerClaimStatus"], row["desiredStatus"] = "active", "claimed", stringValue(row["status"])
-		row["periodStart"] = firstNonEmpty(stringValue(row["periodStart"]), time.Now().UTC().Format(time.RFC3339))
-		if deadline, err := monthlyProviderDeadline(row); err == nil {
-			row["paidThrough"] = deadline.Format(time.RFC3339)
-		}
-		return
+func providerAcceptanceComputeIdentityValid(row map[string]any, slot providerAcceptanceSlot, ownerID string) bool {
+	return row != nil && stringValue(row["id"]) == providerAcceptanceComputeID(slot) && stringValue(row["accountId"]) == slot.AccountID &&
+		stringValue(row["ownerUserId"]) == ownerID && stringValue(row["workspaceId"]) == primaryWorkspaceID(slot.AccountID) &&
+		stringValue(row["packageId"]) == slot.PackageID && stringValue(row["verificationSlotId"]) == slot.ID && row["customerProduct"] == false
+}
+
+func providerAcceptanceStorageIdentityValid(row map[string]any, slot providerAcceptanceSlot, ownerID string) bool {
+	return row != nil && stringValue(row["id"]) == providerAcceptanceStorageID(slot) && stringValue(row["accountId"]) == slot.AccountID &&
+		stringValue(row["ownerUserId"]) == ownerID && stringValue(row["workspaceId"]) == primaryWorkspaceID(slot.AccountID) &&
+		stringValue(row["packageId"]) == slot.PackageID && numberField(row, "sizeGb", 0) == float64(slot.StorageGB) &&
+		stringValue(row["computeAllocationId"]) == providerAcceptanceComputeID(slot) && stringValue(row["verificationSlotId"]) == slot.ID && row["customerProduct"] == false
+}
+
+func providerAcceptanceFactInput(slot providerAcceptanceSlot, resourceType, resourceID string) clients.ProviderFactInput {
+	return clients.ProviderFactInput{
+		AccountID: slot.AccountID, WorkspaceID: primaryWorkspaceID(slot.AccountID), ResourceType: resourceType, ResourceID: resourceID,
 	}
-	row["billingStatus"], row["providerClaimStatus"], row["desiredStatus"] = "preparing", "pending", stringValue(row["status"])
 }
 
-func providerAcceptanceCostTagsValid(row map[string]any, slot providerAcceptanceSlot) bool {
-	tags := mapField(row, "costTags")
-	return stringValue(tags["opl_account_id"]) == slot.AccountID && stringValue(tags["opl_workspace_id"]) == primaryWorkspaceID(slot.AccountID) &&
-		stringValue(tags["opl_resource_id"]) == stringValue(row["id"]) && strings.TrimSpace(stringValue(tags["opl_operation_id"])) != ""
+func providerAcceptanceReadFacts(ctx context.Context, service *controlplane.Service, slot providerAcceptanceSlot, workspace map[string]any, computes, storages []map[string]any, attachment map[string]any) (map[string]clients.ProviderFact, error) {
+	inputs := make([]clients.ProviderFactInput, 0, 4)
+	if len(computes) == 1 && stringValue(computes[0]["id"]) == providerAcceptanceComputeID(slot) {
+		inputs = append(inputs, providerAcceptanceFactInput(slot, "compute", providerAcceptanceComputeID(slot)))
+	}
+	if len(storages) == 1 && stringValue(storages[0]["id"]) == providerAcceptanceStorageID(slot) {
+		inputs = append(inputs, providerAcceptanceFactInput(slot, "storage", providerAcceptanceStorageID(slot)))
+	}
+	if attachmentID := stringValue(attachment["id"]); attachmentID != "" {
+		inputs = append(inputs, providerAcceptanceFactInput(slot, "attachment", attachmentID))
+	}
+	if runtimeID := stringValue(workspace["runtimeId"]); runtimeID != "" {
+		inputs = append(inputs, providerAcceptanceFactInput(slot, "runtime", runtimeID))
+	}
+	if len(inputs) == 0 {
+		return map[string]clients.ProviderFact{}, nil
+	}
+	facts, err := readProviderFacts(ctx, service, inputs)
+	if err != nil {
+		return nil, errProviderAcceptanceStateRead
+	}
+	return facts, nil
 }
 
-func providerAcceptanceComputeValid(row map[string]any, slot providerAcceptanceSlot, ownerID string, now time.Time) bool {
-	deadline, err := monthlyProviderDeadline(row)
-	return err == nil && deadline.After(now) && monthlyResourcePrepared("compute", row) && stringValue(row["accountId"]) == slot.AccountID &&
-		stringValue(row["ownerUserId"]) == ownerID && stringValue(row["workspaceId"]) == primaryWorkspaceID(slot.AccountID) && stringValue(row["packageId"]) == slot.PackageID &&
-		stringValue(row["instanceType"]) == slot.InstanceType && stringValue(row["zone"]) == monthlyComputeLaunchZone() &&
-		stringValue(row["chargeType"]) == "PREPAID" && numberField(row, "periodMonths", 0) == 1 && stringValue(row["renewFlag"]) == "NOTIFY_AND_MANUAL_RENEW" &&
-		strings.HasPrefix(firstNonEmpty(stringValue(row["cvmInstanceId"]), stringValue(row["instanceId"])), "ins-") && strings.HasPrefix(stringValue(row["nodePoolId"]), "np-") && providerAcceptanceCostTagsValid(row, slot)
+func providerAcceptanceFactReady(input clients.ProviderFactInput, fact clients.ProviderFact, now time.Time) bool {
+	if providerFactResultKey(fact) != providerFactKey(input) || !fact.Available || strings.TrimSpace(fact.ErrorCode) != "" ||
+		strings.TrimSpace(fact.Facts.ProviderID) == "" || strings.TrimSpace(fact.Facts.LastReadAt) == "" ||
+		!providerAcceptanceFactStatusReady(input.ResourceType, fact.Facts.Status) {
+		return false
+	}
+	if _, err := time.Parse(time.RFC3339Nano, fact.Facts.LastReadAt); err != nil {
+		return false
+	}
+	if input.ResourceType == "attachment" || input.ResourceType == "runtime" {
+		return true
+	}
+	if strings.TrimSpace(fact.Facts.PackageOrSpec) == "" || strings.TrimSpace(fact.Facts.Zone) == "" {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339, fact.Facts.ExpiresAt)
+	return err == nil && expiresAt.UTC().After(now.UTC())
 }
 
-func providerAcceptanceStorageValid(row map[string]any, slot providerAcceptanceSlot, ownerID string, now time.Time) bool {
-	deadline, err := monthlyProviderDeadline(row)
-	return err == nil && deadline.After(now) && monthlyResourcePrepared("storage", row) && stringValue(row["accountId"]) == slot.AccountID &&
-		stringValue(row["ownerUserId"]) == ownerID && stringValue(row["workspaceId"]) == primaryWorkspaceID(slot.AccountID) && numberField(row, "sizeGb", 0) == float64(slot.StorageGB) &&
-		stringValue(row["zone"]) == monthlyComputeLaunchZone() && stringValue(row["chargeType"]) == "PREPAID" && numberField(row, "periodMonths", 0) == 1 &&
-		stringValue(row["renewFlag"]) == "NOTIFY_AND_MANUAL_RENEW" && strings.HasPrefix(stringValue(row["providerResourceId"]), "disk-") &&
-		firstNonEmpty(stringValue(row["pvName"]), stringValue(row["persistentVolumeName"]), providerDataValue(row, "pvName")) != "" && providerAcceptanceCostTagsValid(row, slot)
+func providerAcceptanceFactStatusReady(resourceType, status string) bool {
+	switch resourceType {
+	case "compute":
+		return strings.EqualFold(status, "running") || strings.EqualFold(status, "ready")
+	case "storage":
+		return strings.EqualFold(status, "ready") || strings.EqualFold(status, "available") || strings.EqualFold(status, "attached") || strings.EqualFold(status, "unattached")
+	case "attachment":
+		return strings.EqualFold(status, "attached") || strings.EqualFold(status, "ready")
+	case "runtime":
+		return strings.EqualFold(status, "running") || strings.EqualFold(status, "ready")
+	default:
+		return false
+	}
 }
 
 func (app *controlPlaneServer) providerAcceptanceAttachment(ctx context.Context, slot providerAcceptanceSlot) (map[string]any, int, error) {
@@ -806,23 +757,30 @@ func (app *controlPlaneServer) providerAcceptanceAttachment(ctx context.Context,
 	return attachments[len(attachments)-1], len(attachments), nil
 }
 
-func providerAcceptanceAttachmentValid(attachment map[string]any, slot providerAcceptanceSlot) bool {
+func providerAcceptanceAttachmentIdentityValid(attachment map[string]any, slot providerAcceptanceSlot) bool {
 	return attachment != nil && stringValue(attachment["accountId"]) == slot.AccountID && stringValue(attachment["workspaceId"]) == primaryWorkspaceID(slot.AccountID) &&
-		stringValue(attachment["computeAllocationId"]) == providerAcceptanceComputeID(slot) && stringValue(attachment["storageId"]) == providerAcceptanceStorageID(slot) &&
-		stringValue(attachment["status"]) == "attached"
+		stringValue(attachment["computeAllocationId"]) == providerAcceptanceComputeID(slot) && stringValue(attachment["storageId"]) == providerAcceptanceStorageID(slot)
 }
 
-func providerAcceptanceWorkspaceProjection(workspace map[string]any, runtime clients.WorkspaceRuntime, slot providerAcceptanceSlot) domain.WorkspaceProjection {
-	status := firstNonEmpty(runtime.Status, stringValue(workspace["status"]), "provisioning")
-	if runtime.Ready {
-		status = "running"
-	}
+func providerAcceptanceWorkspaceProjection(workspace map[string]any, runtimeFact clients.ProviderFact, slot providerAcceptanceSlot) domain.WorkspaceProjection {
 	access := mapField(workspace, "access")
 	return domain.WorkspaceProjection{
 		ID: stringValue(workspace["id"]), AccountID: slot.AccountID, OwnerID: stringValue(workspace["ownerUserId"]), Name: slot.ID,
-		PackageID: slot.PackageID, Provider: "tencent-tke", URL: firstNonEmpty(runtime.URL, stringValue(workspace["url"])), Status: status,
+		PackageID: slot.PackageID, Provider: "fabric", URL: stringValue(workspace["url"]), Status: "running",
 		ComputeID: providerAcceptanceComputeID(slot), VolumeID: providerAcceptanceStorageID(slot), AttachmentID: firstNonEmpty(stringValue(workspace["attachmentId"]), stringValue(workspace["currentAttachmentId"])),
-		RuntimeID: firstNonEmpty(runtime.ID, stringValue(workspace["runtimeId"])), RuntimeServiceName: firstNonEmpty(runtime.ServiceName, stringValue(mapField(workspace, "runtime")["serviceName"])), RuntimeReady: runtime.Ready,
+		RuntimeID: stringValue(workspace["runtimeId"]), RuntimeServiceName: runtimeFact.Facts.ProviderID, RuntimeReady: true,
+		RuntimeUsername: stringValue(access["username"]), CredentialStatus: stringValue(access["credentialStatus"]),
+		CredentialVersion: stringValue(access["credentialVersion"]), CredentialSecretRef: stringValue(access["secretRef"]), ReceiptID: stringValue(workspace["receiptId"]),
+	}
+}
+
+func providerAcceptanceCreatedWorkspaceProjection(workspace map[string]any, runtime clients.WorkspaceRuntime, slot providerAcceptanceSlot) domain.WorkspaceProjection {
+	access := mapField(workspace, "access")
+	return domain.WorkspaceProjection{
+		ID: stringValue(workspace["id"]), AccountID: slot.AccountID, OwnerID: stringValue(workspace["ownerUserId"]), Name: slot.ID,
+		PackageID: slot.PackageID, Provider: "fabric", URL: runtime.URL, Status: "provisioning",
+		ComputeID: providerAcceptanceComputeID(slot), VolumeID: providerAcceptanceStorageID(slot), AttachmentID: firstNonEmpty(stringValue(workspace["attachmentId"]), stringValue(workspace["currentAttachmentId"])),
+		RuntimeID: runtime.ID, RuntimeServiceName: runtime.ServiceName,
 		RuntimeUsername: firstNonEmpty(runtime.Access.Username, stringValue(access["username"])), CredentialStatus: firstNonEmpty(runtime.Access.CredentialStatus, stringValue(access["credentialStatus"])),
 		CredentialVersion: firstNonEmpty(runtime.Access.CredentialVersion, stringValue(access["credentialVersion"])), CredentialSecretRef: firstNonEmpty(runtime.Access.SecretRef, stringValue(access["secretRef"])), ReceiptID: stringValue(workspace["receiptId"]),
 	}
@@ -835,7 +793,7 @@ func providerAcceptanceWorkspaceRow(projection domain.WorkspaceProjection, slot 
 	return row
 }
 
-func (app *controlPlaneServer) providerAcceptanceReadySlot(ctx context.Context, slot providerAcceptanceSlot, ownerID string, now time.Time) (map[string]any, bool, error) {
+func (app *controlPlaneServer) providerAcceptanceReadySlot(ctx context.Context, slot providerAcceptanceSlot, ownerID string, facts map[string]clients.ProviderFact, now time.Time) (map[string]any, bool, error) {
 	workspace, workspaceConflict, err := app.providerAcceptanceWorkspaceExact(ctx, slot)
 	if err != nil {
 		return nil, false, err
@@ -852,18 +810,24 @@ func (app *controlPlaneServer) providerAcceptanceReadySlot(ctx context.Context, 
 	if err != nil {
 		return nil, false, err
 	}
-	if workspaceConflict || computeConflict || storageConflict || attachmentCount > 1 || (attachmentCount == 1 && !providerAcceptanceAttachmentValid(attachment, slot)) {
+	if workspaceConflict || computeConflict || storageConflict || attachmentCount > 1 || (attachmentCount == 1 && !providerAcceptanceAttachmentIdentityValid(attachment, slot)) {
 		return nil, false, errProviderAcceptanceStateRead
 	}
-	if !providerAcceptanceWorkspaceCandidateValid(workspace, slot, ownerID) || stringValue(workspace["url"]) == "" ||
-		!computeOK || !storageOK || attachmentCount != 1 || !providerAcceptanceComputeValid(compute, slot, ownerID, now) || !providerAcceptanceStorageValid(storage, slot, ownerID, now) ||
-		!providerAcceptanceAttachmentValid(attachment, slot) || app.workspaceResponse(cloneMap(workspace))["openable"] != true {
+	computeInput := providerAcceptanceFactInput(slot, "compute", providerAcceptanceComputeID(slot))
+	storageInput := providerAcceptanceFactInput(slot, "storage", providerAcceptanceStorageID(slot))
+	attachmentInput := providerAcceptanceFactInput(slot, "attachment", stringValue(attachment["id"]))
+	runtimeInput := providerAcceptanceFactInput(slot, "runtime", stringValue(workspace["runtimeId"]))
+	if !providerAcceptanceWorkspaceCandidateValid(workspace, slot, ownerID) || stringValue(workspace["url"]) == "" || stringValue(workspace["receiptId"]) == "" ||
+		!computeOK || !storageOK || attachmentCount != 1 || !providerAcceptanceComputeIdentityValid(compute, slot, ownerID) || !providerAcceptanceStorageIdentityValid(storage, slot, ownerID) ||
+		!providerAcceptanceAttachmentIdentityValid(attachment, slot) || !providerAcceptanceFactReady(computeInput, facts[providerFactKey(computeInput)], now) ||
+		!providerAcceptanceFactReady(storageInput, facts[providerFactKey(storageInput)], now) || !providerAcceptanceFactReady(attachmentInput, facts[providerFactKey(attachmentInput)], now) ||
+		!providerAcceptanceFactReady(runtimeInput, facts[providerFactKey(runtimeInput)], now) {
 		return nil, false, nil
 	}
-	return providerAcceptanceSlotResponse(slot, workspace, compute, storage, attachment), true, nil
+	return providerAcceptanceSlotResponse(slot, workspace, compute, storage, attachment, facts), true, nil
 }
 
-func (app *controlPlaneServer) providerAcceptanceSlotSummary(ctx context.Context, slot providerAcceptanceSlot) (map[string]any, error) {
+func (app *controlPlaneServer) providerAcceptanceSlotSummary(ctx context.Context, slot providerAcceptanceSlot, facts map[string]clients.ProviderFact) (map[string]any, error) {
 	workspace, workspaceConflict, err := app.providerAcceptanceWorkspaceExact(ctx, slot)
 	if err != nil {
 		return nil, err
@@ -880,18 +844,25 @@ func (app *controlPlaneServer) providerAcceptanceSlotSummary(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	if workspaceConflict || computeConflict || storageConflict || attachmentCount > 1 || (attachmentCount == 1 && !providerAcceptanceAttachmentValid(attachment, slot)) {
+	if workspaceConflict || computeConflict || storageConflict || attachmentCount > 1 || (attachmentCount == 1 && !providerAcceptanceAttachmentIdentityValid(attachment, slot)) {
 		return nil, errProviderAcceptanceStateRead
 	}
-	return providerAcceptanceSlotResponse(slot, workspace, compute, storage, attachment), nil
+	return providerAcceptanceSlotResponse(slot, workspace, compute, storage, attachment, facts), nil
 }
 
-func providerAcceptanceSlotResponse(slot providerAcceptanceSlot, workspace, compute, storage, attachment map[string]any) map[string]any {
+func providerAcceptanceSlotResponse(slot providerAcceptanceSlot, workspace, compute, storage, attachment map[string]any, facts map[string]clients.ProviderFact) map[string]any {
+	computeInput := providerAcceptanceFactInput(slot, "compute", providerAcceptanceComputeID(slot))
+	storageInput := providerAcceptanceFactInput(slot, "storage", providerAcceptanceStorageID(slot))
+	computeFact, storageFact := facts[providerFactKey(computeInput)], facts[providerFactKey(storageInput)]
 	return map[string]any{
 		"id": slot.ID, "accountId": slot.AccountID, "workspaceId": stringValue(workspace["id"]), "workspaceUrl": stringValue(workspace["url"]),
-		"computeAllocationId": stringValue(compute["id"]), "computeProviderId": firstNonEmpty(stringValue(compute["cvmInstanceId"]), stringValue(compute["instanceId"])), "nodePoolId": stringValue(compute["nodePoolId"]),
-		"storageId": stringValue(storage["id"]), "storageProviderId": stringValue(storage["providerResourceId"]), "persistentVolumeId": firstNonEmpty(stringValue(storage["pvName"]), stringValue(storage["persistentVolumeName"]), providerDataValue(storage, "pvName")),
-		"attachmentId": stringValue(attachment["id"]),
+		"computeAllocationId": stringValue(compute["id"]), "computeProviderId": computeFact.Facts.ProviderID,
+		// Deprecated response-only compatibility projection for tools/provider-acceptance.ts.
+		// These persisted fields never participate in ProviderFactsBatch validation.
+		"nodePoolId": stringValue(compute["nodePoolId"]),
+		"storageId":  stringValue(storage["id"]), "storageProviderId": storageFact.Facts.ProviderID,
+		"persistentVolumeId": stringValue(storage["persistentVolumeName"]),
+		"attachmentId":       stringValue(attachment["id"]),
 	}
 }
 
@@ -903,10 +874,10 @@ func providerAcceptanceResponse(status, reason string, slot map[string]any) map[
 	return response
 }
 
-func (app *controlPlaneServer) writeProviderAcceptanceManualReview(w http.ResponseWriter, r *http.Request, operation map[string]any, slot providerAcceptanceSlot, reason string) {
-	summary, readErr := app.providerAcceptanceSlotSummary(r.Context(), slot)
+func (app *controlPlaneServer) writeProviderAcceptanceManualReview(w http.ResponseWriter, r *http.Request, operation map[string]any, slot providerAcceptanceSlot, facts map[string]clients.ProviderFact, reason string) {
+	summary, readErr := app.providerAcceptanceSlotSummary(r.Context(), slot, facts)
 	if readErr != nil {
-		summary = providerAcceptanceSlotResponse(slot, nil, nil, nil, nil)
+		summary = providerAcceptanceSlotResponse(slot, nil, nil, nil, nil, facts)
 	}
 	response := providerAcceptanceResponse("manual_review", reason, summary)
 	operation = mergeMaps(operation, map[string]any{"status": "manual_review", "errorCode": reason, "result": string(mustJSON(response))})

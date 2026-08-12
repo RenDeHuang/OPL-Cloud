@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -29,13 +30,11 @@ func TestProviderAcceptanceFreezesDualSlotIdentitiesAndBudget(t *testing.T) {
 	want := map[string]providerAcceptanceSlot{
 		"verification-slot-basic-01": {
 			ID: "verification-slot-basic-01", AccountID: "acct-verification-slot-basic-01",
-			Key: "provider-acceptance:verification-slot-basic-01", PackageID: "basic",
-			InstanceType: "SA5.MEDIUM4", StorageGB: 10,
+			Key: "provider-acceptance:verification-slot-basic-01", PackageID: "basic", StorageGB: 10,
 		},
 		"verification-slot-pro-01": {
 			ID: "verification-slot-pro-01", AccountID: "acct-verification-slot-pro-01",
-			Key: "provider-acceptance:verification-slot-pro-01", PackageID: "pro",
-			InstanceType: "SA5.2XLARGE16", StorageGB: 100,
+			Key: "provider-acceptance:verification-slot-pro-01", PackageID: "pro", StorageGB: 100,
 		},
 	}
 	if len(providerAcceptanceSlots) != len(want) {
@@ -47,7 +46,7 @@ func TestProviderAcceptanceFreezesDualSlotIdentitiesAndBudget(t *testing.T) {
 			t.Fatalf("fixed slot %q missing", id)
 		}
 		if actual.ID != expected.ID || actual.AccountID != expected.AccountID || actual.Key != expected.Key ||
-			actual.PackageID != expected.PackageID || actual.InstanceType != expected.InstanceType || actual.StorageGB != expected.StorageGB {
+			actual.PackageID != expected.PackageID || actual.StorageGB != expected.StorageGB {
 			t.Fatalf("fixed slot %q = %#v, want %#v", id, actual, expected)
 		}
 	}
@@ -58,15 +57,16 @@ type providerAcceptanceFabric struct {
 	mu                  sync.Mutex
 	compute             clients.ComputeAllocation
 	storage             clients.StorageVolume
+	attachment          clients.StorageAttachment
 	computeCreates      int
-	computeSyncs        int
 	storageCreates      int
-	storageSyncs        int
 	attachmentCreates   int
 	secretWrites        int
 	runtimeCreates      int
 	mutationKeys        []string
 	preflightCalls      int
+	factInputs          []clients.ProviderFactsBatchInput
+	factOverrides       map[string]clients.ProviderFact
 	failStorageCreation bool
 }
 
@@ -88,24 +88,7 @@ func (f *providerAcceptanceFabric) CreateComputeAllocation(_ context.Context, in
 	f.mutationKeys = append(f.mutationKeys, key)
 	f.compute = clients.ComputeAllocation{
 		ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID,
-		Status: "provisioning", Provider: "tencent-tke", ProviderRequestID: "req-compute-slot",
-	}
-	return f.compute, nil
-}
-
-func (f *providerAcceptanceFabric) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.computeSyncs++
-	accountID, workspaceID, packageID := f.compute.AccountID, f.compute.WorkspaceID, f.compute.PackageID
-	instanceType := map[string]string{"basic": "SA5.MEDIUM4", "pro": "SA5.2XLARGE16"}[packageID]
-	f.compute = clients.ComputeAllocation{
-		ID: id, AccountID: accountID, WorkspaceID: workspaceID, PackageID: packageID,
-		Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/slot-01", ProviderRequestID: "req-compute-slot",
-		NodePoolID: "np-verification-slot-01", InstanceID: "ins-verification-slot-01", CVMInstanceID: "ins-verification-slot-01",
-		InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z",
-		ProviderData: map[string]string{"instanceType": instanceType, "zone": "ap-shanghai-2"},
-		CostTags:     providerAcceptanceTestTags(accountID, workspaceID, id, "op-compute-slot"),
+		Status: "provisioning", Provider: "fabric", ProviderRequestID: "req-compute-slot",
 	}
 	return f.compute, nil
 }
@@ -116,25 +99,13 @@ func (f *providerAcceptanceFabric) CreateStorageVolume(_ context.Context, input 
 	f.storageCreates++
 	f.mutationKeys = append(f.mutationKeys, key)
 	f.storage = clients.StorageVolume{
-		ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "pending", Provider: "tencent-tke",
+		ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "pending", Provider: "fabric",
 		ProviderResourceID: "disk-verification-slot-01", ProviderRequestID: "req-storage-slot", SizeGB: input.SizeGB,
-		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", Zone: input.Zone,
-		ProviderData: map[string]string{"chargeType": "PREPAID", "pvName": "pv-verification-slot-01", "pvcName": "pvc-verification-slot-01", "zone": input.Zone},
-		CostTags:     providerAcceptanceTestTags(input.AccountID, input.WorkspaceID, input.ID, "op-storage-slot"),
+		Deadline: "2099-01-01T00:00:00Z", Zone: input.Zone,
 	}
 	if f.failStorageCreation {
 		return f.storage, errors.New("provider result unknown")
 	}
-	return f.storage, nil
-}
-
-func (f *providerAcceptanceFabric) SyncStorageVolume(_ context.Context, id string) (clients.StorageVolume, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.storageSyncs++
-	f.storage.Status = "ready"
-	f.storage.ID = id
-	f.storage.CBSStatus = "UNATTACHED"
 	return f.storage, nil
 }
 
@@ -143,10 +114,57 @@ func (f *providerAcceptanceFabric) CreateStorageAttachment(_ context.Context, in
 	defer f.mu.Unlock()
 	f.attachmentCreates++
 	f.mutationKeys = append(f.mutationKeys, key)
-	return clients.StorageAttachment{
+	f.attachment = clients.StorageAttachment{
 		ID: "att-verification-slot-01", WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
-		Status: "attached", Provider: "tencent-tke", ProviderAttachmentID: "pv/pv-verification-slot-01:pvc/pvc-verification-slot-01", ProviderRequestID: "req-attachment-slot", MountPath: "/data",
-	}, nil
+		Status: "pending", Provider: "fabric", ProviderAttachmentID: "provider-attachment", ProviderRequestID: "req-attachment-slot", MountPath: "/data",
+	}
+	return f.attachment, nil
+}
+
+func (f *providerAcceptanceFabric) ProviderFactsBatch(_ context.Context, input clients.ProviderFactsBatchInput) (clients.ProviderFactsBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.factInputs = append(f.factInputs, input)
+	result := clients.ProviderFactsBatch{Items: make([]clients.ProviderFact, 0, len(input.Items))}
+	for _, item := range input.Items {
+		if override, ok := f.factOverrides[providerFactKey(item)]; ok {
+			result.Items = append(result.Items, override)
+			continue
+		}
+		fact := clients.ProviderFact{
+			AccountID: item.AccountID, WorkspaceID: item.WorkspaceID, ResourceType: item.ResourceType, ResourceID: item.ResourceID,
+			Facts: clients.ProviderResourceFacts{LastReadAt: "2026-08-12T00:00:00Z"},
+		}
+		switch item.ResourceType {
+		case "compute":
+			if f.compute.ID == item.ResourceID {
+				fact.Available = true
+				fact.Facts.PackageOrSpec, fact.Facts.ProviderID, fact.Facts.Zone = "compute-standard", "provider-compute", "provider-zone"
+				fact.Facts.Status, fact.Facts.ExpiresAt = "running", "2099-01-01T00:00:00Z"
+			}
+		case "storage":
+			if f.storage.ID == item.ResourceID {
+				fact.Available = true
+				fact.Facts.PackageOrSpec, fact.Facts.ProviderID, fact.Facts.Zone = "storage-standard", "provider-storage", "provider-zone"
+				fact.Facts.Status, fact.Facts.ExpiresAt = "ready", "2099-01-01T00:00:00Z"
+			}
+		case "attachment":
+			if f.attachment.ID == item.ResourceID {
+				fact.Available = true
+				fact.Facts.ProviderID, fact.Facts.Status = "provider-attachment", "attached"
+			}
+		case "runtime":
+			if f.fakeFabricClient.runtime.ID == item.ResourceID {
+				fact.Available = true
+				fact.Facts.ProviderID, fact.Facts.Status = f.fakeFabricClient.runtime.ServiceName, "running"
+			}
+		}
+		if !fact.Available {
+			fact.ErrorCode = "provider_fact_missing"
+		}
+		result.Items = append(result.Items, fact)
+	}
+	return result, nil
 }
 
 func (f *providerAcceptanceFabric) WriteGatewaySecret(_ context.Context, input clients.GatewaySecretWriteInput, key string) (clients.GatewaySecretWriteResult, error) {
@@ -187,16 +205,9 @@ func (f *providerAcceptanceFabric) WorkspaceRuntimeStatus(_ context.Context, wor
 	return runtime, nil
 }
 
-func providerAcceptanceTestTags(accountID, workspaceID, resourceID, operationID string) map[string]string {
-	return map[string]string{
-		"opl_account_id": accountID, "opl_workspace_id": workspaceID, "opl_resource_id": resourceID, "opl_operation_id": operationID,
-	}
-}
-
 func newProviderAcceptanceTestServer(t *testing.T, fabric *providerAcceptanceFabric) (http.Handler, *memoryTableStore) {
 	t.Helper()
 	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
-	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
 	t.Setenv("OPL_PROVIDER_ACCEPTANCE_TOKEN", testProviderAcceptanceToken)
 	store := newMemoryTableStore()
 	seedProviderAcceptanceIdentity(t, store, providerAcceptanceSlots["verification-slot-basic-01"])
@@ -283,8 +294,6 @@ func newProviderAcceptanceServer(t *testing.T, fabric *providerAcceptanceFabric,
 func newProviderAcceptanceServerWithSub2API(t *testing.T, fabric *providerAcceptanceFabric, store StateStore, sub2API *testSub2APIClient) http.Handler {
 	t.Helper()
 	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
-	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
-	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
 	t.Setenv("OPL_PROVIDER_ACCEPTANCE_TOKEN", testProviderAcceptanceToken)
 	service := controlplane.NewService(fakeLedgerClient{}, fabric, sub2API)
 	server, err := NewPersistentServer(service, store)
@@ -382,27 +391,16 @@ func providerAcceptancePreflightFixture(slot providerAcceptanceSlot) clients.Mon
 func seedCompleteProviderAcceptanceResources(t *testing.T, store StateStore, slot providerAcceptanceSlot, ownerID string) {
 	t.Helper()
 	workspaceID := primaryWorkspaceID(slot.AccountID)
-	deadline := "2099-01-01T00:00:00Z"
 	compute := providerAcceptanceComputeRow(map[string]any{
 		"id": providerAcceptanceComputeID(slot), "accountId": slot.AccountID, "workspaceId": workspaceID, "packageId": slot.PackageID,
-		"status": "running", "provider": "tencent-tke", "providerResourceId": "node/" + slot.ID,
-		"nodePoolId": "np-" + slot.ID, "instanceId": "ins-" + slot.ID, "cvmInstanceId": "ins-" + slot.ID,
-		"instanceType": slot.InstanceType, "zone": "ap-shanghai-2", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": deadline,
-		"costTags": map[string]any{
-			"opl_account_id": slot.AccountID, "opl_workspace_id": workspaceID,
-			"opl_resource_id": providerAcceptanceComputeID(slot), "opl_operation_id": "op-compute-" + slot.ID,
-		},
-	}, slot, ownerID, mergeMonthlyPreflight(providerAcceptancePreflightFixture(slot), "compute", 0))
+		"status": "persisted-stale", "provider": "fabric", "providerResourceId": "persisted-compute-ignored",
+		"nodePoolId": "compat-node-pool", "providerData": map[string]any{"zone": "ignored"}, "costTags": map[string]any{"ignored": "true"},
+	}, slot, ownerID)
 	storage := providerAcceptanceStorageRow(map[string]any{
 		"id": providerAcceptanceStorageID(slot), "accountId": slot.AccountID, "workspaceId": workspaceID, "packageId": slot.PackageID,
-		"status": "ready", "provider": "tencent-tke", "providerResourceId": "disk-" + slot.ID, "sizeGb": slot.StorageGB,
-		"zone": "ap-shanghai-2", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": deadline,
-		"pvName": "pv-" + slot.ID, "persistentVolumeName": "pv-" + slot.ID,
-		"costTags": map[string]any{
-			"opl_account_id": slot.AccountID, "opl_workspace_id": workspaceID,
-			"opl_resource_id": providerAcceptanceStorageID(slot), "opl_operation_id": "op-storage-" + slot.ID,
-		},
-	}, slot, ownerID, mergeMonthlyPreflight(providerAcceptancePreflightFixture(slot), "storage", slot.StorageGB))
+		"status": "persisted-stale", "provider": "fabric", "providerResourceId": "persisted-storage-ignored", "sizeGb": slot.StorageGB,
+		"pvName": "ignored-pv-name", "persistentVolumeName": "compat-persistent-volume", "providerData": map[string]any{"pvName": "ignored"},
+	}, slot, ownerID)
 	workspace := providerAcceptanceWorkspaceClaim(ownerID, slot)
 	workspace["url"], workspace["status"], workspace["state"] = "https://workspace.medopl.cn/w/"+workspaceID+"/", "running", "running"
 	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
@@ -410,9 +408,80 @@ func seedCompleteProviderAcceptanceResources(t *testing.T, store StateStore, slo
 	mustStore(t, store.SaveStorage(context.Background(), storage))
 }
 
-func mergeMonthlyPreflight(preflight clients.MonthlyPreflight, resourceType string, sizeGB int) clients.MonthlyPreflight {
-	preflight.ResourceType, preflight.SizeGB = resourceType, sizeGB
-	return preflight
+func setProviderAcceptanceCompatibilityFields(t *testing.T, store StateStore, slot providerAcceptanceSlot, nodePoolID, persistentVolumeName string) {
+	t.Helper()
+	computes, err := store.ListComputes(context.Background(), slot.AccountID)
+	if err != nil || len(computes) != 1 {
+		t.Fatalf("load compatibility compute: rows=%#v err=%v", computes, err)
+	}
+	storages, err := store.ListStorages(context.Background(), slot.AccountID)
+	if err != nil || len(storages) != 1 {
+		t.Fatalf("load compatibility storage: rows=%#v err=%v", storages, err)
+	}
+	computes[0]["nodePoolId"] = nodePoolID
+	storages[0]["persistentVolumeName"] = persistentVolumeName
+	mustStore(t, store.SaveCompute(context.Background(), computes[0]))
+	mustStore(t, store.SaveStorage(context.Background(), storages[0]))
+}
+
+func TestProviderAcceptanceCompatibilityFieldsDoNotAffectProviderFactsValidation(t *testing.T) {
+	slot := providerAcceptanceSlots["verification-slot-basic-01"]
+	ownerID := "usr-" + slot.ID
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	compute := providerAcceptanceComputeRow(map[string]any{"nodePoolId": "compat-a"}, slot, ownerID)
+	storage := providerAcceptanceStorageRow(map[string]any{"persistentVolumeName": "compat-volume-a"}, slot, ownerID)
+	computeInput := providerAcceptanceFactInput(slot, "compute", providerAcceptanceComputeID(slot))
+	storageInput := providerAcceptanceFactInput(slot, "storage", providerAcceptanceStorageID(slot))
+	facts := map[string]clients.ProviderFact{
+		providerFactKey(computeInput): {
+			AccountID: slot.AccountID, WorkspaceID: primaryWorkspaceID(slot.AccountID), ResourceType: "compute", ResourceID: providerAcceptanceComputeID(slot), Available: true,
+			Facts: clients.ProviderResourceFacts{PackageOrSpec: "compute-standard", ProviderID: "provider-compute", Zone: "provider-zone", Status: "running", ExpiresAt: "2099-01-01T00:00:00Z", LastReadAt: "2026-08-12T00:00:00Z"},
+		},
+		providerFactKey(storageInput): {
+			AccountID: slot.AccountID, WorkspaceID: primaryWorkspaceID(slot.AccountID), ResourceType: "storage", ResourceID: providerAcceptanceStorageID(slot), Available: true,
+			Facts: clients.ProviderResourceFacts{PackageOrSpec: "storage-standard", ProviderID: "provider-storage", Zone: "provider-zone", Status: "ready", ExpiresAt: "2099-01-01T00:00:00Z", LastReadAt: "2026-08-12T00:00:00Z"},
+		},
+	}
+	if !providerAcceptanceFactReady(computeInput, facts[providerFactKey(computeInput)], now) || !providerAcceptanceFactReady(storageInput, facts[providerFactKey(storageInput)], now) {
+		t.Fatal("ProviderFactsBatch fixtures must be ready")
+	}
+	first := providerAcceptanceSlotResponse(slot, nil, compute, storage, nil, facts)
+	delete(compute, "nodePoolId")
+	storage["persistentVolumeName"] = "compat-volume-b"
+	second := providerAcceptanceSlotResponse(slot, nil, compute, storage, nil, facts)
+	if first["computeProviderId"] != second["computeProviderId"] || first["storageProviderId"] != second["storageProviderId"] ||
+		!providerAcceptanceFactReady(computeInput, facts[providerFactKey(computeInput)], now) || !providerAcceptanceFactReady(storageInput, facts[providerFactKey(storageInput)], now) {
+		t.Fatalf("compatibility fields changed facts validation: first=%#v second=%#v", first, second)
+	}
+	if first["nodePoolId"] != "compat-a" || first["persistentVolumeId"] != "compat-volume-a" || second["nodePoolId"] != "" || second["persistentVolumeId"] != "compat-volume-b" {
+		t.Fatalf("compatibility projection did not stay response-only: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestProviderAcceptanceReadsExistingResourcesInSingleFactsBatch(t *testing.T) {
+	slot := providerAcceptanceSlots["verification-slot-basic-01"]
+	workspaceID := primaryWorkspaceID(slot.AccountID)
+	fabric := &providerAcceptanceFabric{}
+	service := controlplane.NewService(fakeLedgerClient{}, fabric)
+	workspace := map[string]any{"id": workspaceID, "runtimeId": "runtime-acceptance"}
+	computes := []map[string]any{{"id": providerAcceptanceComputeID(slot)}}
+	storages := []map[string]any{{"id": providerAcceptanceStorageID(slot)}}
+	attachment := map[string]any{"id": "attachment-acceptance"}
+
+	facts, err := providerAcceptanceReadFacts(context.Background(), service, slot, workspace, computes, storages, attachment)
+	if err != nil || len(facts) != 4 {
+		t.Fatalf("ProviderFactsBatch facts=%#v err=%v", facts, err)
+	}
+	fabric.mu.Lock()
+	defer fabric.mu.Unlock()
+	if len(fabric.factInputs) != 1 || len(fabric.factInputs[0].Items) != 4 {
+		t.Fatalf("ProviderFactsBatch requests=%#v, want one four-item batch", fabric.factInputs)
+	}
+	for _, item := range fabric.factInputs[0].Items {
+		if item.AccountID != slot.AccountID || item.WorkspaceID != workspaceID || item.ResourceID == "" {
+			t.Fatalf("ProviderFactsBatch item=%#v", item)
+		}
+	}
 }
 
 func TestProviderAcceptanceRequiresDedicatedCredentialBeforeFabricAccess(t *testing.T) {
@@ -577,7 +646,6 @@ func TestProviderAcceptanceRejectsInvalidAttachmentInventoryBeforeExternalCalls(
 			{name: "workspace", field: "workspaceId", value: "ws-cross-user"},
 			{name: "compute", field: "computeAllocationId", value: "ca-cross-user"},
 			{name: "storage", field: "storageId", value: "vol-cross-user"},
-			{name: "status", field: "status", value: "pending"},
 			{name: "multiple", duplicate: true},
 		} {
 			t.Run(slot.PackageID+"/"+test.name, func(t *testing.T) {
@@ -701,11 +769,22 @@ func TestProviderAcceptanceCreatesOneFixedSlotAndReusesIt(t *testing.T) {
 			t.Fatalf("concurrent Provider Acceptance = %d %#v, want in_progress", rec.Code, payload)
 		}
 	}
+	setProviderAcceptanceCompatibilityFields(t, store, providerAcceptanceSlots["verification-slot-basic-01"], "compat-node-pool", "compat-persistent-volume")
 
-	ready := providerAcceptanceRequest(server, operator, body, testProviderAcceptanceKey)
-	readyPayload := providerAcceptancePayload(t, ready)
-	if ready.Code != http.StatusOK || readyPayload["status"] != "ready" {
+	var ready *httptest.ResponseRecorder
+	var readyPayload map[string]any
+	for attempt := 0; attempt < 3; attempt++ {
+		ready = providerAcceptanceRequest(server, operator, body, testProviderAcceptanceKey)
+		readyPayload = providerAcceptancePayload(t, ready)
+		if readyPayload["status"] == "ready" || readyPayload["status"] == "reused" {
+			break
+		}
+	}
+	if ready.Code != http.StatusOK || (readyPayload["status"] != "ready" && readyPayload["status"] != "reused") {
 		t.Fatalf("ready Provider Acceptance = %d %#v", ready.Code, readyPayload)
+	}
+	if slot := mapField(readyPayload, "slot"); slot["nodePoolId"] != "compat-node-pool" || slot["persistentVolumeId"] != "compat-persistent-volume" {
+		t.Fatalf("legacy compatibility projection = %#v", slot)
 	}
 	if leaked := ready.Body.String(); strings.Contains(leaked, "workspace-key-secret") || strings.Contains(leaked, "must-not-leak") || strings.Contains(strings.ToLower(leaked), "secretref") {
 		t.Fatalf("Provider Acceptance response leaked a secret: %s", leaked)
@@ -743,10 +822,10 @@ func TestProviderAcceptanceCreatesOneFixedSlotAndReusesIt(t *testing.T) {
 	}
 
 	fabric.mu.Lock()
-	counts := []int{fabric.computeCreates, fabric.computeSyncs, fabric.storageCreates, fabric.storageSyncs, fabric.attachmentCreates, fabric.secretWrites, fabric.runtimeCreates}
+	counts := []int{fabric.computeCreates, fabric.storageCreates, fabric.attachmentCreates, fabric.secretWrites, fabric.runtimeCreates}
 	keys := append([]string(nil), fabric.mutationKeys...)
 	fabric.mu.Unlock()
-	if want := []int{1, 1, 1, 1, 1, 1, 1}; len(counts) != len(want) {
+	if want := []int{1, 1, 1, 1, 1}; len(counts) != len(want) {
 		t.Fatal("unreachable count shape")
 	} else {
 		for index := range want {
@@ -764,13 +843,13 @@ func TestProviderAcceptanceCreatesOneFixedSlotAndReusesIt(t *testing.T) {
 	workspaces, _ := store.ListWorkspaces(context.Background(), testProviderAcceptanceAccount)
 	computes, _ := store.ListComputes(context.Background(), testProviderAcceptanceAccount)
 	storages, _ := store.ListStorages(context.Background(), testProviderAcceptanceAccount)
-	if len(workspaces) != 1 || workspaces[0]["verificationSlotId"] != "verification-slot-basic-01" || workspaces[0]["customerProduct"] != false || workspaces[0]["provider"] != "tencent-tke" {
+	if len(workspaces) != 1 || workspaces[0]["verificationSlotId"] != "verification-slot-basic-01" || workspaces[0]["customerProduct"] != false || workspaces[0]["provider"] != "fabric" {
 		t.Fatalf("stored verification Workspace = %#v", workspaces)
 	}
-	if len(computes) != 1 || computes[0]["instanceType"] != "SA5.MEDIUM4" || computes[0]["chargeType"] != "PREPAID" || numberField(computes[0], "periodMonths", 0) != 1 {
+	if len(computes) != 1 || computes[0]["nodePoolId"] != "compat-node-pool" {
 		t.Fatalf("stored verification compute = %#v", computes)
 	}
-	if len(storages) != 1 || storages[0]["providerResourceId"] != "disk-verification-slot-01" || storages[0]["chargeType"] != "PREPAID" || numberField(storages[0], "periodMonths", 0) != 1 {
+	if len(storages) != 1 || storages[0]["persistentVolumeName"] != "compat-persistent-volume" {
 		t.Fatalf("stored verification storage = %#v", storages)
 	}
 }
@@ -782,15 +861,23 @@ func TestProviderAcceptanceCreatesAndReusesCompleteProSlot(t *testing.T) {
 	operator := operatorSessionForTest(t, server)
 	body := providerAcceptanceBodyForSlot(slot, true, 1, 20)
 
-	for attempt := 0; attempt < 2; attempt++ {
+	var terminal map[string]any
+	for attempt := 0; attempt < 6; attempt++ {
 		rec := providerAcceptanceRequest(server, operator, body, slot.Key)
-		if payload := providerAcceptancePayload(t, rec); rec.Code != http.StatusOK || payload["status"] != "in_progress" {
+		payload := providerAcceptancePayload(t, rec)
+		if rec.Code != http.StatusOK || (payload["status"] != "in_progress" && payload["status"] != "ready" && payload["status"] != "reused") {
 			t.Fatalf("Pro attempt %d = %d %#v", attempt+1, rec.Code, payload)
 		}
+		if payload["status"] == "ready" || payload["status"] == "reused" {
+			terminal = payload
+			break
+		}
+		if attempt == 1 {
+			setProviderAcceptanceCompatibilityFields(t, store, slot, "compat-node-pool", "compat-persistent-volume")
+		}
 	}
-	ready := providerAcceptanceRequest(server, operator, body, slot.Key)
-	if payload := providerAcceptancePayload(t, ready); ready.Code != http.StatusOK || payload["status"] != "ready" || mapField(payload, "slot")["id"] != slot.ID {
-		t.Fatalf("Pro ready = %d %#v", ready.Code, payload)
+	if terminal == nil || mapField(terminal, "slot")["id"] != slot.ID {
+		t.Fatalf("Pro terminal response = %#v", terminal)
 	}
 	fabric.mu.Lock()
 	providerMutations := len(fabric.mutationKeys)
@@ -814,7 +901,7 @@ func TestProviderAcceptanceCreatesAndReusesCompleteProSlot(t *testing.T) {
 	if len(workspaces) != 1 || workspaces[0]["packageId"] != "pro" || workspaces[0]["verificationSlotId"] != slot.ID || workspaces[0]["customerProduct"] != false {
 		t.Fatalf("stored Pro Workspace = %#v", workspaces)
 	}
-	if len(computes) != 1 || computes[0]["packageId"] != "pro" || computes[0]["instanceType"] != slot.InstanceType {
+	if len(computes) != 1 || computes[0]["packageId"] != "pro" {
 		t.Fatalf("stored Pro compute = %#v", computes)
 	}
 	if len(storages) != 1 || numberField(storages[0], "sizeGb", 0) != 100 {

@@ -14,9 +14,7 @@ import (
 type FabricClient interface {
 	Catalog(ctx context.Context) (FabricCatalog, error)
 	CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput, idempotencyKey string) (ComputeAllocation, error)
-	SyncComputeAllocation(ctx context.Context, id string) (ComputeAllocation, error)
 	CreateStorageVolume(ctx context.Context, input StorageVolumeInput, idempotencyKey string) (StorageVolume, error)
-	SyncStorageVolume(ctx context.Context, id string) (StorageVolume, error)
 	CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (StorageAttachment, error)
 	WriteGatewaySecret(ctx context.Context, input GatewaySecretWriteInput, idempotencyKey string) (GatewaySecretWriteResult, error)
 	CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, idempotencyKey string) (WorkspaceRuntime, error)
@@ -341,12 +339,6 @@ func (c *fabricHTTPClient) CreateComputeAllocation(ctx context.Context, input Co
 	return result, err
 }
 
-func (c *fabricHTTPClient) SyncComputeAllocation(ctx context.Context, id string) (ComputeAllocation, error) {
-	var result ComputeAllocation
-	err := c.post(ctx, "/fabric/compute-allocations/"+id+"/sync", map[string]string{}, "", &result)
-	return result, err
-}
-
 func (c *fabricHTTPClient) RenewComputeAllocation(ctx context.Context, id, idempotencyKey string) (ProviderResourceMutation, error) {
 	var result ProviderResourceMutation
 	err := c.post(ctx, "/fabric/compute-allocations/"+url.PathEscape(id)+"/renew", map[string]any{}, idempotencyKey, &result)
@@ -368,12 +360,6 @@ func (c *fabricHTTPClient) ReadComputeAllocation(ctx context.Context, id string)
 func (c *fabricHTTPClient) CreateStorageVolume(ctx context.Context, input StorageVolumeInput, idempotencyKey string) (StorageVolume, error) {
 	var result StorageVolume
 	err := c.post(ctx, "/fabric/storage-volumes", input, idempotencyKey, &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) SyncStorageVolume(ctx context.Context, id string) (StorageVolume, error) {
-	var result StorageVolume
-	err := c.post(ctx, "/fabric/storage-volumes/"+id+"/sync", map[string]string{}, "", &result)
 	return result, err
 }
 
