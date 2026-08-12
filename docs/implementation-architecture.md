@@ -72,12 +72,13 @@ lane; it complements behavior and contract tests rather than replacing them.
 
 The portable Compose source now gives each service its own PostgreSQL
 role/database and inbound service token; Control Plane receives separate Fabric
-and Ledger outbound tokens. Product-distribution tests enforce those mappings.
-The split has not yet been exercised as a real post-change Compose installation,
-and concrete medopl adoption belongs to the external instance owner, so installed
-and production isolation remain unproven. The common image still makes the
-services one intentional product release unit rather than independent service
-releases.
+and Ledger outbound tokens. A source-built portable Compose isolation run starts
+the services with those identities, rejects cross-owner database access and
+caller-token impersonation, and rotates each token without restarting PostgreSQL
+or unrelated services. This proves the reusable source configuration, not a
+clean-host release installation or concrete medopl adoption. The common image
+still makes the services one intentional product release unit rather than
+independent service releases.
 
 Deployment isolation is an independent implementation lane, not a predecessor
 to Console, Control Plane, Fabric, or Ledger development. Portable distribution
@@ -91,10 +92,11 @@ Internal cohesion has improved but remains uneven. Control Plane Launch now uses
 one focused, provider-neutral Reconciler with separate account, Fabric,
 activation, service, and persistence files. Fabric moved local-Docker and Tencent
 Workspace Launch behavior behind adapter files and reduced
-`internal/fabric/service.go`, but that facade still mixes several capabilities
-and retains legacy provider-specific knowledge. These are change-collision and
-review risks inside the correct owner modules, not a reason to introduce
-cross-service packages.
+`internal/fabric/service.go`; Tencent compute-allocation identity validation now
+belongs to the Tencent adapter and is reused by the targeted operator pool-head
+path. The remaining facade and provider/operator extensions still mix several
+capabilities. These are change-collision and review risks inside the correct owner
+modules, not a reason to introduce cross-service packages.
 
 Cohesion work is also lane-scoped rather than a repository-wide freeze. Splits
 inside different owning modules may proceed concurrently. Work that touches the
@@ -110,9 +112,9 @@ These are current implementation facts, not deletion authorization:
 | Cluster | Current implementation fact |
 | --- | --- |
 | Control Plane persistence | Archive and `ExecutionRequest` application models are deleted while historical SQL/tables remain; Organization/Membership are one-to-one compatibility storage |
-| Control Plane instance extension | The normal Launch/Resume path is provider-neutral, but the separate provider-acceptance route and legacy client/projection fields still interpret Tencent/TKE resource facts |
+| Control Plane instance extension | The normal Launch/Resume path is provider-neutral. Provider Acceptance consumes one provider-neutral facts batch and a narrow Runtime path; Cloud tooling requires canonical compute/storage provider IDs and treats legacy node-pool and persistent-volume values as optional response-only projections. Instance adoption remains external |
 | Fabric optional verticals | ContentTransfer runtime/API/schema surfaces are retired while historical migrations and data remain; Snapshot/Restore still has provider/service/store/route/test surfaces but no current in-repo product caller and remains excluded from the Pilot |
-| Fabric launch residue | Removed recovery proof/claim routes still leave dead Service/provider/store code; legacy resource inputs retain unassigned `LaunchBinding` branches; Tencent ownership mutation/readback has two implementations; operator extensions still contain inference scans |
+| Fabric launch residue | Recovery proof/claim Service/provider/store mutation shells, unassigned legacy `LaunchBinding` branches, and the duplicate Tencent compute-ownership implementation are retired. Typed Tencent Launch has exact stage-chain readback/replay coverage; other operation-list consumers and the remaining mixed Fabric facade still require caller-led cohesion work |
 | Ledger optional verticals | Artifact, Review, ReviewPolicy, and Continuation APIs exist while current Control Plane callers primarily consume receipts and reconciliation |
 | Indirection and tooling | A large Control Plane facade, repeated CLI parsers, repeated workflow setup/cleanup, and custom static-file behavior create maintenance cost |
 | Active-tree residue | Console styles retain multiple generations after the current UI work; dated execution plans and frozen QA assets were retired from active history |
@@ -219,6 +221,16 @@ when the common contract is proven by real paths. Control Plane keeps the one
 Launch business Reconciler and selected provider-profile ref; Fabric persists
 each stage-operation binding and the provider resource mapping.
 
+The read-only `POST /fabric/provider-facts/batch` boundary delegates resource
+interpretation to the selected adapter. Control Plane Provider Acceptance uses
+that same provider-neutral facts shape for compute, storage, attachment, and
+Runtime readiness. The Cloud Provider Acceptance CLI and production live-QA
+require canonical compute/storage provider IDs; compatibility node-pool and
+persistent-volume fields are optional response-only projections and do not
+participate in readiness or continuity comparison. The Local Docker adapter also
+validates an immutable Workspace image against its trusted repository or exact
+release-manifest source before Docker access or Fabric operation persistence.
+
 ## Launch Boundary Integration
 
 Fabric exposes `/fabric/workspace-launches/preflight`,
@@ -232,14 +244,21 @@ suffixes or provider tags. Both owners consume the same focused golden vectors,
 and the normal Launch/Resume caller is integrated. This closes the typed boundary
 slice but not the full Console-to-local-Workspace P0 vertical.
 
+Control Plane uses its own Fabric transport identity for these mutations and
+signs a short-lived capability binding account, Workspace, resource kind/id,
+action, operation identity, expiry, and request-body digest. Fabric derives the
+expected scope from the typed request and rejects missing or mismatched
+capabilities before operation-store or provider mutation. Runner transport
+identity remains limited to job lease routes.
+
 ## Persistence
 
 Control Plane, Fabric, and Ledger each own their PostgreSQL schema and table
 namespaces. Cross-service writes go through typed HTTP clients; no service writes
-another service's tables. Sub2API data remains in Sub2API. The current production
-credential can technically reach all three namespaces, so database least
-privilege remains an open deployment-isolation task rather than a completed
-physical boundary.
+another service's tables. Sub2API data remains in Sub2API. The portable Compose
+configuration and its source-built acceptance prove separate roles/databases and
+cross-owner denial. Legacy production credentials have not been replaced and
+read back through the Instance owner, so production adoption remains unproven.
 
 All three services serialize startup migrations with one database-wide PostgreSQL
 advisory lock. A migration is journaled in `opl_schema_migrations` by service and
@@ -260,8 +279,9 @@ debits the exact monthly amount before Fabric mutates provider resources. It the
 claims every PREPAID CVM/CBS fact and activates the Workspace only after
 readback. A confirmed zero-resource result permits one idempotent refund;
 partial or unknown provider results enter manual review without refund or
-repurchase. Ledger receipt failure retries only the receipt. This behavior is
-code-complete; live Sub2API and Tencent evidence remains pending.
+repurchase. Ledger receipt failure retries only the receipt. Source and focused
+tests implement this behavior; live Sub2API and Tencent evidence remains pending,
+and the repository remains `code-complete=false`.
 
 Each Workspace operation owns renewal intent and one combined monthly debit.
 Compute and storage rows are provider/compatibility facts, not independent
@@ -337,11 +357,15 @@ security-model change is authorized by this document.
 Cloud publishes one multi-architecture GHCR image and GitHub Release containing
 Compose, an environment template, and a release manifest. Product release uses
 no instance production environment and performs no instance deployment. The
-current release workflow still combines build and publication in one job with
-repository and package write authority; the target split and protected
-`cloud-release` environment remain open roadmap work. The image is
-identified by a version tag, exact product SHA, and immutable digest; mutable
-`latest` and `stable` tags are forbidden.
+current workflow builds and validates the OCI layout in a read-only job, passes
+one digest-checked Actions artifact to a separate publish job, and grants
+`contents:write` and `packages:write` only to that publish job under the protected
+`cloud-release` Environment. The image is identified by a version tag, exact
+product SHA, and immutable digest; mutable `latest` and `stable` tags are
+forbidden. No hosted execution of this split workflow, immutable current-revision
+Cloud Release/GHCR readback, or clean-host installation has yet qualified this
+source path. Historical hosted runs predate the current build/publish split and
+are not qualification evidence for it.
 
 Repository security automation currently uses GitHub-managed CodeQL default
 setup rather than a second workflow-owned CodeQL configuration. Pull requests

@@ -34,17 +34,22 @@ Sub2API management origin and credentials are never exposed to the browser.
   Fabric, Ledger, and Control Plane facts through customer-safe DTOs.
 - Control Plane, Fabric, and Ledger are separate Go processes and PostgreSQL
   schema owners. Portable Compose creates separate service databases and roles
-  and maps three distinct service tokens. A local-Workspace Compose smoke has
-  started PostgreSQL, Ledger, and Fabric with those boundaries and proved that
-  Fabric can reach the explicitly mounted host Docker Engine; Control Plane then
-  failed closed at the required external Sub2API authentication boundary. No
-  complete installation or current production instance readback proves the full
-  boundary effective. Required CI separately exercises the Accounting path
-  through real Control Plane HTTP backed by PostgreSQL and a real Ledger HTTP
-  process backed by its own PostgreSQL database, with a typed Sub2API authority
-  fixture. The Ledger `sslmode=disable` exception is limited to an explicit
-  non-production, loopback `OPL_POSTGRES_TESTS=1` gate; it is test plumbing, not
-  production evidence.
+  and maps three distinct service tokens. A source-built portable Compose
+  isolation run started all three services against their own database identities,
+  rejected cross-owner database access and caller-token impersonation, and
+  rotated each service token without restarting PostgreSQL or unrelated
+  services. This runtime acceptance entered canonical source through PR `#260`.
+  It proves the reusable Cloud configuration at source revision; it is not a
+  clean-host release installation or evidence that an Instance adopted the
+  split. A separate local-Workspace Compose smoke started PostgreSQL, Ledger, and
+  Fabric with those boundaries and proved that Fabric can reach the explicitly
+  mounted host Docker Engine; Control Plane then failed closed at the required
+  external Sub2API authentication boundary. Required CI separately exercises the
+  Accounting path through real Control Plane HTTP backed by PostgreSQL and a real
+  Ledger HTTP process backed by its own PostgreSQL database, with a typed Sub2API
+  authority fixture. The Ledger `sslmode=disable` exception is limited to an
+  explicit non-production, loopback `OPL_POSTGRES_TESTS=1` gate; it is test
+  plumbing, not production evidence.
 - Fabric defaults to a real `local-docker` adapter and keeps Tencent/TKE behind
   explicit instance selection. CI exercises local compute, storage, attachment,
   Secret binding, Runtime, and authoritative readback. The generic provider-facts
@@ -54,9 +59,17 @@ Sub2API management origin and credentials are never exposed to the browser.
   the local-Docker adapter has compute, storage, attachment, and Runtime fact
   parity. The typed `POST /fabric/provider-facts/batch` wire remains compatible
   and fails closed on identity or readback errors. Focused tests prove this path
-  is read-only, with no provider mutation or Fabric operation write. This is
-  source and CI evidence, not a complete Console-to-Workspace installation or
-  the completion of the wider Provider Acceptance migration.
+  is read-only, with no provider mutation or Fabric operation write. Provider
+  Acceptance Phases B and C are also absorbed. Phase B moved the Control Plane
+  route to one provider-neutral facts batch and a narrow acceptance Runtime path
+  through PR `#270`. Phase C moved the Cloud Provider Acceptance CLI and
+  production live-QA comparison through PR `#282`
+  (`bb0a221b12273d4dd788003c3d44b0d14e8dee87`): canonical compute and storage
+  provider IDs remain required authority, while legacy `nodePoolId` and
+  `persistentVolumeId` values are optional response-only projections that do not
+  decide readiness or resource continuity. The Instance owner has not adopted
+  and read back this current contract. This is source and CI evidence, not a
+  complete Console-to-Workspace installation or Instance Provider Acceptance.
 - Fabric's unused recovery proof/claim Service, provider, and operation-store
   mutation shell is retired. Five legacy resource inputs no longer carry
   unassigned `LaunchBinding` branches, and the orphan launch-binding readback is
@@ -66,7 +79,17 @@ Sub2API management origin and credentials are never exposed to the browser.
 - Typed Tencent Workspace Launch and the existing `TagComputeMachine` port now
   share one adapter-private compute-ownership core for deterministic CVM tagging,
   Kubernetes node claim, child operations, and authoritative replay readback.
-  Provider-neutral Fabric and Control Plane boundaries are unchanged.
+  Focused tests cover the typed compute, storage, attachment, Secret, and Runtime
+  stage chain, exact CBS/static binding and Runtime/Gateway binding readback, and
+  GET-only replay. Provider-neutral Fabric and Control Plane boundaries are
+  unchanged. The ownership/readback and typed Launch slices entered canonical
+  source through PRs `#275`, `#277`, and `#278`. This is implementation evidence,
+  not live Tencent mutation or current medopl deployment evidence.
+- Tencent compute-allocation identity validation now belongs to the Tencent
+  adapter rather than generic Fabric `service.go`; targeted operator pool-head
+  readback calls that adapter-owned validator. This source ownership cut entered
+  canonical source through PR `#281`. Other Fabric cohesion work remains bounded
+  by its real callers and owning adapters.
 - Operator identity-evidence compute/storage readback and pool-head terminal
   replay no longer call the runtime operation-list path. They use narrow
   action/idempotency or approval/idempotency owner lookups, fail closed on an
@@ -79,9 +102,10 @@ Sub2API management origin and credentials are never exposed to the browser.
   stages call the typed Fabric HTTP contract and consume the same six-field
   request-hash vectors as Fabric. Activation readback uses the canonical
   `currentComputeAllocationId` and `currentAttachmentId` Workspace projection
-  fields, with retained read compatibility for older projections. A separate
-  legacy provider-acceptance surface still contains Tencent-specific client and
-  projection knowledge.
+  fields, with retained read compatibility for older projections. The separate
+  Provider Acceptance surface remains instance-oriented production tooling, but
+  its Cloud route and callers now decide readiness from provider-neutral facts
+  and canonical provider IDs rather than legacy NodePool/PV projections.
 - The zero-caller `ReapplyWorkspaceRuntime` Control Plane facade method is
   removed. This application-code cut neither rewrites nor deletes historical
   `runtime_apply` rows and does not mutate or retire Fabric resources. The
@@ -141,17 +165,19 @@ artifact to a separate publish job. Only publish receives `contents:write` and
 `packages:write`, runs no checkout, dependency install, repository code, or
 third-party Action, and is bound to the protected `cloud-release` Environment.
 Local multi-architecture OCI build and publish-command dry-run evidence does not
-prove a hosted workflow execution. Fresh GitHub owner readback still shows no
-OPL Cloud tag, Release, or GHCR package, and no clean-host installation evidence
-exists. Source and local evidence therefore do not prove a published immutable
-product or an installed application.
+prove the current split workflow on GitHub-hosted runners. Historical hosted
+release-workflow runs predate the split and did not leave a current OPL Cloud tag
+or GitHub Release; no qualifying current-revision GHCR digest/package readback or
+clean-host installation evidence exists. Source, historical workflow, and local
+evidence therefore do not prove a published immutable product or an installed
+application.
 
-GitHub security controls were read back on 2026-08-12 for
-`main@d2408e778e6b4ed09ce616658900521c9aeabcc0`. Private vulnerability
+GitHub security controls were read back on 2026-08-13 for
+`main@fc7bcba6e5314b044e68a283c7c75a49213f1db0`. Private vulnerability
 reporting, Dependabot alerts and security updates, secret scanning and push
 protection, Actions full-SHA pin enforcement, and branch-protection admin
 enforcement are enabled. CodeQL default setup is configured weekly for Actions,
-Go, and JavaScript/TypeScript; run `31568549176` completed successfully at that
+Go, and JavaScript/TypeScript; run `31650441836` completed successfully at that
 exact `main` SHA. The repository has zero open
 secret-scanning alerts and zero open Dependabot alerts. Secret validity checks
 remain disabled after the attempted setting change did not take effect. Actions
@@ -161,11 +187,13 @@ The default workflow token is read-only and cannot approve pull requests.
 `main` strictly requires the GitHub Actions `validate` and `dependency-review`
 contexts, resolves review conversations, and forbids force pushes and deletion.
 
-CodeQL success did not produce a zero-alert baseline. Fresh controller and API
-readback for `main@1fd5419081ffbc56b87ec7ee439561a44704cc32` reports that
+CodeQL success did not produce a zero-alert baseline.
 `SECURITY-CODEQL-TRIAGE-01` completed with `mutation_zero`: all 15 high-security-
 severity alerts were individually classified `not_actionable`, with zero
-`confirmed` and zero `needs_review`. The alerts cover
+`confirmed` and zero `needs_review`. CodeQL run `31650441836` completed
+successfully for Actions, Go, and JavaScript/TypeScript at
+`main@fc7bcba6e5314b044e68a283c7c75a49213f1db0`; fresh GitHub API readback still
+reports those same 15 alerts open. They cover
 `go/weak-sensitive-data-hashing`, `js/weak-cryptographic-algorithm`, and
 `go/allocation-size-overflow`. Alerts `#1` through `#15` remain open; no alert
 dismissal, fix, setting mutation, or code write was performed. This triage
@@ -186,20 +214,23 @@ release enforcement, repository custom coding-agent profile, or coding-agent
 automation exists. These controls and checks do not prove dependency risk is
 zero or that a release has run.
 
-Security currentness now includes the absorbed and owner-cleaned S1 and Gateway
-lanes. PR `#271` (`1635a949b0e9440de841e5163e7eb1980e4bd10d`) merged the split
-read-only build and publish-only release workflow; its owner cleanup is complete.
-This closes the S1 implementation lane only: no release, tag, GHCR publication,
-or immutable-product readback has run. PR `#272`
+Security currentness now includes the absorbed S1, Gateway, S2, and S3
+implementation lanes. PR `#271`
+(`1635a949b0e9440de841e5163e7eb1980e4bd10d`) merged the split read-only build and
+publish-only release workflow. PR `#272`
 (`1fd5419081ffbc56b87ec7ee439561a44704cc32`) merged the dead Gateway helper
-removal; its owner cleanup is complete, while the live external Gateway path and
-the broader Workspace evidence gap remain separate.
-
-`SECURITY-S2-CROSS-OWNER-CAPABILITY-01` has one `ACTIVE` official lifecycle
-receipt under its Cloud controller and exact executor. The receipt records active
-implementation work, not a fixed capability boundary or product readiness.
-Trusted local image admission (S3) remains an admitted lane; the S3 control is
-not implemented here. CodeQL triage is terminal at the classification layer only,
+removal. PR `#276` (`92a4cd104adf6d76540ea4c203f792a539b31655`)
+merged Local Docker trusted immutable-image admission: an unapproved repository,
+bare digest, tag-plus-digest, case-variant, or multi-`@` reference fails before
+Docker or operation-store mutation, while an approved repository or exact
+release-manifest digest remains accepted. PR `#279`
+(`f20984d999e4229fc23a74df8dd44e9e82cd7f5c`) merged separate Control Plane and
+runner transport identities plus a short-lived, HMAC-bound Control Plane
+capability over account, Workspace, resource kind/id, action, operation,
+expiration, and request-body digest. Mismatch tests fail before Fabric operation-
+store or provider mutation. These are source and test controls only: they do not
+prove a release, installation, live external Sub2API path, Instance deployment,
+or product readiness. CodeQL triage is terminal at the classification layer only,
 with alert disposition explicitly unperformed as recorded above.
 
 This product repository holds no current instance deployment readback. The
@@ -212,13 +243,13 @@ rollback, and receipt evidence must be read back from the Instance owner for one
 exact Cloud release.
 
 The Cloud GitHub repository still carries the legacy production authority. It
-has six Environments and 2,084 historical Deployment records; 2,079 records name
-the `production` environment, whose current configuration exposes 23 Secret names
-and 31 variables. These records include every Actions job that declared an
-environment and are not evidence of 2,079 server rollouts. The residual authority
-is migration state, not evidence that Cloud still owns medopl deployment, and it
-cannot be retired until the Instance successor and one exact deployment receipt
-are proven.
+has six non-release Environments in addition to `cloud-release`, and 2,086
+historical Deployment records; 2,079 records name the `production` environment,
+whose current configuration exposes 23 Secret names and 31 variables. These
+records include every Actions job that declared an environment and are not
+evidence of 2,079 server rollouts. The residual authority is migration state, not
+evidence that Cloud still owns medopl deployment, and it cannot be retired until
+the Instance successor and one exact deployment receipt are proven.
 
 Capacity evidence targets a 1000-provisioned-user data set. It does not claim
 1000 concurrent users, concurrent provisioning, multiple Control Plane
