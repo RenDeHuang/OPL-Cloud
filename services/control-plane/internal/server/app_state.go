@@ -170,10 +170,6 @@ func newControlPlaneAppEmpty() *controlPlaneServer {
 	}
 }
 
-func (app *controlPlaneServer) userFacts() controlPlaneRecordSet {
-	return app.userRecordSet(true)
-}
-
 func (app *controlPlaneServer) state(accountID string, computePools []any) map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
@@ -200,16 +196,6 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 		"runtimeOperations":      rowsAsAnyFromMaps(app.runtimeOperationRows(runtimeOperationQuery{AccountID: accountID})),
 		"generatedAt":            time.Now().UTC().Format(time.RFC3339),
 	}
-}
-
-func rowsForAccount(rows []map[string]any, accountID string) []map[string]any {
-	out := make([]map[string]any, 0)
-	for _, row := range rows {
-		if stringValue(row["accountId"]) == accountID {
-			out = append(out, row)
-		}
-	}
-	return out
 }
 
 func (app *controlPlaneServer) userRecordSet(includeDeleted bool) controlPlaneRecordSet {
@@ -292,14 +278,6 @@ func rowsAsAnyFromMaps(rows []map[string]any) []any {
 	return out
 }
 
-func rowsToRecords(rows []map[string]any) []controlPlaneRecord {
-	out := make([]controlPlaneRecord, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, cloneMap(row))
-	}
-	return out
-}
-
 func (app *controlPlaneServer) listAuditEvents(accountID string) []map[string]any {
 	rows, err := app.tables.ListAuditEvents(context.Background(), accountID)
 	if err != nil {
@@ -310,22 +288,6 @@ func (app *controlPlaneServer) listAuditEvents(accountID string) []map[string]an
 
 func (app *controlPlaneServer) listSupportMappings(accountID string) []map[string]any {
 	rows, err := app.tables.ListSupportMappings(context.Background(), accountID)
-	if err != nil {
-		return nil
-	}
-	return rows
-}
-
-func (app *controlPlaneServer) listOrganizations() []map[string]any {
-	rows, err := app.tables.ListOrganizations(context.Background())
-	if err != nil {
-		return nil
-	}
-	return rows
-}
-
-func (app *controlPlaneServer) listMemberships() []map[string]any {
-	rows, err := app.tables.ListMemberships(context.Background())
 	if err != nil {
 		return nil
 	}
@@ -362,22 +324,6 @@ func failedRuntimeOperations(operations []map[string]any) []any {
 		}
 	}
 	return failed
-}
-
-func terminalComputeStatus(status string) bool {
-	return status == "destroyed" || status == "deleted"
-}
-
-func terminalStorageStatus(status string) bool {
-	return status == "destroyed" || status == "deleted"
-}
-
-func terminalAttachmentStatus(status string) bool {
-	return status == "detached" || status == "deleted"
-}
-
-func terminalWorkspaceStatus(status string) bool {
-	return status == "data_deleted" || status == "unrecoverable" || status == "deleted" || status == "destroyed"
 }
 
 func workspaceServiceTarget(serviceName string) (*url.URL, error) {
@@ -581,41 +527,6 @@ func cloneStateTable(input controlPlaneRecordSet) controlPlaneRecordSet {
 	return output
 }
 
-func cloneStateRows(input []controlPlaneRecord) []controlPlaneRecord {
-	output := make([]controlPlaneRecord, 0, len(input))
-	for _, item := range input {
-		output = append(output, cloneMap(item))
-	}
-	return output
-}
-
-func sessionsFromFacts(input controlPlaneRecordSet) map[string]sessionRecord {
-	output := map[string]sessionRecord{}
-	now := time.Now().UTC()
-	for id, row := range input {
-		expiresAt, err := time.Parse(time.RFC3339, stringValue(row["expiresAt"]))
-		if err != nil || now.After(expiresAt) {
-			continue
-		}
-		sessionID := firstNonEmpty(stringValue(row["id"]), id)
-		output[sessionID] = sessionRecord{
-			ID:        sessionID,
-			UserID:    stringValue(row["userId"]),
-			CSRF:      stringValue(row["csrf"]),
-			ExpiresAt: expiresAt,
-		}
-	}
-	return output
-}
-
-func copySlice(input []controlPlaneRecord) []any {
-	output := make([]any, 0, len(input))
-	for _, item := range input {
-		output = append(output, cloneMap(item))
-	}
-	return output
-}
-
 func values(input controlPlaneRecordSet) []any {
 	keys := make([]string, 0, len(input))
 	for key := range input {
@@ -625,25 +536,6 @@ func values(input controlPlaneRecordSet) []any {
 	output := make([]any, 0, len(keys))
 	for _, key := range keys {
 		output = append(output, cloneMap(input[key]))
-	}
-	return output
-}
-
-func accountValues(input controlPlaneRecordSet, accountID string) []any {
-	if accountID == "" {
-		return values(input)
-	}
-	return filteredValues(input, func(item map[string]any) bool {
-		return firstNonEmpty(stringValue(item["accountId"]), stringValue(item["ownerAccountId"])) == accountID
-	})
-}
-
-func auditEventsForAccount(events []controlPlaneRecord, accountID string) []any {
-	output := []any{}
-	for _, event := range events {
-		if accountID == "" || stringValue(event["targetAccountId"]) == accountID || stringValue(event["actorAccountId"]) == accountID {
-			output = append(output, cloneMap(event))
-		}
 	}
 	return output
 }
@@ -698,16 +590,6 @@ func stringSliceField(input map[string]any, key string) []string {
 	for _, item := range raw {
 		if value := stringValue(item); value != "" {
 			output = append(output, value)
-		}
-	}
-	return output
-}
-
-func stringSet(input []string) map[string]bool {
-	output := map[string]bool{}
-	for _, value := range input {
-		if value != "" {
-			output[value] = true
 		}
 	}
 	return output
