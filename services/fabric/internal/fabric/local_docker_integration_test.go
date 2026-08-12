@@ -46,6 +46,18 @@ type bindingCheckingDockerRunner struct {
 	t           *testing.T
 }
 
+type recordingDockerRunner struct {
+	calls [][]string
+}
+
+func (r *recordingDockerRunner) Run(_ context.Context, _ []byte, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, append([]string(nil), args...))
+	if len(args) >= 1 && args[0] == "info" {
+		return []byte("test-docker-version"), nil
+	}
+	return nil, fmt.Errorf("unexpected docker call: %q", args)
+}
+
 func (r bindingCheckingDockerRunner) Run(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
 	stage, mutation := "", ""
 	if len(args) >= 2 && args[0] == "network" && args[1] == "create" {
@@ -111,6 +123,85 @@ func waitForWorkspaceStage(ctx context.Context, service *Service, input Workspac
 	return WorkspaceLaunchStageResult{}, fmt.Errorf("workspace_launch_stage_timeout")
 }
 
+func localDockerImageTrustPreflight(t *testing.T, image string) (WorkspaceLaunchPreflight, *recordingDockerRunner, []FabricOperation) {
+	t.Helper()
+	runner := &recordingDockerRunner{}
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(newLocalDockerProvider(LocalDockerProviderConfig{}, runner), store)
+	result, err := service.PreflightWorkspaceLaunch(context.Background(), WorkspaceLaunchPreflightInput{
+		SchemaVersion: 1, LaunchOperationID: "local-image-trust", AccountID: "acct-local", WorkspaceID: "ws-local",
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image, RequestHash: strings.Repeat("b", 64),
+	})
+	if err != nil {
+		t.Fatalf("preflight error=%v", err)
+	}
+	operations, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("list operations: %v", err)
+	}
+	return result, runner, operations
+}
+
+func TestLocalDockerRejectsUnapprovedWorkspaceImageBeforeDockerOrOperationMutation(t *testing.T) {
+	for _, image := range []string{
+		"ghcr.io/gaofeng21cn/one-person-lab-app-attacker@sha256:" + strings.Repeat("a", 64),
+		"GHCR.IO/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64),
+		"ghcr.io/gaofeng21cn/one-person-lab-app:stable@sha256:" + strings.Repeat("a", 64),
+		"ghcr.io/gaofeng21cn/one-person-lab-app@other@sha256:" + strings.Repeat("a", 64),
+		"sha256:" + strings.Repeat("a", 64),
+	} {
+		t.Run(stableSuffix(image)[:12], func(t *testing.T) {
+			preflight, runner, operations := localDockerImageTrustPreflight(t, image)
+			if preflight.Available || preflight.Reason != "provider_profile_unavailable" {
+				t.Fatalf("unapproved image preflight=%#v", preflight)
+			}
+			if len(runner.calls) != 0 {
+				t.Fatalf("unapproved image reached Docker: %#v", runner.calls)
+			}
+			if len(operations) != 0 {
+				t.Fatalf("unapproved image mutated operation store: %#v", operations)
+			}
+		})
+	}
+}
+
+func TestLocalDockerExactReleaseManifestImageDoesNotTrustSiblingDigest(t *testing.T) {
+	approved := "registry.example.com/opl/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{TrustedWorkspaceImageSources: []string{approved}}, &recordingDockerRunner{})
+	if !provider.ValidateWorkspaceImageReference(approved) {
+		t.Fatal("approved release manifest image rejected")
+	}
+	if provider.ValidateWorkspaceImageReference("registry.example.com/opl/one-person-lab-app@sha256:" + strings.Repeat("b", 64)) {
+		t.Fatal("release manifest allowlist trusted an unlisted digest")
+	}
+}
+
+func TestLocalDockerConfiguredReleaseManifestReplacesDefaultRepositoryTrust(t *testing.T) {
+	approved := "registry.example.com/opl/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	t.Setenv("OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES", approved)
+	provider := NewLocalDockerProvider()
+	if !provider.ValidateWorkspaceImageReference(approved) {
+		t.Fatal("configured release manifest image rejected")
+	}
+	if provider.ValidateWorkspaceImageReference("ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("b", 64)) {
+		t.Fatal("configured release manifest retained default repository trust")
+	}
+}
+
+func TestLocalDockerAcceptsApprovedImmutableWorkspaceImage(t *testing.T) {
+	image := "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	preflight, runner, operations := localDockerImageTrustPreflight(t, image)
+	if !preflight.Available || preflight.Reason != "none" || preflight.BindingRef == "" {
+		t.Fatalf("approved image preflight=%#v", preflight)
+	}
+	if len(runner.calls) != 1 || len(runner.calls[0]) == 0 || runner.calls[0][0] != "info" {
+		t.Fatalf("approved image Docker calls=%#v", runner.calls)
+	}
+	if len(operations) != 1 || operations[0].ID != preflight.BindingRef || operations[0].Status != "succeeded" {
+		t.Fatalf("approved image operations=%#v", operations)
+	}
+}
+
 func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if os.Getenv("OPL_FABRIC_LOCAL_DOCKER_INTEGRATION") != "1" {
 		t.Skip("set OPL_FABRIC_LOCAL_DOCKER_INTEGRATION=1 to run against the local Docker daemon")
@@ -155,7 +246,9 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	mutationIDs := map[string]string{}
 	store := NewMemoryOperationStore()
 	runner := bindingCheckingDockerRunner{base: execDockerRunner{binary: "docker"}, store: store, parents: bindings, mutationIDs: mutationIDs, t: t}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{HelperImage: imageID, RuntimeHost: "127.0.0.1"}, runner)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{
+		HelperImage: imageID, RuntimeHost: "127.0.0.1", TrustedWorkspaceImageSources: []string{imageID},
+	}, runner)
 	service := NewServiceWithOperationStore(provider, store)
 	launchRequestHash := stableSuffix("workspace-launch", launchID, accountID, workspaceID, imageID)
 	preflight, err := service.PreflightWorkspaceLaunch(ctx, WorkspaceLaunchPreflightInput{

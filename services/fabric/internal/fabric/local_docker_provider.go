@@ -15,6 +15,8 @@ import (
 
 var ErrLocalDockerSnapshotUnsupported = errors.New("local_docker_snapshot_unsupported")
 
+const defaultLocalDockerWorkspaceImageRepository = "ghcr.io/gaofeng21cn/one-person-lab-app"
+
 type dockerRunner interface {
 	Run(context.Context, []byte, ...string) ([]byte, error)
 }
@@ -41,23 +43,31 @@ func firstArg(values []string) string {
 }
 
 type LocalDockerProviderConfig struct {
-	DockerBinary string
-	HelperImage  string
-	RuntimeHost  string
+	DockerBinary                 string
+	HelperImage                  string
+	RuntimeHost                  string
+	TrustedWorkspaceImageSources []string
 }
 
 type LocalDockerProvider struct {
-	runner      dockerRunner
-	helperImage string
-	runtimeHost string
-	now         func() time.Time
+	runner                            dockerRunner
+	helperImage                       string
+	runtimeHost                       string
+	trustedWorkspaceImageRepositories map[string]struct{}
+	trustedWorkspaceImageReferences   map[string]struct{}
+	now                               func() time.Time
 }
 
 func NewLocalDockerProvider() *LocalDockerProvider {
+	trustedSources := []string{defaultLocalDockerWorkspaceImageRepository}
+	if raw, configured := os.LookupEnv("OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES"); configured {
+		trustedSources = strings.Split(raw, ",")
+	}
 	return newLocalDockerProvider(LocalDockerProviderConfig{
-		DockerBinary: firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_DOCKER_BINARY")), "docker"),
-		HelperImage:  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HELPER_IMAGE")), "alpine:3.20"),
-		RuntimeHost:  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HOST")), "127.0.0.1"),
+		DockerBinary:                 firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_DOCKER_BINARY")), "docker"),
+		HelperImage:                  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HELPER_IMAGE")), "alpine:3.20"),
+		RuntimeHost:                  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HOST")), "127.0.0.1"),
+		TrustedWorkspaceImageSources: trustedSources,
 	}, nil)
 }
 
@@ -65,10 +75,55 @@ func newLocalDockerProvider(config LocalDockerProviderConfig, runner dockerRunne
 	if runner == nil {
 		runner = execDockerRunner{binary: firstNonEmpty(strings.TrimSpace(config.DockerBinary), "docker")}
 	}
+	trustedSources := config.TrustedWorkspaceImageSources
+	if trustedSources == nil {
+		trustedSources = []string{defaultLocalDockerWorkspaceImageRepository}
+	}
+	trustedRepositories, trustedReferences := localDockerWorkspaceImageTrust(trustedSources)
 	return &LocalDockerProvider{
 		runner: runner, helperImage: firstNonEmpty(strings.TrimSpace(config.HelperImage), "alpine:3.20"),
-		runtimeHost: firstNonEmpty(strings.TrimSpace(config.RuntimeHost), "127.0.0.1"), now: func() time.Time { return time.Now().UTC() },
+		runtimeHost:                       firstNonEmpty(strings.TrimSpace(config.RuntimeHost), "127.0.0.1"),
+		trustedWorkspaceImageRepositories: trustedRepositories, trustedWorkspaceImageReferences: trustedReferences,
+		now: func() time.Time { return time.Now().UTC() },
 	}
+}
+
+func immutableLocalDockerImage(value string) (repository, reference string, ok bool) {
+	value = strings.TrimSpace(value)
+	digest := ""
+	if strings.HasPrefix(value, "sha256:") {
+		digest = strings.TrimPrefix(value, "sha256:")
+	} else {
+		before, after, found := strings.Cut(value, "@sha256:")
+		if !found || before == "" || strings.Contains(before, "@") {
+			return "", "", false
+		}
+		repository, digest = before, after
+	}
+	if len(digest) != 64 || digest != strings.ToLower(digest) || !validDigest(digest) {
+		return "", "", false
+	}
+	return repository, value, true
+}
+
+func localDockerWorkspaceImageTrust(sources []string) (map[string]struct{}, map[string]struct{}) {
+	repositories, references := map[string]struct{}{}, map[string]struct{}{}
+	for _, raw := range sources {
+		source := strings.TrimSpace(raw)
+		if source == "" {
+			continue
+		}
+		if _, reference, ok := immutableLocalDockerImage(source); ok {
+			references[reference] = struct{}{}
+			continue
+		}
+		lastComponent := source[strings.LastIndex(source, "/")+1:]
+		if source != strings.ToLower(source) || strings.ContainsAny(source, "@ \t\r\n") || strings.Contains(lastComponent, ":") || strings.HasSuffix(source, "/") {
+			continue
+		}
+		repositories[source] = struct{}{}
+	}
+	return repositories, references
 }
 
 func (*LocalDockerProvider) Descriptor() ProviderDescriptor {
@@ -89,15 +144,16 @@ func (*LocalDockerProvider) Descriptor() ProviderDescriptor {
 	}
 }
 
-func (*LocalDockerProvider) ValidateWorkspaceImageReference(value string) bool {
-	value = strings.TrimSpace(value)
-	digest := ""
-	if strings.HasPrefix(value, "sha256:") {
-		digest = strings.TrimPrefix(value, "sha256:")
-	} else if before, after, ok := strings.Cut(value, "@sha256:"); ok && before != "" {
-		digest = after
+func (p *LocalDockerProvider) ValidateWorkspaceImageReference(value string) bool {
+	repository, reference, ok := immutableLocalDockerImage(value)
+	if !ok {
+		return false
 	}
-	return len(digest) == 64 && digest == strings.ToLower(digest) && validDigest(digest)
+	if _, trusted := p.trustedWorkspaceImageReferences[reference]; trusted {
+		return true
+	}
+	_, trusted := p.trustedWorkspaceImageRepositories[repository]
+	return repository != "" && trusted
 }
 
 func (*LocalDockerProvider) ValidateComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {
