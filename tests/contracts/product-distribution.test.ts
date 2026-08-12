@@ -100,12 +100,56 @@ test("portable distribution is product-owned and instance-neutral", async () => 
 
 test("Cloud release publishes GHCR and GitHub Release without production deployment", async () => {
   const source = await readFile(".github/workflows/release-opl-cloud-image.yml", "utf8");
+  const workflow = YAML.parse(source);
+  const steps = workflow.jobs.release.steps as Array<{ name: string; run?: string }>;
+  const stepRun = (name: string) => {
+    const run = steps.find((step) => step.name === name)?.run;
+    assert.ok(run, `missing run script for ${name}`);
+    return run;
+  };
+  const validationRun = stepRun("Validate portable product boundary");
+  const manifestRun = stepRun("Create release manifest");
+  const publishRun = stepRun("Publish GitHub Release");
+  const readbackRun = stepRun("Read back release");
+
   assert.match(source, /ghcr\.io\/\$\{\{ github\.repository \}\}/);
   assert.match(source, /--platform linux\/amd64,linux\/arm64/);
-  assert.match(source, /gh release create/);
-  assert.match(source, /opl-cloud-release\.json/);
   assert.match(source, /docker buildx imagetools inspect "\$IMAGE_REPOSITORY:\$RELEASE_TAG"/);
   assert.match(source, /\^v0\\\.\[0-9\]\+\\\.\[0-9\]\+\$/);
   assert.doesNotMatch(source, /environment:\s*production|tencentyun\.com|:latest|:stable/);
   assert.doesNotMatch(source, /--tag "\$IMAGE_REPOSITORY:sha-/);
+
+  assert.match(
+    validationRun,
+    /docker compose --env-file deploy\/portable\/opl-cloud\.env\.example -f compose\.yaml -f deploy\/portable\/compose\.local-workspace\.yaml config --quiet/
+  );
+
+  const manifestAssets = manifestRun.match(/assets:(\[[^\]]+\])/);
+  assert.ok(manifestAssets);
+  assert.deepEqual(JSON.parse(manifestAssets[1]), [
+    "compose.yaml",
+    "compose.local-workspace.yaml",
+    "opl-cloud.env.example"
+  ]);
+
+  assert.match(publishRun, /^gh release create "\$RELEASE_TAG"/m);
+  const publishedAssetPaths = publishRun
+    .split("\n")
+    .map((line) => line.trim().replace(/ \\$/, ""))
+    .filter((line) => /^(compose\.yaml|deploy\/portable\/|artifacts\/release\/)/.test(line));
+  assert.deepEqual(publishedAssetPaths, [
+    "compose.yaml",
+    "deploy/portable/compose.local-workspace.yaml",
+    "deploy/portable/opl-cloud.env.example",
+    "artifacts/release/opl-cloud-release.json"
+  ]);
+
+  const readbackAssets = readbackRun.match(/== (\(\[[^\]]+\] \| sort\))/);
+  assert.ok(readbackAssets);
+  assert.deepEqual(JSON.parse(readbackAssets[1].slice(1, -8)), [
+    "compose.local-workspace.yaml",
+    "compose.yaml",
+    "opl-cloud-release.json",
+    "opl-cloud.env.example"
+  ]);
 });
