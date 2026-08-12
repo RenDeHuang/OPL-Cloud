@@ -2,7 +2,9 @@ package fabric
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -107,4 +109,78 @@ func TestTencentOperatorIdentityEvidenceProjectsHistoricalLedgerWithoutMutation(
 		!reflect.DeepEqual(before, after) {
 		t.Fatalf("evidence=%#v err=%v before=%#v after=%#v listErr=%v", evidence, err, before, after, listErr)
 	}
+}
+
+func TestTencentOperatorIdentityEvidenceIgnoresUnownedAliasMatches(t *testing.T) {
+	service, store, input := seedTencentOperatorIdentityEvidence(t)
+	alias := newOperation(
+		"create_compute_allocation", "compute_allocation", input.ComputeAllocationID, input.AccountID, input.WorkspaceID,
+		"another-launch:compute", "another-hash", time.Date(2026, 8, 12, 0, 1, 0, 0, time.UTC),
+	)
+	alias.ID, alias.Status = "fop-unowned-compute-alias", "failed"
+	storageAlias := newOperation(
+		"create_storage_volume", "storage_volume", input.StorageVolumeID, input.AccountID, input.WorkspaceID,
+		"another-launch:storage", "another-storage-hash", time.Date(2026, 8, 12, 0, 2, 0, 0, time.UTC),
+	)
+	storageAlias.ID, storageAlias.Status = "fop-unowned-storage-alias", "started"
+	for _, operation := range []FabricOperation{alias, storageAlias} {
+		if err := store.Append(context.Background(), operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	evidence, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), input)
+	if err != nil || evidence == nil || evidence.MutationLedgerOutcome != "confirmed_zero" {
+		t.Fatalf("evidence=%#v err=%v", evidence, err)
+	}
+}
+
+func TestTencentOperatorIdentityEvidenceFailsClosedOnExactConflictAndUnknownStorage(t *testing.T) {
+	t.Run("compute identity conflict", func(t *testing.T) {
+		service, store, input := seedTencentOperatorIdentityEvidence(t)
+		store.mu.Lock()
+		duplicate := store.operation[0]
+		store.mu.Unlock()
+		duplicate.ID = "fop-operator-duplicate"
+		if err := store.Append(context.Background(), duplicate); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), input); !errors.Is(err, ErrComputeClaimRecoveryUnavailable) || !strings.Contains(err.Error(), "local_identity") {
+			t.Fatalf("error=%v", err)
+		}
+	})
+
+	t.Run("storage identity unknown", func(t *testing.T) {
+		service, store, input := seedTencentOperatorIdentityEvidence(t)
+		storage := newOperation(
+			"create_storage_volume", "storage_volume", input.StorageVolumeID, input.AccountID, input.WorkspaceID,
+			input.LaunchOperationID+":storage", "storage-hash", time.Date(2026, 8, 12, 0, 3, 0, 0, time.UTC),
+		)
+		storage.ID, storage.Status = "fop-storage-unknown", "started"
+		if err := store.Append(context.Background(), storage); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), input); !errors.Is(err, ErrComputeClaimRecoveryUnavailable) || !strings.Contains(err.Error(), "storage_already_started") {
+			t.Fatalf("error=%v", err)
+		}
+	})
+
+	t.Run("storage identity conflict", func(t *testing.T) {
+		service, store, input := seedTencentOperatorIdentityEvidence(t)
+		storage := newOperation(
+			"create_storage_volume", "storage_volume", input.StorageVolumeID, input.AccountID, input.WorkspaceID,
+			input.LaunchOperationID+":storage", "storage-hash", time.Date(2026, 8, 12, 0, 4, 0, 0, time.UTC),
+		)
+		storage.ID, storage.Status = "fop-storage-conflict-one", "started"
+		duplicate := storage
+		duplicate.ID = "fop-storage-conflict-two"
+		for _, operation := range []FabricOperation{storage, duplicate} {
+			if err := store.Append(context.Background(), operation); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), input); !errors.Is(err, ErrComputeClaimRecoveryUnavailable) || !strings.Contains(err.Error(), "identity_mismatch") {
+			t.Fatalf("error=%v", err)
+		}
+	})
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -186,20 +187,21 @@ func withComputeClaimRecoveryBinding(payload map[string]any, binding computeClai
 }
 
 func (s *Service) computeClaimRecoveryLocalState(ctx context.Context, input ComputeClaimRecoveryInput) (FabricOperation, ComputeAllocation, ComputeAllocationPreparation, MachineOwnership, string, error) {
-	operations, err := s.operations.List(ctx)
+	operation, found, err := s.operations.OperationByActionIdempotency(ctx, "create_compute_allocation", input.LaunchOperationID+":compute")
 	if err != nil {
+		if errors.Is(err, ErrOperationIdentityConflict) {
+			return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "local_identity",
+				fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
+		}
 		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "local_identity", err
 	}
-	var operation FabricOperation
-	computeCount := 0
-	for _, candidate := range operations {
-		if candidate.Action == "create_compute_allocation" && (candidate.ResourceID == input.ComputeAllocationID ||
-			candidate.IdempotencyKey == input.LaunchOperationID+":compute" || candidate.AccountID == input.AccountID && candidate.WorkspaceID == input.WorkspaceID) {
-			computeCount++
-			operation = candidate
-		}
+	storageOperation, storageFound, err := s.operations.OperationByActionIdempotency(ctx, "create_storage_volume", input.LaunchOperationID+":storage")
+	storageDisposition := computeClaimRecoveryStorageOperationDisposition(storageOperation, storageFound, input)
+	if errors.Is(err, ErrOperationIdentityConflict) {
+		storageDisposition = computeClaimStorageOperationConflict
+	} else if err != nil {
+		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "local_identity", err
 	}
-	storageDisposition := computeClaimRecoveryStorageOperationDisposition(operations, input)
 	if storageDisposition == computeClaimStorageOperationUnknown && !input.AllowExistingStorageOperation {
 		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "storage_already_started",
 			fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
@@ -208,7 +210,7 @@ func (s *Service) computeClaimRecoveryLocalState(ctx context.Context, input Comp
 		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "identity_mismatch",
 			fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 	}
-	if computeCount != 1 || operation.AccountID != input.AccountID || operation.WorkspaceID != input.WorkspaceID ||
+	if !found || operation.ResourceID != input.ComputeAllocationID || operation.AccountID != input.AccountID || operation.WorkspaceID != input.WorkspaceID ||
 		operation.IdempotencyKey != input.LaunchOperationID+":compute" ||
 		(operation.Status != "failed" && operation.Status != "claim_pending" && operation.Status != "succeeded") {
 		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "local_identity",

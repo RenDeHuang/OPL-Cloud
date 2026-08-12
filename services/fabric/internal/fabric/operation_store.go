@@ -24,10 +24,13 @@ import (
 )
 
 var ErrOperationNotFound = errors.New("fabric_operation_not_found")
+var ErrOperationIdentityConflict = errors.New("fabric_operation_identity_conflict")
 
 type OperationStore interface {
 	Append(ctx context.Context, operation FabricOperation) error
 	Get(ctx context.Context, id string) (FabricOperation, error)
+	OperationByActionIdempotency(ctx context.Context, action, idempotencyKey string) (FabricOperation, bool, error)
+	ComputeClaimTerminalOperation(ctx context.Context, approvalID, idempotencyKey string) (FabricOperation, bool, error)
 	ClaimRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
 	ClaimComputePoolRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
 	ReclaimRuntime(ctx context.Context, id string, priorStartedAt, startedAt time.Time) (FabricOperation, bool, error)
@@ -164,6 +167,59 @@ func (s *MemoryOperationStore) Get(_ context.Context, id string) (FabricOperatio
 		}
 	}
 	return FabricOperation{}, ErrOperationNotFound
+}
+
+func (s *MemoryOperationStore) OperationByActionIdempotency(_ context.Context, action, idempotencyKey string) (FabricOperation, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var match FabricOperation
+	found := false
+	for _, operation := range s.operation {
+		if operation.Action != action || operation.IdempotencyKey != idempotencyKey {
+			continue
+		}
+		if found {
+			return FabricOperation{}, false, ErrOperationIdentityConflict
+		}
+		match, found = operation, true
+	}
+	return match, found, nil
+}
+
+func (s *MemoryOperationStore) ComputeClaimTerminalOperation(_ context.Context, approvalID, idempotencyKey string) (FabricOperation, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var match FabricOperation
+	found := false
+	for _, operation := range s.operation {
+		if operation.Action != "create_compute_allocation" || !computeClaimTerminalIdentityMatches(operation, approvalID, idempotencyKey) {
+			continue
+		}
+		if found {
+			return FabricOperation{}, false, ErrOperationIdentityConflict
+		}
+		match, found = operation, true
+	}
+	return match, found, nil
+}
+
+func computeClaimTerminalIdentityMatches(operation FabricOperation, approvalID, idempotencyKey string) bool {
+	value, present := operation.RedactedProviderPayload[computeClaimTerminalEvidencePayloadKey]
+	if !present {
+		return false
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	var identity struct {
+		OperatorApprovalID     string `json:"operatorApprovalId"`
+		OperatorIdempotencyKey string `json:"operatorIdempotencyKey"`
+	}
+	if json.Unmarshal(body, &identity) != nil {
+		return false
+	}
+	return identity.OperatorApprovalID == approvalID || identity.OperatorIdempotencyKey == idempotencyKey
 }
 
 func (s *MemoryOperationStore) ClaimRuntime(_ context.Context, operation FabricOperation) (FabricOperation, bool, error) {
@@ -540,6 +596,62 @@ func (s *PostgresOperationStore) Get(ctx context.Context, id string) (FabricOper
 		return FabricOperation{}, err
 	}
 	return fabricOperationFromEnt(row), nil
+}
+
+func (s *PostgresOperationStore) OperationByActionIdempotency(ctx context.Context, action, idempotencyKey string) (FabricOperation, bool, error) {
+	rows, err := s.client.FabricOperation.Query().
+		Where(fabricoperation.Action(action), fabricoperation.IdempotencyKey(idempotencyKey)).
+		Limit(2).
+		All(ctx)
+	if err != nil {
+		return FabricOperation{}, false, err
+	}
+	if len(rows) == 0 {
+		return FabricOperation{}, false, nil
+	}
+	if len(rows) != 1 {
+		return FabricOperation{}, false, ErrOperationIdentityConflict
+	}
+	return fabricOperationFromEnt(rows[0]), true, nil
+}
+
+func (s *PostgresOperationStore) ComputeClaimTerminalOperation(ctx context.Context, approvalID, idempotencyKey string) (FabricOperation, bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, operation_id, caller_service, action, resource_kind, resource_id, account_id, workspace_id,
+			provider, provider_request_id, idempotency_key, request_hash, redacted_provider_payload, status,
+			error_code, retryable, compute_pool_key, compute_pool_lease_owner, compute_pool_lease_expires_at,
+			started_at, finished_at, created_at
+		FROM fabric_operations
+		WHERE action = 'create_compute_allocation' AND (
+			redacted_provider_payload::jsonb #>> '{computeClaimTerminalEvidence,operatorApprovalId}' = $1 OR
+			redacted_provider_payload::jsonb #>> '{computeClaimTerminalEvidence,operatorIdempotencyKey}' = $2
+		)
+		ORDER BY created_at DESC, id DESC
+		LIMIT 2`, approvalID, idempotencyKey)
+	if err != nil {
+		return FabricOperation{}, false, err
+	}
+	defer rows.Close()
+	var match FabricOperation
+	count := 0
+	for rows.Next() {
+		operation, scanErr := scanPostgresFabricOperation(rows)
+		if scanErr != nil {
+			return FabricOperation{}, false, scanErr
+		}
+		match = operation
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return FabricOperation{}, false, err
+	}
+	if count == 0 {
+		return FabricOperation{}, false, nil
+	}
+	if count != 1 {
+		return FabricOperation{}, false, ErrOperationIdentityConflict
+	}
+	return match, true, nil
 }
 
 func (s *PostgresOperationStore) ClaimMachine(ctx context.Context, ownership MachineOwnership) (MachineOwnership, bool, error) {

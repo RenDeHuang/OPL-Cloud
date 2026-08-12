@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -206,26 +207,29 @@ func (s *Service) ReadComputePoolHeadTerminalizationResult(ctx context.Context, 
 }
 
 func (s *Service) computePoolHeadTerminalizationReplay(ctx context.Context, input ComputePoolHeadTerminalizationInput) (ComputePoolHeadTerminalizationReadback, bool, error) {
-	operations, err := s.operations.List(ctx)
+	operation, found, err := s.operations.ComputeClaimTerminalOperation(ctx, input.ApprovalID, input.IdempotencyKey)
 	if err != nil {
-		return ComputePoolHeadTerminalizationReadback{}, false, err
-	}
-	for _, operation := range operations {
-		evidence, present, valid := decodeComputeClaimTerminalEvidence(operation)
-		if !present || !valid || evidence.OperatorApprovalID != input.ApprovalID && evidence.OperatorIdempotencyKey != input.IdempotencyKey {
-			continue
-		}
-		if evidence.OperatorApprovalID != input.ApprovalID || evidence.OperatorIdempotencyKey != input.IdempotencyKey || evidence.OperatorApprovalDigest != input.ApprovalDigest ||
-			operation.ComputePoolKey != input.NodePoolID || operation.Status != "failed" {
+		if errors.Is(err, ErrOperationIdentityConflict) {
 			return ComputePoolHeadTerminalizationReadback{}, true, ErrComputePoolHeadTerminalizationConflict
 		}
-		return ComputePoolHeadTerminalizationReadback{
-			SchemaVersion: 1, Status: "succeeded", HeadStatus: "failed", AllocationStatus: "quarantined", OwnershipStatus: "quarantined",
-			TerminalStatus: "terminal_unprovable", ApprovalDigest: evidence.OperatorApprovalDigest, BindingDigest: evidence.BindingDigest,
-			ManualRecoveryLedgerDigest: evidence.ManualRecoveryLedgerDigest, Replayed: true,
-		}, true, nil
+		return ComputePoolHeadTerminalizationReadback{}, false, err
 	}
-	return ComputePoolHeadTerminalizationReadback{}, false, nil
+	if !found {
+		return ComputePoolHeadTerminalizationReadback{}, false, nil
+	}
+	evidence, present, valid := decodeComputeClaimTerminalEvidence(operation)
+	if !present || !valid {
+		return ComputePoolHeadTerminalizationReadback{}, true, fmt.Errorf("%w: terminalization_evidence_unknown", ErrComputePoolHeadTerminalizationUnavailable)
+	}
+	if evidence.OperatorApprovalID != input.ApprovalID || evidence.OperatorIdempotencyKey != input.IdempotencyKey || evidence.OperatorApprovalDigest != input.ApprovalDigest ||
+		operation.ComputePoolKey != input.NodePoolID || operation.Status != "failed" {
+		return ComputePoolHeadTerminalizationReadback{}, true, ErrComputePoolHeadTerminalizationConflict
+	}
+	return ComputePoolHeadTerminalizationReadback{
+		SchemaVersion: 1, Status: "succeeded", HeadStatus: "failed", AllocationStatus: "quarantined", OwnershipStatus: "quarantined",
+		TerminalStatus: "terminal_unprovable", ApprovalDigest: evidence.OperatorApprovalDigest, BindingDigest: evidence.BindingDigest,
+		ManualRecoveryLedgerDigest: evidence.ManualRecoveryLedgerDigest, Replayed: true,
+	}, true, nil
 }
 
 func validComputePoolNodePoolID(value string) bool {

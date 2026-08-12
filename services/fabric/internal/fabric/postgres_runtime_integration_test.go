@@ -600,6 +600,14 @@ func TestPostgresComputePoolHeadTerminalizationCASReleasesFreshFIFOHead(t *testi
 			t.Fatalf("terminalization error=%v", err)
 		}
 	}
+	replayed, err := secondService.ReadComputePoolHeadTerminalizationResult(ctx, request)
+	if err != nil || replayed.Status != "succeeded" || !replayed.Replayed || replayed.ApprovalDigest != request.ApprovalDigest {
+		t.Fatalf("terminalization replay=%#v err=%v", replayed, err)
+	}
+	prepare, create, proof, cvm, node := provider.automaticContinuationCounts()
+	if prepare != 0 || create != 0 || proof != 0 || cvm != 0 || node != 0 {
+		t.Fatalf("provider calls=%d/%d/%d/%d/%d", prepare, create, proof, cvm, node)
+	}
 	head, found, err := firstStore.ComputePoolHead(ctx, input.NodePoolID)
 	if err != nil || !found || head.ID != fresh.ID || head.Status != "started" || head.ComputePoolLeaseOwner != "" {
 		t.Fatalf("fresh read-only head=%#v found=%v err=%v", head, found, err)
@@ -1093,6 +1101,72 @@ func postgresComputeClaimOwnership(suffix string) MachineOwnership {
 		InstanceID: "ins-postgres-" + suffix, NodeName: "node-postgres-" + suffix, Status: "quarantined",
 		ProviderRequestID: "redacted-provider-reference", ClaimedAt: time.Date(2026, 7, 28, 1, 0, 0, 0, time.UTC),
 	}
+}
+
+func TestPostgresOperationStoreReadsExactIdentitiesAndFailsClosedOnDuplicates(t *testing.T) {
+	t.Run("action idempotency", func(t *testing.T) {
+		store, err := newTestPostgresOperationStore(fabricTestDatabaseURL(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.client.Close()
+		exact := postgresComputeClaimOperation("exact-read", "failed")
+		alias := exact
+		alias.ID, alias.OperationID, alias.IdempotencyKey = "fop-postgres-alias-read", "op-postgres-alias-read", "launch-postgres-alias:compute"
+		for _, operation := range []FabricOperation{exact, alias} {
+			if err := store.Append(context.Background(), operation); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, found, err := store.OperationByActionIdempotency(context.Background(), exact.Action, exact.IdempotencyKey)
+		if err != nil || !found || got.ID != exact.ID {
+			t.Fatalf("exact=%#v found=%v err=%v", got, found, err)
+		}
+		if missing, found, err := store.OperationByActionIdempotency(context.Background(), exact.Action, "launch-postgres-absent:compute"); err != nil || found || missing.ID != "" {
+			t.Fatalf("missing=%#v found=%v err=%v", missing, found, err)
+		}
+		duplicate := exact
+		duplicate.ID, duplicate.OperationID = "fop-postgres-duplicate-read", "op-postgres-duplicate-read"
+		if err := store.Append(context.Background(), duplicate); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.OperationByActionIdempotency(context.Background(), exact.Action, exact.IdempotencyKey); !errors.Is(err, ErrOperationIdentityConflict) {
+			t.Fatalf("duplicate error=%v", err)
+		}
+	})
+
+	t.Run("operator approval", func(t *testing.T) {
+		store, err := newTestPostgresOperationStore(fabricTestDatabaseURL(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.client.Close()
+		approvalID := "postgres-approval-exact-30970000001"
+		exact := postgresComputeClaimOperation("terminal-read", "failed")
+		exact.RedactedProviderPayload = map[string]any{
+			computeClaimTerminalEvidencePayloadKey: map[string]any{
+				"operatorApprovalId": approvalID, "operatorIdempotencyKey": approvalID,
+			},
+		}
+		if err := store.Append(context.Background(), exact); err != nil {
+			t.Fatal(err)
+		}
+		got, found, err := store.ComputeClaimTerminalOperation(context.Background(), approvalID, approvalID)
+		if err != nil || !found || got.ID != exact.ID {
+			t.Fatalf("exact=%#v found=%v err=%v", got, found, err)
+		}
+		if missing, found, err := store.ComputeClaimTerminalOperation(context.Background(), "postgres-approval-absent-30970000001", "postgres-approval-absent-30970000001"); err != nil || found || missing.ID != "" {
+			t.Fatalf("missing=%#v found=%v err=%v", missing, found, err)
+		}
+		duplicate := exact
+		duplicate.ID, duplicate.OperationID = "fop-postgres-terminal-duplicate", "op-postgres-terminal-duplicate"
+		if err := store.Append(context.Background(), duplicate); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.ComputeClaimTerminalOperation(context.Background(), approvalID, approvalID); !errors.Is(err, ErrOperationIdentityConflict) {
+			t.Fatalf("duplicate error=%v", err)
+		}
+	})
 }
 
 func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
