@@ -56,6 +56,15 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		result, err := service.ReadWorkspaceLaunchStage(r.Context(), input)
 		writeWorkspaceLaunchResult(w, result, err)
 	})
+	mux.HandleFunc("POST /fabric/workspace-launches/legacy-bindings/read", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.LegacyWorkspaceLaunchBindingInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		result, err := service.ReadLegacyWorkspaceLaunchBinding(r.Context(), input)
+		writeWorkspaceLaunchResult(w, result, err)
+	})
 	mux.HandleFunc("POST /fabric/workspace-launches/stages/ensure", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.WorkspaceLaunchStageInput
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

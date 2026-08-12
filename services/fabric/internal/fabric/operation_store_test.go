@@ -17,6 +17,56 @@ func TestProductionPostgresOperationStoreRejectsUnsafeTLSBeforeConnecting(t *tes
 	}
 }
 
+func TestMemoryOperationStoreReadsScopedLegacyLaunchHistory(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	now := time.Date(2026, 8, 12, 2, 0, 0, 0, time.UTC)
+	started := newOperation("create_storage_volume", "storage_volume", "storage-legacy", "acct-legacy", "ws-legacy", "launch-legacy:storage", "hash-legacy", now)
+	started.ID, started.OperationID, started.Status = "fop-legacy-started", "op-legacy-storage", "started"
+	succeeded := started
+	succeeded.ID, succeeded.Status, succeeded.FinishedAt = "fop-legacy-succeeded", "succeeded", now.Add(time.Second)
+	for _, operation := range []FabricOperation{started, succeeded} {
+		if err := store.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	history, err := store.LegacyLaunchOperationHistory(ctx, LegacyLaunchOperationIdentity{
+		Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: "storage-legacy",
+		AccountID: "acct-legacy", WorkspaceID: "ws-legacy",
+	})
+	if err != nil || len(history) != 2 {
+		t.Fatalf("history=%#v err=%v", history, err)
+	}
+	if history[0].OperationID != history[1].OperationID || history[0].RequestHash != history[1].RequestHash {
+		t.Fatalf("same logical history not preserved: %#v", history)
+	}
+
+	competing := started
+	competing.ID, competing.OperationID, competing.RequestHash = "fop-legacy-competing", "op-legacy-competing", "hash-competing"
+	if err := store.Append(ctx, competing); err != nil {
+		t.Fatal(err)
+	}
+	history, err = store.LegacyLaunchOperationHistory(ctx, LegacyLaunchOperationIdentity{
+		Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: "storage-legacy",
+		AccountID: "acct-legacy", WorkspaceID: "ws-legacy",
+	})
+	if err != nil || len(history) != 3 {
+		t.Fatalf("competing history=%#v err=%v", history, err)
+	}
+	if history[2].OperationID == history[0].OperationID {
+		t.Fatalf("competing logical operation was collapsed: %#v", history)
+	}
+
+	missing, err := store.LegacyLaunchOperationHistory(ctx, LegacyLaunchOperationIdentity{
+		Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: "storage-missing",
+		AccountID: "acct-legacy", WorkspaceID: "ws-legacy",
+	})
+	if err != nil || len(missing) != 0 {
+		t.Fatalf("missing history=%#v err=%v", missing, err)
+	}
+}
+
 func TestMemoryOperationStoreReadsExactIdentitiesAndFailsClosedOnDuplicates(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryOperationStore()

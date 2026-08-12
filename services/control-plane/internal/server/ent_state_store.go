@@ -1918,6 +1918,34 @@ func (s *postgresEntStateStore) PersistWorkspaceLaunchReconcile(ctx context.Cont
 	return tx.Commit()
 }
 
+func (s *postgresEntStateStore) UpcastLegacyWorkspaceLaunch(ctx context.Context, update workspaceLaunchLegacyCAS) error {
+	if _, err := decodeWorkspaceLaunchReconcileOperation(update.DesiredOperation); err != nil {
+		return errWorkspaceLaunchCASConflict
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	entity, err := tx.Client().RuntimeOperation.Query().Where(runtimeoperation.IDEQ(update.OperationID), lockRowForUpdate).Only(ctx)
+	if err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errWorkspaceLaunchCASConflict
+		}
+		return err
+	}
+	current := recordFromEnt(entity, runtimeOpEntFields)
+	if !workspaceLaunchLegacyUpcastMatches(current, update) {
+		return errWorkspaceLaunchCASConflict
+	}
+	builder := tx.Client().RuntimeOperation.UpdateOneID(update.OperationID)
+	setRecordFieldsWithEmptyText(builder, update.DesiredOperation, runtimeOpEntFields, true)
+	if err := execCreate(ctx, builder); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *postgresEntStateStore) ClaimWorkspaceRenewal(ctx context.Context, claim workspaceRenewalClaimCAS) error {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {

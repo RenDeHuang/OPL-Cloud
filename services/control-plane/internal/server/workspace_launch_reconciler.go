@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"opl-cloud/services/control-plane/internal/clients"
 )
 
 const workspaceLaunchReconcileSchemaVersion = 3
@@ -126,6 +128,7 @@ var workspaceLaunchStageCanonicalFacts = map[string]map[string]workspaceLaunchCa
 }
 
 var errWorkspaceLaunchGrantConflict = errors.New("workspace_launch_resume_authorization_conflict")
+var errWorkspaceLaunchLegacyMigrationBlocked = errors.New("workspace_launch_legacy_migration_blocked")
 
 type workspaceLaunchStageAttempt struct {
 	Attempted      int    `json:"attempted"`
@@ -206,10 +209,20 @@ type workspaceLaunchReconcileCAS struct {
 	DesiredOperation        map[string]any
 }
 
+type workspaceLaunchLegacyCAS struct {
+	OperationID             string
+	ExpectedOperationResult string
+	DesiredOperation        map[string]any
+}
+
 type workspaceLaunchReconcileStore interface {
 	GetRuntimeOperation(context.Context, string) (map[string]any, bool, error)
 	ClaimWorkspaceLaunchReconcile(context.Context, workspaceLaunchReconcileClaim) error
 	PersistWorkspaceLaunchReconcile(context.Context, workspaceLaunchReconcileCAS) error
+}
+
+type workspaceLaunchLegacyMigrationStore interface {
+	UpcastLegacyWorkspaceLaunch(context.Context, workspaceLaunchLegacyCAS) error
 }
 
 type workspaceLaunchStageAdapter interface {
@@ -256,6 +269,300 @@ func (r *WorkspaceLaunchReconciler) Create(ctx context.Context, command workspac
 		return existing, nil
 	}
 	return r.Reconcile(ctx, command.OperationID)
+}
+
+func (r *WorkspaceLaunchReconciler) MigrateLegacy(ctx context.Context, currentRow map[string]any, command workspaceLaunchReconcileCreate, binding *clients.LegacyWorkspaceLaunchBindingResult) (workspaceLaunchReconcileOperation, error) {
+	if r == nil || r.store == nil || r.adapter == nil {
+		return workspaceLaunchReconcileOperation{}, errors.New("WorkspaceLaunchReconciler dependencies are required")
+	}
+	migrationStore, ok := r.store.(workspaceLaunchLegacyMigrationStore)
+	if !ok {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	if current, err := decodeWorkspaceLaunchReconcileOperation(currentRow); err == nil {
+		return current, nil
+	}
+	expected := stringValue(currentRow["result"])
+	var legacy map[string]json.RawMessage
+	var schemaVersion int
+	if stringValue(currentRow["status"]) != "manual_review" || !isWorkspaceLaunchAction(stringValue(currentRow["action"])) || expected == "" ||
+		json.Unmarshal([]byte(expected), &legacy) != nil || json.Unmarshal(legacy["schemaVersion"], &schemaVersion) != nil || schemaVersion != 2 {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	operation, err := newWorkspaceLaunchReconcileOperation(command)
+	if err != nil || operation.ID != firstNonEmpty(stringValue(currentRow["operationId"]), stringValue(currentRow["id"])) {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	if err := copyWorkspaceLaunchLegacyFacts(&operation, legacy); err != nil {
+		return workspaceLaunchReconcileOperation{}, err
+	}
+	if !workspaceLaunchLegacyOwnerFactsPresent(legacy) {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	legacyAttempts, err := workspaceLaunchLegacyAttemptsExact(legacy)
+	if err != nil {
+		return workspaceLaunchReconcileOperation{}, err
+	}
+	operation.Attempts = legacyAttempts
+	if binding != nil {
+		if err := applyLegacyBindingReadback(&operation, *binding); err != nil {
+			return workspaceLaunchReconcileOperation{}, err
+		}
+	}
+	for _, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-1] {
+		operation.Stage = stage
+		observation, readErr := workspaceLaunchLegacyStageRead(ctx, r.adapter, operation, binding)
+		if readErr != nil || observation.State == workspaceLaunchStagePending || observation.State == workspaceLaunchStageUnknown {
+			return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchLegacyMigrationBlocked
+		}
+		if observation.State == workspaceLaunchStageAbsent {
+			if !workspaceLaunchLegacyAbsentStageEligible(operation.Attempts[stage]) {
+				return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchLegacyMigrationBlocked
+			}
+			operation.Observations[stage] = workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}
+			operation.Stage = stage
+			break
+		}
+		if observation.State != workspaceLaunchStageReady {
+			return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchLegacyMigrationBlocked
+		}
+		observation, err = reduceWorkspaceLaunchStageObservation(&operation, observation)
+		if err != nil {
+			return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchLegacyMigrationBlocked
+		}
+		operation.Observations[stage] = observation
+		attempt := operation.Attempts[stage]
+		attempt, err = workspaceLaunchLegacyConfirmedAttempt(stage, attempt, operation, binding)
+		if err != nil {
+			return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchLegacyMigrationBlocked
+		}
+		operation.Attempts[stage] = attempt
+	}
+	operation.Stage = workspaceLaunchLegacyNextStage(operation)
+	operation.Status = "manual_review"
+	desired, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	if err := migrationStore.UpcastLegacyWorkspaceLaunch(ctx, workspaceLaunchLegacyCAS{OperationID: operation.ID, ExpectedOperationResult: expected, DesiredOperation: desired}); err != nil {
+		if !errors.Is(err, errWorkspaceLaunchCASConflict) {
+			return workspaceLaunchReconcileOperation{}, err
+		}
+	}
+	current, found, err := r.store.GetRuntimeOperation(ctx, operation.ID)
+	if err != nil || !found {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchCASConflict
+	}
+	migrated, err := decodeWorkspaceLaunchReconcileOperation(current)
+	if err != nil || stringValue(current["result"]) != stringValue(desired["result"]) || migrated.ID != operation.ID || migrated.stringFact("accountId") != operation.stringFact("accountId") ||
+		migrated.stringFact("ownerUserId") != operation.stringFact("ownerUserId") || migrated.stringFact("workspaceId") != operation.stringFact("workspaceId") ||
+		migrated.stringFact("requestHash") != operation.stringFact("requestHash") {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchCASConflict
+	}
+	return migrated, nil
+}
+
+func copyWorkspaceLaunchLegacyFacts(operation *workspaceLaunchReconcileOperation, legacy map[string]json.RawMessage) error {
+	if operation == nil || operation.raw == nil {
+		return errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	for _, field := range workspaceLaunchLegacyMigrationFactFields {
+		value, ok := legacy[field]
+		if !ok || !json.Valid(value) {
+			continue
+		}
+		operation.raw[field] = append(json.RawMessage(nil), value...)
+	}
+	return nil
+}
+
+var workspaceLaunchLegacyMigrationFactFields = []string{
+	"requestHash", "accountId", "ownerUserId", "sub2apiUserId", "workspaceId", "name", "packageId", "sizeGb", "autoRenew", "priceVersion", "totalChargeUsdMicros",
+	"workspaceImageDigest", "workspaceKeyGroupId", "workspaceApiKeyId", "workspaceKeyStatus", "workspaceKeyFingerprint", "sub2apiRedeemCode", "preChargeBalanceUsdMicros",
+	"sub2apiRefundCode", "chargeAttempted", "chargeConfirmation", "preChargeBalanceUsdMicros", "postChargeBalanceUsdMicros", "postChargeBalanceKnown",
+	"refundAttempted", "refundConfirmation", "refundReason", "refundReceiptId", "periodStart", "paidThrough", "billingAnchorDay", "billingPeriodState",
+	"computeAllocationId", "computeBindingRef", "storageId", "storageBindingRef", "attachmentId", "attachmentOperationId", "attachmentBindingRef",
+	"workspaceOperationId", "gatewaySecretRef", "gatewaySecretVersion", "secretBindingRef",
+	"runtimeId", "runtimeReady", "runtimeServiceName", "runtimeBindingRef", "runtimeUsername", "credentialStatus", "credentialVersion", "credentialSecretRef", "url", "receiptId", "receiptOperationId", "activationOperationId", "workspaceActivatedAt",
+	"acceptanceBCapacitySlot",
+}
+
+func workspaceLaunchLegacyOwnerFactsPresent(legacy map[string]json.RawMessage) bool {
+	for _, field := range []string{
+		"workspaceApiKeyId", "workspaceKeyGroupId", "workspaceKeyStatus", "workspaceKeyFingerprint",
+		"chargeAttempted", "chargeConfirmation", "postChargeBalanceUsdMicros", "postChargeBalanceKnown",
+	} {
+		if value, ok := legacy[field]; !ok || !json.Valid(value) || string(value) == "null" {
+			return false
+		}
+	}
+	return true
+}
+
+var workspaceLaunchLegacyBudgetStages = []string{"storage", "attachment", "secret", "runtime", "activation", "receipt"}
+
+func workspaceLaunchLegacyAttemptsExact(legacy map[string]json.RawMessage) (map[string]workspaceLaunchStageAttempt, error) {
+	var legacyBudgets map[string]workspaceLaunchStageAttempt
+	if json.Unmarshal(legacy["continuationAttemptBudgets"], &legacyBudgets) != nil || len(legacyBudgets) != len(workspaceLaunchLegacyBudgetStages) {
+		return nil, errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	attempts := make(map[string]workspaceLaunchStageAttempt, len(workspaceLaunchReconcileStages)-1)
+	for _, stage := range []string{"key", "debit", "ensure_compute_allocation"} {
+		attempts[stage] = workspaceLaunchStageAttempt{Max: 1}
+	}
+	for _, stage := range workspaceLaunchLegacyBudgetStages {
+		attempt, ok := legacyBudgets[stage]
+		if !ok || attempt.Max != 1 || attempt.Attempted < 0 || attempt.Attempted > 1 || attempt.Confirmed < 0 || attempt.Confirmed > attempt.Attempted || attempt.Unknown < 0 || attempt.Unknown > attempt.Attempted || attempt.Confirmed+attempt.Unknown > attempt.Attempted {
+			return nil, errWorkspaceLaunchLegacyMigrationBlocked
+		}
+		if attempt.Attempted == 1 && attempt.Status == "" {
+			switch {
+			case attempt.Confirmed == 1:
+				attempt.Status = "confirmed"
+			case attempt.Unknown == 1:
+				attempt.Status = "unknown"
+			default:
+				attempt.Status = "reserved"
+			}
+		}
+		attempts[stage] = attempt
+	}
+	return attempts, nil
+}
+
+func workspaceLaunchLegacyConfirmedAttempt(stage string, current workspaceLaunchStageAttempt, operation workspaceLaunchReconcileOperation, binding *clients.LegacyWorkspaceLaunchBindingResult) (workspaceLaunchStageAttempt, error) {
+	switch stage {
+	case "key":
+		return current, nil
+	case "debit":
+		var attempted bool
+		var confirmation map[string]any
+		if json.Unmarshal(operation.raw["chargeAttempted"], &attempted) != nil || !attempted ||
+			json.Unmarshal(operation.raw["chargeConfirmation"], &confirmation) != nil || stringValue(confirmation["status"]) != "used" || operation.stringFact("sub2apiRedeemCode") == "" {
+			return workspaceLaunchStageAttempt{}, errWorkspaceLaunchLegacyMigrationBlocked
+		}
+		return workspaceLaunchStageAttempt{Attempted: 1, Confirmed: 1, Max: 1, Status: "confirmed", IdempotencyKey: operation.stringFact("sub2apiRedeemCode")}, nil
+	}
+	if _, fabricStage := workspaceLaunchFabricStages[stage]; fabricStage {
+		readback, ok := workspaceLaunchLegacyBindingStage(*binding, stage)
+		if !ok || readback.State != workspaceLaunchStageReady || readback.OperationRef == "" || readback.IdempotencyIdentity == "" || readback.ResourceBindingRef == "" {
+			return workspaceLaunchStageAttempt{}, errWorkspaceLaunchLegacyMigrationBlocked
+		}
+		if stage != "ensure_compute_allocation" && current != (workspaceLaunchStageAttempt{Attempted: 1, Confirmed: 1, Max: 1, Status: "confirmed"}) &&
+			current != (workspaceLaunchStageAttempt{Attempted: 1, Confirmed: 1, Max: 1}) {
+			return workspaceLaunchStageAttempt{}, errWorkspaceLaunchLegacyMigrationBlocked
+		}
+		return workspaceLaunchStageAttempt{Attempted: 1, Confirmed: 1, Max: 1, Status: "confirmed", IdempotencyKey: readback.IdempotencyIdentity}, nil
+	}
+	if current.Attempted != 1 || current.Confirmed != 1 || current.Unknown != 0 {
+		return workspaceLaunchStageAttempt{}, errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	if current.IdempotencyKey == "" {
+		current.IdempotencyKey = workspaceLaunchLegacyStageIdempotencyIdentity(operation, stage, binding)
+	}
+	if current.IdempotencyKey == "" {
+		return workspaceLaunchStageAttempt{}, errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	current.Status = "confirmed"
+	return current, nil
+}
+
+func workspaceLaunchLegacyBindingStage(binding clients.LegacyWorkspaceLaunchBindingResult, stage string) (clients.LegacyWorkspaceLaunchStageReadback, bool) {
+	for _, readback := range binding.Stages {
+		if readback.Stage == stage {
+			return readback, true
+		}
+	}
+	return clients.LegacyWorkspaceLaunchStageReadback{}, false
+}
+
+func workspaceLaunchLegacyAbsentStageEligible(attempt workspaceLaunchStageAttempt) bool {
+	return attempt.Max == 1 && attempt.Attempted == 0 && attempt.Confirmed == 0 && attempt.Unknown == 0 && attempt.Status == "" && attempt.IdempotencyKey == ""
+}
+
+func workspaceLaunchLegacyStageRead(ctx context.Context, adapter workspaceLaunchStageAdapter, operation workspaceLaunchReconcileOperation, binding *clients.LegacyWorkspaceLaunchBindingResult) (workspaceLaunchStageObservation, error) {
+	if _, fabricStage := workspaceLaunchFabricStages[operation.Stage]; !fabricStage {
+		return adapter.ReadStage(ctx, operation)
+	}
+	if binding == nil {
+		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	for _, readback := range binding.Stages {
+		if readback.Stage != operation.Stage {
+			continue
+		}
+		switch readback.State {
+		case workspaceLaunchStageAbsent:
+			if readback.OperationRef != "" || readback.IdempotencyIdentity != "" || readback.ResourceBindingRef != "" || readback.AuthoritativeReadbackRef != "" {
+				return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, errWorkspaceLaunchLegacyMigrationBlocked
+			}
+			return workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, nil
+		case workspaceLaunchStageReady:
+			if readback.OperationRef == "" || readback.IdempotencyIdentity == "" || readback.ResourceBindingRef == "" || readback.AuthoritativeReadbackRef == "" {
+				return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, errWorkspaceLaunchLegacyMigrationBlocked
+			}
+			facts, err := workspaceLaunchFabricStageFacts(operation.Stage, binding.Resources, operation)
+			if err != nil {
+				return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, err
+			}
+			return workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: facts}, nil
+		case workspaceLaunchStagePending, workspaceLaunchStageUnknown:
+			return workspaceLaunchStageObservation{State: readback.State}, nil
+		default:
+			return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, errWorkspaceLaunchLegacyMigrationBlocked
+		}
+	}
+	return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, errWorkspaceLaunchLegacyMigrationBlocked
+}
+
+func workspaceLaunchLegacyStageIdempotencyIdentity(operation workspaceLaunchReconcileOperation, stage string, binding *clients.LegacyWorkspaceLaunchBindingResult) string {
+	switch stage {
+	case "key":
+		return operation.ID + ":workspace-key"
+	case "debit":
+		return operation.stringFact("sub2apiRedeemCode")
+	case "activation":
+		return operation.ID + ":activation"
+	case "receipt":
+		return operation.ID + ":purchase-receipt"
+	}
+	if binding != nil {
+		for _, readback := range binding.Stages {
+			if readback.Stage == stage && readback.State == workspaceLaunchStageReady {
+				return readback.IdempotencyIdentity
+			}
+		}
+	}
+	return ""
+}
+
+func applyLegacyBindingReadback(operation *workspaceLaunchReconcileOperation, result clients.LegacyWorkspaceLaunchBindingResult) error {
+	if operation == nil || result.State != "ready" || result.LaunchOperationID != operation.ID || result.AccountID != operation.stringFact("accountId") || result.WorkspaceID != operation.stringFact("workspaceId") || result.ProviderProfileRef == "" || result.PreflightBindingRef == "" {
+		return errWorkspaceLaunchLegacyMigrationBlocked
+	}
+	operation.raw["providerProfileRef"] = json.RawMessage(strconv.Quote(result.ProviderProfileRef))
+	operation.raw["preflightBindingRef"] = json.RawMessage(strconv.Quote(result.PreflightBindingRef))
+	resources := result.Resources
+	for key, value := range map[string]string{
+		"computeAllocationId": resources.ComputeAllocationID, "computeBindingRef": resources.ComputeBindingRef, "storageId": resources.StorageID, "storageBindingRef": resources.StorageBindingRef,
+		"attachmentId": resources.AttachmentID, "attachmentBindingRef": resources.AttachmentBindingRef, "gatewaySecretRef": resources.GatewaySecretRef, "gatewaySecretVersion": resources.GatewaySecretVersion, "secretBindingRef": resources.SecretBindingRef,
+		"runtimeId": resources.RuntimeID, "runtimeServiceName": resources.RuntimeServiceName, "runtimeBindingRef": resources.RuntimeBindingRef, "runtimeUsername": resources.RuntimeUsername, "url": resources.RuntimeURL,
+	} {
+		if value != "" {
+			encoded, _ := json.Marshal(value)
+			operation.raw[key] = encoded
+		}
+	}
+	return nil
+}
+
+func workspaceLaunchLegacyNextStage(operation workspaceLaunchReconcileOperation) string {
+	for _, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-1] {
+		if observation, ok := operation.Observations[stage]; !ok || observation.State != workspaceLaunchStageReady {
+			return stage
+		}
+	}
+	return "receipt"
 }
 
 func (r *WorkspaceLaunchReconciler) Reconcile(ctx context.Context, operationID string) (workspaceLaunchReconcileOperation, error) {
@@ -844,6 +1151,36 @@ func workspaceLaunchReconcileIdentityMatches(current, desired map[string]any) bo
 			existing.stringFact("requestHash") == next.stringFact("requestHash") && next.Version == existing.Version+1
 	}
 	return false
+}
+
+func workspaceLaunchLegacyUpcastMatches(current map[string]any, update workspaceLaunchLegacyCAS) bool {
+	if stringValue(current["id"]) != update.OperationID || firstNonEmpty(stringValue(current["operationId"]), stringValue(current["id"])) != update.OperationID ||
+		stringValue(current["status"]) != "manual_review" || !isWorkspaceLaunchAction(stringValue(current["action"])) ||
+		stringValue(current["result"]) != update.ExpectedOperationResult {
+		return false
+	}
+	var legacy map[string]json.RawMessage
+	var schemaVersion int
+	if json.Unmarshal([]byte(update.ExpectedOperationResult), &legacy) != nil || json.Unmarshal(legacy["schemaVersion"], &schemaVersion) != nil || schemaVersion != 2 {
+		return false
+	}
+	desired, err := decodeWorkspaceLaunchReconcileOperation(update.DesiredOperation)
+	if err != nil || desired.ID != update.OperationID || desired.Status != "manual_review" || desired.Version != 1 {
+		return false
+	}
+	for rowField, resultField := range map[string]string{"accountId": "accountId", "workspaceId": "workspaceId", "resourceId": "workspaceId"} {
+		var legacyValue string
+		if json.Unmarshal(legacy[resultField], &legacyValue) != nil || legacyValue == "" || stringValue(current[rowField]) != legacyValue || stringValue(update.DesiredOperation[rowField]) != legacyValue {
+			return false
+		}
+	}
+	for _, resultField := range []string{"requestHash", "accountId", "ownerUserId", "workspaceId"} {
+		var legacyValue string
+		if json.Unmarshal(legacy[resultField], &legacyValue) != nil || legacyValue == "" || desired.stringFact(resultField) != legacyValue {
+			return false
+		}
+	}
+	return true
 }
 
 func workspaceLaunchReconcileAcceptanceSlot(row map[string]any) bool {

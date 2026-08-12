@@ -267,6 +267,7 @@ type controlPlaneTableStore interface {
 	ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error
 	ClaimWorkspaceLaunchReconcile(ctx context.Context, claim workspaceLaunchReconcileClaim) error
 	PersistWorkspaceLaunchReconcile(ctx context.Context, update workspaceLaunchReconcileCAS) error
+	UpcastLegacyWorkspaceLaunch(ctx context.Context, update workspaceLaunchLegacyCAS) error
 	ClaimWorkspaceRenewal(ctx context.Context, claim workspaceRenewalClaimCAS) error
 	PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error
 	ActivateWorkspaceLaunchProjection(ctx context.Context, row map[string]any) (map[string]any, error)

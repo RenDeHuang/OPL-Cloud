@@ -48,7 +48,7 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		if err != nil {
 			if errors.Is(err, errBillingReviewNotFound) {
 				writeError(w, http.StatusNotFound, "workspace_launch_not_found")
-			} else if errors.Is(err, errWorkspaceLaunchGrantConflict) || errors.Is(err, errWorkspaceLaunchCASConflict) || errors.Is(err, errInvalidWorkspaceLaunchOperation) {
+			} else if errors.Is(err, errWorkspaceLaunchGrantConflict) || errors.Is(err, errWorkspaceLaunchCASConflict) || errors.Is(err, errInvalidWorkspaceLaunchOperation) || errors.Is(err, errWorkspaceLaunchLegacyMigrationBlocked) {
 				writeError(w, http.StatusConflict, err.Error())
 			} else {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")

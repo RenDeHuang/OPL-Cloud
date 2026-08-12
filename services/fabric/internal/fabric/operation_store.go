@@ -26,9 +26,21 @@ import (
 var ErrOperationNotFound = errors.New("fabric_operation_not_found")
 var ErrOperationIdentityConflict = errors.New("fabric_operation_identity_conflict")
 
+// LegacyLaunchOperationIdentity scopes a read to one persisted legacy stage.
+// It is intentionally provider-neutral and cannot be used to enumerate the
+// Fabric operation store.
+type LegacyLaunchOperationIdentity struct {
+	Action       string
+	ResourceKind string
+	ResourceID   string
+	AccountID    string
+	WorkspaceID  string
+}
+
 type OperationStore interface {
 	Append(ctx context.Context, operation FabricOperation) error
 	Get(ctx context.Context, id string) (FabricOperation, error)
+	LegacyLaunchOperationHistory(ctx context.Context, identity LegacyLaunchOperationIdentity) ([]FabricOperation, error)
 	OperationByActionIdempotency(ctx context.Context, action, idempotencyKey string) (FabricOperation, bool, error)
 	ComputeClaimTerminalOperation(ctx context.Context, approvalID, idempotencyKey string) (FabricOperation, bool, error)
 	ClaimRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
@@ -167,6 +179,21 @@ func (s *MemoryOperationStore) Get(_ context.Context, id string) (FabricOperatio
 		}
 	}
 	return FabricOperation{}, ErrOperationNotFound
+}
+
+func (s *MemoryOperationStore) LegacyLaunchOperationHistory(_ context.Context, identity LegacyLaunchOperationIdentity) ([]FabricOperation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	operations := make([]FabricOperation, 0)
+	for _, operation := range s.operation {
+		if operation.Action != identity.Action || operation.ResourceKind != identity.ResourceKind ||
+			operation.ResourceID != identity.ResourceID || operation.AccountID != identity.AccountID ||
+			operation.WorkspaceID != identity.WorkspaceID {
+			continue
+		}
+		operations = append(operations, operation)
+	}
+	return operations, nil
 }
 
 func (s *MemoryOperationStore) OperationByActionIdempotency(_ context.Context, action, idempotencyKey string) (FabricOperation, bool, error) {
@@ -596,6 +623,35 @@ func (s *PostgresOperationStore) Get(ctx context.Context, id string) (FabricOper
 		return FabricOperation{}, err
 	}
 	return fabricOperationFromEnt(row), nil
+}
+
+func (s *PostgresOperationStore) LegacyLaunchOperationHistory(ctx context.Context, identity LegacyLaunchOperationIdentity) ([]FabricOperation, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, operation_id, caller_service, action, resource_kind, resource_id, account_id, workspace_id,
+			provider, provider_request_id, idempotency_key, request_hash, redacted_provider_payload, status,
+			error_code, retryable, compute_pool_key, compute_pool_lease_owner, compute_pool_lease_expires_at,
+			started_at, finished_at, created_at
+		FROM fabric_operations
+		WHERE action = $1 AND resource_kind = $2 AND resource_id = $3 AND account_id = $4 AND
+			workspace_id = $5
+		ORDER BY created_at, id`,
+		identity.Action, identity.ResourceKind, identity.ResourceID, identity.AccountID, identity.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	operations := make([]FabricOperation, 0)
+	for rows.Next() {
+		operation, scanErr := scanPostgresFabricOperation(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		operations = append(operations, operation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return operations, nil
 }
 
 func (s *PostgresOperationStore) OperationByActionIdempotency(ctx context.Context, action, idempotencyKey string) (FabricOperation, bool, error) {

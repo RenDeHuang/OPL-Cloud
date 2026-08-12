@@ -697,6 +697,22 @@ func (s *memoryTableStore) PersistWorkspaceLaunchReconcile(_ context.Context, up
 	return errWorkspaceLaunchCASConflict
 }
 
+func (s *memoryTableStore) UpcastLegacyWorkspaceLaunch(_ context.Context, update workspaceLaunchLegacyCAS) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, row := range s.runtimeOps {
+		if stringValue(row["id"]) != update.OperationID {
+			continue
+		}
+		if !workspaceLaunchLegacyUpcastMatches(row, update) {
+			return errWorkspaceLaunchCASConflict
+		}
+		s.runtimeOps[i] = cloneMap(update.DesiredOperation)
+		return nil
+	}
+	return errWorkspaceLaunchCASConflict
+}
+
 func (s *memoryTableStore) ClaimWorkspaceRenewal(_ context.Context, claim workspaceRenewalClaimCAS) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

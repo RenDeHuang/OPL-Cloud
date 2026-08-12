@@ -19,6 +19,399 @@ var (
 	ErrWorkspaceLaunchPending      = errors.New("workspace_launch_pending")
 )
 
+type LegacyWorkspaceLaunchStageIdentity struct {
+	Stage                 string `json:"stage"`
+	ResourceRef           string `json:"resourceRef"`
+	PersistedOperationRef string `json:"persistedOperationRef,omitempty"`
+}
+
+type LegacyWorkspaceLaunchStageReadback struct {
+	Stage                    string `json:"stage"`
+	State                    string `json:"state"`
+	OperationRef             string `json:"operationRef,omitempty"`
+	IdempotencyIdentity      string `json:"idempotencyIdentity,omitempty"`
+	ResourceBindingRef       string `json:"resourceBindingRef,omitempty"`
+	AuthoritativeReadbackRef string `json:"authoritativeReadbackRef,omitempty"`
+}
+
+type LegacyWorkspaceLaunchBindingInput struct {
+	SchemaVersion           int                                  `json:"schemaVersion"`
+	LaunchOperationID       string                               `json:"launchOperationId"`
+	AccountID               string                               `json:"accountId"`
+	WorkspaceID             string                               `json:"workspaceId"`
+	RequestHash             string                               `json:"requestHash"`
+	PackageID               string                               `json:"packageId"`
+	SizeGB                  int                                  `json:"sizeGb"`
+	WorkspaceImageDigest    string                               `json:"workspaceImageDigest"`
+	WorkspaceAPIKeyID       int64                                `json:"workspaceApiKeyId"`
+	WorkspaceKeyFingerprint string                               `json:"workspaceKeyFingerprint"`
+	Stages                  []LegacyWorkspaceLaunchStageIdentity `json:"stages"`
+}
+
+type LegacyWorkspaceLaunchBindingResult struct {
+	SchemaVersion       int                                  `json:"schemaVersion"`
+	State               string                               `json:"state"`
+	Reason              string                               `json:"reason"`
+	LaunchOperationID   string                               `json:"launchOperationId"`
+	AccountID           string                               `json:"accountId"`
+	WorkspaceID         string                               `json:"workspaceId"`
+	ProviderProfileRef  string                               `json:"providerProfileRef,omitempty"`
+	PreflightBindingRef string                               `json:"preflightBindingRef,omitempty"`
+	Resources           WorkspaceLaunchResources             `json:"resources,omitempty"`
+	Stages              []LegacyWorkspaceLaunchStageReadback `json:"stages,omitempty"`
+}
+
+type legacyGatewaySecretReadbackProvider interface {
+	ReadGatewaySecretByDigest(context.Context, GatewaySecretReadbackInput) (GatewaySecret, error)
+}
+
+func validLegacyWorkspaceLaunchStageIdentity(input LegacyWorkspaceLaunchStageIdentity) bool {
+	for _, value := range []string{input.Stage, input.ResourceRef} {
+		if strings.TrimSpace(value) == "" || value != strings.TrimSpace(value) {
+			return false
+		}
+	}
+	return input.PersistedOperationRef == strings.TrimSpace(input.PersistedOperationRef)
+}
+
+func legacyWorkspaceLaunchStageStoreIdentity(stage, resourceRef, workspaceID string) (string, string, string) {
+	identity, ok := map[string][2]string{
+		"ensure_compute_allocation": {"create_compute_allocation", "compute_allocation"},
+		"storage":                   {"create_storage_volume", "storage_volume"},
+		"attachment":                {"create_storage_attachment", "storage_attachment"},
+		"secret":                    {"upsert_gateway_secret", "gateway_secret"},
+		"runtime":                   {"create_workspace_runtime", "workspace_runtime"},
+	}[stage]
+	if !ok {
+		return "", "", ""
+	}
+	if stage == "runtime" {
+		resourceRef = workspaceID
+	}
+	return identity[0], identity[1], resourceRef
+}
+
+// ReadLegacyWorkspaceLaunchBinding is a migration-only, GET-only projection.
+// It never claims, appends, or updates an operation and never invokes an
+// ensure/mutation provider method.
+func (s *Service) ReadLegacyWorkspaceLaunchBinding(ctx context.Context, input LegacyWorkspaceLaunchBindingInput) (LegacyWorkspaceLaunchBindingResult, error) {
+	result := LegacyWorkspaceLaunchBindingResult{SchemaVersion: WorkspaceLaunchFabricSchemaVersion, LaunchOperationID: input.LaunchOperationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}
+	if input.SchemaVersion != 2 || strings.TrimSpace(input.LaunchOperationID) == "" || strings.TrimSpace(input.AccountID) == "" || strings.TrimSpace(input.WorkspaceID) == "" ||
+		strings.TrimSpace(input.RequestHash) == "" || strings.TrimSpace(input.PackageID) == "" || input.SizeGB <= 0 || strings.TrimSpace(input.WorkspaceImageDigest) == "" || len(input.Stages) == 0 {
+		result.State, result.Reason = "conflict", "legacy_input_invalid"
+		return result, nil
+	}
+	preflight := workspaceLaunchPreflightAdmission{
+		SchemaVersion: WorkspaceLaunchFabricSchemaVersion,
+		Input: WorkspaceLaunchPreflightInput{
+			SchemaVersion: WorkspaceLaunchFabricSchemaVersion, LaunchOperationID: input.LaunchOperationID,
+			AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, SizeGB: input.SizeGB,
+			WorkspaceImageDigest: input.WorkspaceImageDigest, RequestHash: input.RequestHash,
+		},
+		ProviderProfileRef: s.provider.Descriptor().Name,
+	}
+	preflight.BindingRef = "fabric-preflight:" + hashInput(preflight)
+	persistedPreflight, err := s.workspaceLaunchPreflight(ctx, preflight.BindingRef)
+	if errors.Is(err, ErrLaunchStageBindingNotFound) {
+		result.State, result.Reason = "unknown", "legacy_preflight_history_missing"
+		return result, nil
+	}
+	if err != nil || persistedPreflight != preflight {
+		result.State, result.Reason = "conflict", "legacy_preflight_identity_mismatch"
+		return result, nil
+	}
+	result.ProviderProfileRef, result.PreflightBindingRef = preflight.ProviderProfileRef, preflight.BindingRef
+	byStage := make(map[string]LegacyWorkspaceLaunchStageIdentity, len(input.Stages))
+	for index, identity := range input.Stages {
+		action, _, _ := legacyWorkspaceLaunchStageStoreIdentity(identity.Stage, identity.ResourceRef, input.WorkspaceID)
+		if !validLegacyWorkspaceLaunchStageIdentity(identity) || action == "" || byStage[identity.Stage].Stage != "" ||
+			index > 0 && workspaceLaunchRequiredPriorStages(identity.Stage)[len(workspaceLaunchRequiredPriorStages(identity.Stage))-1] != input.Stages[index-1].Stage {
+			result.State, result.Reason = "conflict", "legacy_stage_identity_invalid"
+			return result, nil
+		}
+		byStage[identity.Stage] = identity
+	}
+	resources := WorkspaceLaunchResources{}
+	decoded := make(map[string]any)
+	readbacks := make(map[string]LegacyWorkspaceLaunchStageReadback, len(byStage))
+	finish := func(state, reason string) LegacyWorkspaceLaunchBindingResult {
+		result.State, result.Reason, result.Resources = state, reason, resources
+		result.Stages = result.Stages[:0]
+		for _, identity := range input.Stages {
+			result.Stages = append(result.Stages, readbacks[identity.Stage])
+		}
+		return result
+	}
+	for _, identity := range input.Stages {
+		stage := identity.Stage
+		action, resourceKind, historyResourceID := legacyWorkspaceLaunchStageStoreIdentity(stage, identity.ResourceRef, input.WorkspaceID)
+		history, err := s.operations.LegacyLaunchOperationHistory(ctx, LegacyLaunchOperationIdentity{
+			Action: action, ResourceKind: resourceKind, ResourceID: historyResourceID,
+			AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		})
+		if err != nil {
+			return LegacyWorkspaceLaunchBindingResult{}, err
+		}
+		if len(history) == 0 {
+			readbacks[stage] = LegacyWorkspaceLaunchStageReadback{Stage: stage, State: "unknown"}
+			return finish("unknown", "legacy_operation_history_missing"), nil
+		}
+		var logicalID, requestHash, idempotencyKey, providerProfileRef string
+		var succeeded *FabricOperation
+		for index := range history {
+			operation := history[index]
+			if operation.Action != action || operation.ResourceKind != resourceKind || operation.ResourceID != historyResourceID || operation.AccountID != input.AccountID || operation.WorkspaceID != input.WorkspaceID ||
+				identity.PersistedOperationRef != "" && operation.OperationID != identity.PersistedOperationRef || strings.TrimSpace(operation.Provider) == "" || strings.TrimSpace(operation.OperationID) == "" {
+				readbacks[stage] = LegacyWorkspaceLaunchStageReadback{Stage: stage, State: "conflict"}
+				result.Stages = append(result.Stages, readbacks[stage])
+				result.State, result.Reason = "conflict", "legacy_operation_identity_drift"
+				return result, nil
+			}
+			if logicalID == "" {
+				logicalID, requestHash, idempotencyKey, providerProfileRef = operation.OperationID, operation.RequestHash, operation.IdempotencyKey, operation.Provider
+			} else if logicalID != operation.OperationID || requestHash != operation.RequestHash || idempotencyKey != operation.IdempotencyKey || providerProfileRef != operation.Provider {
+				readbacks[stage] = LegacyWorkspaceLaunchStageReadback{Stage: stage, State: "conflict"}
+				result.Stages = append(result.Stages, readbacks[stage])
+				result.State, result.Reason = "conflict", "legacy_competing_logical_operation"
+				return result, nil
+			}
+			if operation.Status == "succeeded" {
+				if succeeded != nil {
+					readbacks[stage] = LegacyWorkspaceLaunchStageReadback{Stage: stage, State: "conflict"}
+					result.Stages = append(result.Stages, readbacks[stage])
+					result.State, result.Reason = "conflict", "legacy_succeeded_operation_not_unique"
+					return result, nil
+				}
+				candidate := operation
+				succeeded = &candidate
+			}
+		}
+		if result.ProviderProfileRef == "" {
+			result.ProviderProfileRef = providerProfileRef
+		} else if result.ProviderProfileRef != providerProfileRef {
+			readbacks[stage] = LegacyWorkspaceLaunchStageReadback{Stage: stage, State: "conflict"}
+			return finish("conflict", "legacy_provider_profile_drift"), nil
+		}
+		if result.ProviderProfileRef != s.provider.Descriptor().Name {
+			readbacks[stage] = LegacyWorkspaceLaunchStageReadback{Stage: stage, State: "conflict"}
+			return finish("conflict", "legacy_provider_profile_unavailable"), nil
+		}
+		if succeeded == nil {
+			readbacks[stage] = LegacyWorkspaceLaunchStageReadback{Stage: stage, State: "pending", OperationRef: logicalID, IdempotencyIdentity: idempotencyKey}
+			result.Stages = append(result.Stages, readbacks[stage])
+			continue
+		}
+		if _, ok := succeeded.RedactedProviderPayload["resource"]; !ok {
+			readbacks[stage] = LegacyWorkspaceLaunchStageReadback{Stage: stage, State: "unknown", OperationRef: logicalID, IdempotencyIdentity: idempotencyKey, ResourceBindingRef: succeeded.ID}
+			result.Stages = append(result.Stages, readbacks[stage])
+			continue
+		}
+		decoded[stage] = succeeded.RedactedProviderPayload
+		readbacks[stage] = LegacyWorkspaceLaunchStageReadback{Stage: stage, OperationRef: succeeded.OperationID, IdempotencyIdentity: succeeded.IdempotencyKey, ResourceBindingRef: succeeded.ID, State: "ready"}
+	}
+	if _, ok := byStage["ensure_compute_allocation"]; !ok {
+		result.State, result.Reason = "absent", "legacy_compute_ref_missing"
+		return result, nil
+	}
+	if computeStage := readbacks["ensure_compute_allocation"]; computeStage.State != "ready" {
+		return finish(computeStage.State, "legacy_compute_"+computeStage.State), nil
+	}
+	compute, ok := decodeLegacyResource[ComputeAllocation](legacyResourcePayload(decoded["ensure_compute_allocation"]))
+	if !ok || compute.ID != byStage["ensure_compute_allocation"].ResourceRef || compute.AccountID != input.AccountID || compute.WorkspaceID != input.WorkspaceID || compute.PackageID != input.PackageID {
+		result.State, result.Reason = "conflict", "legacy_compute_identity_mismatch"
+		return result, nil
+	}
+	if reader, ok := s.provider.(computeAllocationDiscoveryProvider); ok {
+		plan, planOK := decodeLegacyOperationPlan(decoded["ensure_compute_allocation"])
+		if !planOK {
+			result.State, result.Reason = "unknown", "legacy_compute_plan_unavailable"
+			return result, nil
+		}
+		readback, err := reader.DiscoverComputeAllocation(ctx, compute, plan)
+		if err != nil {
+			result.State, result.Reason = "unknown", "legacy_compute_readback_unavailable"
+			return result, nil
+		}
+		compute = readback
+	} else if reader, ok := s.provider.(computeAllocationReadbackProvider); ok {
+		readback, err := reader.ReadComputeAllocation(ctx, compute)
+		if err != nil {
+			result.State, result.Reason = "unknown", "legacy_compute_readback_unavailable"
+			return result, nil
+		}
+		compute = readback
+	} else {
+		result.State, result.Reason = "unknown", "legacy_compute_readback_unavailable"
+		return result, nil
+	}
+	if compute.ID != inputStagesResourceID(byStage, "ensure_compute_allocation") || compute.AccountID != input.AccountID || compute.WorkspaceID != input.WorkspaceID || !isReadyResourceStatus(compute.Status) {
+		result.State, result.Reason = "conflict", "legacy_compute_readback_mismatch"
+		return result, nil
+	}
+	resources.ComputeAllocationID, resources.ComputeBindingRef = compute.ID, readbacks["ensure_compute_allocation"].ResourceBindingRef
+	readback := readbacks["ensure_compute_allocation"]
+	readback.AuthoritativeReadbackRef = "fabric-readback:" + hashInput(compute)
+	readbacks["ensure_compute_allocation"] = readback
+
+	storagePayload, storagePresent := decoded["storage"]
+	if !storagePresent {
+		return finish("ready", "legacy_partial_history"), nil
+	}
+	if stage := readbacks["storage"]; stage.State != "ready" {
+		return finish(stage.State, "legacy_storage_"+stage.State), nil
+	}
+	storage, ok := decodeLegacyResource[StorageVolume](legacyResourcePayload(storagePayload))
+	if !ok || storage.ID != byStage["storage"].ResourceRef || storage.AccountID != input.AccountID || storage.WorkspaceID != input.WorkspaceID {
+		result.State, result.Reason = "conflict", "legacy_storage_identity_mismatch"
+		return result, nil
+	}
+	reader, ok := s.provider.(storageVolumeStatusReader)
+	if !ok {
+		result.State, result.Reason = "unknown", "legacy_storage_readback_unavailable"
+		return result, nil
+	}
+	storageReadback, err := reader.ReadStorageVolumeStatus(ctx, storage)
+	if err != nil {
+		result.State, result.Reason = "unknown", "legacy_storage_readback_unavailable"
+		return result, nil
+	}
+	storage = storageReadback
+	if storage.ID != byStage["storage"].ResourceRef || storage.AccountID != input.AccountID || storage.WorkspaceID != input.WorkspaceID || !isReadyResourceStatus(storage.Status) {
+		result.State, result.Reason = "conflict", "legacy_storage_readback_mismatch"
+		return result, nil
+	}
+	resources.StorageID, resources.StorageBindingRef = storage.ID, readbacks["storage"].ResourceBindingRef
+	readback = readbacks["storage"]
+	readback.AuthoritativeReadbackRef = "fabric-readback:" + hashInput(storage)
+	readbacks["storage"] = readback
+
+	attachmentPayload, attachmentPresent := decoded["attachment"]
+	if !attachmentPresent {
+		return finish("ready", "legacy_partial_history"), nil
+	}
+	if stage := readbacks["attachment"]; stage.State != "ready" {
+		return finish(stage.State, "legacy_attachment_"+stage.State), nil
+	}
+	attachment, ok := decodeLegacyResource[StorageAttachment](legacyResourcePayload(attachmentPayload))
+	if !ok || attachment.ID != byStage["attachment"].ResourceRef || attachment.WorkspaceID != input.WorkspaceID || attachment.ComputeID != compute.ID || attachment.VolumeID != storage.ID {
+		result.State, result.Reason = "conflict", "legacy_attachment_identity_mismatch"
+		return result, nil
+	}
+	attachmentReader, ok := s.provider.(storageAttachmentReadbackProvider)
+	if !ok {
+		result.State, result.Reason = "unknown", "legacy_attachment_readback_unavailable"
+		return result, nil
+	}
+	attachmentReadback, err := attachmentReader.ReadStorageAttachment(ctx, attachment, compute, storage)
+	if err != nil {
+		result.State, result.Reason = "unknown", "legacy_attachment_readback_unavailable"
+		return result, nil
+	}
+	attachment = attachmentReadback
+	if attachment.ID != byStage["attachment"].ResourceRef || attachment.WorkspaceID != input.WorkspaceID || attachment.ComputeID != compute.ID || attachment.VolumeID != storage.ID || attachment.Status != "attached" {
+		result.State, result.Reason = "conflict", "legacy_attachment_readback_mismatch"
+		return result, nil
+	}
+	resources.AttachmentID, resources.AttachmentBindingRef = attachment.ID, readbacks["attachment"].ResourceBindingRef
+	readback = readbacks["attachment"]
+	readback.AuthoritativeReadbackRef = "fabric-readback:" + hashInput(attachment)
+	readbacks["attachment"] = readback
+
+	secretPayload, secretPresent := decoded["secret"]
+	if !secretPresent {
+		return finish("ready", "legacy_partial_history"), nil
+	}
+	if stage := readbacks["secret"]; stage.State != "ready" {
+		return finish(stage.State, "legacy_secret_"+stage.State), nil
+	}
+	secret, ok := decodeLegacyResource[GatewaySecret](legacyResourcePayload(secretPayload))
+	if !ok || secret.SecretRef != byStage["secret"].ResourceRef || secret.Fingerprint != input.WorkspaceKeyFingerprint {
+		result.State, result.Reason = "conflict", "legacy_secret_identity_mismatch"
+		return result, nil
+	}
+	secretReader, ok := s.provider.(legacyGatewaySecretReadbackProvider)
+	if !ok || input.WorkspaceAPIKeyID <= 0 {
+		result.State, result.Reason = "unknown", "legacy_secret_readback_unavailable"
+		return result, nil
+	}
+	secretReadback, err := secretReader.ReadGatewaySecretByDigest(ctx, GatewaySecretReadbackInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, WorkspaceAPIKeyID: input.WorkspaceAPIKeyID, SecretRef: secret.SecretRef, Fingerprint: secret.Fingerprint, KeyDigest: strings.TrimPrefix(secret.Fingerprint, "sha256:")})
+	if err != nil {
+		result.State, result.Reason = "unknown", "legacy_secret_readback_unavailable"
+		return result, nil
+	}
+	secret = secretReadback
+	if secret.SecretRef != byStage["secret"].ResourceRef || secret.Fingerprint != input.WorkspaceKeyFingerprint || secret.Version == "" {
+		result.State, result.Reason = "conflict", "legacy_secret_readback_mismatch"
+		return result, nil
+	}
+	resources.GatewaySecretRef, resources.GatewaySecretVersion, resources.GatewaySecretFingerprint, resources.SecretBindingRef = secret.SecretRef, secret.Version, secret.Fingerprint, readbacks["secret"].ResourceBindingRef
+	readback = readbacks["secret"]
+	readback.AuthoritativeReadbackRef = "fabric-readback:" + hashInput(secret)
+	readbacks["secret"] = readback
+
+	runtimePayload, runtimePresent := decoded["runtime"]
+	if !runtimePresent {
+		return finish("ready", "legacy_partial_history"), nil
+	}
+	if stage := readbacks["runtime"]; stage.State != "ready" {
+		return finish(stage.State, "legacy_runtime_"+stage.State), nil
+	}
+	runtime, ok := decodeLegacyResource[WorkspaceRuntime](legacyResourcePayload(runtimePayload))
+	if !ok || runtime.ID != byStage["runtime"].ResourceRef || runtime.WorkspaceID != input.WorkspaceID {
+		result.State, result.Reason = "conflict", "legacy_runtime_identity_mismatch"
+		return result, nil
+	}
+	runtimeReadback, err := s.provider.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
+	if err != nil {
+		result.State, result.Reason = "unknown", "legacy_runtime_readback_unavailable"
+		return result, nil
+	}
+	runtime = runtimeReadback
+	if runtime.ID != byStage["runtime"].ResourceRef || runtime.WorkspaceID != input.WorkspaceID || !runtime.Ready || runtime.URL == "" || runtime.ImageID != input.WorkspaceImageDigest || runtime.Access.SecretRef != secret.SecretRef {
+		result.State, result.Reason = "conflict", "legacy_runtime_readback_mismatch"
+		return result, nil
+	}
+	resources.RuntimeID, resources.RuntimeServiceName, resources.RuntimeUsername, resources.RuntimeURL = runtime.ID, runtime.ServiceName, runtime.Access.Username, runtime.URL
+	resources.RuntimeCredentialStatus, resources.RuntimeCredentialVersion, resources.RuntimeCredentialSecretRef, resources.RuntimeBindingRef = runtime.Access.CredentialStatus, runtime.Access.CredentialVersion, runtime.Access.SecretRef, readbacks["runtime"].ResourceBindingRef
+	readback = readbacks["runtime"]
+	readback.AuthoritativeReadbackRef = "fabric-readback:" + hashInput(runtime)
+	readbacks["runtime"] = readback
+	return finish("ready", "none"), nil
+}
+
+func decodeLegacyResource[T any](value any) (T, bool) {
+	var out T
+	body, err := json.Marshal(value)
+	if err != nil || json.Unmarshal(body, &out) != nil {
+		return out, false
+	}
+	return out, true
+}
+
+func decodeLegacyOperationPlan(value any) (ComputeAllocationPreparation, bool) {
+	body, ok := value.(map[string]any)
+	if !ok {
+		return ComputeAllocationPreparation{}, false
+	}
+	planValue, ok := body["allocationPlan"]
+	if !ok {
+		return ComputeAllocationPreparation{}, false
+	}
+	return decodeLegacyResource[ComputeAllocationPreparation](planValue)
+}
+
+func legacyResourcePayload(value any) any {
+	body, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return body["resource"]
+}
+
+func inputStagesResourceID(stages map[string]LegacyWorkspaceLaunchStageIdentity, stage string) string {
+	return stages[stage].ResourceRef
+}
+
 type WorkspaceLaunchPreflightInput struct {
 	SchemaVersion        int    `json:"schemaVersion"`
 	LaunchOperationID    string `json:"launchOperationId"`
