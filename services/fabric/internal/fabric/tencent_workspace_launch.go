@@ -96,6 +96,10 @@ func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, reques
 		if err != nil || !isReadyResourceStatus(volume.Status) {
 			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchUnavailable)
 		}
+		volume, err = p.ReadStaticStorageBinding(ctx, volume)
+		if err != nil || !isReadyResourceStatus(volume.Status) {
+			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchUnavailable)
+		}
 		state.Storage = &volume
 		resources.StorageID, resources.StorageBindingRef = volume.ID, binding.FabricOperationID
 	case "attachment":
@@ -132,17 +136,21 @@ func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, reques
 		computeState, computeErr := decodeTencentWorkspaceLaunchState(request.Prior["ensure_compute_allocation"])
 		storageState, storageErr := decodeTencentWorkspaceLaunchState(request.Prior["storage"])
 		attachmentState, attachmentErr := decodeTencentWorkspaceLaunchState(request.Prior["attachment"])
-		secretState, secretErr := decodeTencentWorkspaceLaunchState(request.Prior["secret"])
+		secretRecord := request.Prior["secret"]
+		secretState, secretErr := decodeTencentWorkspaceLaunchState(secretRecord)
 		if computeErr != nil || storageErr != nil || attachmentErr != nil || secretErr != nil || computeState.Compute == nil ||
-			storageState.Storage == nil || attachmentState.Attachment == nil || secretState.Secret == nil {
+			storageState.Storage == nil || attachmentState.Attachment == nil || secretState.Secret == nil || secretRecord.GatewayKeyID <= 0 {
 			return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
 		}
-		runtime, err := p.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{
+		runtimeInput := WorkspaceRuntimeInput{
 			WorkspaceID: binding.WorkspaceID, ComputeID: computeState.Compute.ID, VolumeID: storageState.Storage.ID,
 			AttachmentID: attachmentState.Attachment.ID, AttachmentOperationID: attachmentState.Attachment.OperationID,
 			RuntimeOperationID: binding.FabricOperationID, ImageID: input.WorkspaceImageDigest, GatewaySecretRef: secretState.Secret.SecretRef,
 			IdempotencyKey: binding.IdempotencyKey, OperationID: binding.FabricOperationID,
-		}, *computeState.Compute, *storageState.Storage)
+		}
+		runtime, err := p.createWorkspaceRuntime(ctx, runtimeInput, *computeState.Compute, *storageState.Storage, tencentWorkspaceRuntimeGatewayBinding{
+			WorkspaceAPIKeyID: secretRecord.GatewayKeyID, SecretRef: secretState.Secret.SecretRef, Fingerprint: secretState.Secret.Fingerprint,
+		})
 		if err != nil || !runtime.Ready || runtime.Access.Username == "" || runtime.Access.CredentialStatus == "" || runtime.Access.CredentialVersion == "" || runtime.Access.SecretRef == "" {
 			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchUnavailable)
 		}
@@ -186,6 +194,10 @@ func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request 
 		if err != nil || !isReadyResourceStatus(readback.Status) {
 			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchPending)
 		}
+		readback, err = p.ReadStaticStorageBinding(ctx, readback)
+		if err != nil || !isReadyResourceStatus(readback.Status) {
+			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchPending)
+		}
 		state.Storage = &readback
 		resources.StorageID, resources.StorageBindingRef = readback.ID, binding.FabricOperationID
 	case "attachment":
@@ -217,8 +229,28 @@ func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request 
 		resources.GatewaySecretRef, resources.GatewaySecretVersion = readback.SecretRef, readback.Version
 		resources.GatewaySecretFingerprint, resources.SecretBindingRef = readback.Fingerprint, binding.FabricOperationID
 	case "runtime":
-		readback, err := p.WorkspaceRuntimeStatus(ctx, binding.WorkspaceID)
-		if err != nil || !readback.Ready || readback.OperationID != binding.FabricOperationID || readback.ImageID != input.WorkspaceImageDigest ||
+		computeState, computeErr := decodeTencentWorkspaceLaunchState(request.Prior["ensure_compute_allocation"])
+		storageState, storageErr := decodeTencentWorkspaceLaunchState(request.Prior["storage"])
+		attachmentState, attachmentErr := decodeTencentWorkspaceLaunchState(request.Prior["attachment"])
+		secretRecord := request.Prior["secret"]
+		secretState, secretErr := decodeTencentWorkspaceLaunchState(secretRecord)
+		if computeErr != nil || storageErr != nil || attachmentErr != nil || secretErr != nil || computeState.Compute == nil ||
+			storageState.Storage == nil || attachmentState.Attachment == nil || secretState.Secret == nil || secretRecord.GatewayKeyID <= 0 {
+			return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
+		}
+		runtimeInput := WorkspaceRuntimeInput{
+			WorkspaceID: binding.WorkspaceID, ComputeID: computeState.Compute.ID, VolumeID: storageState.Storage.ID,
+			AttachmentID: attachmentState.Attachment.ID, AttachmentOperationID: attachmentState.Attachment.OperationID,
+			RuntimeOperationID: binding.FabricOperationID, ImageID: input.WorkspaceImageDigest, GatewaySecretRef: secretState.Secret.SecretRef,
+			IdempotencyKey: binding.IdempotencyKey, OperationID: binding.FabricOperationID,
+		}
+		runtimeID := "rt_" + stableSuffix(binding.WorkspaceID, binding.FabricOperationID)[:18]
+		serviceName := firstNonEmpty(computeState.Compute.ServiceName, k8sName(computeState.Compute.ID))
+		readback, err := p.readWorkspaceRuntime(ctx, runtimeInput, runtimeID, serviceName,
+			oplCostTags(binding.AccountID, binding.WorkspaceID, runtimeID, binding.FabricOperationID), tencentWorkspaceRuntimeGatewayBinding{
+				WorkspaceAPIKeyID: secretRecord.GatewayKeyID, SecretRef: secretState.Secret.SecretRef, Fingerprint: secretState.Secret.Fingerprint,
+			})
+		if err != nil || !readback.Ready ||
 			readback.Access.Username == "" || readback.Access.CredentialStatus == "" || readback.Access.CredentialVersion == "" || readback.Access.SecretRef == "" {
 			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchPending)
 		}

@@ -2033,6 +2033,16 @@ func (p *TencentProvider) DetachStorageAttachment(_ context.Context, attachment 
 }
 
 func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) (WorkspaceRuntime, error) {
+	return p.createWorkspaceRuntime(ctx, input, compute, volume, tencentWorkspaceRuntimeGatewayBinding{})
+}
+
+type tencentWorkspaceRuntimeGatewayBinding struct {
+	WorkspaceAPIKeyID int64
+	SecretRef         string
+	Fingerprint       string
+}
+
+func (p *TencentProvider) createWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume, gateway tencentWorkspaceRuntimeGatewayBinding) (WorkspaceRuntime, error) {
 	if compute.ID == "" || volume.ID == "" {
 		return WorkspaceRuntime{}, fmt.Errorf("workspace_runtime_resources_required")
 	}
@@ -2043,6 +2053,7 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 	serviceName := firstNonEmpty(compute.ServiceName, k8sName(compute.ID))
 	credentialSeed := stableID(input.WorkspaceID, input.IdempotencyKey)[:24]
 	runtimeOperationID := firstNonEmpty(input.RuntimeOperationID, input.IdempotencyKey)
+	input.RuntimeOperationID = runtimeOperationID
 	runtimeID := "rt_" + stableSuffix(input.WorkspaceID, runtimeOperationID)[:18]
 	tags := oplCostTags(compute.AccountID, input.WorkspaceID, runtimeID, runtimeOperationID)
 	runtimeTarget := protectedresource.Target{PackageID: compute.PackageID, NodePoolID: compute.NodePoolID, MachineID: compute.MachineName, NodeName: compute.NodeName, CVMID: firstNonEmpty(compute.InstanceID, compute.CVMInstanceID)}
@@ -2051,9 +2062,8 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 		return WorkspaceRuntime{}, err
 	}
 	if mutation != nil && !mutation.Fresh {
-		runtime, readErr := p.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
-		if readErr != nil || runtime.ID != runtimeID {
-			readErr = firstNonNil(readErr, fmt.Errorf("workspace_runtime_readback_mismatch"))
+		runtime, readErr := p.readWorkspaceRuntime(ctx, input, runtimeID, serviceName, tags, gateway)
+		if readErr != nil {
 			_ = mutation.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, readErr)
 			return WorkspaceRuntime{}, readErr
 		}
@@ -2062,26 +2072,42 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 		}
 		return runtime, nil
 	}
-	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifest(input, input.WorkspaceID, credentialSeed, runtimeID, serviceName, compute, volume, tags), runtimeTarget); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifestWithGatewayBinding(input, input.WorkspaceID, credentialSeed, runtimeID, serviceName, compute, volume, tags, gateway), runtimeTarget); err != nil {
 		_ = mutation.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, err)
 		return WorkspaceRuntime{}, err
 	}
-	runtime, err := p.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
+	runtime, err := p.readWorkspaceRuntime(ctx, input, runtimeID, serviceName, tags, gateway)
 	if err != nil {
 		_ = mutation.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, err)
 		return WorkspaceRuntime{}, err
 	}
-	runtime.ID = runtimeID
-	runtime.OperationID = runtimeOperationID
-	runtime.WorkspaceID = input.WorkspaceID
-	runtime.URL = firstNonEmpty(runtime.URL, fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), input.WorkspaceID))
-	runtime.ServiceName = firstNonEmpty(runtime.ServiceName, serviceName)
 	runtime.ProviderRequestID = providerRequestID("runtime", input.IdempotencyKey)
-	runtime.CostTags = tags
 	runtime.CreatedAt = now
 	if err := mutation.complete(ctx, runtime.ProviderRequestID, runtime, nil); err != nil {
 		return WorkspaceRuntime{}, err
 	}
+	return runtime, nil
+}
+
+func (p *TencentProvider) readWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, runtimeID, serviceName string, tags map[string]string, gateway tencentWorkspaceRuntimeGatewayBinding) (WorkspaceRuntime, error) {
+	runtime, err := p.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
+	if err != nil {
+		return runtime, err
+	}
+	if runtime.ID != runtimeID || runtime.OperationID != input.RuntimeOperationID || runtime.WorkspaceID != input.WorkspaceID ||
+		runtime.ServiceName != serviceName || runtime.ImageID != input.ImageID || runtime.URL == "" || !reflect.DeepEqual(runtime.CostTags, tags) {
+		return runtime, fmt.Errorf("workspace_runtime_readback_mismatch")
+	}
+	if gateway == (tencentWorkspaceRuntimeGatewayBinding{}) {
+		runtime.Access.Password = ""
+		return runtime, nil
+	}
+	binding, err := p.WorkspaceRuntimeGatewaySecret(ctx, input.WorkspaceID)
+	if err != nil || !binding.Bound || binding.WorkspaceID != input.WorkspaceID || binding.WorkspaceAPIKeyID != gateway.WorkspaceAPIKeyID ||
+		binding.SecretRef != gateway.SecretRef || binding.Fingerprint != gateway.Fingerprint {
+		return runtime, firstNonNil(err, fmt.Errorf("workspace_runtime_gateway_secret_readback_mismatch"))
+	}
+	runtime.Access.Password = ""
 	return runtime, nil
 }
 
@@ -2675,6 +2701,10 @@ func restoredPVCManifest(name, storageID, accountID string, sizeGB int, snapshot
 }
 
 func workspaceManifest(input WorkspaceRuntimeInput, workspaceName string, credentialSeed string, runtimeID string, serviceName string, compute ComputeAllocation, storage StorageVolume, tags map[string]string) []byte {
+	return workspaceManifestWithGatewayBinding(input, workspaceName, credentialSeed, runtimeID, serviceName, compute, storage, tags, tencentWorkspaceRuntimeGatewayBinding{})
+}
+
+func workspaceManifestWithGatewayBinding(input WorkspaceRuntimeInput, workspaceName string, credentialSeed string, runtimeID string, serviceName string, compute ComputeAllocation, storage StorageVolume, tags map[string]string, gateway tencentWorkspaceRuntimeGatewayBinding) []byte {
 	workspaceID := input.WorkspaceID
 	gatewaySecretRef := input.GatewaySecretRef
 	selectorLabels := stringAnyMap(runtimeSelectorLabels(serviceName, compute))
@@ -2729,6 +2759,11 @@ func workspaceManifest(input WorkspaceRuntimeInput, workspaceName string, creden
 	}
 	secretVolume := map[string]any{"name": "workspace-secrets", "projected": map[string]any{"sources": secretSources}}
 	podAnnotations := stringAnyMap(mergeStringMaps(tags, map[string]string{"opl.medopl.cn/credential-revision": stableID("workspace-credential", workspaceID, credentialSeed)[:16]}))
+	if gateway != (tencentWorkspaceRuntimeGatewayBinding{}) {
+		podAnnotations["opl.medopl.cn/gateway-secret-ref"] = gateway.SecretRef
+		podAnnotations["opl.medopl.cn/gateway-key-id"] = strconv.FormatInt(gateway.WorkspaceAPIKeyID, 10)
+		podAnnotations["opl.medopl.cn/gateway-fingerprint"] = gateway.Fingerprint
+	}
 	deployment := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": selectorLabels}, "template": map[string]any{"metadata": map[string]any{"labels": labels, "annotations": podAnnotations}, "spec": map[string]any{"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}}, "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": map[string]any{"kubernetes.io/hostname": compute.NodeName}, "tolerations": workspaceNodeTolerations(compute.PackageID), "containers": []any{workspaceContainer}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}, secretVolume}}}}}
 	service := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"type": "ClusterIP", "selector": selectorLabels, "ports": []any{map[string]any{"name": "http", "port": 3000, "targetPort": "http"}}}}
 	networkPolicy := map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"podSelector": map[string]any{"matchLabels": selectorLabels}, "policyTypes": []any{"Ingress", "Egress"}, "ingress": []any{map[string]any{"from": []any{map[string]any{"podSelector": map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "opl-cloud", "app.kubernetes.io/component": "control-plane"}}}}, "ports": []any{map[string]any{"protocol": "TCP", "port": 3000}}}}, "egress": workspaceEgressRules()}}
