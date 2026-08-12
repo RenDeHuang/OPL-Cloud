@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -350,5 +351,182 @@ func TestTencentWorkspaceLaunchRuntimeReplayRequiresExactRuntimeAndGatewayBindin
 				t.Fatalf("drift result=%#v err=%v applyCalls=%d getCalls=%d", result, err, fixture.applyCalls, fixture.getCalls)
 			}
 		})
+	}
+}
+
+func TestTencentWorkspaceLaunchCompletesTypedFiveStageChainWithGETOnlyReplay(t *testing.T) {
+	service, store, provider, preflight, image, launchHash := newTencentWorkspaceLaunchService(t)
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "20")
+	provider.convergenceWait = func(context.Context, int) error { return nil }
+
+	computeInput := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{})
+	computeID := workspaceLaunchComputeID(computeInput.Binding)
+	allocation := ComputeAllocation{
+		ID: computeID, AccountID: computeInput.Binding.AccountID, WorkspaceID: computeInput.Binding.WorkspaceID,
+		PackageID: "basic", Provider: "tencent-tke", ProviderResourceID: "ins-launch-alpha", PoolID: "pool-basic-2c4g", NodePoolID: "np-basic",
+		MachineName: "machine-launch-alpha", InstanceID: "ins-launch-alpha", CVMInstanceID: "ins-launch-alpha", NodeName: "node-launch-alpha",
+		PrivateIP: "10.0.0.8", PublicIP: "203.0.113.8", InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3",
+		ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-12T00:00:00Z",
+	}
+	prepared := ComputeAllocationPreparation{
+		PoolID: allocation.PoolID, PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, InstanceType: allocation.InstanceType,
+		MaxReplicas: 20, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"machine-before"},
+	}
+
+	providerMutations := map[string]int{}
+	nodeOwned := false
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "prepare_compute_allocation":
+			return provisionerResponse{OK: true, ProviderRequestID: "req-prepare", CurrentReplicas: 1, TargetReplicas: 2, Machines: []provisionerMachine{{MachineID: "machine-before"}}}, nil
+		case "create_compute_allocation":
+			providerMutations["scale"]++
+			return tencentComputeAllocationResponse(allocation, "req-scale"), nil
+		case "read_compute_allocation":
+			return tencentComputeAllocationResponse(allocation, "req-compute-read"), nil
+		case "tag_compute_machine":
+			providerMutations["tag"]++
+			return provisionerResponse{
+				OK: true, Status: "tagged", MutationCount: 1,
+				MutationEvidence: &ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+			}, nil
+		case "compute_claim_truth":
+			return tencentTargetOwnedProofResponse(allocation, prepared), nil
+		case "create_storage_volume":
+			providerMutations["cbs"]++
+			return provisionerResponse{
+				OK: true, Status: "created", StorageVolumeID: "disk-launch-alpha", CBSStatus: "UNATTACHED", ProviderRequestID: "req-cbs-create",
+				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": allocation.Zone, "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z"},
+			}, nil
+		case "sync_storage_volume":
+			return provisionerResponse{
+				OK: true, Status: "ready", StorageVolumeID: "disk-launch-alpha", CBSStatus: "UNATTACHED", ProviderRequestID: "req-cbs-read",
+				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": allocation.Zone, "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z"},
+			}, nil
+		default:
+			t.Fatalf("unexpected provisioner action %q", request.Action)
+			return provisionerResponse{}, nil
+		}
+	}
+
+	var staticManifest, gatewayManifest []byte
+	runtimeFixture := &tencentRuntimeReadbackFixture{t: t, workspaceID: allocation.WorkspaceID}
+	provider.kubectl = func(ctx context.Context, args []string, stdin []byte) ([]byte, error) {
+		switch {
+		case len(args) > 1 && args[0] == "get" && args[1] == "node/"+allocation.NodeName:
+			ownership := MachineOwnership{
+				ResourceID: allocation.ID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
+				PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID,
+			}
+			return tencentOwnershipNodeReadback(allocation, ownership, nodeOwned), nil
+		case len(args) > 0 && args[0] == "patch":
+			providerMutations["node_patch"]++
+			nodeOwned = true
+			return nil, nil
+		case slices.Equal(args, []string{"apply", "-f", "-"}):
+			var manifest map[string]any
+			if err := json.Unmarshal(stdin, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			switch manifest["kind"] {
+			case "List":
+				items := manifest["items"].([]any)
+				if items[0].(map[string]any)["kind"] == "PersistentVolume" {
+					providerMutations["static_apply"]++
+					staticManifest = append([]byte(nil), stdin...)
+					return nil, nil
+				}
+				providerMutations["runtime_apply"]++
+				runtimeFixture.applied = append([]byte(nil), stdin...)
+				return nil, nil
+			case "Secret":
+				providerMutations["gateway_apply"]++
+				gatewayManifest = append([]byte(nil), stdin...)
+				return nil, nil
+			default:
+				t.Fatalf("unexpected apply manifest=%#v", manifest)
+				return nil, nil
+			}
+		case len(args) > 2 && args[0] == "get" && strings.HasPrefix(args[1], "pv/") && strings.HasPrefix(args[2], "pvc/"):
+			return tencentStorageBindingReadback(t, staticManifest, false), nil
+		case len(args) == 4 && args[0] == "get" && args[1] == "secret/"+gatewaySecretName(allocation.WorkspaceID):
+			var manifest map[string]any
+			if err := json.Unmarshal(gatewayManifest, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			return mustJSON(map[string]any{
+				"kind": "Secret", "type": manifest["type"], "metadata": manifest["metadata"],
+				"data": map[string]any{"opl_gateway_api_key": b64(stringValue(nested(manifest, "stringData", "opl_gateway_api_key")))},
+			}), nil
+		default:
+			return runtimeFixture.kubectl(ctx, args, stdin)
+		}
+	}
+
+	type stageCall struct {
+		input  WorkspaceLaunchStageInput
+		result WorkspaceLaunchStageResult
+	}
+	stages := []stageCall{{input: computeInput}}
+	result, err := service.EnsureWorkspaceLaunchStage(context.Background(), computeInput)
+	if err != nil || result.State != "ready" || result.Resources.ComputeAllocationID != allocation.ID {
+		t.Fatalf("compute result=%#v err=%v", result, err)
+	}
+	stages[0].result = result
+
+	storageInput := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "storage", "ensure_storage", result.Resources)
+	result, err = service.EnsureWorkspaceLaunchStage(context.Background(), storageInput)
+	if err != nil || result.State != "ready" || result.Resources.StorageID == "" {
+		t.Fatalf("storage result=%#v err=%v", result, err)
+	}
+	stages = append(stages, stageCall{input: storageInput, result: result})
+	var storageState tencentWorkspaceLaunchState
+	storageOperation, _ := store.Get(context.Background(), storageInput.Binding.FabricOperationID)
+	storageRecord, _ := decodeWorkspaceLaunchStageRecord(storageOperation)
+	if json.Unmarshal(storageRecord.ProviderState, &storageState) != nil || storageState.Storage == nil {
+		t.Fatalf("storage provider state=%#v", storageRecord)
+	}
+	runtimeFixture.storage = *storageState.Storage
+
+	attachmentInput := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "attachment", "ensure_attachment", result.Resources)
+	result, err = service.EnsureWorkspaceLaunchStage(context.Background(), attachmentInput)
+	if err != nil || result.State != "ready" || result.Resources.AttachmentID == "" {
+		t.Fatalf("attachment result=%#v err=%v", result, err)
+	}
+	stages = append(stages, stageCall{input: attachmentInput, result: result})
+
+	secretInput := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "secret", "ensure_gateway_secret", result.Resources)
+	secretInput.Resources.GatewaySecretFingerprint = "sha256:12982dcaf26b60cde5b6b68b01556e591badb2768ac9b71525619cb4ebc646f0"
+	secretInput.GatewayCredential = &WorkspaceLaunchGatewayCredential{KeyID: 19, Value: "raw-gateway-key"}
+	secretInput.Binding.RequestHash = workspaceLaunchStageRequestHash(secretInput, launchHash)
+	result, err = service.EnsureWorkspaceLaunchStage(context.Background(), secretInput)
+	if err != nil || result.State != "ready" || result.Resources.GatewaySecretRef == "" {
+		t.Fatalf("secret result=%#v err=%v", result, err)
+	}
+	stages = append(stages, stageCall{input: secretInput, result: result})
+
+	runtimeInput := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "runtime", "ensure_runtime", result.Resources)
+	result, err = service.EnsureWorkspaceLaunchStage(context.Background(), runtimeInput)
+	if err != nil || result.State != "ready" || result.Resources.RuntimeID == "" || result.Resources.RuntimeURL != "https://workspace.medopl.cn/w/ws-alpha/" {
+		t.Fatalf("runtime result=%#v err=%v", result, err)
+	}
+	stages = append(stages, stageCall{input: runtimeInput, result: result})
+
+	wantMutations := map[string]int{"scale": 1, "tag": 1, "node_patch": 1, "cbs": 1, "static_apply": 1, "gateway_apply": 1, "runtime_apply": 1}
+	if !maps.Equal(providerMutations, wantMutations) {
+		t.Fatalf("mutations=%#v want=%#v", providerMutations, wantMutations)
+	}
+	for _, stage := range stages {
+		replayed, replayErr := service.EnsureWorkspaceLaunchStage(context.Background(), stage.input)
+		if replayErr != nil || replayed.State != "ready" || replayed.Resources != stage.result.Resources {
+			t.Fatalf("replay stage=%s result=%#v err=%v", stage.input.Binding.Stage, replayed, replayErr)
+		}
+		readback, readErr := service.ReadWorkspaceLaunchStage(context.Background(), stage.input)
+		if readErr != nil || readback.State != "ready" || readback.Resources != stage.result.Resources {
+			t.Fatalf("read stage=%s result=%#v err=%v", stage.input.Binding.Stage, readback, readErr)
+		}
+	}
+	if !maps.Equal(providerMutations, wantMutations) {
+		t.Fatalf("GET-only replay repeated mutation: mutations=%#v want=%#v", providerMutations, wantMutations)
 	}
 }
