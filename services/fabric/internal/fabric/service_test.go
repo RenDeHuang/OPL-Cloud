@@ -2702,6 +2702,28 @@ func (testProvider) ValidateWorkspaceImageReference(value string) bool {
 	return validWorkspaceRuntimeImageIdentity(value)
 }
 
+func (testProvider) ReadComputeProviderFacts(_ context.Context, allocation ComputeAllocation) (ProviderResourceFacts, error) {
+	return ProviderResourceFacts{
+		PackageOrSpec: allocation.PackageID,
+		ProviderID:    allocation.ProviderResourceID,
+		Zone:          allocation.Zone,
+		Status:        allocation.Status,
+		ExpiresAt:     allocation.Deadline,
+	}, nil
+}
+
+func (testProvider) ReadStorageProviderFacts(_ context.Context, volume StorageVolume) (ProviderResourceFacts, error) {
+	return ProviderResourceFacts{PackageOrSpec: volume.StorageClass, ProviderID: volume.ProviderResourceID, Zone: volume.Zone, Status: volume.Status, ExpiresAt: volume.Deadline}, nil
+}
+
+func (testProvider) ReadStorageAttachmentProviderFacts(_ context.Context, attachment StorageAttachment, _ ComputeAllocation, _ StorageVolume) (ProviderResourceFacts, error) {
+	return ProviderResourceFacts{PackageOrSpec: "/data", ProviderID: attachment.ProviderAttachmentID, Status: attachment.Status}, nil
+}
+
+func (testProvider) WorkspaceRuntimeProviderFacts(runtime WorkspaceRuntime) ProviderResourceFacts {
+	return ProviderResourceFacts{ProviderID: runtime.ServiceName, Status: runtime.Status}
+}
+
 type liveRuntimeWithoutIDProvider struct {
 	testProvider
 	runtimeIDs map[string]string

@@ -93,9 +93,10 @@ type GatewaySecretReadbackInput struct {
 }
 
 type providerFactsReader interface {
-	ReadComputeAllocation(context.Context, ComputeAllocation) (ComputeAllocation, error)
-	ReadStorageVolume(context.Context, StorageVolume) (StorageVolume, error)
-	ReadStorageAttachment(context.Context, StorageAttachment, ComputeAllocation, StorageVolume) (StorageAttachment, error)
+	ReadComputeProviderFacts(context.Context, ComputeAllocation) (ProviderResourceFacts, error)
+	ReadStorageProviderFacts(context.Context, StorageVolume) (ProviderResourceFacts, error)
+	ReadStorageAttachmentProviderFacts(context.Context, StorageAttachment, ComputeAllocation, StorageVolume) (ProviderResourceFacts, error)
+	WorkspaceRuntimeProviderFacts(WorkspaceRuntime) ProviderResourceFacts
 }
 
 type storageAttachmentReadbackProvider interface {
