@@ -529,21 +529,6 @@ func validateComputeAllocationPreparation(prepared ComputeAllocationPreparation,
 	return nil
 }
 
-func validateNewComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {
-	if prepared.NodePoolID == "" || allocation.NodePoolID != prepared.NodePoolID || allocation.PoolID != prepared.PoolID || allocation.PackageID != prepared.PackageID ||
-		allocation.InstanceType != prepared.InstanceType || allocation.MachineName == "" || !strings.HasPrefix(firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), "ins-") ||
-		allocation.NodeName == "" || allocation.PrivateIP == "" || allocation.Zone == "" || allocation.ChargeType != "PREPAID" ||
-		allocation.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || allocation.Deadline == "" {
-		return fmt.Errorf("compute_provider_readback_mismatch")
-	}
-	for _, existing := range prepared.BeforeMachineNames {
-		if allocation.MachineName == existing {
-			return fmt.Errorf("compute_allocation_machine_not_new")
-		}
-	}
-	return nil
-}
-
 func (s *Service) readComputeAllocationAfterReservation(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, dryRun bool) (ComputeAllocation, error) {
 	if reader, ok := s.provider.(computeAllocationDiscoveryProvider); ok {
 		return reader.DiscoverComputeAllocation(ctx, allocation, prepared)
