@@ -39,7 +39,12 @@ Sub2API management origin and credentials are never exposed to the browser.
   Fabric can reach the explicitly mounted host Docker Engine; Control Plane then
   failed closed at the required external Sub2API authentication boundary. No
   complete installation or current production instance readback proves the full
-  boundary effective.
+  boundary effective. Required CI separately exercises the Accounting path
+  through real Control Plane HTTP backed by PostgreSQL and a real Ledger HTTP
+  process backed by its own PostgreSQL database, with a typed Sub2API authority
+  fixture. The Ledger `sslmode=disable` exception is limited to an explicit
+  non-production, loopback `OPL_POSTGRES_TESTS=1` gate; it is test plumbing, not
+  production evidence.
 - Fabric defaults to a real `local-docker` adapter and keeps Tencent/TKE behind
   explicit instance selection. CI exercises local compute, storage, attachment,
   Secret binding, Runtime, and authoritative readback; this is Fabric evidence,
@@ -64,8 +69,11 @@ Sub2API management origin and credentials are never exposed to the browser.
   identity, operation, reference, and evidence facts rather than file bodies.
 - Create and Resume now enter one durable Control Plane Reconciler. Its resource
   stages call the typed Fabric HTTP contract and consume the same six-field
-  request-hash vectors as Fabric. A separate legacy provider-acceptance surface
-  still contains Tencent-specific client and projection knowledge.
+  request-hash vectors as Fabric. Activation readback uses the canonical
+  `currentComputeAllocationId` and `currentAttachmentId` Workspace projection
+  fields, with retained read compatibility for older projections. A separate
+  legacy provider-acceptance surface still contains Tencent-specific client and
+  projection knowledge.
 - The authenticated Workspace owner can issue one durable, resumable delete
   command. Control Plane coordinates Runtime, attachment, storage, and compute
   cleanup through existing typed Fabric HTTP routes; partial or unknown results
@@ -89,17 +97,25 @@ Current delivery levels remain:
 - `pilot-ready=false`;
 - `production-proven=false`.
 
-Focused local and CI evidence exists for the single Workspace Launch Reconciler,
-immutable Resume authorization, typed Fabric stage binding, idempotent settlement,
-real local-Docker Fabric stages, source envelopes, and Console behavior. The base
-Compose profile remains a low-authority control-services path. The explicit
-`compose.local-workspace.yaml` profile now enables the Launch worker, mounts a
-configured Docker socket only into Fabric, and requires an immutable Workspace
-image. Its real smoke reached the host Docker Engine but stopped at the required
-external Sub2API authentication boundary, so it does not prove the complete
-Console-to-Workspace path, live Gateway accounting, browser, renewal, rollback,
-or production path. Existing Tencent/TKE evidence applies only to medopl instance
-provenance.
+Focused local and required-CI evidence exists for the single Workspace Launch
+Reconciler, immutable Resume authorization, typed Fabric stage binding, real
+local-Docker Fabric stages, source envelopes, Console behavior, and the Accounting
+source path. The Accounting test proves one stable debit, no additional debit on
+replay, one purchase receipt, and linked wallet, balance-history, Workspace, and
+operation identities. When the debit response is lost and history is temporarily
+unknown, it stays at `manual_review` / `debit`; replay creates no Workspace or
+receipt, issues no additional debit, and does not refund. This uses a typed
+Sub2API fixture and therefore does not prove external Sub2API authentication,
+funding, live balance/usage, or product readiness.
+
+The base Compose profile remains a low-authority control-services path. The
+explicit `compose.local-workspace.yaml` profile now enables the Launch worker,
+mounts a configured Docker socket only into Fabric, and requires an immutable
+Workspace image. Its real smoke reached the host Docker Engine but stopped at the
+required external Sub2API authentication boundary, so it does not prove the
+complete live Console create/readback/open/delete path, browser, renewal,
+rollback, or production path. Existing Tencent/TKE evidence applies only to
+medopl instance provenance.
 
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
 workflow, and focused distribution checks exist at source level. The workflow
