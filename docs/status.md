@@ -54,6 +54,11 @@ Sub2API management origin and credentials are never exposed to the browser.
   share one adapter-private compute-ownership core for deterministic CVM tagging,
   Kubernetes node claim, child operations, and authoritative replay readback.
   Provider-neutral Fabric and Control Plane boundaries are unchanged.
+- Operator identity-evidence compute/storage readback and pool-head terminal
+  replay no longer call the runtime operation-list path. They use narrow
+  action/idempotency or approval/idempotency owner lookups, fail closed on an
+  exact-identity conflict, and retain historical recovery-binding and mutation-
+  ledger read compatibility. Other Fabric operation-list consumers remain.
 - Workspace file bodies stay in provider-owned storage: a local Docker volume for
   the local adapter or CBS for the Tencent adapter. Platform PostgreSQL stores
   identity, operation, reference, and evidence facts rather than file bodies.
@@ -97,11 +102,13 @@ or production path. Existing Tencent/TKE evidence applies only to medopl instanc
 provenance.
 
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
-workflow, and focused distribution checks exist at source level. GitHub currently
-has no OPL Cloud tag or Release. The release workflow's published asset set also
-omits `compose.local-workspace.yaml`, so the current workflow cannot yet
-distribute the same local-Workspace profile that exists in source. Source or CI
-evidence does not prove an installed application.
+workflow, and focused distribution checks exist at source level. The workflow
+validates `compose.local-workspace.yaml`, records it in the release manifest,
+uploads it with the base Compose file and environment template, and checks the
+exact four-asset GitHub Release readback. Fresh GitHub owner readback shows no
+OPL Cloud tag, Release, or GHCR package, and no clean-host installation evidence
+exists. Source and CI evidence therefore do not prove a published immutable
+product or an installed application.
 
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production
