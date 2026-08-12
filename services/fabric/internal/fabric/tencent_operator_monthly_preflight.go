@@ -52,9 +52,6 @@ func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID
 	return result, nil
 }
 
-// ComputeProviderTruth reads only the Compute Claim provider proof. It is the
-// authoritative GET-only collector for the compute stage and deliberately
-// keeps a later Storage read failure out of the Compute result.
 func unknownMonthlyProviderTruth(compute ComputeAllocation, storage StorageVolume) MonthlyProviderTruth {
 	return MonthlyProviderTruth{ComputeState: "unknown", StorageState: "unknown", Compute: cloneComputeAllocation(compute), Storage: cloneStorageVolume(storage)}
 }
