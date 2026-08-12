@@ -41,14 +41,23 @@ func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, reques
 		if err != nil {
 			return WorkspaceLaunchProviderResult{}, err
 		}
-		poolID := pool.NodePoolID
+		if journal := providerMutationJournalFromContext(ctx); journal != nil {
+			ownership, ownershipErr := journal.operations.MachineOwnership(ctx, computeID)
+			if ownershipErr == nil && (ownership.ResourceID != computeID || ownership.AccountID != binding.AccountID ||
+				ownership.WorkspaceID != binding.WorkspaceID || ownership.PackageID != input.PackageID || ownership.NodePoolID != pool.NodePoolID) {
+				return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
+			}
+			if ownershipErr != nil && !errors.Is(ownershipErr, ErrMachineOwnershipNotFound) {
+				return WorkspaceLaunchProviderResult{}, ownershipErr
+			}
+		}
 		allocation := ComputeAllocation{
 			ID: computeID, OperationID: binding.FabricOperationID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID,
-			PackageID: input.PackageID, NodePoolID: poolID, Status: "provisioning", Provider: p.Descriptor().Name,
+			PackageID: input.PackageID, NodePoolID: pool.NodePoolID, Status: "provisioning", Provider: p.Descriptor().Name,
 			ProviderRequestID: providerRequestID("compute", binding.IdempotencyKey),
 		}
 		prepared, err := p.PrepareComputeAllocation(ctx, ComputeAllocationInput{
-			ID: computeID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, PackageID: input.PackageID, NodePoolID: poolID,
+			ID: computeID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, PackageID: input.PackageID, NodePoolID: pool.NodePoolID,
 		})
 		if err != nil {
 			return WorkspaceLaunchProviderResult{}, err
@@ -145,7 +154,6 @@ func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, reques
 	providerState, err := encodeTencentWorkspaceLaunchState(state)
 	return WorkspaceLaunchProviderResult{Resources: resources, ProviderState: providerState}, err
 }
-
 func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
 	input, binding := request.Input, request.Input.Binding
 	resources := input.Resources
@@ -252,27 +260,51 @@ func (p *TencentProvider) ensureWorkspaceLaunchComputeOwnership(ctx context.Cont
 	}
 	return ownership, nil
 }
+
 func (p *TencentProvider) tencentWorkspaceLaunchComputeStateFromMutation(ctx context.Context, binding WorkspaceLaunchStageBinding, packageID string) (tencentWorkspaceLaunchState, error) {
 	journal := providerMutationJournalFromContext(ctx)
 	if journal == nil {
 		return tencentWorkspaceLaunchState{}, ErrLaunchStageBindingConflict
 	}
 	computeID := workspaceLaunchComputeID(binding)
-	nodePoolID := p.Descriptor().DefaultComputePoolIDs[packageID]
-	operationID := providerMutationOperationID(binding, "tencent_compute_allocation_create", "compute_allocation", computeID, nodePoolID)
-	operation, err := journal.operations.Get(ctx, operationID)
-	if err != nil {
-		return tencentWorkspaceLaunchState{}, err
-	}
-	var mutationState tencentComputeMutationState
-	if !decodeProviderMutationState(operation, &mutationState) {
-		return tencentWorkspaceLaunchState{}, ErrLaunchStageBindingConflict
-	}
-	allocation := mutationState.Allocation
-	_ = decodeOperationResource(operation, &allocation)
 	ownership, err := journal.operations.MachineOwnership(ctx, computeID)
 	if err != nil {
 		return tencentWorkspaceLaunchState{}, err
+	}
+	if ownership.ResourceID != computeID || ownership.AccountID != binding.AccountID || ownership.WorkspaceID != binding.WorkspaceID ||
+		ownership.PackageID != packageID || ownership.NodePoolID == "" {
+		return tencentWorkspaceLaunchState{}, ErrLaunchStageBindingConflict
+	}
+	operationID := providerMutationOperationID(binding, "tencent_compute_allocation_create", "compute_allocation", computeID, ownership.NodePoolID)
+	operation, err := journal.operations.Get(ctx, operationID)
+	if errors.Is(err, ErrOperationNotFound) {
+		return tencentWorkspaceLaunchState{}, ErrLaunchStageBindingConflict
+	}
+	if err != nil {
+		return tencentWorkspaceLaunchState{}, err
+	}
+	child, ok := decodeProviderMutationBinding(operation)
+	if !ok || child.Parent != binding || child.Action != "tencent_compute_allocation_create" || child.ResourceKind != "compute_allocation" ||
+		child.ResourceID != computeID || child.ExpectedResourceBinding != ownership.NodePoolID {
+		return tencentWorkspaceLaunchState{}, ErrLaunchStageBindingConflict
+	}
+	var mutationState tencentComputeMutationState
+	if !decodeProviderMutationState(operation, &mutationState) || mutationState.Allocation.ID != computeID ||
+		mutationState.Allocation.AccountID != binding.AccountID || mutationState.Allocation.WorkspaceID != binding.WorkspaceID ||
+		mutationState.Allocation.PackageID != packageID || mutationState.Allocation.NodePoolID != ownership.NodePoolID ||
+		mutationState.Plan.PoolID != packagePlan(packageID).ID || mutationState.Plan.PackageID != packageID || mutationState.Plan.NodePoolID != ownership.NodePoolID {
+		return tencentWorkspaceLaunchState{}, ErrLaunchStageBindingConflict
+	}
+	allocation := mutationState.Allocation
+	if !decodeOperationResource(operation, &allocation) {
+		return tencentWorkspaceLaunchState{}, ErrWorkspaceLaunchPending
+	}
+	if allocation.ID != computeID || allocation.AccountID != binding.AccountID || allocation.WorkspaceID != binding.WorkspaceID ||
+		allocation.PackageID != packageID || allocation.PoolID != mutationState.Plan.PoolID || allocation.NodePoolID != ownership.NodePoolID ||
+		allocation.MachineName != ownership.MachineID || allocation.ProviderResourceID != ownership.InstanceID ||
+		allocation.InstanceID != ownership.InstanceID || allocation.CVMInstanceID != ownership.InstanceID ||
+		allocation.NodeName != ownership.NodeName || allocation.PrivateIP == "" {
+		return tencentWorkspaceLaunchState{}, ErrLaunchStageBindingConflict
 	}
 	return tencentWorkspaceLaunchState{Compute: &allocation, ComputePlan: &mutationState.Plan, Ownership: &ownership}, nil
 }
