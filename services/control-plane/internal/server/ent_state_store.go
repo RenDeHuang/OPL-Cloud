@@ -2204,6 +2204,76 @@ func (s *postgresEntStateStore) DeleteWorkspace(ctx context.Context, id string) 
 	return err
 }
 
+func (s *postgresEntStateStore) ApplyWorkspaceDelete(ctx context.Context, mutation workspaceDeleteStoreMutation) error {
+	desired, ok := validWorkspaceDeleteStoreMutation(mutation)
+	if !ok {
+		return errWorkspaceDeleteCASConflict
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+
+	workspaceEntity, workspaceErr := client.Workspace.Query().Where(workspace.IDEQ(desired.WorkspaceID), lockRowForUpdate).Only(ctx)
+	if mutation.RequireWorkspaceAbsent {
+		if workspaceErr == nil || !controlplaneent.IsNotFound(workspaceErr) {
+			return errWorkspaceDeleteCASConflict
+		}
+	} else {
+		if workspaceErr != nil {
+			if controlplaneent.IsNotFound(workspaceErr) {
+				return errWorkspaceDeleteCASConflict
+			}
+			return workspaceErr
+		}
+		workspaceRow := recordFromEnt(workspaceEntity, workspaceEntFields)
+		if firstNonEmpty(stringValue(workspaceRow["accountId"]), stringValue(workspaceRow["ownerAccountId"])) != desired.AccountID ||
+			firstNonEmpty(stringValue(workspaceRow["ownerUserId"]), stringValue(workspaceRow["ownerId"])) != desired.OwnerUserID {
+			return errWorkspaceDeleteCASConflict
+		}
+	}
+
+	operationEntity, operationErr := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(desired.OperationID), lockRowForUpdate).Only(ctx)
+	if mutation.Create {
+		if operationErr == nil {
+			return errWorkspaceDeleteCASConflict
+		}
+		if !controlplaneent.IsNotFound(operationErr) {
+			return operationErr
+		}
+		if err := saveRecord(ctx, desired.OperationID, mutation.DesiredOperation, client.RuntimeOperation.Create(), runtimeOpEntFields); err != nil {
+			if controlplaneent.IsConstraintError(err) {
+				return errWorkspaceDeleteCASConflict
+			}
+			return err
+		}
+	} else {
+		if operationErr != nil {
+			if controlplaneent.IsNotFound(operationErr) {
+				return errWorkspaceDeleteCASConflict
+			}
+			return operationErr
+		}
+		current := recordFromEnt(operationEntity, runtimeOpEntFields)
+		if stringValue(current["result"]) != mutation.ExpectedResult || !workspaceDeleteOperationIdentityMatches(current, desired) {
+			return errWorkspaceDeleteCASConflict
+		}
+		builder := client.RuntimeOperation.UpdateOneID(desired.OperationID)
+		setRecordFieldsWithEmptyText(builder, mutation.DesiredOperation, runtimeOpEntFields, true)
+		if err := execCreate(ctx, builder); err != nil {
+			return err
+		}
+	}
+	if mutation.DeleteWorkspace {
+		if err := client.Workspace.DeleteOneID(desired.WorkspaceID).Exec(ctx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *postgresEntStateStore) ListAuditEvents(ctx context.Context, accountID string) ([]map[string]any, error) {
 	query := s.client.AdminAuditEvent.Query().Order(controlplaneent.Asc(adminauditevent.FieldCreatedAt, adminauditevent.FieldID))
 	if accountID != "" {

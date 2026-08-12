@@ -840,6 +840,49 @@ func (s *memoryTableStore) DeleteWorkspace(_ context.Context, id string) error {
 	return nil
 }
 
+func (s *memoryTableStore) ApplyWorkspaceDelete(_ context.Context, mutation workspaceDeleteStoreMutation) error {
+	desired, ok := validWorkspaceDeleteStoreMutation(mutation)
+	if !ok {
+		return errWorkspaceDeleteCASConflict
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	workspace := s.workspaces[desired.WorkspaceID]
+	if mutation.RequireWorkspaceAbsent {
+		if workspace != nil {
+			return errWorkspaceDeleteCASConflict
+		}
+	} else if workspace == nil || firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) != desired.AccountID ||
+		firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != desired.OwnerUserID {
+		return errWorkspaceDeleteCASConflict
+	}
+
+	operationIndex := -1
+	for index, row := range s.runtimeOps {
+		if stringValue(row["id"]) == desired.OperationID {
+			operationIndex = index
+			break
+		}
+	}
+	if mutation.Create {
+		if operationIndex >= 0 {
+			return errWorkspaceDeleteCASConflict
+		}
+		s.runtimeOps = append(s.runtimeOps, cloneMap(mutation.DesiredOperation))
+	} else {
+		if operationIndex < 0 || stringValue(s.runtimeOps[operationIndex]["result"]) != mutation.ExpectedResult ||
+			!workspaceDeleteOperationIdentityMatches(s.runtimeOps[operationIndex], desired) {
+			return errWorkspaceDeleteCASConflict
+		}
+		s.runtimeOps[operationIndex] = cloneMap(mutation.DesiredOperation)
+	}
+	if mutation.DeleteWorkspace {
+		delete(s.workspaces, desired.WorkspaceID)
+	}
+	return nil
+}
+
 func (s *memoryTableStore) ListAuditEvents(_ context.Context, accountID string) ([]map[string]any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
