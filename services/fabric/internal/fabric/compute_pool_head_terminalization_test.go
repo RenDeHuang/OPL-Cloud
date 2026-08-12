@@ -257,3 +257,58 @@ func TestOperatorTerminalizationCASAllowsOneWriterAndReleasesFreshHead(t *testin
 		t.Fatalf("fresh head=%#v claimed=%v err=%v", head, claimed, err)
 	}
 }
+
+func TestOperatorTerminalizationResultFailsClosedOnDuplicateOrUnknownApprovalEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*MemoryOperationStore)
+		want   error
+	}{
+		{
+			name: "duplicate approval identity",
+			mutate: func(store *MemoryOperationStore) {
+				duplicate := store.operation[0]
+				duplicate.ID = "fop-terminal-duplicate"
+				store.operation = append(store.operation, duplicate)
+			},
+			want: ErrComputePoolHeadTerminalizationConflict,
+		},
+		{
+			name: "unknown approval evidence",
+			mutate: func(store *MemoryOperationStore) {
+				evidence := store.operation[0].RedactedProviderPayload[computeClaimTerminalEvidencePayloadKey].(map[string]any)
+				evidence["schemaVersion"] = 0
+			},
+			want: ErrComputePoolHeadTerminalizationUnavailable,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewMemoryOperationStore()
+			provider := &normalLaunchComputeProvider{}
+			input, _, _ := seedOperatorTerminalizationHead(t, store, provider)
+			service := NewServiceWithOperationStore(provider, store)
+			candidate, err := service.ReadComputePoolHeadTerminalization(context.Background(), input.NodePoolID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ComputePoolHeadTerminalizationInput{
+				NodePoolID: input.NodePoolID, ApprovalID: "result-head-terminalize-30970000005",
+				ApprovalDigest: candidate.ApprovalDigest, IdempotencyKey: "result-head-terminalize-30970000005",
+			}
+			if _, err := service.TerminalizeComputePoolHead(context.Background(), request); err != nil {
+				t.Fatal(err)
+			}
+			store.mu.Lock()
+			test.mutate(store)
+			store.mu.Unlock()
+
+			if _, err := service.ReadComputePoolHeadTerminalizationResult(context.Background(), request); !errors.Is(err, test.want) {
+				t.Fatalf("error=%v want=%v", err, test.want)
+			}
+			prepare, create, proof, cvm, node := provider.automaticContinuationCounts()
+			if prepare != 0 || create != 0 || proof != 0 || cvm != 0 || node != 0 {
+				t.Fatalf("provider calls=%d/%d/%d/%d/%d", prepare, create, proof, cvm, node)
+			}
+		})
+	}
+}

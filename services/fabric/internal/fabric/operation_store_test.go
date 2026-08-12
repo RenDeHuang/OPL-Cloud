@@ -17,6 +17,54 @@ func TestProductionPostgresOperationStoreRejectsUnsafeTLSBeforeConnecting(t *tes
 	}
 }
 
+func TestMemoryOperationStoreReadsExactIdentitiesAndFailsClosedOnDuplicates(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	now := time.Date(2026, 8, 12, 1, 0, 0, 0, time.UTC)
+	exact := newOperation("create_compute_allocation", "compute_allocation", "ca-exact", "acct-exact", "ws-exact", "launch-exact:compute", "hash-exact", now)
+	exact.ID = "fop-exact"
+	exact.RedactedProviderPayload = map[string]any{
+		computeClaimTerminalEvidencePayloadKey: map[string]any{
+			"operatorApprovalId": "approval-exact-30970000001", "operatorIdempotencyKey": "approval-exact-30970000001",
+		},
+	}
+	alias := exact
+	alias.ID, alias.IdempotencyKey = "fop-alias", "launch-alias:compute"
+	alias.RedactedProviderPayload = nil
+	for _, operation := range []FabricOperation{exact, alias} {
+		if err := store.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, found, err := store.OperationByActionIdempotency(ctx, exact.Action, exact.IdempotencyKey)
+	if err != nil || !found || got.ID != exact.ID {
+		t.Fatalf("exact=%#v found=%v err=%v", got, found, err)
+	}
+	if missing, found, err := store.OperationByActionIdempotency(ctx, exact.Action, "launch-absent:compute"); err != nil || found || missing.ID != "" {
+		t.Fatalf("missing=%#v found=%v err=%v", missing, found, err)
+	}
+	terminal, found, err := store.ComputeClaimTerminalOperation(ctx, "approval-exact-30970000001", "approval-exact-30970000001")
+	if err != nil || !found || terminal.ID != exact.ID {
+		t.Fatalf("terminal=%#v found=%v err=%v", terminal, found, err)
+	}
+	if missing, found, err := store.ComputeClaimTerminalOperation(ctx, "approval-absent-30970000001", "approval-absent-30970000001"); err != nil || found || missing.ID != "" {
+		t.Fatalf("terminal missing=%#v found=%v err=%v", missing, found, err)
+	}
+
+	duplicate := exact
+	duplicate.ID = "fop-duplicate"
+	if err := store.Append(ctx, duplicate); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.OperationByActionIdempotency(ctx, exact.Action, exact.IdempotencyKey); !errors.Is(err, ErrOperationIdentityConflict) {
+		t.Fatalf("exact duplicate error=%v", err)
+	}
+	if _, _, err := store.ComputeClaimTerminalOperation(ctx, "approval-exact-30970000001", "approval-exact-30970000001"); !errors.Is(err, ErrOperationIdentityConflict) {
+		t.Fatalf("terminal duplicate error=%v", err)
+	}
+}
+
 func TestMemoryOperationStoreReclaimRuntimeFencesOldOwner(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryOperationStore()

@@ -15,22 +15,10 @@ const (
 	computeClaimStorageOperationConflict computeClaimStorageOperationDisposition = "conflict"
 )
 
-func computeClaimRecoveryStorageOperationDisposition(operations []FabricOperation, input ComputeClaimRecoveryInput) computeClaimStorageOperationDisposition {
-	matches := make([]FabricOperation, 0, 1)
-	for _, operation := range operations {
-		if operation.Action == "create_storage_volume" &&
-			(operation.ResourceID == input.StorageVolumeID || operation.IdempotencyKey == input.LaunchOperationID+":storage" ||
-				operation.AccountID == input.AccountID && operation.WorkspaceID == input.WorkspaceID) {
-			matches = append(matches, operation)
-		}
-	}
-	if len(matches) == 0 {
+func computeClaimRecoveryStorageOperationDisposition(operation FabricOperation, found bool, input ComputeClaimRecoveryInput) computeClaimStorageOperationDisposition {
+	if !found {
 		return computeClaimStorageOperationAbsent
 	}
-	if len(matches) != 1 {
-		return computeClaimStorageOperationConflict
-	}
-	operation := matches[0]
 	if operation.ResourceKind != "storage_volume" || operation.ResourceID != input.StorageVolumeID ||
 		operation.IdempotencyKey != input.LaunchOperationID+":storage" || operation.AccountID != input.AccountID ||
 		operation.WorkspaceID != input.WorkspaceID {
