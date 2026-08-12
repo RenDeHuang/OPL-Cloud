@@ -557,36 +557,6 @@ func (s *Service) WorkspaceRuntimeGatewaySecret(ctx context.Context, workspaceID
 	return client.WorkspaceRuntimeGatewaySecret(ctx, workspaceID)
 }
 
-func (s *Service) ReapplyWorkspaceRuntime(ctx context.Context, workspaceID, computeID, volumeID, secretRef, idempotencyKey string) (clients.WorkspaceRuntime, error) {
-	if workspaceID == "" || computeID == "" || volumeID == "" || secretRef == "" || idempotencyKey == "" {
-		return clients.WorkspaceRuntime{}, errors.New("workspace_runtime_apply_input_required")
-	}
-	applied, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{
-		WorkspaceID: workspaceID, ComputeID: computeID, VolumeID: volumeID,
-		ImageID: "one-person-lab-app", GatewaySecretRef: secretRef,
-	}, idempotencyKey+":runtime")
-	if err != nil {
-		return clients.WorkspaceRuntime{}, err
-	}
-	runtime, err := s.fabric.WorkspaceRuntimeStatus(ctx, workspaceID)
-	if err != nil {
-		return clients.WorkspaceRuntime{}, err
-	}
-	if runtime.ID == "" {
-		runtime.ID = applied.ID
-	}
-	if runtime.WorkspaceID == "" {
-		runtime.WorkspaceID = applied.WorkspaceID
-	}
-	if runtime.ServiceName == "" {
-		runtime.ServiceName = applied.ServiceName
-	}
-	if runtime.WorkspaceID != workspaceID || runtime.ID == "" || runtime.Status == "not_found" || !runtime.Ready {
-		return clients.WorkspaceRuntime{}, errors.New("workspace_runtime_readback_invalid")
-	}
-	return runtime, nil
-}
-
 func (s *Service) RecordWorkspaceGatewayKeyRotation(ctx context.Context, accountID, workspaceID, ownerID, operationID string, oldKeyID, newKeyID int64, fingerprint string) (clients.Receipt, error) {
 	if accountID == "" || workspaceID == "" || ownerID == "" || operationID == "" || oldKeyID <= 0 || newKeyID <= 0 || oldKeyID == newKeyID || fingerprint == "" {
 		return clients.Receipt{}, errors.New("workspace_gateway_key_rotation_evidence_invalid")
