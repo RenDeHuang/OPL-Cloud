@@ -1953,43 +1953,34 @@ func (s *Service) providerFact(ctx context.Context, input ProviderFactInput) Pro
 	s.mu.Unlock()
 	var facts ProviderResourceFacts
 	var err error
+	if input.ResourceType != "compute" && input.ResourceType != "storage" && input.ResourceType != "attachment" && input.ResourceType != "runtime" {
+		result.ErrorCode = "provider_fact_resource_type_invalid"
+		return result
+	}
+	provider, ok := s.provider.(providerFactsReader)
+	if !ok {
+		result.ErrorCode = "provider_facts_unavailable"
+		return result
+	}
 	switch input.ResourceType {
 	case "compute":
-		provider, ok := s.provider.(providerFactsReader)
-		if !ok {
-			result.ErrorCode = "provider_facts_unavailable"
-			return result
-		}
 		if compute.ID == "" || compute.AccountID != input.AccountID || compute.WorkspaceID != input.WorkspaceID {
 			result.ErrorCode = "provider_fact_identity_mismatch"
 			return result
 		}
-		compute, err = provider.ReadComputeAllocation(ctx, compute)
-		facts = ProviderResourceFacts{PackageOrSpec: firstNonEmpty(compute.InstanceType, compute.ProviderData["instanceType"]), ProviderID: firstNonEmpty(compute.ProviderResourceID, compute.InstanceID, compute.CVMInstanceID), Zone: firstNonEmpty(compute.Zone, compute.ProviderData["zone"]), Status: firstNonEmpty(compute.CVMStatus, compute.Status), ExpiresAt: compute.Deadline, LastReadAt: s.now().Format(time.RFC3339Nano)}
+		facts, err = provider.ReadComputeProviderFacts(ctx, compute)
 	case "storage":
-		provider, ok := s.provider.(providerFactsReader)
-		if !ok {
-			result.ErrorCode = "provider_facts_unavailable"
-			return result
-		}
 		if storage.ID == "" || storage.AccountID != input.AccountID || storage.WorkspaceID != input.WorkspaceID {
 			result.ErrorCode = "provider_fact_identity_mismatch"
 			return result
 		}
-		storage, err = provider.ReadStorageVolume(ctx, storage)
-		facts = ProviderResourceFacts{PackageOrSpec: firstNonEmpty(storage.DiskType, storage.StorageClass), ProviderID: storage.ProviderResourceID, Zone: storage.Zone, Status: firstNonEmpty(storage.CBSStatus, storage.Status), ExpiresAt: storage.Deadline, LastReadAt: s.now().Format(time.RFC3339Nano)}
+		facts, err = provider.ReadStorageProviderFacts(ctx, storage)
 	case "attachment":
-		provider, ok := s.provider.(providerFactsReader)
-		if !ok {
-			result.ErrorCode = "provider_facts_unavailable"
-			return result
-		}
 		if attachment.ID == "" || attachment.WorkspaceID != input.WorkspaceID || attachmentCompute.AccountID != input.AccountID || attachmentCompute.WorkspaceID != input.WorkspaceID || attachmentStorage.AccountID != input.AccountID || attachmentStorage.WorkspaceID != input.WorkspaceID {
 			result.ErrorCode = "provider_fact_identity_mismatch"
 			return result
 		}
-		attachment, err = provider.ReadStorageAttachment(ctx, attachment, attachmentCompute, attachmentStorage)
-		facts = ProviderResourceFacts{PackageOrSpec: "/data", ProviderID: attachment.ProviderAttachmentID, Status: attachment.Status, LastReadAt: s.now().Format(time.RFC3339Nano)}
+		facts, err = provider.ReadStorageAttachmentProviderFacts(ctx, attachment, attachmentCompute, attachmentStorage)
 	case "runtime":
 		var runtime WorkspaceRuntime
 		runtime, err = s.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
@@ -1997,15 +1988,13 @@ func (s *Service) providerFact(ctx context.Context, input ProviderFactInput) Pro
 			result.ErrorCode = "provider_fact_identity_mismatch"
 			return result
 		}
-		facts = ProviderResourceFacts{ProviderID: runtime.ServiceName, Status: runtime.Status, LastReadAt: s.now().Format(time.RFC3339Nano)}
-	default:
-		result.ErrorCode = "provider_fact_resource_type_invalid"
-		return result
+		facts = provider.WorkspaceRuntimeProviderFacts(runtime)
 	}
 	if err != nil {
 		result.ErrorCode = errorCode(err)
 		return result
 	}
+	facts.LastReadAt = s.now().Format(time.RFC3339Nano)
 	result.Available, result.Facts = true, facts
 	return result
 }

@@ -1356,6 +1356,20 @@ func (p *TencentProvider) ReadComputeAllocation(ctx context.Context, allocation 
 	return p.SyncComputeAllocation(ctx, allocation)
 }
 
+func (p *TencentProvider) ReadComputeProviderFacts(ctx context.Context, allocation ComputeAllocation) (ProviderResourceFacts, error) {
+	readback, err := p.ReadComputeAllocation(ctx, allocation)
+	if err != nil {
+		return ProviderResourceFacts{}, err
+	}
+	return ProviderResourceFacts{
+		PackageOrSpec: firstNonEmpty(readback.InstanceType, readback.ProviderData["instanceType"]),
+		ProviderID:    firstNonEmpty(readback.ProviderResourceID, readback.InstanceID, readback.CVMInstanceID),
+		Zone:          firstNonEmpty(readback.Zone, readback.ProviderData["zone"]),
+		Status:        firstNonEmpty(readback.CVMStatus, readback.Status),
+		ExpiresAt:     readback.Deadline,
+	}, nil
+}
+
 func (p *TencentProvider) RenewComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
 	if !validComputeRenewalIdentity(allocation) {
 		return ComputeAllocation{}, fmt.Errorf("compute_allocation_renew_identity_required")
@@ -1762,6 +1776,20 @@ func (p *TencentProvider) ReadStorageVolume(ctx context.Context, volume StorageV
 	return volume, nil
 }
 
+func (p *TencentProvider) ReadStorageProviderFacts(ctx context.Context, volume StorageVolume) (ProviderResourceFacts, error) {
+	readback, err := p.ReadStorageVolume(ctx, volume)
+	if err != nil {
+		return ProviderResourceFacts{}, err
+	}
+	return ProviderResourceFacts{
+		PackageOrSpec: firstNonEmpty(readback.DiskType, readback.StorageClass),
+		ProviderID:    readback.ProviderResourceID,
+		Zone:          readback.Zone,
+		Status:        firstNonEmpty(readback.CBSStatus, readback.Status),
+		ExpiresAt:     readback.Deadline,
+	}, nil
+}
+
 func (p *TencentProvider) DestroyStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
 	if volume.ID == "" {
 		return StorageVolume{}, fmt.Errorf("storage_volume_id_required")
@@ -1989,6 +2017,14 @@ func (p *TencentProvider) ReadStorageAttachment(ctx context.Context, attachment 
 	return readback, nil
 }
 
+func (p *TencentProvider) ReadStorageAttachmentProviderFacts(ctx context.Context, attachment StorageAttachment, compute ComputeAllocation, volume StorageVolume) (ProviderResourceFacts, error) {
+	readback, err := p.ReadStorageAttachment(ctx, attachment, compute, volume)
+	if err != nil {
+		return ProviderResourceFacts{}, err
+	}
+	return ProviderResourceFacts{PackageOrSpec: "/data", ProviderID: readback.ProviderAttachmentID, Status: readback.Status}, nil
+}
+
 func (p *TencentProvider) DetachStorageAttachment(_ context.Context, attachment StorageAttachment) (StorageAttachment, error) {
 	attachment.Status = "detached"
 	attachment.ProviderRequestID = providerRequestID("storage-detach", attachment.ID)
@@ -2195,6 +2231,10 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, workspaceRuntimeStatusError("readback_mismatch")
 	}
 	return WorkspaceRuntime{ID: runtimeID, OperationID: runtimeOperationID, WorkspaceID: workspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), workspaceID), Status: status, ServiceName: serviceName, ImageID: image, Access: access, Ready: ready, Checks: checks, CostTags: costTags}, nil
+}
+
+func (*TencentProvider) WorkspaceRuntimeProviderFacts(runtime WorkspaceRuntime) ProviderResourceFacts {
+	return ProviderResourceFacts{ProviderID: runtime.ServiceName, Status: runtime.Status}
 }
 
 func (p *TencentProvider) BindWorkspaceRuntimeGatewaySecret(ctx context.Context, input WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error) {

@@ -341,6 +341,10 @@ func (p *LocalDockerProvider) WorkspaceRuntimeStatus(ctx context.Context, worksp
 	return p.runtimeFromContainer(container)
 }
 
+func (*LocalDockerProvider) WorkspaceRuntimeProviderFacts(runtime WorkspaceRuntime) ProviderResourceFacts {
+	return ProviderResourceFacts{ProviderID: runtime.ServiceName, Status: runtime.Status}
+}
+
 func (p *LocalDockerProvider) DestroyWorkspaceRuntime(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
 	name := localRuntimeName(workspaceID)
 	container, exists, err := p.inspectContainer(ctx, name)

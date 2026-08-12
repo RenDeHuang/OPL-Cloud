@@ -166,6 +166,49 @@ func TestRuntimeHealthSummaryHTTPIsAuthenticatedAndReadOnly(t *testing.T) {
 	}
 }
 
+func TestProviderFactsBatchHTTPPreservesTypedWireShape(t *testing.T) {
+	service := fabric.NewService(testProvider{})
+	compute, err := service.CreateComputeAllocation(context.Background(), fabric.ComputeAllocationInput{
+		AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "provider-facts-http",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		operations, listErr := service.ListOperations(context.Background())
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		for _, operation := range operations {
+			if operation.Action == "create_compute_allocation" && operation.ResourceID == compute.ID && operation.Status == "succeeded" {
+				deadline = time.Time{}
+				break
+			}
+		}
+		if deadline.IsZero() {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	server := NewServer(service, "internal-secret")
+	body := fmt.Sprintf(`{"items":[{"accountId":"acct-alpha","workspaceId":"workspace-alpha","resourceType":"compute","resourceId":%q}]}`, compute.ID)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, testRequest(http.MethodPost, "/fabric/provider-facts/batch", strings.NewReader(body)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("provider facts status=%d body=%s", response.Code, response.Body.String())
+	}
+	var batch fabric.ProviderFactsBatch
+	if err := json.Unmarshal(response.Body.Bytes(), &batch); err != nil || len(batch.Items) != 1 || !batch.Items[0].Available || batch.Items[0].ResourceID != compute.ID || batch.Items[0].Facts.ProviderID != "machine/"+compute.ID || batch.Items[0].Facts.LastReadAt == "" {
+		t.Fatalf("provider facts=%#v err=%v", batch, err)
+	}
+	for _, field := range []string{`"accountId"`, `"workspaceId"`, `"resourceType"`, `"resourceId"`, `"available"`, `"facts"`, `"packageOrSpec"`, `"providerId"`, `"zone"`, `"status"`, `"expiresAt"`, `"lastReadAt"`} {
+		if !strings.Contains(response.Body.String(), field) {
+			t.Fatalf("provider facts response lost %s: %s", field, response.Body.String())
+		}
+	}
+}
+
 func TestMachineOwnershipHTTPIsAuthenticatedExactAndNotFound(t *testing.T) {
 	store := fabric.NewMemoryOperationStore()
 	releasedAt := time.Now().UTC().Truncate(time.Second)
@@ -897,6 +940,24 @@ func (testProvider) ValidateComputeAllocation(allocation fabric.ComputeAllocatio
 func (testProvider) ValidateWorkspaceImageReference(value string) bool {
 	const prefix = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:"
 	return strings.HasPrefix(value, prefix) && len(value) == len(prefix)+64
+}
+
+func (testProvider) ReadComputeProviderFacts(_ context.Context, allocation fabric.ComputeAllocation) (fabric.ProviderResourceFacts, error) {
+	return fabric.ProviderResourceFacts{
+		PackageOrSpec: allocation.PackageID, ProviderID: allocation.ProviderResourceID, Zone: allocation.Zone, Status: allocation.Status, ExpiresAt: allocation.Deadline,
+	}, nil
+}
+
+func (testProvider) ReadStorageProviderFacts(_ context.Context, volume fabric.StorageVolume) (fabric.ProviderResourceFacts, error) {
+	return fabric.ProviderResourceFacts{PackageOrSpec: volume.StorageClass, ProviderID: volume.ProviderResourceID, Zone: volume.Zone, Status: volume.Status, ExpiresAt: volume.Deadline}, nil
+}
+
+func (testProvider) ReadStorageAttachmentProviderFacts(_ context.Context, attachment fabric.StorageAttachment, _ fabric.ComputeAllocation, _ fabric.StorageVolume) (fabric.ProviderResourceFacts, error) {
+	return fabric.ProviderResourceFacts{PackageOrSpec: "/data", ProviderID: attachment.ProviderAttachmentID, Status: attachment.Status}, nil
+}
+
+func (testProvider) WorkspaceRuntimeProviderFacts(runtime fabric.WorkspaceRuntime) fabric.ProviderResourceFacts {
+	return fabric.ProviderResourceFacts{ProviderID: runtime.ServiceName, Status: runtime.Status}
 }
 
 func (testProvider) PrepareComputeAllocation(_ context.Context, input fabric.ComputeAllocationInput) (fabric.ComputeAllocationPreparation, error) {
