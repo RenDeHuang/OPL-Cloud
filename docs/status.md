@@ -260,10 +260,13 @@ Review job, and expanded monthly Dependabot coverage. PR `#261` merged as
 `dependency-review`, `validate`, and the three CodeQL language analyses before
 merge. GitHub now requires strict `validate` and `dependency-review` on `main`.
 The `cloud-release` Environment exists with protected branches as its only
-protection rule and has no Secrets or variables. No tag ruleset, immutable
-release enforcement, repository custom coding-agent profile, or coding-agent
-automation exists. These controls and checks do not prove dependency risk is
-zero or that a release has run.
+protection rule and has no Secrets or variables. The release workflow is
+create-only: it rejects an existing Git tag, GitHub Release, or GHCR release tag
+before publication. GitHub currently reports no tag ruleset and the `v0.1.0`
+Release API object has `immutable=false`, so workflow-level no-overwrite and
+digest/product-SHA binding are verified, while platform-enforced release/tag
+immutability remains an explicit gap. These controls and checks do not prove
+dependency risk is zero or Instance production state.
 
 Security currentness now includes the absorbed S1, Gateway, S2, S3, and narrow
 login-CSRF implementation lanes. PR `#271`
