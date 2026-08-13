@@ -166,9 +166,20 @@ func (p *LocalDockerProvider) ReadGatewaySecretByDigest(ctx context.Context, inp
 
 func (p *LocalDockerProvider) RemoveGatewaySecret(ctx context.Context, workspaceID string) error {
 	secretRef := gatewaySecretName(workspaceID)
-	if _, exists, err := p.inspectVolume(ctx, secretRef); err != nil {
+	readback, exists, err := p.inspectVolume(ctx, secretRef)
+	if err != nil {
 		return err
-	} else if exists {
+	}
+	if exists {
+		expected := map[string]string{
+			"opl.fabric.provider": "local-docker",
+			"opl.fabric.kind":     "secret",
+			"opl.workspace.id":    workspaceID,
+			"opl.resource.id":     secretRef,
+		}
+		if !exactDockerLabels(readback.Labels, expected) {
+			return fmt.Errorf("local_docker_secret_destroy_ownership_mismatch")
+		}
 		_, err = p.runner.Run(ctx, nil, "volume", "rm", secretRef)
 		return err
 	}
@@ -351,16 +362,19 @@ func (p *LocalDockerProvider) DestroyWorkspaceRuntime(ctx context.Context, works
 	if err != nil {
 		return WorkspaceRuntime{}, err
 	}
-	result := WorkspaceRuntime{ID: localRuntimeID(workspaceID), WorkspaceID: workspaceID, ServiceName: name, Status: "destroyed", ProviderRequestID: providerRequestID("docker-runtime-destroy", workspaceID)}
+	result := WorkspaceRuntime{ID: localRuntimeID(workspaceID), WorkspaceID: workspaceID, ServiceName: name, ProviderRequestID: providerRequestID("docker-runtime-destroy", workspaceID)}
 	if exists {
 		if current, readErr := p.runtimeFromContainer(container); readErr == nil {
 			result = current
-			result.Status, result.Ready = "destroyed", false
 		}
 		if _, err := p.runner.Run(ctx, nil, "container", "rm", "-f", name); err != nil {
 			return result, err
 		}
 	}
+	if err := p.RemoveGatewaySecret(ctx, workspaceID); err != nil {
+		return result, err
+	}
+	result.Status, result.Ready = "destroyed", false
 	return result, nil
 }
 
