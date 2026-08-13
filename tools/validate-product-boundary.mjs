@@ -30,6 +30,25 @@ for (const instanceLeak of ["medopl.cn", "tencentyun.com", "TENCENT_DEPLOY_"]) {
   if (compose.includes(instanceLeak)) throw new Error(`portable Compose contains instance state: ${instanceLeak}`);
 }
 
+const dockerfile = await readFile(new URL("Dockerfile", root), "utf8");
+const baseImages = dockerfile
+  .split("\n")
+  .map((line) => line.trim())
+  .filter((line) => line.startsWith("FROM"));
+for (const line of baseImages) {
+  if (!/@sha256:[0-9a-f]{64}\b/.test(line)) {
+    throw new Error(`release base image is not digest-pinned: ${line}`);
+  }
+}
+const kubectlAmd64 = dockerfile.match(/amd64\)\s*KUBECTL_SHA256="([0-9a-f]{64})"/);
+const kubectlArm64 = dockerfile.match(/arm64\)\s*KUBECTL_SHA256="([0-9a-f]{64})"/);
+if (!kubectlAmd64 || !kubectlArm64) {
+  throw new Error("release kubectl download is not checksum-bound per architecture");
+}
+if (!/sha256sum\s+-c\s/.test(dockerfile)) {
+  throw new Error("release kubectl download is not checksum-verified");
+}
+
 const contract = JSON.parse(await readFile(new URL("packages/contracts/opl-cloud-distribution-contract.json", root), "utf8"));
 if (contract.productRepository !== "gaofeng21cn/one-person-lab-cloud" ||
     contract.instanceHandoff?.repository !== "gaofeng21cn/opl-instance-medopl") {

@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -1258,76 +1256,6 @@ func (s *PostgresOperationStore) ConvergeRuntimeReadback(ctx context.Context, ex
 		return ErrRuntimeOperationNotCurrent
 	}
 	return nil
-}
-
-func validComputeClaimRecoveryTransition(current, next FabricOperation) bool {
-	if current.Status == "failed" && next.Status == "claim_pending" ||
-		current.Status == "claim_pending" && next.Status == "claim_pending" ||
-		current.Status == "claim_pending" && next.Status == "succeeded" ||
-		current.Status == "claim_pending" && next.Status == "failed" {
-		return true
-	}
-	if current.Status != "succeeded" || next.Status != "succeeded" {
-		return false
-	}
-	currentLedger, currentPresent, currentValid := decodeComputeClaimRecoveryMutation(current)
-	nextLedger, nextPresent, nextValid := decodeComputeClaimRecoveryMutation(next)
-	validNodeTransition := !currentPresent && nextPresent && nextValid && nextLedger.State == "node_reserved" &&
-		(validLegacyNodeReservationTransition(current, next, nextLedger) || validConfirmedNodeDriftReservationTransition(current, next, nextLedger)) ||
-		currentPresent && currentValid && currentLedger.State == "node_reserved" && nextPresent && nextValid &&
-			nextLedger.State == "observed" && nextLedger.TencentMutationCount == 0 && currentLedger.Generation == nextLedger.Generation &&
-			currentLedger.AttemptDigest == nextLedger.AttemptDigest &&
-			reflect.DeepEqual(nextLedger.Evidence.CVM, ComputeClaimMutationEvidence{})
-	if !validNodeTransition {
-		return false
-	}
-	currentWithoutPayload, nextWithoutPayload := current, next
-	currentWithoutPayload.RedactedProviderPayload, nextWithoutPayload.RedactedProviderPayload = nil, nil
-	if !reflect.DeepEqual(currentWithoutPayload, nextWithoutPayload) {
-		return false
-	}
-	currentPayload, nextPayload := maps.Clone(current.RedactedProviderPayload), maps.Clone(next.RedactedProviderPayload)
-	delete(currentPayload, computeClaimRecoveryMutationPayloadKey)
-	delete(nextPayload, computeClaimRecoveryMutationPayloadKey)
-	return reflect.DeepEqual(currentPayload, nextPayload)
-}
-
-func sameComputeClaimRecoveryOperation(current, next FabricOperation) bool {
-	return current.ID == next.ID && current.Action == "create_compute_allocation" && current.Action == next.Action &&
-		current.ResourceKind == next.ResourceKind && current.ResourceID == next.ResourceID && current.AccountID == next.AccountID &&
-		current.WorkspaceID == next.WorkspaceID && current.IdempotencyKey == next.IdempotencyKey && current.RequestHash == next.RequestHash
-}
-
-func validComputeClaimRecoveryBindingTransition(current, next FabricOperation) bool {
-	currentBinding, currentPresent, currentValid := decodeComputeClaimRecoveryBinding(current)
-	nextBinding, nextPresent, nextValid := decodeComputeClaimRecoveryBinding(next)
-	if !nextPresent || !nextValid {
-		return false
-	}
-	if currentPresent {
-		return currentValid && currentBinding == nextBinding
-	}
-	if next.Status == "claim_pending" {
-		return true
-	}
-	if next.Status != "failed" {
-		return false
-	}
-	launchOperationID, ok := strings.CutSuffix(current.IdempotencyKey, ":compute")
-	return ok && nextBinding.LaunchOperationID == launchOperationID && nextBinding.IdempotencyKey == current.IdempotencyKey && nextBinding.RequestHash == current.RequestHash
-}
-
-func validComputeClaimTerminalTransition(current, next FabricOperation) bool {
-	if next.Status != "failed" {
-		return true
-	}
-	if current.Status != "claim_pending" || next.FinishedAt.IsZero() {
-		return false
-	}
-	evidence, present, valid := decodeComputeClaimTerminalEvidence(next)
-	return present && valid && evidence.FabricRecordID == current.ID && evidence.OperationID == current.OperationID && evidence.IdempotencyKey == current.IdempotencyKey &&
-		evidence.RequestHash == current.RequestHash && evidence.ComputeAllocationID == current.ResourceID && evidence.AccountID == current.AccountID && evidence.WorkspaceID == current.WorkspaceID &&
-		next.ErrorCode == evidence.ErrorCode
 }
 
 func operationPayloadJSON(operation FabricOperation) (string, error) {
