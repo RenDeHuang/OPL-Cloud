@@ -24,13 +24,6 @@ func (app *controlPlaneServer) createSupportMapping(input map[string]any) (map[s
 		return nil, errors.New("missing_account_id")
 	}
 	const maxSupportMappingsPerAccount = 1000
-	existing, err := app.tables.ListSupportMappings(context.Background(), accountID)
-	if err != nil {
-		return nil, err
-	}
-	if len(existing) >= maxSupportMappingsPerAccount {
-		return nil, errors.New("support_mapping_limit_reached")
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := "support-" + stableID(accountID, externalTicketID)[:12]
 	message := strings.TrimSpace(stringField(input, "description", ""))
@@ -55,5 +48,5 @@ func (app *controlPlaneServer) createSupportMapping(input map[string]any) (map[s
 	if message != "" {
 		row["messages"] = []any{map[string]any{"author": "requester", "text": message, "createdAt": now}}
 	}
-	return cloneMap(row), app.tables.SaveSupportMapping(context.Background(), row)
+	return cloneMap(row), app.tables.CreateSupportMapping(context.Background(), row, maxSupportMappingsPerAccount)
 }

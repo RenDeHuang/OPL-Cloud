@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -71,6 +72,23 @@ func TestCreateSupportMappingRejectsPerAccountOverflow(t *testing.T) {
 	}
 	if _, err := app.createSupportMapping(map[string]any{"accountId": "acct-support-bound", "externalTicketId": "EXT-OVERFLOW"}); err == nil || err.Error() != "support_mapping_limit_reached" {
 		t.Fatalf("overflow error = %v", err)
+	}
+}
+
+func TestWorkspaceProxyStripsPlatformCredentials(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "http://workspace.medopl.cn/w/ws-alpha/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer platform-session")
+	req.Header.Set("Cookie", "opl_session=platform-session; opl_ws_active=ws-alpha")
+	req.Header.Set("X-OPL-CSRF", "csrf")
+	req.Header.Set("X-OPL-CSRF-Token", "csrf-token")
+	stripWorkspaceProxyCredentials(req)
+	for _, header := range []string{"Authorization", "Cookie", "X-OPL-CSRF", "X-OPL-CSRF-Token"} {
+		if got := req.Header.Get(header); got != "" {
+			t.Fatalf("proxy forwarded %s=%q", header, got)
+		}
 	}
 }
 

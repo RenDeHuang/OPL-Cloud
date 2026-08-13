@@ -280,6 +280,7 @@ type controlPlaneTableStore interface {
 	ListAnnouncementReads(ctx context.Context, userID string) ([]map[string]any, error)
 	MarkAnnouncementRead(ctx context.Context, announcementID, userID, readAt string) (map[string]any, error)
 	ListSupportMappings(ctx context.Context, accountID string) ([]map[string]any, error)
+	CreateSupportMapping(ctx context.Context, row map[string]any, limit int) error
 	SaveSupportMapping(ctx context.Context, row map[string]any) error
 	ListRuntimeOperations(ctx context.Context) ([]map[string]any, error)
 	GetRuntimeOperation(ctx context.Context, id string) (map[string]any, bool, error)
