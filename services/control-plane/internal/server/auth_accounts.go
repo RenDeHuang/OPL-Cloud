@@ -293,6 +293,39 @@ func loginFailureKey(r *http.Request, input map[string]any) string {
 }
 
 func (app *controlPlaneServer) createSession(user map[string]any, bearer string) (map[string]any, string, error) {
+	const maxSessionsPerUser = 8
+	userID := stringValue(user["id"])
+	if existing, err := app.tables.ListSessionsByUser(context.Background(), userID); err != nil {
+		return nil, "", err
+	} else {
+		now := time.Now().UTC()
+		for key, session := range existing {
+			expiresAt, parseErr := time.Parse(time.RFC3339, stringValue(session["expiresAt"]))
+			if parseErr != nil || !expiresAt.After(now) {
+				_ = app.tables.DeleteSession(context.Background(), key)
+				app.sessionCredentials.Delete(key)
+				delete(existing, key)
+			}
+		}
+		for len(existing) >= maxSessionsPerUser {
+			var oldestKey string
+			var oldestExpiry time.Time
+			for key, session := range existing {
+				expiresAt, _ := time.Parse(time.RFC3339, stringValue(session["expiresAt"]))
+				if oldestKey == "" || expiresAt.Before(oldestExpiry) || expiresAt.Equal(oldestExpiry) && key < oldestKey {
+					oldestKey, oldestExpiry = key, expiresAt
+				}
+			}
+			if oldestKey == "" {
+				break
+			}
+			if err := app.tables.DeleteSession(context.Background(), oldestKey); err != nil {
+				return nil, "", err
+			}
+			app.sessionCredentials.Delete(oldestKey)
+			delete(existing, oldestKey)
+		}
+	}
 	sessionID, err := randomToken(32)
 	if err != nil {
 		return nil, "", err
@@ -306,7 +339,7 @@ func (app *controlPlaneServer) createSession(user map[string]any, bearer string)
 	if err := app.sessionCredentials.Put(sessionKey, SessionDelegatedCredential{Bearer: bearer, ExpiresAt: expiresAt}); err != nil {
 		return nil, "", err
 	}
-	if err := app.tables.SaveSession(context.Background(), map[string]any{"id": sessionKey, "userId": stringValue(user["id"]), "csrf": csrf, "expiresAt": expiresAt.Format(time.RFC3339)}); err != nil {
+	if err := app.tables.SaveSession(context.Background(), map[string]any{"id": sessionKey, "userId": userID, "csrf": csrf, "expiresAt": expiresAt.Format(time.RFC3339)}); err != nil {
 		app.sessionCredentials.Delete(sessionKey)
 		return nil, "", err
 	}

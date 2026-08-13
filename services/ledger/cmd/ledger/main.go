@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -32,6 +33,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	capabilityKey, err := ledgerCapabilityKey(os.Getenv, token)
+	if err != nil {
+		log.Fatal(err)
+	}
 	store := ledger.Store(ledger.NewMemoryStore())
 	if databaseURL != "" {
 		db, err := sql.Open("postgres", databaseURL)
@@ -47,11 +52,22 @@ func main() {
 		store = postgresStore
 	}
 
-	handler := ledgerhttp.NewServer(store, token)
+	handler := ledgerhttp.NewServerWithAuth(store, token, capabilityKey)
 	log.Printf("ledger listening on %s", addr)
 	if err := newHTTPServer(addr, handler).ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func ledgerCapabilityKey(getenv func(string) string, transportToken string) (string, error) {
+	key := strings.TrimSpace(getenv("OPL_LEDGER_CAPABILITY_KEY"))
+	if (getenv("NODE_ENV") == "production" || transportToken != "" || key != "") && len(key) < 32 {
+		return "", errors.New("OPL_LEDGER_CAPABILITY_KEY must contain at least 32 characters when Ledger transport is configured")
+	}
+	if key != "" && key == transportToken {
+		return "", errors.New("Ledger capability key must be distinct from its transport token")
+	}
+	return key, nil
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

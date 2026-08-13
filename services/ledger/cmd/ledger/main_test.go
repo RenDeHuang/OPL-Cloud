@@ -111,3 +111,19 @@ func TestInternalServiceTokenRequiredInProduction(t *testing.T) {
 		t.Fatal("production Ledger must reject missing OPL_INTERNAL_SERVICE_TOKEN")
 	}
 }
+
+func TestLedgerCapabilityKeyIsRequiredAndSeparatedInProduction(t *testing.T) {
+	values := map[string]string{"NODE_ENV": "production", "OPL_LEDGER_CAPABILITY_KEY": "ledger-capability-key-with-at-least-32-characters"}
+	key, err := ledgerCapabilityKey(func(name string) string { return values[name] }, "ledger-transport-token")
+	if err != nil || key != values["OPL_LEDGER_CAPABILITY_KEY"] {
+		t.Fatalf("key=%q err=%v", key, err)
+	}
+	delete(values, "OPL_LEDGER_CAPABILITY_KEY")
+	if _, err := ledgerCapabilityKey(func(name string) string { return values[name] }, "ledger-transport-token"); err == nil {
+		t.Fatal("missing capability key accepted")
+	}
+	values["OPL_LEDGER_CAPABILITY_KEY"] = "ledger-transport-token"
+	if _, err := ledgerCapabilityKey(func(name string) string { return values[name] }, "ledger-transport-token"); err == nil {
+		t.Fatal("capability key reused transport token")
+	}
+}

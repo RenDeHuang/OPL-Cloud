@@ -3,6 +3,10 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +16,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"opl-cloud/services/ledger/internal/ledger"
 )
@@ -45,6 +50,46 @@ func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLedgerCapabilityRejectsUnscopedBearerAndAcceptsBoundRequest(t *testing.T) {
+	const key = "ledger-capability-key-for-http-tests-32-chars"
+	store := ledger.NewMemoryStore()
+	server := NewServerWithAuth(store, "internal-secret", key)
+	body := `{"type":"workspace.created","status":"completed","surface":"workspace","accountId":"acct-alpha","workspaceId":"ws-alpha"}`
+	req := testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer internal-secret")
+	req.Header.Set("Idempotency-Key", "ledger-capability-once")
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, req)
+	if unauthorized.Code != http.StatusForbidden {
+		t.Fatalf("missing capability status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
+	}
+
+	capability := testLedgerCapability(t, key, ledgerCapabilityClaims{Version: 1, Caller: "control-plane", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceKind: "receipt", ResourceID: "ledger-capability-once", Action: "record_receipt", OperationID: "ledger-capability-once", ExpiresAt: time.Now().Add(time.Minute).Unix()}, []byte(body))
+	req = testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer internal-secret")
+	req.Header.Set("Idempotency-Key", "ledger-capability-once")
+	req.Header.Set(ledgerCapabilityHeader, capability)
+	accepted := httptest.NewRecorder()
+	server.ServeHTTP(accepted, req)
+	if accepted.Code != http.StatusCreated {
+		t.Fatalf("valid capability status=%d body=%s", accepted.Code, accepted.Body.String())
+	}
+}
+
+func testLedgerCapability(t *testing.T, key string, claims ledgerCapabilityClaims, body []byte) string {
+	t.Helper()
+	digest := sha256.Sum256(body)
+	claims.BodySHA256 = hex.EncodeToString(digest[:])
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	mac := hmac.New(sha256.New, []byte(key))
+	_, _ = mac.Write([]byte(encoded))
+	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 type unavailableReadinessStore struct {

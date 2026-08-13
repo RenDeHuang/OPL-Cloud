@@ -635,3 +635,26 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalDockerHelperImageIsImmutableAndConstrained(t *testing.T) {
+	for _, configured := range []string{"alpine:3.20", "sha256:" + strings.Repeat("a", 64), "ALPINE@sha256:" + strings.Repeat("a", 64)} {
+		provider := newLocalDockerProvider(LocalDockerProviderConfig{HelperImage: configured}, &recordingDockerRunner{})
+		if !strings.Contains(provider.helperImage, "@sha256:") {
+			t.Fatalf("helper image %q was not pinned: %q", configured, provider.helperImage)
+		}
+	}
+	runner := &recordingDockerRunner{}
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{}, runner)
+	if err := provider.writeGatewaySecret(context.Background(), "opl-gateway-ws-test", []byte("key"), localDockerGatewayMetadata{WorkspaceID: "ws-test", WorkspaceAPIKeyID: 1, SecretRef: "opl-gateway-ws-test"}); err != nil && !strings.Contains(err.Error(), "unexpected docker call") {
+		t.Fatal(err)
+	}
+	if len(runner.calls) == 0 {
+		t.Fatal("helper did not invoke docker")
+	}
+	call := strings.Join(runner.calls[0], " ")
+	for _, required := range []string{"--network none", "--cap-drop ALL", "no-new-privileges"} {
+		if !strings.Contains(call, required) {
+			t.Fatalf("docker helper args=%q missing %q", call, required)
+		}
+	}
+}

@@ -9,11 +9,17 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"opl-cloud/services/ledger/internal/ledger"
 )
 
 func NewServer(store ledger.Store, token string) http.Handler {
+	return NewServerWithAuth(store, token, "")
+}
+
+func NewServerWithAuth(store ledger.Store, token, capabilityKey string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -349,7 +355,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusCreated, result)
 	})
-	return authenticate(mux, token)
+	return authorizeLedgerRequests(mux, store, token, capabilityKey)
 }
 
 const maxJSONBodyBytes int64 = 1 << 20
@@ -401,6 +407,82 @@ func authenticate(next http.Handler, token string) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func authorizeLedgerRequests(next http.Handler, store ledger.Store, token, capabilityKey string) http.Handler {
+	return authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if capabilityKey == "" || (r.Method == http.MethodGet && (r.URL.Path == "/healthz" || r.URL.Path == "/readyz")) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxJSONBodyBytes+1))
+		if err != nil || int64(len(body)) > maxJSONBodyBytes {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		scope, ok := ledgerCapabilityScopeForRequest(r, body)
+		if !ok {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if err := enrichLedgerOwnerScope(r, store, &scope); err != nil {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if !verifyLedgerCapability(r.Header.Get(ledgerCapabilityHeader), capabilityKey, scope, body, time.Now().UTC()) {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}), token)
+}
+
+func enrichLedgerOwnerScope(r *http.Request, store ledger.Store, scope *ledgerCapabilityScope) error {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 || parts[0] != "ledger" {
+		return nil
+	}
+	var accountID, workspaceID string
+	switch {
+	case parts[1] == "receipts" && len(parts) >= 3:
+		result, err := store.Receipt(r.Context(), parts[2])
+		if err != nil {
+			return err
+		}
+		accountID, workspaceID = result.AccountID, result.WorkspaceID
+	case parts[1] == "artifacts" && len(parts) == 3:
+		result, err := store.Artifact(r.Context(), parts[2])
+		if err != nil {
+			return err
+		}
+		workspaceID = result.WorkspaceID
+	case parts[1] == "reviews" && len(parts) == 3:
+		result, err := store.Review(r.Context(), parts[2])
+		if err != nil {
+			return err
+		}
+		workspaceID = result.WorkspaceID
+	case parts[1] == "review-policies" && len(parts) == 3:
+		result, err := store.ReviewPolicy(r.Context(), parts[2])
+		if err != nil {
+			return err
+		}
+		workspaceID = result.WorkspaceID
+	}
+	if accountID != "" && scope.AccountID != "" && accountID != scope.AccountID {
+		return errors.New("owner mismatch")
+	}
+	if workspaceID != "" && scope.WorkspaceID != "" && workspaceID != scope.WorkspaceID {
+		return errors.New("owner mismatch")
+	}
+	if accountID != "" {
+		scope.AccountID = accountID
+	}
+	if workspaceID != "" {
+		scope.WorkspaceID = workspaceID
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

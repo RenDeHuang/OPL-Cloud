@@ -57,6 +57,7 @@ type ReconciliationInput struct {
 }
 
 type StorageAttachmentInput struct {
+	AccountID   string `json:"accountId"`
 	WorkspaceID string `json:"workspaceId"`
 	ComputeID   string `json:"computeId"`
 	VolumeID    string `json:"volumeId"`
@@ -312,6 +313,16 @@ func (s *Service) BillingReceipt(ctx context.Context, receiptID string) (clients
 	return s.ledger.Receipt(ctx, receiptID)
 }
 
+func (s *Service) BillingReceiptForAccount(ctx context.Context, accountID, workspaceID, receiptID string) (clients.Receipt, error) {
+	if receiptID == "" || accountID == "" {
+		return clients.Receipt{}, fmt.Errorf("receipt_scope_required")
+	}
+	if client, ok := s.ledger.(clients.LedgerScopedReceiptClient); ok {
+		return client.ReceiptForAccount(ctx, accountID, workspaceID, receiptID)
+	}
+	return s.ledger.Receipt(ctx, receiptID)
+}
+
 func (s *Service) BillingReceipts(ctx context.Context, query clients.ReceiptQuery) (clients.ReceiptPage, error) {
 	client, ok := s.ledger.(clients.LedgerReceiptListClient)
 	if !ok {
@@ -371,7 +382,7 @@ func (s *Service) FabricCatalog(ctx context.Context) (clients.FabricCatalog, err
 }
 
 func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (clients.StorageAttachment, error) {
-	return s.fabric.CreateStorageAttachment(ctx, clients.StorageAttachmentInput{WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID}, idempotencyKey)
+	return s.fabric.CreateStorageAttachment(ctx, clients.StorageAttachmentInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID}, idempotencyKey)
 }
 
 func (s *Service) RecordWorkspaceCreatedReceipt(ctx context.Context, workspace domain.WorkspaceProjection, idempotencyKey string) (domain.WorkspaceProjection, error) {
