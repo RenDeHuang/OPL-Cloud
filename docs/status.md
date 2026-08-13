@@ -31,15 +31,17 @@ Sub2API management origin and credentials are never exposed to the browser.
   Fabric operator-identity/service/provider/provisioner surfaces, including two
   unreferenced provider-port interfaces; the zero-importer
   `services/fabric/internal/tencent` package, unreferenced
-  `tools/runtime-fact-source-eval.sh`, superseded or absorbed brand assets, the
-  unused `tailwindcss` dependency, and Console Alert/Tooltip pass-through
-  wrappers were deleted. The test-only `memory_table_store` no longer ships in
-  the production binary, and the persistent server constructor now requires a
-  `controlPlaneTableStore` instead of a never-taken memory fallback. Sub2API,
-  Fabric, and Ledger client role interfaces (capability gating with tested
-  negative paths) and the module-local ops environment catalogs were re-checked
-  against callers and tests and retained. This is source and CI evidence only;
-  it does not change code-complete, Pilot, or production flags.
+  `tools/runtime-fact-source-eval.sh`, superseded or absorbed brand assets, and
+  Console Alert/Tooltip pass-through wrappers were deleted. The Console imports
+  Tailwind CSS through `apps-sdk.css`, so `tailwindcss` remains an explicit root
+  peer/build dependency required by `@openai/apps-sdk-ui`. The test-only
+  `memory_table_store` no longer ships in the production binary, and the
+  persistent server constructor now requires a `controlPlaneTableStore` instead
+  of a never-taken memory fallback. Sub2API, Fabric, and Ledger client role
+  interfaces (capability gating with tested negative paths) and the module-local
+  ops environment catalogs were re-checked against callers and tests and
+  retained. This is source and CI evidence only; it does not change
+  code-complete, Pilot, or production flags.
 
 - Public and login surfaces present the generic OPL Cloud product in user-task
   language, preserve the administrator-provisioned Pilot boundary, and use the
