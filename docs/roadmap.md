@@ -140,8 +140,6 @@ resume the deletion.
 | `SIMPLIFY-CP-FACADE-01` | `planned` | `P2` | The zero-caller `ReapplyWorkspaceRuntime` forwarding method and the finite zero-caller `server/app_state` forwarding/cache helpers are removed without changing historical `runtime_apply` rows or Fabric resources. The real `Service` facade and capability boundaries remain; no broader caller-zero admission exists | medium | Remove only separately proven-zero forwarding or dead helpers, migrate real callers to owning capabilities, and preserve the real `Service` and capability boundaries without introducing an aggregate replacement facade |
 | `SIMPLIFY-CLI-ARGS-01` | `planned` | `P2` | Repeated handwritten CLI argument parsers | low | Preserve accepted flags and errors using the native parser in each owning tool |
 | `SIMPLIFY-STATIC-ASSETS-01` | `later` | `P3` | Custom static lookup, SPA fallback, and request-time gzip | medium | Select one compression/edge owner and preserve cache, range, content type, and SPA behavior |
-| `SIMPLIFY-OVERDESIGN-CLEANUP-01` | `next` | `P1` | staticcheck U1000 确认的死符号（Control Plane server/app-state/auth/monthly-billing/resource-facts/routes/workspace-* 与 Fabric operator-identity 恢复簇、service、tencent_provider、provisioner、两处 provider_port 死接口）、零引用死包 `services/fabric/internal/tencent`、零引用脚本 `tools/runtime-fact-source-eval.sh`、被 v2 取代或已并入的品牌资产与未使用 `tailwindcss` 依赖；测试专用 `memory_table_store` 仍被生产接线携带并配一个永假 fallback。客户端角色接口（能力门控 + 已测负路径）与两处 ops env 目录（模块本地真值）经 caller/test 复核后保留 | low | 每个删除项具备 U1000 或全仓零引用证据；control-plane/fabric/ledger 三模块 build+test 通过且失败集与 main 基线一致；npm lint/typecheck/test 通过；吸收后 main/tree 回读一致 |
-
 ## Evidence Gaps
 
 Accounting source and required-CI evidence are closed by the real Control Plane
