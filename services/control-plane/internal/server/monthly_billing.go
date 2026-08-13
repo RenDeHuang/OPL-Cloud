@@ -65,15 +65,6 @@ func (app *controlPlaneServer) sub2APIUserID(ctx context.Context, accountID stri
 	return 0, errMonthlyAccountUnmapped
 }
 
-func monthlyResourceInProgress(row map[string]any) bool {
-	switch stringValue(row["status"]) {
-	case "provisioning", "pending", "creating":
-		return stringValue(row["providerRequestId"]) != ""
-	default:
-		return false
-	}
-}
-
 func monthlyResourceType(row map[string]any) string {
 	if resourceType := stringValue(row["resourceType"]); resourceType == "compute" || resourceType == "storage" {
 		return resourceType

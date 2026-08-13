@@ -1036,14 +1036,6 @@ func (client *tencentSDKClient) WorkspaceSKUInventory(request Request, env map[s
 	return response
 }
 
-func capacityFailure(code string, err error) Response {
-	message := code
-	if err != nil {
-		message = err.Error()
-	}
-	return Response{Ok: false, ErrorCode: code, Message: message, Retryable: false}
-}
-
 func completedPreflightStage(stage, status, code string, started time.Time, blockedBy []string, facts map[string]any) PreflightStage {
 	if blockedBy == nil {
 		blockedBy = []string{}
@@ -4719,22 +4711,6 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 	return withBootstrapInventoryFacts(Response{Ok: true, Status: status, NodePools: results, MutationCount: mutationCount}, inventory, requiredCapacity)
 }
 
-func tkeTagSpecifications(tags map[string]string, resourceType string) []*tke2022.TagSpecification {
-	if len(tags) == 0 {
-		return nil
-	}
-	items := []*tke2022.Tag{}
-	for key, value := range tags {
-		if strings.TrimSpace(key) != "" && strings.TrimSpace(value) != "" {
-			items = append(items, &tke2022.Tag{Key: common.StringPtr(key), Value: common.StringPtr(value)})
-		}
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	return []*tke2022.TagSpecification{{ResourceType: common.StringPtr(resourceType), Tags: items}}
-}
-
 var cbsOwnershipTagKeys = [...]string{"opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"}
 
 var cvmOwnershipTagAliases = map[string]string{
@@ -5146,25 +5122,6 @@ func nativeReplicas(pool *tke2022.NodePool) int64 {
 		return 0
 	}
 	return *pool.Native.Replicas
-}
-
-func compactName(value string) string {
-	value = strings.ToLower(value)
-	var builder strings.Builder
-	lastDash := false
-	for _, char := range value {
-		isAlphaNum := (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9')
-		if isAlphaNum {
-			builder.WriteRune(char)
-			lastDash = false
-			continue
-		}
-		if !lastDash && builder.Len() > 0 {
-			builder.WriteByte('-')
-			lastDash = true
-		}
-	}
-	return strings.Trim(strings.TrimSpace(builder.String()), "-")
 }
 
 func stringValue(value *string) string {

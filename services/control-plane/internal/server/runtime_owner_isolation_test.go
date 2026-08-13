@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -251,73 +250,4 @@ func TestWorkspaceRuntimeAndSecretCommandsRequireCanonicalAccess(t *testing.T) {
 			})
 		}
 	}
-}
-
-type rotatingCredentialFabricClient struct {
-	fakeFabricClient
-	current        clients.WorkspaceRuntime
-	runtimes       map[string]clients.WorkspaceRuntime
-	gatewayKeys    []string
-	runtimeKeys    []string
-	runtimeInputs  []clients.WorkspaceRuntimeInput
-	runtimeApplies int
-}
-
-func (f *rotatingCredentialFabricClient) WriteGatewaySecret(_ context.Context, input clients.GatewaySecretWriteInput, key string) (clients.GatewaySecretWriteResult, error) {
-	f.record("fabric.gateway-secret")
-	f.gatewayKeys = append(f.gatewayKeys, key)
-	return clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-" + input.AccountID, Version: "v1", Fingerprint: "sha256:redacted"}, nil
-}
-
-func (f *rotatingCredentialFabricClient) CreateWorkspaceRuntime(_ context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
-	f.record("fabric.runtime")
-	f.runtimeKeys = append(f.runtimeKeys, key)
-	f.runtimeInputs = append(f.runtimeInputs, input)
-	runtime, ok := f.runtimes[key]
-	if !ok {
-		f.runtimeApplies++
-		revision := stableID("runtime-credential", key)[:12]
-		runtime = clients.WorkspaceRuntime{
-			ID: "runtime-alpha", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, Status: "running", Ready: true,
-			ServiceName: "opl-compute-alpha", Access: clients.WorkspaceRuntimeAccess{
-				Username: "opl", Password: "runtime-password-" + revision,
-				CredentialStatus: "configured", CredentialVersion: "v-" + revision, SecretRef: "opl-compute-alpha-env",
-			},
-		}
-		f.runtimes[key] = runtime
-	}
-	f.current = runtime
-	runtime.Access.Password = ""
-	return runtime, nil
-}
-
-func (f *rotatingCredentialFabricClient) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {
-	f.record("fabric.runtime-status")
-	runtime := f.current
-	runtime.WorkspaceID = workspaceID
-	return runtime, nil
-}
-
-type credentialRotationLedger struct {
-	fakeLedgerClient
-	receipts map[string]clients.Receipt
-	inputs   []clients.ReceiptInput
-	keys     []string
-	failNext bool
-}
-
-func (l *credentialRotationLedger) RecordReceipt(_ context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
-	if l.failNext {
-		l.failNext = false
-		return clients.Receipt{}, errors.New("ledger unavailable")
-	}
-	if receipt, ok := l.receipts[key]; ok {
-		receipt.Replayed = true
-		return receipt, nil
-	}
-	receipt := clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-" + stableID(key)[:12]}
-	l.receipts[key] = receipt
-	l.inputs = append(l.inputs, input)
-	l.keys = append(l.keys, key)
-	return receipt, nil
 }

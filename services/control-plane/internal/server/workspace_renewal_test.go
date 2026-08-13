@@ -25,7 +25,7 @@ type workspaceRenewalAPIFixture struct {
 }
 
 func newWorkspaceRenewalAPIFixture(t *testing.T) workspaceRenewalAPIFixture {
-	return newWorkspaceRenewalAPIFixtureWithStore(t, nil)
+	return newWorkspaceRenewalAPIFixtureWithStore(t, newMemoryTableStore())
 }
 
 func newWorkspaceRenewalAPIFixtureWithStore(t *testing.T, store StateStore) workspaceRenewalAPIFixture {
@@ -131,7 +131,7 @@ func TestWorkspaceAutoRenewAllowsDisable(t *testing.T) {
 }
 
 func TestCloudAdminCanManageOwnWorkspaceRenewal(t *testing.T) {
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), nil)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), newMemoryTableStore())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestWorkspaceAutoRenewAuditIsBoundToOriginalCommandAndRequest(t *testing.T)
 		name string
 		new  func(*testing.T) StateStore
 	}{
-		{name: "memory", new: func(*testing.T) StateStore { return nil }},
+		{name: "memory", new: func(*testing.T) StateStore { return newMemoryTableStore() }},
 		{name: "postgres", new: func(t *testing.T) StateStore { return newPostgresWorkspaceRenewalStore(t).(StateStore) }},
 	} {
 		t.Run(storeCase.name, func(t *testing.T) {

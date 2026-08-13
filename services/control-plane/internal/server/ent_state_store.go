@@ -2740,30 +2740,6 @@ func recordFromEnt(entity any, fields []entRecordField) controlPlaneRecord {
 	return row
 }
 
-func saveRecordSet(ctx context.Context, rows controlPlaneRecordSet, create func() any, fields []entRecordField) error {
-	for id, row := range rows {
-		if err := saveRecord(ctx, firstNonEmpty(stringValue(row["id"]), id), row, create(), fields); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func saveEventRows(ctx context.Context, rows []controlPlaneRecord, create func() any, fields []entRecordField, prefix string) error {
-	seen := map[string]bool{}
-	for index, row := range rows {
-		id := firstNonEmpty(stringValue(row["id"]), prefix+"-"+stableID(stringValue(row["accountId"]), stringValue(row["createdAt"]), stringValue(row["type"]), strconv.Itoa(index))[:12])
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		if err := saveRecord(ctx, id, row, create(), fields); err != nil {
-			return fmt.Errorf("save %s projection %s: %w", prefix, id, err)
-		}
-	}
-	return nil
-}
-
 func saveRecord(ctx context.Context, id string, row controlPlaneRecord, builder any, fields []entRecordField) error {
 	callSetter(builder, "SetID", id)
 	if createdAt, ok := parseRecordTime(row); ok {

@@ -941,16 +941,6 @@ func newTestService(ledger clients.LedgerClient, fabric clients.FabricClient) *c
 	return controlplane.NewService(ledger, fabric, &testSub2APIClient{balance: 1_000_000_000_000, charges: map[string]int64{}})
 }
 
-type failingResourceCreateFabricClient struct{ fakeFabricClient }
-
-func (*failingResourceCreateFabricClient) CreateComputeAllocation(context.Context, clients.ComputeAllocationInput, string) (clients.ComputeAllocation, error) {
-	return clients.ComputeAllocation{}, errors.New("compute create failed")
-}
-
-func (*failingResourceCreateFabricClient) CreateStorageVolume(context.Context, clients.StorageVolumeInput, string) (clients.StorageVolume, error) {
-	return clients.StorageVolume{}, errors.New("storage create failed")
-}
-
 func (fakeLedgerClient) RecordReceipt(_ context.Context, input clients.ReceiptInput, _ string) (clients.Receipt, error) {
 	return clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-from-ledger", ContinuationID: "continuation-from-ledger"}, nil
 }
@@ -981,22 +971,6 @@ type fakeBlockingReconciliationLedgerClient struct {
 
 func (fakeBlockingReconciliationLedgerClient) RecordReconciliation(_ context.Context, input clients.ReconciliationInput, _ string) (clients.ReconciliationResult, error) {
 	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "mismatch", Report: input.Report, BlockNewWorkspaces: true, Reason: "provider_bill_reconciliation_failed"}, nil
-}
-
-type flakyWorkspaceReceiptLedger struct {
-	fakeLedgerClient
-	receiptCalls int
-}
-
-func (l *flakyWorkspaceReceiptLedger) RecordReceipt(ctx context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
-	if input.Type != "workspace.created" {
-		return l.fakeLedgerClient.RecordReceipt(ctx, input, key)
-	}
-	l.receiptCalls++
-	if l.receiptCalls == 1 {
-		return clients.Receipt{}, errors.New("ledger unavailable")
-	}
-	return l.fakeLedgerClient.RecordReceipt(ctx, input, key)
 }
 
 type failingFabricClient struct {
@@ -1094,41 +1068,6 @@ func reconcileProviderFact(resourceType, resourceID, status string) clients.Prov
 	}
 }
 
-type countingWorkspaceFabricClient struct {
-	fakeFabricClient
-	mu             sync.Mutex
-	gatewayWrites  int
-	runtimeCreates int
-}
-
-func (f *countingWorkspaceFabricClient) WriteGatewaySecret(ctx context.Context, input clients.GatewaySecretWriteInput, key string) (clients.GatewaySecretWriteResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.gatewayWrites++
-	return f.fakeFabricClient.WriteGatewaySecret(ctx, input, key)
-}
-
-func (f *countingWorkspaceFabricClient) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.runtimeCreates++
-	return f.fakeFabricClient.CreateWorkspaceRuntime(ctx, input, key)
-}
-
-func (f *countingWorkspaceFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
-	return clients.StorageAttachment{
-		ID: "attachment-" + stableID(input.ComputeID, input.VolumeID)[:12], WorkspaceID: input.WorkspaceID,
-		ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "fabric",
-		ProviderAttachmentID: "deployment/runtime:pvc/storage:/data", ProviderRequestID: "attachment-request-from-fabric", MountPath: "/data",
-	}, nil
-}
-
-type provisioningComputeFabricClient struct{ fakeFabricClient }
-
-type pendingComputeFabricClient struct {
-	provisioningComputeFabricClient
-}
-
 func (f *fakeFabricClient) record(call string) {
 	if f != nil && f.calls != nil {
 		*f.calls = append(*f.calls, call)
@@ -1155,21 +1094,6 @@ func (f *fakeFabricClient) MonthlyPreflight(_ context.Context, input clients.Mon
 func (f *fakeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute")
 	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "fabric", ProviderResourceID: "resource-from-fabric", ProviderRequestID: "compute-request-from-fabric", Zone: "provider-zone", Deadline: "2099-01-01T00:00:00Z"}, nil
-}
-
-func (f *provisioningComputeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
-	f.record("fabric.compute")
-	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, PackageID: input.PackageID, Status: "provisioning", Provider: "fabric"}, nil
-}
-
-func (f *provisioningComputeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
-	f.record("fabric.compute-sync")
-	return clients.ComputeAllocation{ID: id, Status: "running", Provider: "fabric", InstanceID: "resource-alpha"}, nil
-}
-
-func (f *pendingComputeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
-	f.record("fabric.compute-sync")
-	return clients.ComputeAllocation{ID: id, Status: "provisioning", Provider: "fabric"}, nil
 }
 
 func (f *fakeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
@@ -1275,15 +1199,6 @@ func (f *fakeFabricClient) Readiness(_ context.Context) (map[string]any, error) 
 	return map[string]any{"provider": "fabric", "ready": true, "cloudImagesReady": true, "workspaceImagesReady": true, "immutableImagesReady": true, "missingEnv": []string{}, "missingTools": []string{}}, nil
 }
 
-func createResource(t *testing.T, server http.Handler, method string, path string, body string) map[string]any {
-	t.Helper()
-	session := operatorSessionForTest(t, server)
-	if !explicitOperatorTestPath(path) {
-		session = tenantAdminSessionForTest(t, server)
-	}
-	return createResourceWithSession(t, server, session, method, path, body)
-}
-
 func explicitOperatorTestPath(path string) bool {
 	return strings.HasPrefix(path, "/api/operator") || strings.HasPrefix(path, "/api/management") || strings.HasPrefix(path, "/api/billing/reconciliation")
 }
@@ -1294,19 +1209,6 @@ func createResourceWithSession(t *testing.T, server http.Handler, loginRec *http
 		loginRec = reservedOperatorSessionForTest(t, server)
 	}
 	rec := requestWithSession(t, server, loginRec, method, path, body)
-	if rec.Code < 200 || rec.Code >= 300 {
-		t.Fatalf("%s %s status = %d: %s", method, path, rec.Code, rec.Body.String())
-	}
-	var payload map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode %s %s: %v", method, path, err)
-	}
-	return payload
-}
-
-func createResourceWithMutationKeyForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, method, path, body, key string) map[string]any {
-	t.Helper()
-	rec := requestWithMutationKeyForTest(t, server, session, method, path, body, key)
 	if rec.Code < 200 || rec.Code >= 300 {
 		t.Fatalf("%s %s status = %d: %s", method, path, rec.Code, rec.Body.String())
 	}

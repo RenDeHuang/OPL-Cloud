@@ -140,7 +140,6 @@ resume the deletion.
 | `SIMPLIFY-CP-FACADE-01` | `planned` | `P2` | The zero-caller `ReapplyWorkspaceRuntime` forwarding method and the finite zero-caller `server/app_state` forwarding/cache helpers are removed without changing historical `runtime_apply` rows or Fabric resources. The real `Service` facade and capability boundaries remain; no broader caller-zero admission exists | medium | Remove only separately proven-zero forwarding or dead helpers, migrate real callers to owning capabilities, and preserve the real `Service` and capability boundaries without introducing an aggregate replacement facade |
 | `SIMPLIFY-CLI-ARGS-01` | `planned` | `P2` | Repeated handwritten CLI argument parsers | low | Preserve accepted flags and errors using the native parser in each owning tool |
 | `SIMPLIFY-STATIC-ASSETS-01` | `later` | `P3` | Custom static lookup, SPA fallback, and request-time gzip | medium | Select one compression/edge owner and preserve cache, range, content type, and SPA behavior |
-
 ## Evidence Gaps
 
 Accounting source and required-CI evidence are closed by the real Control Plane

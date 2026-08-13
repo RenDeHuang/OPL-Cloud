@@ -21,14 +21,6 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
-func NewServer(service *controlplane.Service) http.Handler {
-	handler, err := NewPersistentServer(service, nil)
-	if err != nil {
-		panic(err)
-	}
-	return handler
-}
-
 type controlPlaneHTTPHandler struct {
 	app     *controlPlaneServer
 	next    http.Handler
@@ -462,17 +454,6 @@ func confirmed(input map[string]any, key string) bool {
 	return ok && value
 }
 
-func moneyToCents(input map[string]any) int64 {
-	if cents := numberField(input, "amountCents", -1); cents >= 0 {
-		return int64(cents)
-	}
-	return int64(numberField(input, "amount", 0) * 100)
-}
-
-func mutationKey(r *http.Request, input map[string]any) string {
-	return firstNonEmpty(r.Header.Get("Idempotency-Key"), stringField(input, "idempotencyKey", ""), stringField(input, "sourceEventId", ""), stableID(r.Method, r.URL.Path, time.Now().UTC().String()))
-}
-
 func requiredMutationKey(w http.ResponseWriter, r *http.Request) (string, bool) {
 	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if key == "" {
@@ -577,22 +558,6 @@ func workspaceResponse(row map[string]any) map[string]any {
 	}
 	response["access"] = accessResponse
 	return response
-}
-
-func billingStatusFor(row map[string]any) string {
-	status := stringValue(row["status"])
-	if isTerminalResourceStatus(status) {
-		return "stopped"
-	}
-	if billingStatus := stringValue(row["billingStatus"]); billingStatus != "" {
-		return billingStatus
-	}
-	switch status {
-	case "detached", "failed":
-		return "stopped"
-	default:
-		return "pending"
-	}
 }
 
 func isTerminalResourceStatus(status string) bool {
