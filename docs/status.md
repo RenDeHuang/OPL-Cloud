@@ -308,6 +308,19 @@ test, and immutable publication evidence only. CodeQL triage is
 terminal at the classification layer only, with alert disposition explicitly
 unperformed as recorded above.
 
+The repository security scan for canonical revision `b7217daddf1520d7f442cea5b8dba2c6df636cdf`
+reported eight source findings (five high, three medium). The current remediation
+candidate adds account/workspace/action/operation/body-bound HMAC capabilities to
+Ledger and the remaining Fabric storage mutations, pins the portable PostgreSQL
+runtime and local Docker helper image, constrains the Workspace proxy to an
+admitted DNS service identity and fixed port, and bounds Control Plane sessions,
+support mappings, retention, and proxy input. Focused regression tests and the
+Ledger/Fabric modules pass; the candidate is not yet canonical `main`, deployed,
+or rescanned. GitHub tag/Release/GHCR immutability remains an external-owner gap:
+fresh readback still reports no tag ruleset and `v0.1.0` `immutable=false`.
+The full Control Plane server suite requires a PostgreSQL test database and was
+not claimed from this local environment.
+
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production
 workflow source, but GitHub currently reports no Instance Environment or

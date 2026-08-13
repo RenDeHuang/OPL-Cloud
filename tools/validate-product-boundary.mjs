@@ -29,6 +29,14 @@ for (const required of ["control-plane:", "fabric:", "ledger:", "postgres:", "OP
 for (const instanceLeak of ["medopl.cn", "tencentyun.com", "TENCENT_DEPLOY_"]) {
   if (compose.includes(instanceLeak)) throw new Error(`portable Compose contains instance state: ${instanceLeak}`);
 }
+const commonImage = compose.match(/^  image: (.+)$/m)?.[1] || "";
+for (const service of ["control-plane", "fabric", "ledger", "postgres"]) {
+  const block = compose.match(new RegExp(`^  ${service}:\\n([\\s\\S]*?)(?=^  [a-z][a-z0-9-]*:|^volumes:|^configs:|^networks:)`, "m"))?.[1] || "";
+  const image = block.match(/^    image: (.+)$/m)?.[1] || commonImage;
+  if (!/@sha256:[0-9a-f]{64}$/.test(image) && image !== "${OPL_CLOUD_IMAGE:?Set OPL_CLOUD_IMAGE to an immutable GHCR digest}") {
+    throw new Error(`portable Compose image is not digest-pinned: ${service}`);
+  }
+}
 
 const dockerfile = await readFile(new URL("Dockerfile", root), "utf8");
 const baseImages = dockerfile

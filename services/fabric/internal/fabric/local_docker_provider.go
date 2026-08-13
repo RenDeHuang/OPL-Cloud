@@ -65,7 +65,7 @@ func NewLocalDockerProvider() *LocalDockerProvider {
 	}
 	return newLocalDockerProvider(LocalDockerProviderConfig{
 		DockerBinary:                 firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_DOCKER_BINARY")), "docker"),
-		HelperImage:                  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HELPER_IMAGE")), "alpine:3.20"),
+		HelperImage:                  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HELPER_IMAGE")), "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"),
 		RuntimeHost:                  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HOST")), "127.0.0.1"),
 		TrustedWorkspaceImageSources: trustedSources,
 	}, nil)
@@ -80,8 +80,15 @@ func newLocalDockerProvider(config LocalDockerProviderConfig, runner dockerRunne
 		trustedSources = []string{defaultLocalDockerWorkspaceImageRepository}
 	}
 	trustedRepositories, trustedReferences := localDockerWorkspaceImageTrust(trustedSources)
+	helperImage := firstNonEmpty(strings.TrimSpace(config.HelperImage), "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc")
+	if !strings.Contains(helperImage, "@sha256:") {
+		helperImage = "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+	}
+	if _, _, ok := immutableLocalDockerImage(helperImage); !ok {
+		helperImage = "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+	}
 	return &LocalDockerProvider{
-		runner: runner, helperImage: firstNonEmpty(strings.TrimSpace(config.HelperImage), "alpine:3.20"),
+		runner: runner, helperImage: helperImage,
 		runtimeHost:                       firstNonEmpty(strings.TrimSpace(config.RuntimeHost), "127.0.0.1"),
 		trustedWorkspaceImageRepositories: trustedRepositories, trustedWorkspaceImageReferences: trustedReferences,
 		now: func() time.Time { return time.Now().UTC() },

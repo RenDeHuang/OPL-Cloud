@@ -55,7 +55,7 @@ func (p *LocalDockerProvider) writeGatewaySecret(ctx context.Context, secretRef 
 	if err != nil {
 		return err
 	}
-	_, err = p.runner.Run(ctx, archive, "run", "--rm", "-i", "--mount", "type=volume,source="+secretRef+",target=/run/opl-secrets", p.helperImage, "tar", "-x", "-C", "/run/opl-secrets")
+	_, err = p.runner.Run(ctx, archive, "run", "--rm", "-i", "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--mount", "type=volume,source="+secretRef+",target=/run/opl-secrets", p.helperImage, "tar", "-x", "-C", "/run/opl-secrets")
 	return err
 }
 
@@ -63,7 +63,7 @@ func (p *LocalDockerProvider) readGatewaySecretFile(ctx context.Context, secretR
 	if name != localDockerGatewayKeyFile && name != localDockerGatewayMetaFile {
 		return nil, fmt.Errorf("local_docker_secret_file_invalid")
 	}
-	return p.runner.Run(ctx, nil, "run", "--rm", "--mount", "type=volume,source="+secretRef+",target=/run/opl-secrets,readonly", p.helperImage, "cat", "/run/opl-secrets/"+name)
+	return p.runner.Run(ctx, nil, "run", "--rm", "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--mount", "type=volume,source="+secretRef+",target=/run/opl-secrets,readonly", p.helperImage, "cat", "/run/opl-secrets/"+name)
 }
 
 func (p *LocalDockerProvider) gatewayMetadata(ctx context.Context, secretRef string) (localDockerGatewayMetadata, error) {

@@ -785,6 +785,7 @@ func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.R
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
+		stripWorkspaceProxyCredentials(req)
 		if proxyPath == "" {
 			proxyPath = "/"
 		}
@@ -792,10 +793,20 @@ func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.R
 		req.URL.RawPath = ""
 		req.Host = target.Host
 	}
+	proxy.ModifyResponse = func(response *http.Response) error {
+		response.Header.Del("Set-Cookie")
+		return nil
+	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		writeUpstreamError(w)
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+func stripWorkspaceProxyCredentials(r *http.Request) {
+	for _, header := range []string{"Authorization", "Cookie", "X-OPL-CSRF", "X-OPL-CSRF-Token"} {
+		r.Header.Del(header)
+	}
 }
 
 func (app *controlPlaneServer) succeededWorkspaceLaunchForAccess(ctx context.Context, workspace map[string]any) (workspaceLaunchReconcileOperation, error) {

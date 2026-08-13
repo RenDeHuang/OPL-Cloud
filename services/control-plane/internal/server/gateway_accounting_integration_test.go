@@ -773,10 +773,12 @@ func startGatewayAccountingLedger(t *testing.T) (clients.LedgerClient, clients.L
 	address := listener.Addr().String()
 	_ = listener.Close()
 	token := "gateway-accounting-ledger-token"
+	capabilityKey := "gateway-accounting-ledger-capability-key-32-chars"
 	command := exec.Command(binary)
 	command.Env = gatewayAccountingProcessEnv(os.Environ(), map[string]string{
 		"LEDGER_ADDR": address, "OPL_INTERNAL_SERVICE_TOKEN": token, "DATABASE_URL": databaseURL,
-		"NODE_ENV": "local", "OPL_POSTGRES_TESTS": "1",
+		"OPL_LEDGER_CAPABILITY_KEY": capabilityKey,
+		"NODE_ENV":                  "local", "OPL_POSTGRES_TESTS": "1",
 	})
 	var logs bytes.Buffer
 	command.Stdout, command.Stderr = &logs, &logs
@@ -815,7 +817,7 @@ func startGatewayAccountingLedger(t *testing.T) (clients.LedgerClient, clients.L
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	ledger := clients.NewLedgerHTTPClient(baseURL, token, &http.Client{Timeout: 5 * time.Second})
+	ledger := clients.NewLedgerHTTPClientWithCapability(baseURL, token, capabilityKey, &http.Client{Timeout: 5 * time.Second})
 	list, ok := ledger.(clients.LedgerReceiptListClient)
 	if !ok {
 		t.Fatal("typed Ledger HTTP client does not support receipt readback")

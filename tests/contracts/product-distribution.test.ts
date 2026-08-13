@@ -22,6 +22,7 @@ test("portable distribution is product-owned and instance-neutral", async () => 
     signerWorkflow: ".github/workflows/release-opl-cloud-image.yml"
   });
   assert.equal(contract.portableInstallation.providerSelection, "instance_or_installer_owned");
+	assert.equal(contract.portableInstallation.runtimeImagePolicy, "all_compose_images_require_registry_tag_and_sha256_digest");
   assert.equal(contract.portableInstallation.composeScope, "cloud_control_services_only");
   assert.deepEqual(contract.portableInstallation.composeDoesNotProve, [
     "workspace_create",
@@ -35,6 +36,13 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   const compose = YAML.parse(composeSource);
   const localWorkspaceCompose = YAML.parse(localWorkspaceComposeSource);
   assert.deepEqual(Object.keys(compose.services).sort(), ["control-plane", "fabric", "ledger", "postgres"]);
+  for (const [name, service] of Object.entries(compose.services) as Array<[string, { image?: string }]>) {
+    const image = service.image || compose["x-opl-cloud-common"]?.image || "";
+    assert.ok(
+      /@sha256:[0-9a-f]{64}$/.test(image) || image === "${OPL_CLOUD_IMAGE:?Set OPL_CLOUD_IMAGE to an immutable GHCR digest}",
+      `${name} image must require a digest-pinned value`
+    );
+  }
   assert.equal(compose.services.ledger.command[0], "/usr/local/bin/opl-ledger");
   assert.equal(compose.services.fabric.command[0], "/usr/local/bin/opl-fabric");
   const databaseURLs = ["control-plane", "fabric", "ledger"].map(

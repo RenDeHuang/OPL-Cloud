@@ -768,7 +768,7 @@ func (app *controlPlaneServer) operatorWorkspaceDTO(ctx context.Context, service
 	result["resources"] = resources
 	if liveLedger {
 		receiptID := stringValue(workspace["purchaseReceiptId"])
-		if receipt, err := service.BillingReceipt(ctx, receiptID); err == nil && receipt.ReceiptID == receiptID && receipt.AccountID == accountID && receipt.WorkspaceID == workspaceID {
+		if receipt, err := service.BillingReceiptForAccount(ctx, accountID, workspaceID, receiptID); err == nil && receipt.ReceiptID == receiptID && receipt.AccountID == accountID && receipt.WorkspaceID == workspaceID {
 			if projected, ok := projectCustomerBillingReceipt(receipt); ok {
 				result["receipt"] = sourceEnvelope("ledger", "available", projected, authoritativeSourceTimestamp(receipt.CreatedAt))
 			}
@@ -848,7 +848,7 @@ func operatorResourceReceipt(ctx context.Context, service *controlplane.Service,
 	if receiptID == "" {
 		return clients.Receipt{}, false
 	}
-	receipt, err := service.BillingReceipt(ctx, receiptID)
+	receipt, err := service.BillingReceiptForAccount(ctx, accountID, workspaceID, receiptID)
 	if err != nil || receipt.ReceiptID != receiptID || receipt.AccountID != accountID || receipt.WorkspaceID != workspaceID {
 		return clients.Receipt{}, false
 	}

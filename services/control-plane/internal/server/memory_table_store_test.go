@@ -963,6 +963,26 @@ func (s *memoryTableStore) ListSupportMappings(_ context.Context, accountID stri
 	return filteredRecords(s.support, accountID)
 }
 
+func (s *memoryTableStore) CreateSupportMapping(_ context.Context, row map[string]any, limit int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := stringValue(row["id"])
+	accountID := stringValue(row["accountId"])
+	if _, exists := s.support[id]; !exists {
+		count := 0
+		for _, existing := range s.support {
+			if stringValue(existing["accountId"]) == accountID {
+				count++
+			}
+		}
+		if count >= limit {
+			return errors.New("support_mapping_limit_reached")
+		}
+	}
+	s.support[id] = cloneMap(row)
+	return nil
+}
+
 func (s *memoryTableStore) SaveSupportMapping(_ context.Context, row map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

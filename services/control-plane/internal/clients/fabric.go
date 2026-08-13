@@ -180,6 +180,7 @@ type StorageVolume struct {
 }
 
 type StorageAttachmentInput struct {
+	AccountID   string `json:"accountId"`
 	WorkspaceID string `json:"workspaceId"`
 	ComputeID   string `json:"computeId"`
 	VolumeID    string `json:"volumeId"`
@@ -424,7 +425,9 @@ func (c *fabricHTTPClient) DestroyStorageVolume(ctx context.Context, accountID, 
 
 func (c *fabricHTTPClient) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (StorageAttachment, error) {
 	var result StorageAttachment
-	err := c.post(ctx, "/fabric/storage-attachments", input, idempotencyKey, &result)
+	err := c.postMutation(ctx, "/fabric/storage-attachments", input, idempotencyKey, fabricMutationScope{
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceKind: "storage_attachment", ResourceID: input.ComputeID + ":" + input.VolumeID, Action: "create_storage_attachment",
+	}, &result)
 	return result, err
 }
 

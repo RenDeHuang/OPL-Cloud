@@ -27,6 +27,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	ledgerCapabilityKey, err := ledgerCapabilityKeyFromEnv(os.Getenv, outboundTokens.Ledger)
+	if err != nil {
+		log.Fatal(err)
+	}
 	sub2APIConfig, err := sub2APIConfigFromEnv(os.Getenv)
 	if err != nil {
 		log.Fatal(err)
@@ -40,7 +44,7 @@ func main() {
 	}
 
 	service := controlplane.NewService(
-		clients.NewLedgerHTTPClient(ledgerURL, outboundTokens.Ledger, nil),
+		clients.NewLedgerHTTPClientWithCapability(ledgerURL, outboundTokens.Ledger, ledgerCapabilityKey, nil),
 		clients.NewFabricHTTPClientWithCapability(fabricURL, outboundTokens.Fabric, fabricCapabilityKey, nil),
 		sub2API,
 	)
@@ -56,6 +60,17 @@ func main() {
 	if err := newHTTPServer(addr, handler).ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func ledgerCapabilityKeyFromEnv(getenv func(string) string, ledgerTransportToken string) (string, error) {
+	key := strings.TrimSpace(getenv("OPL_LEDGER_CAPABILITY_KEY"))
+	if (getenv("NODE_ENV") == "production" || ledgerTransportToken != "" || key != "") && len(key) < 32 {
+		return "", errors.New("OPL_LEDGER_CAPABILITY_KEY must contain at least 32 characters when Ledger transport is configured")
+	}
+	if key != "" && key == ledgerTransportToken {
+		return "", errors.New("Ledger capability key must be distinct from its transport token")
+	}
+	return key, nil
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

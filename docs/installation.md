@@ -51,10 +51,14 @@ curl --fail http://127.0.0.1:8787/api/healthz
 
 The Compose installation starts PostgreSQL, Ledger, Fabric, and Control Plane
 as separate processes. Only the Control Plane is published to the host. Data is
-stored in the `opl-cloud-postgres` named volume. First initialization creates a
-separate database and role for each Go service. The environment template also
-requires independent Control Plane, Fabric, and Ledger service tokens; Control
-Plane uses only the target service's token for each outbound call.
+stored in the `opl-cloud-postgres` named volume. The bundled PostgreSQL runtime
+is pinned by its multi-architecture image digest; upgrades require an explicit
+release change to that digest rather than a mutable tag update. First
+initialization creates a separate database and role for each Go service. The environment template also
+requires independent Control Plane, Fabric, and Ledger service tokens plus
+independent Fabric and Ledger capability keys; Control Plane uses only the
+target service's transport token and short-lived scoped capability for each
+outbound call.
 
 The services intentionally require either verified PostgreSQL TLS or an
 explicit RFC1918 address when TLS is disabled. The Compose template therefore

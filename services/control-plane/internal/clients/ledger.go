@@ -3,11 +3,17 @@ package clients
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
+	"time"
 )
 
 type LedgerClient interface {
@@ -17,6 +23,16 @@ type LedgerClient interface {
 	Review(ctx context.Context, reviewID string) (Review, error)
 	Continuation(ctx context.Context, receiptID string) (map[string]any, error)
 	RecordReconciliation(ctx context.Context, input ReconciliationInput, idempotencyKey string) (ReconciliationResult, error)
+}
+
+type LedgerScopedReceiptClient interface {
+	ReceiptForAccount(ctx context.Context, accountID, workspaceID, receiptID string) (Receipt, error)
+}
+
+type LedgerScopedEvidenceClient interface {
+	ArtifactForWorkspace(ctx context.Context, accountID, workspaceID, artifactID string) (Artifact, error)
+	ReviewForWorkspace(ctx context.Context, accountID, workspaceID, reviewID string) (Review, error)
+	ContinuationForWorkspace(ctx context.Context, accountID, workspaceID, receiptID string) (map[string]any, error)
 }
 
 type LedgerReceiptListClient interface {
@@ -118,9 +134,10 @@ type Artifact struct {
 }
 
 type ledgerHTTPClient struct {
-	baseURL string
-	token   string
-	client  *http.Client
+	baseURL       string
+	token         string
+	capabilityKey string
+	client        *http.Client
 }
 
 func NewLedgerHTTPClient(baseURL, token string, client *http.Client) LedgerClient {
@@ -128,6 +145,13 @@ func NewLedgerHTTPClient(baseURL, token string, client *http.Client) LedgerClien
 		client = http.DefaultClient
 	}
 	return &ledgerHTTPClient{baseURL: baseURL, token: token, client: client}
+}
+
+func NewLedgerHTTPClientWithCapability(baseURL, token, capabilityKey string, client *http.Client) LedgerClient {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	return &ledgerHTTPClient{baseURL: baseURL, token: token, capabilityKey: capabilityKey, client: client}
 }
 
 func (c *ledgerHTTPClient) RecordReceipt(ctx context.Context, input ReceiptInput, idempotencyKey string) (Receipt, error) {
@@ -163,13 +187,31 @@ func (c *ledgerHTTPClient) ListReceipts(ctx context.Context, query ReceiptQuery)
 		values.Set("cursor", query.Cursor)
 	}
 	var result ReceiptPage
-	err := c.get(ctx, "/ledger/receipts?"+values.Encode(), &result)
+	err := c.getScoped(ctx, "/ledger/receipts?"+values.Encode(), query.AccountID, "", &result)
 	return result, err
 }
 
 func (c *ledgerHTTPClient) Receipt(ctx context.Context, receiptID string) (Receipt, error) {
+	if c.capabilityKey != "" {
+		return Receipt{}, fmt.Errorf("ledger receipt scope required")
+	}
+	return c.ReceiptForAccount(ctx, "", "", receiptID)
+}
+
+func (c *ledgerHTTPClient) ReceiptForAccount(ctx context.Context, accountID, workspaceID, receiptID string) (Receipt, error) {
 	var result Receipt
-	err := c.get(ctx, "/ledger/receipts/"+url.PathEscape(receiptID), &result)
+	values := url.Values{}
+	if accountID != "" {
+		values.Set("accountId", accountID)
+	}
+	if workspaceID != "" {
+		values.Set("workspaceId", workspaceID)
+	}
+	path := "/ledger/receipts/" + url.PathEscape(receiptID)
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	err := c.getScoped(ctx, path, accountID, workspaceID, &result)
 	return result, err
 }
 
@@ -187,21 +229,56 @@ func (c *ledgerHTTPClient) Ready(ctx context.Context) error {
 }
 
 func (c *ledgerHTTPClient) Artifact(ctx context.Context, artifactID string) (Artifact, error) {
+	if c.capabilityKey != "" {
+		return Artifact{}, fmt.Errorf("ledger artifact scope required")
+	}
+	return c.ArtifactForWorkspace(ctx, "", "", artifactID)
+}
+
+func (c *ledgerHTTPClient) ArtifactForWorkspace(ctx context.Context, accountID, workspaceID, artifactID string) (Artifact, error) {
 	var result Artifact
-	err := c.get(ctx, "/ledger/artifacts/"+url.PathEscape(artifactID), &result)
+	err := c.getScoped(ctx, "/ledger/artifacts/"+url.PathEscape(artifactID)+ownerQuery(accountID, workspaceID), accountID, workspaceID, &result)
 	return result, err
 }
 
 func (c *ledgerHTTPClient) Review(ctx context.Context, reviewID string) (Review, error) {
+	if c.capabilityKey != "" {
+		return Review{}, fmt.Errorf("ledger review scope required")
+	}
+	return c.ReviewForWorkspace(ctx, "", "", reviewID)
+}
+
+func (c *ledgerHTTPClient) ReviewForWorkspace(ctx context.Context, accountID, workspaceID, reviewID string) (Review, error) {
 	var result Review
-	err := c.get(ctx, "/ledger/reviews/"+url.PathEscape(reviewID), &result)
+	err := c.getScoped(ctx, "/ledger/reviews/"+url.PathEscape(reviewID)+ownerQuery(accountID, workspaceID), accountID, workspaceID, &result)
 	return result, err
 }
 
 func (c *ledgerHTTPClient) Continuation(ctx context.Context, receiptID string) (map[string]any, error) {
+	if c.capabilityKey != "" {
+		return nil, fmt.Errorf("ledger continuation scope required")
+	}
+	return c.ContinuationForWorkspace(ctx, "", "", receiptID)
+}
+
+func (c *ledgerHTTPClient) ContinuationForWorkspace(ctx context.Context, accountID, workspaceID, receiptID string) (map[string]any, error) {
 	result := map[string]any{}
-	err := c.get(ctx, "/ledger/receipts/"+url.PathEscape(receiptID)+"/continuation", &result)
+	err := c.getScoped(ctx, "/ledger/receipts/"+url.PathEscape(receiptID)+"/continuation"+ownerQuery(accountID, workspaceID), accountID, workspaceID, &result)
 	return result, err
+}
+
+func ownerQuery(accountID, workspaceID string) string {
+	values := url.Values{}
+	if accountID != "" {
+		values.Set("accountId", accountID)
+	}
+	if workspaceID != "" {
+		values.Set("workspaceId", workspaceID)
+	}
+	if encoded := values.Encode(); encoded != "" {
+		return "?" + encoded
+	}
+	return ""
 }
 
 func (c *ledgerHTTPClient) RecordReconciliation(ctx context.Context, input ReconciliationInput, idempotencyKey string) (ReconciliationResult, error) {
@@ -241,17 +318,172 @@ func (c *ledgerHTTPClient) post(ctx context.Context, path string, input any, ide
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", idempotencyKey)
+	capability, err := signLedgerCapability(c.capabilityKey, ledgerClientScopeFromInput(path, input, idempotencyKey), body, time.Now())
+	if err != nil {
+		return err
+	}
+	if capability != "" {
+		req.Header.Set("X-OPL-Ledger-Capability", capability)
+	}
 	c.authorize(req)
 	return c.do(req, output)
 }
 
 func (c *ledgerHTTPClient) get(ctx context.Context, path string, output any) error {
+	return c.getScoped(ctx, path, "", "", output)
+}
+
+func (c *ledgerHTTPClient) getScoped(ctx context.Context, path, accountID, workspaceID string, output any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return err
 	}
 	c.authorize(req)
+	capability, err := signLedgerCapability(c.capabilityKey, ledgerClientScope{AccountID: accountID, WorkspaceID: workspaceID, ResourceKind: ledgerResourceKind(path), ResourceID: ledgerResourceID(path), Action: ledgerAction(path), OperationID: ledgerRequestOperation(req)}, nil, time.Now())
+	if err != nil {
+		return err
+	}
+	if capability != "" {
+		req.Header.Set("X-OPL-Ledger-Capability", capability)
+	}
 	return c.do(req, output)
+}
+
+type ledgerClientScope struct{ AccountID, WorkspaceID, ResourceKind, ResourceID, Action, OperationID string }
+
+func signLedgerCapability(key string, scope ledgerClientScope, body []byte, now time.Time) (string, error) {
+	if key == "" {
+		return "", nil
+	}
+	digest := sha256.Sum256(body)
+	claims := map[string]any{"version": 1, "caller": "control-plane", "accountId": scope.AccountID, "workspaceId": scope.WorkspaceID, "resourceKind": scope.ResourceKind, "resourceId": scope.ResourceID, "action": scope.Action, "operationId": scope.OperationID, "expiresAt": now.Add(time.Minute).Unix(), "bodySha256": hex.EncodeToString(digest[:])}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	mac := hmac.New(sha256.New, []byte(key))
+	_, _ = mac.Write([]byte(encoded))
+	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
+func ledgerClientScopeFromInput(path string, input any, operationID string) ledgerClientScope {
+	scope := ledgerClientScope{ResourceKind: ledgerResourceKind(path), ResourceID: operationID, Action: ledgerAction(path), OperationID: operationID}
+	if value, ok := input.(ReceiptInput); ok {
+		scope.AccountID, scope.WorkspaceID = value.AccountID, value.WorkspaceID
+	}
+	if value, ok := input.(ReconciliationInput); ok {
+		scope.ResourceID = stringField(value.Report, "id")
+		scope.AccountID = stringField(value.Report, "accountId")
+		scope.WorkspaceID = stringField(value.Report, "workspaceId")
+	}
+	if raw, err := json.Marshal(input); err == nil {
+		var fields map[string]any
+		if json.Unmarshal(raw, &fields) == nil {
+			if account, ok := fields["accountId"].(string); ok {
+				scope.AccountID = account
+			}
+			if workspace, ok := fields["workspaceId"].(string); ok {
+				scope.WorkspaceID = workspace
+			}
+		}
+	}
+	return scope
+}
+
+func stringField(input map[string]any, key string) string {
+	value, _ := input[key].(string)
+	return value
+}
+func ledgerResourceKind(path string) string {
+	if strings.Contains(path, "reconciliation") {
+		return "reconciliation"
+	}
+	if strings.Contains(path, "review-policies") {
+		if strings.Contains(path, "?") {
+			return "review_policy_collection"
+		}
+		return "review_policy"
+	}
+	if strings.Contains(path, "review-gates/evaluate") {
+		return "review_gate"
+	}
+	if strings.Contains(path, "artifacts") {
+		if strings.Contains(path, "?") {
+			return "artifact_collection"
+		}
+		return "artifact"
+	}
+	if strings.Contains(path, "reviews") {
+		if strings.Contains(path, "?") {
+			return "review_collection"
+		}
+		return "review"
+	}
+	if strings.Contains(path, "receipts?") {
+		return "receipt_collection"
+	}
+	return "receipt"
+}
+func ledgerResourceID(path string) string {
+	parsed, err := url.Parse(path)
+	if err == nil && strings.HasSuffix(strings.Trim(parsed.Path, "/"), "receipts") {
+		return parsed.Query().Get("accountId")
+	}
+	if err == nil && strings.HasSuffix(strings.Trim(parsed.Path, "/"), "review-policies") {
+		return parsed.Query().Get("workspaceId")
+	}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) >= 3 {
+		return parts[2]
+	}
+	return ""
+}
+func ledgerAction(path string) string {
+	if strings.Contains(path, "/continuation") {
+		return "read_continuation"
+	}
+	if strings.Contains(path, "reconciliation") {
+		return "record_reconciliation"
+	}
+	if strings.Contains(path, "review-gates/evaluate") {
+		return "evaluate_review_gate"
+	}
+	if strings.Contains(path, "review-policies") {
+		if strings.Contains(path, "?") {
+			return "list_review_policies"
+		}
+		if strings.Count(path, "/") > 2 {
+			return "read_review_policy"
+		}
+		return "create_review_policy"
+	}
+	if strings.Contains(path, "artifacts") {
+		if strings.Count(path, "/") > 2 {
+			return "read_artifact"
+		}
+		return "record_artifact"
+	}
+	if strings.Contains(path, "reviews") {
+		if strings.Contains(path, "?") {
+			return "list_reviews"
+		}
+		if strings.Count(path, "/") > 2 {
+			return "read_review"
+		}
+		return "record_review"
+	}
+	if strings.Contains(path, "receipts?") {
+		return "list_receipts"
+	}
+	if strings.Contains(path, "receipts/") {
+		return "read_receipt"
+	}
+	return "record_receipt"
+}
+func ledgerRequestOperation(req *http.Request) string {
+	hash := sha256.Sum256([]byte(req.Method + " " + req.URL.RequestURI()))
+	return "request:" + hex.EncodeToString(hash[:])
 }
 
 func (c *ledgerHTTPClient) authorize(req *http.Request) {

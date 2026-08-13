@@ -45,6 +45,7 @@
   "portableInstallation": {
     "entrypoint": "compose.yaml",
     "documentation": "docs/installation.md",
+    "runtimeImagePolicy": "all_compose_images_require_registry_tag_and_sha256_digest",
     "processes": [
       "control-plane",
       "fabric",

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -312,13 +313,22 @@ func failedRuntimeOperations(operations []map[string]any) []any {
 }
 
 func workspaceServiceTarget(serviceName string) (*url.URL, error) {
-	if strings.HasPrefix(serviceName, "http://") || strings.HasPrefix(serviceName, "https://") {
-		return url.Parse(serviceName)
+	value := strings.TrimSpace(serviceName)
+	if value == "" || len(value) > 63 || strings.ContainsAny(value, ".:/@\\\r\n") || !strings.HasPrefix(value, "opl-") {
+		return nil, errors.New("invalid_workspace_runtime_destination")
 	}
-	if strings.Contains(serviceName, ":") {
-		return url.Parse("http://" + serviceName)
+	if net.ParseIP(value) != nil || strings.EqualFold(value, "localhost") || strings.HasSuffix(strings.ToLower(value), ".localhost") {
+		return nil, errors.New("invalid_workspace_runtime_destination")
 	}
-	return url.Parse("http://" + serviceName + ":3000")
+	if value[len(value)-1] == '-' {
+		return nil, errors.New("invalid_workspace_runtime_destination")
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+			return nil, errors.New("invalid_workspace_runtime_destination")
+		}
+	}
+	return url.Parse("http://" + value + ":3000")
 }
 
 func workspaceIDFromPath(path string) string {
