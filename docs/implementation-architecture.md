@@ -367,14 +367,22 @@ Compose, an environment template, and a release manifest. Product release uses
 no instance production environment and performs no instance deployment. The
 current workflow builds and validates the OCI layout in a read-only job, passes
 one digest-checked Actions artifact to a separate publish job, and grants
-`contents:write` and `packages:write` only to that publish job under the protected
-`cloud-release` Environment. The image is identified by a version tag, exact
-product SHA, and immutable digest; mutable `latest` and `stable` tags are
-forbidden. Release `v0.1.0` was published by hosted run `31685878938` from
+`contents:write`, `packages:write`, `artifact-metadata:write`,
+`attestations:write`, and `id-token:write` only to that publish job under the
+protected `cloud-release` Environment. The
+build emits a SHA-256 manifest for every GitHub Release asset; the publish job
+checks those bytes, signs a GitHub OIDC-backed attestation that binds the
+workflow commit/ref, selected product SHA, release tag, image digest, and
+checksum-manifest digest, publishes the assets, downloads them again, and
+verifies both checksum and predicate identity. The image is identified by a version tag, exact product
+SHA, and immutable digest; mutable `latest` and `stable` tags are forbidden.
+Release `v0.1.0` predates the checksum/attestation addition and was published by
+hosted run `31685878938` from
 product SHA `98eac98b46fc872ed8c803363de7ed47edacd2ba`, with GHCR index digest
 `sha256:68771bb25c8131c931d03f32210ce0fcb119ace90c05dcfe65555f4800db0fe7` for
-`linux/amd64` and `linux/arm64`. The four GitHub Release assets and manifest
-readback match that immutable release. This is portable publication evidence;
+`linux/amd64` and `linux/arm64`. Its four GitHub Release assets and manifest
+readback match that immutable release, but do not retroactively carry the newer
+asset attestation. This is portable publication evidence;
 clean-host installation, complete external Sub2API-backed Workspace flow, and
 Instance deployment/readback remain separate qualification gates.
 

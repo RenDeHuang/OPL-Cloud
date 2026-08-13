@@ -295,8 +295,13 @@ operation-store, or provider mutation, and Ledger applies the same bound before
 store calls on its JSON POST routes. Oversized requests return `413` while
 existing authentication and idempotency ordering remains covered. The admitted
 S4 source slices are now closed: release build inputs are pinned and verified by
-the canonical release-boundary validator, and the remaining release
-hash/attestation semantics are already bound in the workflow and contracts.
+the canonical release-boundary validator. Current workflow source also emits a
+per-asset `SHA256SUMS`, creates GitHub OIDC-backed provenance attestations for
+the exact Release asset bytes, binds both the signing workflow revision and the
+separately selected product SHA, and verifies downloaded assets against the
+checksum manifest, signer workflow, release identity, and image digest. The published `v0.1.0` predates this
+addition, so the new provenance control is source/test evidence until a later
+release executes it; it is not retroactive evidence for `v0.1.0`.
 Clean-host installation and production deployment remain `PRODUCT-RELEASE-01`
 / Instance evidence gaps, not another S4 source lane. These controls are source,
 test, and immutable publication evidence only. CodeQL triage is

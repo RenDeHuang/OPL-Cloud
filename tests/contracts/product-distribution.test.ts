@@ -8,6 +8,19 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   assert.equal(contract.productRepository, "gaofeng21cn/one-person-lab-cloud");
   assert.equal(contract.instanceHandoff.repository, "gaofeng21cn/opl-instance-medopl");
   assert.deepEqual(contract.distribution.platforms, ["linux/amd64", "linux/arm64"]);
+  assert.deepEqual(contract.distribution.releaseAssets, [
+    "compose.yaml",
+    "compose.local-workspace.yaml",
+    "opl-cloud.env.example",
+    "opl-cloud-release.json",
+    "SHA256SUMS"
+  ]);
+  assert.deepEqual(contract.distribution.assetIntegrity, {
+    checksumManifest: "SHA256SUMS",
+    provenance: "github_oidc_custom_attestation",
+    predicateType: "https://github.com/gaofeng21cn/one-person-lab-cloud/attestations/opl-cloud-release/v1",
+    signerWorkflow: ".github/workflows/release-opl-cloud-image.yml"
+  });
   assert.equal(contract.portableInstallation.providerSelection, "instance_or_installer_owned");
   assert.equal(contract.portableInstallation.composeScope, "cloud_control_services_only");
   assert.deepEqual(contract.portableInstallation.composeDoesNotProve, [
@@ -130,7 +143,14 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
   assert.equal(build.environment, undefined);
   assert.equal(build.env.GH_TOKEN, undefined);
   assert.equal(build.steps.find((step: { name?: string }) => step.name === "Checkout exact product source")?.with?.["persist-credentials"], false);
-  assert.deepEqual(publish.permissions, { actions: "read", contents: "write", packages: "write" });
+  assert.deepEqual(publish.permissions, {
+    actions: "read",
+    "artifact-metadata": "write",
+    attestations: "write",
+    contents: "write",
+    "id-token": "write",
+    packages: "write"
+  });
   assert.equal(publish.environment, "cloud-release");
   assert.equal(publish.needs, "build");
 
@@ -164,7 +184,12 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
   assert.doesNotMatch(buildCommands, /docker login|--push|gh release create|docker buildx imagetools create/);
   assert.match(imageBuildRun, /--output "type=oci,dest=artifacts\/image,tar=false,name=\$IMAGE_REPOSITORY:\$RELEASE_TAG"/);
   assert.match(imageBuildRun, /oci-layout:\/\/\$PWD\/artifacts\/image:\$RELEASE_TAG/);
-  assert.equal(publishSteps.some((step) => step.uses), false);
+  const attestationAction = "actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d";
+  const attestation = publishSteps.find((step) => step.name === "Attest release assets");
+  assert.equal(attestation?.uses, attestationAction);
+  assert.match(String(attestation?.with?.["subject-path"]), /artifacts\/release\/SHA256SUMS/);
+  assert.equal(attestation?.with?.["predicate-type"], "https://github.com/gaofeng21cn/one-person-lab-cloud/attestations/opl-cloud-release/v1");
+  assert.equal(attestation?.with?.["predicate-path"], "artifacts/release-provenance.json");
   assert.doesNotMatch(publishCommands, /npm (ci|run)|docker buildx build|\.\/tools\//);
   assert.match(stepRun(publishSteps, "Log in to GHCR"), /docker buildx version/);
   assert.match(artifactVerificationRun, /actions\/artifacts\/\$ARTIFACT_ID/);
@@ -172,6 +197,11 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
   assert.match(artifactVerificationRun, /\^\[0-9a-f\]\{64\}\$/);
   assert.match(artifactVerificationRun, /\.digest == \$digest or \.digest == \("sha256:" \+ \$digest\)/);
   assert.match(artifactVerificationRun, /sha256sum --check --status/);
+  assert.match(manifestRun, /sha256sum --check --strict SHA256SUMS/);
+  assert.match(artifactVerificationRun, /sha256sum --check --strict SHA256SUMS/);
+  assert.match(artifactVerificationRun, /workflowSha/);
+  assert.match(artifactVerificationRun, /productSha/);
+  assert.match(artifactVerificationRun, /checksumManifestSha256/);
   assert.match(imagePublishRun, /docker buildx imagetools create/);
   assert.match(imagePublishRun, /oci-layout:\/\/\$PWD\/artifacts\/image:\$RELEASE_TAG/);
   assert.match(imagePublishRun, /published_digest.*expected_digest/);
@@ -193,7 +223,8 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
   assert.deepEqual(JSON.parse(manifestAssets[1]), [
     "compose.yaml",
     "compose.local-workspace.yaml",
-    "opl-cloud.env.example"
+    "opl-cloud.env.example",
+    "SHA256SUMS"
   ]);
 
   assert.match(publishRun, /^gh release create "\$RELEASE_TAG"/m);
@@ -205,15 +236,27 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
     "artifacts/release/compose.yaml",
     "artifacts/release/compose.local-workspace.yaml",
     "artifacts/release/opl-cloud.env.example",
-    "artifacts/release/opl-cloud-release.json"
+    "artifacts/release/opl-cloud-release.json",
+    "artifacts/release/SHA256SUMS"
   ]);
 
   const readbackAssets = readbackRun.match(/== (\(\[[^\]]+\] \| sort\))/);
   assert.ok(readbackAssets);
   assert.deepEqual(JSON.parse(readbackAssets[1].slice(1, -8)), [
+    "SHA256SUMS",
     "compose.local-workspace.yaml",
     "compose.yaml",
     "opl-cloud-release.json",
     "opl-cloud.env.example"
   ]);
+  assert.match(readbackRun, /gh release download/);
+  assert.match(readbackRun, /sha256sum --check --strict SHA256SUMS/);
+  assert.match(readbackRun, /gh attestation verify/);
+  assert.match(readbackRun, /--signer-workflow/);
+  assert.match(readbackRun, /--source-digest/);
+  assert.match(readbackRun, /--source-ref/);
+  assert.match(readbackRun, /--predicate-type/);
+  assert.match(readbackRun, /verificationResult\.statement\.predicate\.productSha/);
+  assert.match(readbackRun, /verificationResult\.statement\.predicate\.checksumManifestSha256/);
+  assert.match(readbackRun, /--deny-self-hosted-runners/);
 });
