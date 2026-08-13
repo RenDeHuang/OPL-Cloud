@@ -89,9 +89,10 @@ requires GitHub or an Instance owner to supply the missing authority or evidence
 Scanner output remains evidence until triaged, implemented, and revalidated.
 S1, S2, S3, and `SECURITY-CODEQL-TRIAGE-01` are no longer active plan rows: their
 absorbed source or terminal classification evidence belongs in
-[status.md](./status.md). The 15 CodeQL alerts remain open because no dismissal,
-fix, or settings mutation was authorized or performed; that open disposition is
-not an admitted fix lane.
+[status.md](./status.md). Fifteen CodeQL alerts remain open (`#1`-`#11` and
+`#14`-`#17`); GitHub reports `#12` and `#13` as fixed. No dismissal or settings
+mutation was authorized or performed, and the open disposition is not an
+admitted fix lane.
 
 | ID | Class | Priority | Current gap | Owner boundary | Acceptance |
 | --- | --- | --- | --- | --- | --- |
