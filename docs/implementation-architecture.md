@@ -370,10 +370,13 @@ one digest-checked Actions artifact to a separate publish job, and grants
 `contents:write` and `packages:write` only to that publish job under the protected
 `cloud-release` Environment. The image is identified by a version tag, exact
 product SHA, and immutable digest; mutable `latest` and `stable` tags are
-forbidden. No hosted execution of this split workflow, immutable current-revision
-Cloud Release/GHCR readback, or clean-host installation has yet qualified this
-source path. Historical hosted runs predate the current build/publish split and
-are not qualification evidence for it.
+forbidden. Release `v0.1.0` was published by hosted run `31685878938` from
+product SHA `98eac98b46fc872ed8c803363de7ed47edacd2ba`, with GHCR index digest
+`sha256:68771bb25c8131c931d03f32210ce0fcb119ace90c05dcfe65555f4800db0fe7` for
+`linux/amd64` and `linux/arm64`. The four GitHub Release assets and manifest
+readback match that immutable release. This is portable publication evidence;
+clean-host installation, complete external Sub2API-backed Workspace flow, and
+Instance deployment/readback remain separate qualification gates.
 
 Repository security automation currently uses GitHub-managed CodeQL default
 setup rather than a second workflow-owned CodeQL configuration. Pull requests

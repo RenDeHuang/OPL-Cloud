@@ -202,24 +202,26 @@ rollback, or production path. Existing Tencent/TKE evidence applies only to
 medopl instance provenance.
 
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
-workflow, and focused distribution checks exist at source level. The workflow
-validates `compose.local-workspace.yaml`, records it in the release manifest,
-and preserves the exact four-asset GitHub Release contract. This revision builds
-and validates the multi-architecture OCI layout in a read-only job with no
-checkout credentials or `GH_TOKEN`, then hands one digest-checked Actions
-artifact to a separate publish job. Only publish receives `contents:write` and
-`packages:write`, runs no checkout, dependency install, repository code, or
-third-party Action, and is bound to the protected `cloud-release` Environment.
-Local multi-architecture OCI build and publish-command dry-run evidence does not
-prove the current split workflow on GitHub-hosted runners. Historical hosted
-release-workflow runs predate the split and did not leave a current OPL Cloud tag
-or GitHub Release; no qualifying current-revision GHCR digest/package readback or
-clean-host installation evidence exists. Source, historical workflow, and local
-evidence therefore do not prove a published immutable product or an installed
-application.
+workflow, and focused distribution checks exist at source level. The split
+workflow was executed successfully as run `31685878938` and published immutable
+Cloud release `v0.1.0` from exact product SHA
+`98eac98b46fc872ed8c803363de7ed47edacd2ba`. Its GHCR multi-architecture index
+digest is `sha256:68771bb25c8131c931d03f32210ce0fcb119ace90c05dcfe65555f4800db0fe7`,
+with `linux/amd64` and `linux/arm64` manifests. The GitHub Release contains
+`compose.yaml`, `compose.local-workspace.yaml`, `opl-cloud.env.example`, and
+`opl-cloud-release.json`; manifest readback matched the release tag, product
+SHA, image digest, platforms, and asset set. This proves publication of the
+portable product artifact, not installation or production readiness.
 
-GitHub security controls were read back on 2026-08-13 for
-`main@98eac98b46fc872ed8c803363de7ed47edacd2ba`. Private vulnerability
+The current canonical `main` is now
+`41744aaaab0a28ae6defeb6dc82b240ef871b0a9`, newer than the immutable `v0.1.0`
+product SHA and not silently substituted into that release. A clean Docker-host
+installation using only the release assets, a complete live Console
+create/readback/open/delete path, real external Sub2API authentication/balance/
+usage evidence, and Instance adoption/deployment remain open evidence gaps.
+
+GitHub security controls were read back on 2026-08-13 for current
+`main@41744aaaab0a28ae6defeb6dc82b240ef871b0a9`. Private vulnerability
 reporting, Dependabot alerts and security updates, secret scanning and push
 protection, Actions full-SHA pin enforcement, and branch-protection admin
   enforcement are enabled. CodeQL default setup is configured weekly for Actions,
@@ -237,8 +239,8 @@ CodeQL success did not produce a zero-alert baseline.
 `SECURITY-CODEQL-TRIAGE-01` completed with `mutation_zero`: the original 15
 high-security-severity alerts were individually classified `not_actionable`, with
 zero `confirmed` and zero `needs_review`; GitHub now reports alerts `#12` and
-`#13` as `fixed`. Fresh GitHub API readback for
-`main@98eac98b46fc872ed8c803363de7ed47edacd2ba` reports 15 alerts still open:
+`#13` as `fixed`. Fresh GitHub API readback for the current `main` reports 15
+alerts still open:
 `#1`-`#11` and `#14`-`#17`. Alerts `#16` and `#17` are the newly surfaced
 `go/weak-sensitive-data-hashing` comments from merged PR `#287`; static review
 matches the already triaged Go fingerprint family: SHA-256 is used for opaque
@@ -292,9 +294,9 @@ existing authentication and idempotency ordering remains covered. The admitted
 S4 source slices are now closed: release build inputs are pinned and verified by
 the canonical release-boundary validator, and the remaining release
 hash/attestation semantics are already bound in the workflow and contracts.
-Hosted publish, GHCR digest readback, clean-host installation, and production
-deployment remain `PRODUCT-RELEASE-01` / Instance evidence gaps, not another S4
-source lane. These controls are source/test evidence only. CodeQL triage is
+Clean-host installation and production deployment remain `PRODUCT-RELEASE-01`
+/ Instance evidence gaps, not another S4 source lane. These controls are source,
+test, and immutable publication evidence only. CodeQL triage is
 terminal at the classification layer only, with alert disposition explicitly
 unperformed as recorded above.
 
