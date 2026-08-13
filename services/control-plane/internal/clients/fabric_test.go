@@ -124,6 +124,66 @@ func TestFabricHTTPClientGatewaySecretErrorDoesNotLeakKey(t *testing.T) {
 	}
 }
 
+func TestFabricHTTPClientBoundsResponseBody(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"padding":"` + strings.Repeat("sensitive", 1<<17) + `"}`))
+	}))
+	defer upstream.Close()
+
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client()).(*fabricHTTPClient)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, upstream.URL+"/fabric/readiness", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	err = client.doJSON(req, &result)
+	if err == nil || !strings.Contains(err.Error(), "fabric response too large") || strings.Contains(err.Error(), "sensitive") {
+		t.Fatalf("bounded response error = %v", err)
+	}
+}
+
+func TestFabricHTTPClientRejectsMultipleJSONValues(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client()).(*fabricHTTPClient)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, upstream.URL+"/fabric/readiness", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	err = client.doJSON(req, &result)
+	if err == nil || !strings.Contains(err.Error(), "multiple JSON values") {
+		t.Fatalf("multiple JSON value error = %v", err)
+	}
+}
+
+func TestFabricHTTPClientBoundsErrorBody(t *testing.T) {
+	const secret = "never-leak-after-truncation"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"` + strings.Repeat("x", 96<<10) + `","detail":"` + secret + `"}`))
+	}))
+	defer upstream.Close()
+
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client()).(*fabricHTTPClient)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, upstream.URL+"/fabric/readiness", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	err = client.doJSON(req, &result)
+	var httpErr *FabricHTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("error = %v, want FabricHTTPError", err)
+	}
+	if httpErr.StatusCode != http.StatusInternalServerError || len(httpErr.Body) > maxFabricErrorBodyBytes || strings.Contains(httpErr.Body, secret) {
+		t.Fatalf("bounded error body = %#v", httpErr)
+	}
+}
+
 func TestFabricHTTPClientPreflightsMonthlyResourceWithoutIdempotencyKey(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/fabric/monthly-preflight" || r.Header.Get("Authorization") != "Bearer internal-secret" {

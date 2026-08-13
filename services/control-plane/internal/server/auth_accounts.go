@@ -221,7 +221,7 @@ func (app *controlPlaneServer) loginRateLimited(r *http.Request, input map[strin
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	failure := app.loginRateLimits[key]
-	if !failure.FirstAt.IsZero() && time.Since(failure.FirstAt) > 15*time.Minute {
+	if !failure.FirstAt.IsZero() && time.Since(failure.FirstAt) > loginFailureWindow {
 		delete(app.loginRateLimits, key)
 		return false
 	}
@@ -233,11 +233,38 @@ func (app *controlPlaneServer) recordLoginFailure(r *http.Request, input map[str
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	failure := app.loginRateLimits[key]
-	if failure.FirstAt.IsZero() || time.Since(failure.FirstAt) > 15*time.Minute {
+	if failure.FirstAt.IsZero() || time.Since(failure.FirstAt) > loginFailureWindow {
+		if _, exists := app.loginRateLimits[key]; !exists && len(app.loginRateLimits) >= maxLoginRateEntries {
+			app.expireLoginFailuresLocked(time.Now().UTC())
+		}
+		if _, exists := app.loginRateLimits[key]; !exists && len(app.loginRateLimits) >= maxLoginRateEntries {
+			app.evictOldestLoginFailureLocked()
+		}
 		failure = loginFailure{FirstAt: time.Now().UTC()}
 	}
 	failure.Count++
 	app.loginRateLimits[key] = failure
+}
+
+func (app *controlPlaneServer) expireLoginFailuresLocked(now time.Time) {
+	for key, failure := range app.loginRateLimits {
+		if !failure.FirstAt.IsZero() && now.Sub(failure.FirstAt) > loginFailureWindow {
+			delete(app.loginRateLimits, key)
+		}
+	}
+}
+
+func (app *controlPlaneServer) evictOldestLoginFailureLocked() {
+	var oldestKey string
+	var oldest time.Time
+	for key, failure := range app.loginRateLimits {
+		if oldestKey == "" || failure.FirstAt.Before(oldest) {
+			oldestKey, oldest = key, failure.FirstAt
+		}
+	}
+	if oldestKey != "" {
+		delete(app.loginRateLimits, oldestKey)
+	}
 }
 
 func (app *controlPlaneServer) clearLoginFailures(r *http.Request, input map[string]any) {
@@ -247,12 +274,21 @@ func (app *controlPlaneServer) clearLoginFailures(r *http.Request, input map[str
 	delete(app.loginRateLimits, key)
 }
 
+const (
+	loginFailureWindow        = 15 * time.Minute
+	maxLoginRateEntries       = 10000
+	maxLoginRateKeyEmailBytes = 256
+)
+
 func loginFailureKey(r *http.Request, input map[string]any) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil || host == "" {
 		host = r.RemoteAddr
 	}
 	email := strings.ToLower(strings.TrimSpace(stringField(input, "email", "")))
+	if len(email) > maxLoginRateKeyEmailBytes {
+		email = email[:maxLoginRateKeyEmailBytes]
+	}
 	return email + "|" + host
 }
 

@@ -13,8 +13,10 @@ func registerSupportRoutes(mux *http.ServeMux, app *controlPlaneServer) {
 		if !ok {
 			return
 		}
-		user, ok := app.sessionUserContext(r)
-		withSessionUserContext(input, user, ok)
+		user, _ := app.sessionUserContext(r)
+		if userID := stringValue(user["id"]); userID != "" {
+			input["userId"] = userID
+		}
 		input["accountId"] = accountID
 		body, err := app.createSupportMapping(input)
 		if err != nil {
