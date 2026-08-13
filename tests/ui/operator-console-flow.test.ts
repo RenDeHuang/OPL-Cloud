@@ -84,7 +84,7 @@ test("operator mutations retain stable intents until authoritative success", asy
   const controller = await source("apps/console-ui/src/app/use-console-controller.ts");
   for (const intent of [
     "operatorProvisionIntent", "operatorDisableIntents", "walletAdjustmentIntent",
-    "walletAdjustmentRecoveryIntent", "recoveryPlanExecuteIntent",
+    "walletAdjustmentRecoveryIntent",
     "announcementCreateIntent", "announcementPublishIntents", "announcementWithdrawIntents"
   ]) assert.match(controller, new RegExp(intent), `${intent} must preserve one mutation identity`);
   assert.match(controller, /mutationError/);
@@ -97,7 +97,7 @@ test("account provisioning completes only after authoritative identity readback"
     source("apps/console-ui/src/app/use-console-controller.ts")
   ]);
   const modal = pages.slice(pages.indexOf("function ProvisionAccountModal"), pages.indexOf("function AccountDetailModal"));
-  const mutation = controller.slice(controller.indexOf("const provisionAccount"), controller.indexOf("const diagnoseRecoveryPlan"));
+  const mutation = controller.slice(controller.indexOf("const provisionAccount"), controller.indexOf("const createAnnouncement"));
   assert.match(mutation, /findOperatorAccountByEmail/);
   assert.match(mutation, /authoritativeAccount/);
   assert.match(modal, /operation\.account/);
@@ -167,39 +167,4 @@ test("operator accounts and workspaces expose server-side pagination", async () 
   assert.match(controller, /operatorWorkspacePage/);
   assert.match(pages, /label="账号分页"/);
   assert.match(pages, /label="Workspace 分页"/);
-});
-
-test("operator billing recovery diagnoses, reads the persisted plan, and continues only that plan", async () => {
-  const [pages, controller, api, dtos] = await Promise.all([
-    source("apps/console-ui/src/pages/AdminPages.tsx"),
-    source("apps/console-ui/src/app/use-console-controller.ts"),
-    source("apps/console-ui/src/api/console-read-api.ts"),
-    source("apps/console-ui/src/api/dtos.ts")
-  ]);
-  assert.equal(typeof readApi.diagnoseWorkspaceLaunchRecoveryPlan, "function");
-  assert.equal(typeof readApi.getWorkspaceLaunchRecoveryPlan, "function");
-  assert.equal(typeof readApi.validateWorkspaceLaunchRecoveryPlan, "function");
-  assert.equal(typeof readApi.executeWorkspaceLaunchRecoveryPlan, "function");
-  assert.doesNotMatch(api, /\brecoverWorkspaceLaunch\b/);
-  assert.doesNotMatch(dtos, /\bWorkspaceLaunchRecoveryRequest\b/);
-  assert.match(api, /\/api\/operator\/workspace-launches\/.*\/recovery-plan\/diagnose/);
-  assert.match(api, /\/api\/operator\/workspace-launches\/.*\/recovery-plan/);
-  assert.match(api, /\/recovery-plan\/validate/);
-  assert.match(api, /\/recovery-plan\/execute/);
-  for (const field of ["planId", "planDigest", "decision", "confirmation", "stages", "mismatches", "executionId", "runId", "receiptId"]) assert.match(dtos, new RegExp(`${field}[?]?:`));
-  assert.match(controller, /diagnoseWorkspaceLaunchRecoveryPlan/);
-  assert.match(controller, /getWorkspaceLaunchRecoveryPlan/);
-  assert.match(controller, /validateWorkspaceLaunchRecoveryPlan/);
-  assert.match(controller, /executeWorkspaceLaunchRecoveryPlan/);
-  assert.match(pages, /诊断恢复计划/);
-  assert.match(pages, /Recovery Plan/);
-  assert.match(pages, /mismatch/);
-  assert.match(pages, /最终 URL/);
-  assert.match(pages, /Receipt/);
-  const recoveryController = controller.slice(controller.indexOf("const diagnoseRecoveryPlan"), controller.indexOf("const createAnnouncement"));
-  const recoveryDtos = dtos.slice(dtos.indexOf("export interface WorkspaceLaunchRecoveryPlanStageDTO"), dtos.indexOf("export interface BillingReviewResolutionRequest"));
-  for (const forbidden of ["evidenceRef", "computeAllocationId", "storageId", "nodePoolId", "cloudImageDigest", "targetJson"]) {
-    assert.doesNotMatch(recoveryController, new RegExp(forbidden));
-    assert.doesNotMatch(recoveryDtos, new RegExp(forbidden));
-  }
 });

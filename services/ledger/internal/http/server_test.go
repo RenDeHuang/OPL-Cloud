@@ -142,6 +142,133 @@ func TestJSONBodiesRejectTrailingDataWithoutPersistence(t *testing.T) {
 	}
 }
 
+type callCountingStore struct {
+	ledger.Store
+	calls int
+}
+
+func (s *callCountingStore) RecordReceipt(context.Context, ledger.ReceiptInput) (ledger.Receipt, error) {
+	s.calls++
+	return ledger.Receipt{}, nil
+}
+
+func (s *callCountingStore) UpdateReceiptRetention(context.Context, ledger.ReceiptRetentionInput) (ledger.ReceiptRetentionResult, error) {
+	s.calls++
+	return ledger.ReceiptRetentionResult{}, nil
+}
+
+func (s *callCountingStore) PrivacyDeleteReceipt(context.Context, ledger.ReceiptPrivacyDeleteInput) (ledger.ReceiptRetentionResult, error) {
+	s.calls++
+	return ledger.ReceiptRetentionResult{}, nil
+}
+
+func (s *callCountingStore) RecordArtifact(context.Context, ledger.ArtifactInput) (ledger.Artifact, error) {
+	s.calls++
+	return ledger.Artifact{}, nil
+}
+
+func (s *callCountingStore) RecordReview(context.Context, ledger.ReviewInput) (ledger.Review, error) {
+	s.calls++
+	return ledger.Review{}, nil
+}
+
+func (s *callCountingStore) CreateReviewPolicy(context.Context, ledger.ReviewPolicyInput) (ledger.ReviewPolicy, error) {
+	s.calls++
+	return ledger.ReviewPolicy{}, nil
+}
+
+func (s *callCountingStore) EvaluateReviewGate(context.Context, ledger.ReviewGateInput) (ledger.ReviewGateResult, error) {
+	s.calls++
+	return ledger.ReviewGateResult{}, nil
+}
+
+func (s *callCountingStore) RecordReconciliation(context.Context, ledger.ReconciliationInput) (ledger.ReconciliationResult, error) {
+	s.calls++
+	return ledger.ReconciliationResult{}, nil
+}
+
+func TestJSONBodyLimitAppliesBeforeLedgerStoreCall(t *testing.T) {
+	oversizedBody := `{"padding":"` + strings.Repeat("x", int(maxJSONBodyBytes)) + `"}`
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "receipt", path: "/ledger/receipts"},
+		{name: "retention", path: "/ledger/receipts/receipt-alpha/retention"},
+		{name: "privacy delete", path: "/ledger/receipts/receipt-alpha/privacy-delete"},
+		{name: "artifact", path: "/ledger/artifacts"},
+		{name: "review", path: "/ledger/reviews"},
+		{name: "review policy", path: "/ledger/review-policies"},
+		{name: "review gate", path: "/ledger/review-gates/evaluate"},
+		{name: "reconciliation", path: "/ledger/reconciliation"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &callCountingStore{Store: ledger.NewMemoryStore()}
+			server := NewServer(store, "internal-secret")
+			req := testRequest(http.MethodPost, test.path, strings.NewReader(oversizedBody))
+			req.Header.Set("Idempotency-Key", "oversized-body")
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), `"error":"request body too large"`) {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if store.calls != 0 {
+				t.Fatalf("store calls=%d, want 0", store.calls)
+			}
+		})
+	}
+}
+
+func TestJSONBodyLimitPrecedesMalformedJSONError(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(`}`+strings.Repeat("x", int(maxJSONBodyBytes))))
+	req.Header.Set("Idempotency-Key", "oversized-malformed-body")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), `"error":"request body too large"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestJSONBodyLimitPreservesMissingIdempotencyKeyError(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(strings.Repeat("x", int(maxJSONBodyBytes)+1)))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"error":"missing Idempotency-Key"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestJSONBodyLimitPreservesAuthenticationOrder(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := httptest.NewRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(strings.Repeat("x", int(maxJSONBodyBytes)+1)))
+	req.Header.Set("Idempotency-Key", "unauthorized-oversized-body")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), `"error":"unauthorized"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReceiptAcceptsExactJSONBodyLimit(t *testing.T) {
+	prefix := `{"type":"execution.receipt.v1","status":"completed","surface":"workspace","workspaceId":"workspace-alpha","outputRefs":{"padding":"`
+	suffix := `"}}`
+	payload := prefix + strings.Repeat("x", int(maxJSONBodyBytes)-len(prefix)-len(suffix)) + suffix
+	if len(payload) != int(maxJSONBodyBytes) {
+		t.Fatalf("payload size=%d, want %d", len(payload), maxJSONBodyBytes)
+	}
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(payload))
+	req.Header.Set("Idempotency-Key", "exact-limit-body")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestLegacyResourceBillingReceiptWritesRejectedHTTP(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
 	body := `{"type":"%s","status":"completed","surface":"control_plane","accountId":"acct-alpha","workspaceId":"workspace-alpha","cost":{"pricingVersion":"pricing-v1","monthlyPriceCnyCents":35000,"chargeUsdMicros":50000000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:test:billing-alpha:charge:v1","periodStart":"2026-07-01T00:00:00Z","paidThrough":"2026-08-01T00:00:00Z","resourceType":"compute","resourceId":"compute-alpha"}}`

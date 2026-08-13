@@ -775,8 +775,8 @@ export interface OperatorReconciliationItemDTO {
   billingOperationId: string;
   phase: string;
   errorCode: string;
-  progressionOwner: "control_plane_recovery_plan" | "operator_recovery" | "none";
-  allowedActions: Array<"diagnose_workspace_recovery_plan" | "resolve_billing_review">;
+  progressionOwner: "control_plane_launch_reconciler" | "operator_recovery" | "none";
+  allowedActions: Array<"resume_workspace_launch" | "resolve_billing_review">;
   operationRef?: string;
   receiptRef?: string;
 }
@@ -786,50 +786,6 @@ export interface OperatorReconciliationPageDTO {
   total: number;
   page: number;
   pageSize: number;
-}
-
-export interface WorkspaceLaunchRecoveryPlanStageDTO {
-  stage: string;
-  status: string;
-  phase?: string;
-  errorCode?: string;
-}
-
-export interface WorkspaceLaunchRecoveryPlanMismatchDTO {
-  field: string;
-  expected?: string;
-  actual?: string;
-  expectedDigest?: string;
-  actualDigest?: string;
-}
-
-export interface WorkspaceLaunchRecoveryPlanDTO {
-  planId: string;
-  planDigest: string;
-  status: string;
-  operationId?: string;
-  stages: WorkspaceLaunchRecoveryPlanStageDTO[];
-  mismatches: WorkspaceLaunchRecoveryPlanMismatchDTO[];
-  mutationCounts?: { sub2api: number; tencent: number; kubernetes: number };
-  executionId?: string;
-  runId?: string;
-  url?: string;
-  receiptId?: string;
-  errorCode?: string;
-}
-
-export interface DiagnoseWorkspaceLaunchRecoveryPlanRequest {
-  accountId: string;
-}
-
-export interface ValidateWorkspaceLaunchRecoveryPlanRequest {
-  planId: string;
-  planDigest: string;
-}
-
-export interface ExecuteWorkspaceLaunchRecoveryPlanRequest extends ValidateWorkspaceLaunchRecoveryPlanRequest {
-  decision: "continue";
-  confirmation: string;
 }
 
 export interface BillingReviewResolutionRequest {

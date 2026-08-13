@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -33,7 +34,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		var input ledger.ReceiptInput
 		if err := decodeJSONBody(r, &input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			writeJSONBodyError(w, err)
 			return
 		}
 		input.IdempotencyKey = idempotencyKey
@@ -105,7 +106,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		var input ledger.ReceiptRetentionInput
 		if err := decodeJSONBody(r, &input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			writeJSONBodyError(w, err)
 			return
 		}
 		input.ReceiptID = r.PathValue("id")
@@ -132,7 +133,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		var input ledger.ReceiptPrivacyDeleteInput
 		if err := decodeJSONBody(r, &input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			writeJSONBodyError(w, err)
 			return
 		}
 		input.ReceiptID = r.PathValue("id")
@@ -175,7 +176,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		var input ledger.ArtifactInput
 		if err := decodeJSONBody(r, &input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			writeJSONBodyError(w, err)
 			return
 		}
 		input.IdempotencyKey = idempotencyKey
@@ -214,7 +215,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		var input ledger.ReviewInput
 		if err := decodeJSONBody(r, &input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			writeJSONBodyError(w, err)
 			return
 		}
 		input.IdempotencyKey = idempotencyKey
@@ -253,7 +254,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		var input ledger.ReviewPolicyInput
 		if err := decodeJSONBody(r, &input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			writeJSONBodyError(w, err)
 			return
 		}
 		input.IdempotencyKey = idempotencyKey
@@ -303,7 +304,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 	mux.HandleFunc("POST /ledger/review-gates/evaluate", func(w http.ResponseWriter, r *http.Request) {
 		var input ledger.ReviewGateInput
 		if err := decodeJSONBody(r, &input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			writeJSONBodyError(w, err)
 			return
 		}
 		result, err := store.EvaluateReviewGate(r.Context(), input)
@@ -329,7 +330,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		var input ledger.ReconciliationInput
 		if err := decodeJSONBody(r, &input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			writeJSONBodyError(w, err)
 			return
 		}
 		input.IdempotencyKey = idempotencyKey
@@ -351,8 +352,19 @@ func NewServer(store ledger.Store, token string) http.Handler {
 	return authenticate(mux, token)
 }
 
+const maxJSONBodyBytes int64 = 1 << 20
+
+var errJSONBodyTooLarge = errors.New("JSON body too large")
+
 func decodeJSONBody(r *http.Request, target any) error {
-	decoder := json.NewDecoder(r.Body)
+	payload, err := io.ReadAll(io.LimitReader(r.Body, maxJSONBodyBytes+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(payload)) > maxJSONBodyBytes {
+		return errJSONBodyTooLarge
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.UseNumber()
 	if err := decoder.Decode(target); err != nil {
 		return err
@@ -365,6 +377,14 @@ func decodeJSONBody(r *http.Request, target any) error {
 		return errors.New("JSON body contains multiple values")
 	}
 	return nil
+}
+
+func writeJSONBodyError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errJSONBodyTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	writeError(w, http.StatusBadRequest, "invalid JSON body")
 }
 
 func authenticate(next http.Handler, token string) http.Handler {

@@ -340,9 +340,6 @@ test("all Console mutations reject late shared-state writes after session replac
     "refreshWalletOperation",
     "recoverWalletOperation",
     "provisionAccount",
-    "diagnoseRecoveryPlan",
-    "validateRecoveryPlan",
-    "executeRecoveryPlan",
     "createAnnouncement",
     "publishAnnouncement",
     "withdrawAnnouncement"

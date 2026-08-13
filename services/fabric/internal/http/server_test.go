@@ -912,6 +912,102 @@ func TestCreateComputeAllocationHTTPRequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestFabricHTTPRejectsOversizedJSONBeforeMutation(t *testing.T) {
+	provider := &capabilityBoundaryProvider{}
+	store := fabric.NewMemoryOperationStore()
+	server := newTestServer(fabric.NewServiceWithOperationStore(provider, store), "internal-secret")
+	prefix := `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","padding":"`
+	suffix := `"}`
+	body := []byte(prefix + strings.Repeat("x", int(maxJSONBodyBytes)-len(prefix)-len(suffix)+1) + suffix)
+	if int64(len(body)) != maxJSONBodyBytes+1 {
+		t.Fatalf("body length=%d, want %d", len(body), maxJSONBodyBytes+1)
+	}
+	req := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewReader(body))
+	req.Header.Set("Idempotency-Key", "oversized-compute")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "request_body_too_large") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 0 || provider.computeCreates.Load() != 0 {
+		t.Fatalf("oversized request changed Fabric state: operations=%#v providerCalls=%d err=%v", operations, provider.computeCreates.Load(), err)
+	}
+}
+
+func TestFabricHTTPBodyLimitAllowsExactOneMiBJSON(t *testing.T) {
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
+	prefix := `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","padding":"`
+	suffix := `"}`
+	body := []byte(prefix + strings.Repeat("x", int(maxJSONBodyBytes)-len(prefix)-len(suffix)) + suffix)
+	if int64(len(body)) != maxJSONBodyBytes {
+		t.Fatalf("body length=%d, want %d", len(body), maxJSONBodyBytes)
+	}
+	req := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewReader(body))
+	req.Header.Set("Idempotency-Key", "exact-limit-compute")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("exact-limit request rejected: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFabricHTTPBodyLimitCoversDirectJSONRoutes(t *testing.T) {
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
+	prefix := `{"schemaVersion":1,"launchOperationId":"launch-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","sizeGb":10,"workspaceImageDigest":"digest","requestHash":"`
+	suffix := `"}`
+	body := []byte(prefix + strings.Repeat("x", int(maxJSONBodyBytes)-len(prefix)-len(suffix)+1) + suffix)
+	if int64(len(body)) != maxJSONBodyBytes+1 {
+		t.Fatalf("body length=%d, want %d", len(body), maxJSONBodyBytes+1)
+	}
+	req := testRequest(http.MethodPost, "/fabric/workspace-launches/preflight", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "request_body_too_large") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFabricAuthenticatedMutationRejectsOversizedBodyBeforeCapabilityOrMutation(t *testing.T) {
+	provider := &capabilityBoundaryProvider{}
+	store := fabric.NewMemoryOperationStore()
+	server := NewServerWithAuth(fabric.NewServiceWithOperationStore(provider, store), ServerAuthConfig{
+		ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey,
+	})
+	prefix := `{"id":"compute-oversized","accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","padding":"`
+	suffix := `"}`
+	body := []byte(prefix + strings.Repeat("x", int(maxJSONBodyBytes)-len(prefix)-len(suffix)+1) + suffix)
+	if int64(len(body)) != maxJSONBodyBytes+1 {
+		t.Fatalf("body length=%d, want %d", len(body), maxJSONBodyBytes+1)
+	}
+	claims := fabricCapabilityClaimsForTest{
+		Version: 1, Caller: "control-plane", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		ResourceKind: "compute_allocation", ResourceID: "compute-oversized", Action: "create_compute_allocation", OperationID: "oversized-auth",
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	req := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer internal-secret")
+	req.Header.Set("Idempotency-Key", "oversized-auth")
+	req.Header.Set(fabricCapabilityHeader, fabricCapabilityForTest(t, claims, body))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "request_body_too_large") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 0 || provider.computeCreates.Load() != 0 {
+		t.Fatalf("oversized authenticated request changed Fabric state: operations=%#v providerCalls=%d err=%v", operations, provider.computeCreates.Load(), err)
+	}
+}
+
 func TestResourceBoundaryHTTPReturnsBadRequest(t *testing.T) {
 	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	for _, tc := range []struct{ name, path, body string }{

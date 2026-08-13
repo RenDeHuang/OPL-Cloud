@@ -1860,6 +1860,38 @@ func TestLoginRateLimitBlocksRepeatedFailuresAndResetsAfterSuccess(t *testing.T)
 	}
 }
 
+func TestLoginRateLimitStateBoundedAndExpires(t *testing.T) {
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	app := server.(*controlPlaneHTTPHandler).app
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req.RemoteAddr = "192.0.2.9:4000"
+	for i := 0; i < maxLoginRateEntries+500; i++ {
+		app.recordLoginFailure(req, map[string]any{"email": fmt.Sprintf("attacker-%d@example.com", i)})
+	}
+	if size := len(app.loginRateLimits); size > maxLoginRateEntries {
+		t.Fatalf("login rate state exceeded bound: %d", size)
+	}
+
+	shared := strings.Repeat("a", 300)
+	app.recordLoginFailure(req, map[string]any{"email": shared + "1@example.com"})
+	app.recordLoginFailure(req, map[string]any{"email": shared + "2@example.com"})
+	truncatedKey := strings.Repeat("a", maxLoginRateKeyEmailBytes) + "|192.0.2.9"
+	if failure := app.loginRateLimits[truncatedKey]; failure.Count != 2 {
+		t.Fatalf("truncated key did not merge failures: %#v", app.loginRateLimits[truncatedKey])
+	}
+
+	app.mu.Lock()
+	for key, failure := range app.loginRateLimits {
+		failure.FirstAt = time.Now().UTC().Add(-loginFailureWindow - time.Minute)
+		app.loginRateLimits[key] = failure
+	}
+	app.mu.Unlock()
+	app.recordLoginFailure(req, map[string]any{"email": "fresh@example.com"})
+	if len(app.loginRateLimits) != 1 || app.loginRateLimits["fresh@example.com|192.0.2.9"].Count != 1 {
+		t.Fatalf("TTL sweep did not reclaim expired entries: %#v", app.loginRateLimits)
+	}
+}
+
 func TestAccountDisableStopsRenewalAndRevokesOwnerSession(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	operator := operatorSessionForTest(t, server)
@@ -1978,6 +2010,35 @@ func TestSupportTicketMappingPersistsExternalContext(t *testing.T) {
 	tickets := listed["tickets"].([]any)
 	if len(tickets) != 1 || tickets[0].(map[string]any)["externalTicketId"] != "ZAM-42" {
 		t.Fatalf("support mapping did not persist: %#v", tickets)
+	}
+}
+
+func TestSupportTicketMappingUsesServerOwnedFields(t *testing.T) {
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	session := tenantAdminSessionForTest(t, server)
+	userID := sessionUserIDForTest(t, server, session)
+	body := `{"accountId":"acct-alpha","userId":"usr-forged","externalTicketId":"ZAM-99","title":"forged metadata","status":"resolved","category":"billing","priority":"urgent"}`
+	created := createResourceWithSession(t, server, session, http.MethodPost, "/api/support/tickets", body)
+	if stringValue(created["userId"]) != userID || created["status"] != "external_open" || created["category"] != "Workspace" || created["priority"] != "normal" {
+		t.Fatalf("support mapping kept client-owned fields: %#v", created)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/support/tickets", nil)
+	addSessionCookies(req, session)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var listed map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&listed); err != nil {
+		t.Fatal(err)
+	}
+	tickets := listed["tickets"].([]any)
+	if len(tickets) != 1 || stringValue(tickets[0].(map[string]any)["userId"]) != userID ||
+		tickets[0].(map[string]any)["status"] != "external_open" || tickets[0].(map[string]any)["category"] != "Workspace" ||
+		tickets[0].(map[string]any)["priority"] != "normal" {
+		t.Fatalf("persisted mapping kept client-owned fields: %#v", tickets)
 	}
 }
 

@@ -267,41 +267,23 @@
       "workspaceLaunchReconciliation": {
         "route": "GET /api/operator/reconciliation",
         "action": "workspace.launch.v2",
-        "requiredItemFields": ["accountId", "billingOperationId", "phase", "errorCode", "allowedActions"],
+        "requiredItemFields": ["accountId", "billingOperationId", "phase", "errorCode", "progressionOwner", "allowedActions"],
         "billingOperationIdentity": "billingOperationId_equals_workspace_launch_operation_id",
         "allowedActions": {
-          "manual_review": ["diagnose_workspace_recovery_plan"],
+          "manual_review": ["resume_workspace_launch"],
           "allOtherStatuses": []
         },
-        "recoveryPlanRoutes": {
-          "diagnose": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/diagnose",
-          "read": "GET /api/operator/workspace-launches/{operationId}/recovery-plan",
-          "validate": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate",
-          "execute": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute"
-        },
-        "operatorInputFields": ["accountId", "launchOperationId", "decision"],
-        "executeRequestFields": ["planId", "planDigest", "decision", "confirmation"],
+        "resumeRoute": "POST /api/operator/workspace-launches/{operationId}/resume",
         "resourceIdentityInput": "forbidden_server_authoritative_readback_only",
-        "terminalSuccessorGateProjection": {
-          "route": "diagnose_response_only",
-          "persistence": "none",
-          "fields": ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
-          "forbidden": ["approval", "lease", "resource_identity", "private_ip", "provider_request_id", "mutation_ledger_digest"]
-        }
+        "browserProjection": "display_server_provided_allowed_actions_only",
+        "stateMachine": "server_authoritative_no_client_derivation"
       },
       "workspaceLaunchProgression": {
         "route": "GET /api/operator/reconciliation",
         "requiredItemFields": ["accountId", "billingOperationId", "phase", "errorCode", "progressionOwner", "allowedActions"],
-        "states": {
-          "compute_claim_pending": {
-            "progressionOwner": "original_workspace.launch.v2_worker",
-            "allowedActions": [],
-            "completionEvidence": ["target_owned", "launch_succeeded", "runtime_ready", "receipt_completed", "workspace_url"]
-          },
-          "manual_review": {
-            "progressionOwner": "control_plane_recovery_plan",
-            "allowedActions": ["diagnose_workspace_recovery_plan"]
-          }
+        "manualReviewProjection": {
+          "progressionOwner": "control_plane_launch_reconciler",
+          "allowedActions": ["resume_workspace_launch"]
         },
         "unavailableBehavior": "source_unavailable_never_completed_or_zero"
       },
@@ -318,7 +300,7 @@
         "included": ["workspace.launch.v2_manual_review", "workspace.renewal_manual_review", "compute_billingStatus_manual_review", "storage_billingStatus_manual_review", "BillingReconciliation_mismatch"],
         "excluded": ["gateway.key", "account.provision", "runtime.resume", "ordinary_started", "ordinary_succeeded"],
         "recoveryActions": {
-          "workspace.launch.v2_manual_review": "diagnose_workspace_recovery_plan",
+          "workspace.launch.v2_manual_review": "resume_workspace_launch",
           "workspace.renewal_or_resource_manual_review": "resolve_billing_review",
           "BillingReconciliation_mismatch": "none"
         }

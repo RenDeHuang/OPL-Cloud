@@ -49,6 +49,8 @@ test("business object contract keeps runtime template out of billing ownership",
 test("Fabric catalog is the live availability authority for both target packages", async () => {
   const catalog = await readJson(fabricCatalogContractPath);
 
+  assert.equal(catalog.endpoint, "GET /fabric/catalog");
+  assert.deepEqual(catalog.catalogSections, ["workspacePackages", "storageClasses", "ingressDomains"]);
   assert.deepEqual(catalog.supportedPackages, ["basic", "pro"]);
   assert.deepEqual(catalog.productionAvailability, {
     basic: true,
@@ -58,5 +60,6 @@ test("Fabric catalog is the live availability authority for both target packages
   assert.equal(catalog.availabilityAuthority, "GET /fabric/catalog workspacePackages[].available");
   assert.equal(catalog.availabilityMeaning, "product_open_not_tencent_capacity");
   assert.equal(catalog.capacityAuthority, "Tencent MonthlyPreflight immediately before first debit");
+  assert.equal("workspacePackageNodePools" in catalog, false);
   assert.equal("currentAvailablePackages" in catalog, false);
 });
