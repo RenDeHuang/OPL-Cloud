@@ -151,7 +151,7 @@ func TestWorkspaceAutoRenewAuditIsBoundToOriginalCommandAndRequest(t *testing.T)
 		name string
 		new  func(*testing.T) StateStore
 	}{
-		{name: "memory", new: func(*testing.T) StateStore { return nil }},
+		{name: "memory", new: func(*testing.T) StateStore { return newMemoryTableStore() }},
 		{name: "postgres", new: func(t *testing.T) StateStore { return newPostgresWorkspaceRenewalStore(t).(StateStore) }},
 	} {
 		t.Run(storeCase.name, func(t *testing.T) {
