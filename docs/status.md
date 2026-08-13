@@ -96,6 +96,22 @@ Sub2API management origin and credentials are never exposed to the browser.
   decide readiness or resource continuity. The Instance owner has not adopted
   and read back this current contract. This is source and CI evidence, not a
   complete Console-to-Workspace installation or Instance Provider Acceptance.
+- The Fabric resource catalog contract now retains only provider-neutral package,
+  storage-class, ingress, availability, and capacity boundaries. Its unused
+  `workspacePackageNodePools` provider-specific subtree was removed through
+  Catalog hard-cut PR `#295`; NodePool, SKU, bootstrap, ownership, and launch
+  interpretation remain owned by the Fabric adapter/provisioner and Instance
+  workflow. This contract cleanup does not change catalog runtime behavior or
+  establish Instance adoption.
+- Control Plane Provider Acceptance now consumes Fabric's provider-neutral
+  monthly-preflight availability plus Control Plane-owned package, size, and
+  zone facts. It no longer interprets Tencent purchase mode, renewal policy, or
+  CVM/CBS resource kinds. The isolated Console recovery-plan DTO, read adapter,
+  controller intents, and Admin review modal are removed; operator
+  reconciliation projects the server-owned action back into the same durable
+  Launch Reconciler. Instance recovery workflows and their pinned Cloud tool
+  callers remain an external cutover obligation, so this source cleanup does
+  not admit PR `#280` or complete Instance Provider Acceptance.
 - Fabric's unused recovery proof/claim Service, provider, and operation-store
   mutation shell is retired. Five legacy resource inputs no longer carry
   unassigned `LaunchBinding` branches, and the orphan launch-binding readback is
@@ -136,8 +152,12 @@ Sub2API management origin and credentials are never exposed to the browser.
   removed. This application-code cut neither rewrites nor deletes historical
   `runtime_apply` rows and does not mutate or retire Fabric resources. The
   zero-caller `server/app_state` forwarding and cache helpers are also removed.
-  The real Control Plane `Service` and capability boundaries remain; neither
-  finite deletion admits an aggregate replacement facade or broader removal.
+  The later zero-caller `PrepareWorkspace` orchestration path, its private
+  Runtime-readback merge helper, and its dedicated errors are removed as one
+  closed dead chain. `CreateWorkspaceInput` remains because Provider Acceptance
+  has a real caller. The real Control Plane `Service` and capability boundaries
+  remain; none of these finite deletions admits an aggregate replacement facade
+  or broader removal.
 - The authenticated Workspace owner can issue one durable, resumable delete
   command. Control Plane coordinates Runtime, attachment, storage, and compute
   cleanup through existing typed Fabric HTTP routes; partial or unknown results
@@ -257,9 +277,22 @@ store or provider mutation. These are source and test controls only: they do not
 prove a release, installation, live external Sub2API path, Instance deployment,
 or product readiness. PR `#283` adds the pre-session login request admission
 described above without changing the accepted same-origin Console or headerless
-non-browser JSON paths. The remaining S4 findings retain their own candidate or
-successor obligations. CodeQL triage is terminal at the classification layer
-only, with alert disposition explicitly unperformed as recorded above.
+non-browser JSON paths. The current Control Plane support API derives user,
+status, category, and priority from server/session authority; its login-rate
+state has bounded keys, capacity, and TTL eviction, and its Fabric client bounds
+success and error responses. Control Plane already bounds incoming JSON bodies;
+Fabric now applies a uniform 1 MiB JSON admission before capability,
+operation-store, or provider mutation, and Ledger applies the same bound before
+store calls on its JSON POST routes. Oversized requests return `413` while
+existing authentication and idempotency ordering remains covered. The admitted
+S4 source slices are now closed: release build inputs are pinned and verified by
+the canonical release-boundary validator, and the remaining release
+hash/attestation semantics are already bound in the workflow and contracts.
+Hosted publish, GHCR digest readback, clean-host installation, and production
+deployment remain `PRODUCT-RELEASE-01` / Instance evidence gaps, not another S4
+source lane. These controls are source/test evidence only. CodeQL triage is
+terminal at the classification layer only, with alert disposition explicitly
+unperformed as recorded above.
 
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production
