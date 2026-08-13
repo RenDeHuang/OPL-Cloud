@@ -2512,11 +2512,6 @@ func runtimeImageDigest(value string) (string, bool) {
 	return value, err == nil
 }
 
-func (p *TencentProvider) workspaceRuntimeResources(ctx context.Context, workspaceID string) (string, string) {
-	serviceName, pvcName, _ := p.workspaceRuntimeResourcesStrict(ctx, workspaceID, false)
-	return serviceName, pvcName
-}
-
 func (p *TencentProvider) workspaceRuntimeResourcesStrict(ctx context.Context, workspaceID string, includeSecret bool) (string, string, error) {
 	if strings.TrimSpace(workspaceID) == "" {
 		return "", "", nil
@@ -3100,27 +3095,6 @@ func findK8s(items []any, kind string, name string) map[string]any {
 		}
 	}
 	return map[string]any{}
-}
-
-func findK8sByLabel(items []any, kind string, key string, value string) map[string]any {
-	for _, item := range items {
-		asMap, ok := item.(map[string]any)
-		if ok && asMap["kind"] == kind && nested(asMap, "metadata", "labels", key) == value {
-			return asMap
-		}
-	}
-	return map[string]any{}
-}
-
-func firstPVCClaimName(deployment map[string]any) string {
-	volumes, _ := nested(deployment, "spec", "template", "spec", "volumes").([]any)
-	for _, volume := range volumes {
-		asMap, _ := volume.(map[string]any)
-		if name := stringValue(nested(asMap, "persistentVolumeClaim", "claimName")); name != "" {
-			return name
-		}
-	}
-	return ""
 }
 
 func firstContainerField(deployment map[string]any, key string) any {

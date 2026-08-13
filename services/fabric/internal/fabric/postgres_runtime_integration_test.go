@@ -284,24 +284,6 @@ func TestPostgresPersistedClaimPendingConcurrentReplayWaitsForControlPlaneDecisi
 	}
 }
 
-func waitForPostgresComputeLeaseExpiry(t *testing.T, store *PostgresOperationStore, resourceID string) {
-	t.Helper()
-	var remainingMilliseconds int64
-	if err := store.db.QueryRowContext(context.Background(), `
-		SELECT COALESCE(CEIL(EXTRACT(EPOCH FROM GREATEST(
-			compute_pool_lease_expires_at - clock_timestamp(), interval '0 seconds'
-		)) * 1000), 0)::bigint
-		FROM fabric_operations
-		WHERE action = 'create_compute_allocation' AND resource_id = $1`, resourceID).Scan(&remainingMilliseconds); err != nil {
-		t.Fatal(err)
-	}
-	if remainingMilliseconds > 0 {
-		timer := time.NewTimer(time.Duration(remainingMilliseconds+10) * time.Millisecond)
-		defer timer.Stop()
-		<-timer.C
-	}
-}
-
 func TestPostgresStaleRuntimeClaimConvergesAcrossServiceInstances(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1090,16 +1072,6 @@ func postgresComputeClaimRecoveryBinding(suffix string) computeClaimRecoveryBind
 		IdempotencyKey:    "launch-postgres-" + suffix + ":compute",
 		TargetHash:        "target-hash-" + suffix,
 		RequestHash:       "claim-request-hash-" + suffix,
-	}
-}
-
-func postgresComputeClaimOwnership(suffix string) MachineOwnership {
-	return MachineOwnership{
-		ID: "owner-postgres-" + suffix, ResourceID: "ca-postgres-" + suffix,
-		AccountID: "acct-postgres-" + suffix, WorkspaceID: "workspace-postgres-" + suffix,
-		PackageID: "basic", NodePoolID: "np-postgres-basic", MachineID: "machine-postgres-" + suffix,
-		InstanceID: "ins-postgres-" + suffix, NodeName: "node-postgres-" + suffix, Status: "quarantined",
-		ProviderRequestID: "redacted-provider-reference", ClaimedAt: time.Date(2026, 7, 28, 1, 0, 0, 0, time.UTC),
 	}
 }
 

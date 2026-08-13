@@ -529,21 +529,6 @@ func validateComputeAllocationPreparation(prepared ComputeAllocationPreparation,
 	return nil
 }
 
-func (s *Service) readComputeAllocationAfterReservation(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, dryRun bool) (ComputeAllocation, error) {
-	if reader, ok := s.provider.(computeAllocationDiscoveryProvider); ok {
-		return reader.DiscoverComputeAllocation(ctx, allocation, prepared)
-	}
-	if reader, ok := s.provider.(computeAllocationReadbackProvider); ok {
-		return reader.ReadComputeAllocation(ctx, allocation)
-	}
-	// Legacy providers can only read back after they have returned a complete
-	// identity. They must never be asked to create/scale as a replay fallback.
-	if allocation.MachineName == "" || firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) == "" || allocation.NodeName == "" {
-		return allocation, ErrComputeAllocationPending
-	}
-	return s.provider.SyncComputeAllocation(ctx, allocation)
-}
-
 func mergeComputeAllocation(current, fallback ComputeAllocation, prepared ComputeAllocationPreparation) ComputeAllocation {
 	current.ID = firstNonEmpty(current.ID, fallback.ID)
 	current.AccountID = firstNonEmpty(current.AccountID, fallback.AccountID)
@@ -612,14 +597,6 @@ func computeAllocationClaimPending(ctx context.Context, s *Service, operation Fa
 	s.computes[allocation.ID] = allocation
 	s.mu.Unlock()
 	return cause
-}
-
-// terminalizeComputeClaimPending records an unprovable claim as a failed,
-// quarantined operation.  The payload is cloned so existing stage budgets,
-// mutation ledger, and binding remain part of the CAS identity and no provider
-// write is retried by a replay.
-func terminalizeComputeClaimPending(ctx context.Context, s *Service, operation FabricOperation, allocation ComputeAllocation, prepared ComputeAllocationPreparation, stage, readbackStatus string, cause error, proof *ComputeClaimProviderProof) error {
-	return terminalizeComputeClaimPendingWithApproval(ctx, s, operation, allocation, prepared, stage, readbackStatus, cause, proof, nil)
 }
 
 func terminalizeComputeClaimPendingWithApproval(ctx context.Context, s *Service, operation FabricOperation, allocation ComputeAllocation, prepared ComputeAllocationPreparation, stage, readbackStatus string, cause error, proof *ComputeClaimProviderProof, approval *ComputePoolHeadTerminalizationInput) error {

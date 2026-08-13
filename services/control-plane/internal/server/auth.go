@@ -9,20 +9,12 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 const (
 	sessionCookieName   = "opl_session"
 	sessionLookupPrefix = "sub2api-sha256:"
 )
-
-type sessionRecord struct {
-	ID        string
-	UserID    string
-	CSRF      string
-	ExpiresAt time.Time
-}
 
 func validatePlaintextPassword(password string) error {
 	if password == "" {

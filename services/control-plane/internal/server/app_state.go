@@ -78,18 +78,16 @@ var (
 	errMembershipAccountMismatch = errors.New("membership_account_mismatch")
 )
 
-func newControlPlaneApp() *controlPlaneServer {
-	return newControlPlaneAppEmpty()
-}
-
 func newControlPlaneAppWithStore(store StateStore) (*controlPlaneServer, error) {
-	app := newControlPlaneAppEmpty()
-	app.store = store
-	if tableStore, ok := store.(controlPlaneTableStore); ok {
-		app.tables = tableStore
+	tableStore, ok := store.(controlPlaneTableStore)
+	if !ok {
+		return nil, errors.New("control_plane_store_must_implement_table_store")
 	}
-	if app.tables == nil {
-		app.tables = newMemoryTableStore()
+	app := &controlPlaneServer{
+		store:              store,
+		tables:             tableStore,
+		sessionCredentials: newSessionCredentialVault(time.Now),
+		loginRateLimits:    map[string]loginFailure{},
 	}
 	if err := app.importBootstrapUsers(); err != nil {
 		return nil, err
@@ -159,15 +157,6 @@ func (app *controlPlaneServer) ensureBootstrapAdmin(ctx context.Context, service
 	bootstrapOrganization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
 	bootstrapMembership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
 	return app.tables.CreateProvisionedAccount(ctx, bootstrapAccount, bootstrapUser, bootstrapOrganization, bootstrapMembership)
-}
-
-func newControlPlaneAppEmpty() *controlPlaneServer {
-	tables := newMemoryTableStore()
-	return &controlPlaneServer{
-		tables:             tables,
-		sessionCredentials: newSessionCredentialVault(time.Now),
-		loginRateLimits:    map[string]loginFailure{},
-	}
 }
 
 func (app *controlPlaneServer) state(accountID string, computePools []any) map[string]any {
@@ -240,10 +229,6 @@ func (app *controlPlaneServer) listAttachments(accountID string) []map[string]an
 		return nil
 	}
 	return rows
-}
-
-func (app *controlPlaneServer) attachmentRecordSet(accountID string) controlPlaneRecordSet {
-	return recordSetFromRows(app.listAttachments(accountID))
 }
 
 func (app *controlPlaneServer) listWorkspaces(accountID string) []map[string]any {
@@ -486,19 +471,6 @@ func nested(root map[string]any, keys ...string) any {
 	return current
 }
 
-func number(value any) float64 {
-	switch typed := value.(type) {
-	case float64:
-		return typed
-	case int:
-		return float64(typed)
-	case int64:
-		return float64(typed)
-	default:
-		return 0
-	}
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -523,31 +495,6 @@ func cloneStateTable(input controlPlaneRecordSet) controlPlaneRecordSet {
 	output := controlPlaneRecordSet{}
 	for key, value := range input {
 		output[key] = cloneMap(value)
-	}
-	return output
-}
-
-func values(input controlPlaneRecordSet) []any {
-	keys := make([]string, 0, len(input))
-	for key := range input {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	output := make([]any, 0, len(keys))
-	for _, key := range keys {
-		output = append(output, cloneMap(input[key]))
-	}
-	return output
-}
-
-func filteredValues(input controlPlaneRecordSet, include func(map[string]any) bool) []any {
-	rows := values(input)
-	output := make([]any, 0, len(rows))
-	for _, row := range rows {
-		item := row.(map[string]any)
-		if include(item) {
-			output = append(output, item)
-		}
 	}
 	return output
 }
@@ -593,15 +540,6 @@ func stringSliceField(input map[string]any, key string) []string {
 		}
 	}
 	return output
-}
-
-func firstNonNil(values ...any) any {
-	for _, value := range values {
-		if value != nil {
-			return value
-		}
-	}
-	return nil
 }
 
 func mapContainsAnyID(input map[string]any, ids ...string) bool {

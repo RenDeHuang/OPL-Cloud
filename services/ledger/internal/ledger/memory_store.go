@@ -462,17 +462,6 @@ func (s *MemoryStore) newID(prefix string) string {
 	return fmt.Sprintf("%s_%06d", prefix, s.nextID)
 }
 
-func cloneAnyMap(input map[string]any) map[string]any {
-	if input == nil {
-		return nil
-	}
-	output := make(map[string]any, len(input))
-	for key, value := range input {
-		output[key] = value
-	}
-	return output
-}
-
 func hashJSON(payload any) (string, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {

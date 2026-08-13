@@ -1031,24 +1031,6 @@ func billingReviewRequestShapeValid(input map[string]any) bool {
 	return true
 }
 
-func workspaceLaunchRecoveryShapeValid(input map[string]any) bool {
-	if len(input) != 3 && len(input) != 4 {
-		return false
-	}
-	for _, key := range []string{"accountId", "billingOperationId", "evidenceRef"} {
-		value, ok := input[key].(string)
-		if !ok || value == "" || value != strings.TrimSpace(value) {
-			return false
-		}
-	}
-	if len(input) == 4 {
-		if _, ok := input["approval"].(map[string]any); !ok {
-			return false
-		}
-	}
-	return true
-}
-
 func validBillingReviewEvidenceRef(value string) bool {
 	return billingReviewEvidenceRefPattern.MatchString(value)
 }

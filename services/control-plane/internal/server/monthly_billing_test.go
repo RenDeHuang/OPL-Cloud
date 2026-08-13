@@ -274,14 +274,6 @@ func (f *monthlyFabric) MonthlyPreflight(_ context.Context, input clients.Monthl
 	}, f.preflightErr
 }
 
-func monthlyPreflightResult(input clients.MonthlyPreflightInput, _ string) clients.MonthlyPreflight {
-	return clients.MonthlyPreflight{
-		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
-		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
-		ProviderPriceCNY: 12.34,
-	}
-}
-
 func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, key string) (clients.ComputeAllocation, error) {
 	*f.events = append(*f.events, "fabric.compute.prepare")
 	f.computeIDs = append(f.computeIDs, input.ID)

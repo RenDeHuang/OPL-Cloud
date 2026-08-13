@@ -12,11 +12,10 @@ import (
 )
 
 var (
-	errInvalidWorkspaceLaunchOperation    = errors.New("invalid_workspace_launch_operation")
-	errWorkspaceLaunchInProgress          = errors.New("workspace_launch_in_progress")
-	errWorkspaceLaunchCASConflict         = errors.New("workspace_launch_cas_conflict")
-	errWorkspaceCodexGroupUnavailable     = errors.New("apiKey.codexGroupUnavailable")
-	errWorkspaceCodexGroupMutationUnknown = errors.New("apiKey.codexGroupMutationUnknown")
+	errInvalidWorkspaceLaunchOperation = errors.New("invalid_workspace_launch_operation")
+	errWorkspaceLaunchInProgress       = errors.New("workspace_launch_in_progress")
+	errWorkspaceLaunchCASConflict      = errors.New("workspace_launch_cas_conflict")
+	errWorkspaceCodexGroupUnavailable  = errors.New("apiKey.codexGroupUnavailable")
 )
 
 const (
@@ -59,14 +58,6 @@ func currentWorkspaceImageDigest() string {
 		return value
 	}
 	return ""
-}
-
-func validWorkspaceImageIdentity(value string) bool {
-	if workspaceImageDigestPattern.MatchString(value) {
-		return true
-	}
-	_, digest, ok := strings.Cut(value, "@")
-	return ok && workspaceImageDigestPattern.MatchString(digest)
 }
 
 func isWorkspaceLaunchAction(action string) bool {

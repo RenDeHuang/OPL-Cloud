@@ -381,13 +381,6 @@ func (s *providerAcceptanceReadFailureStore) ListAttachments(ctx context.Context
 	return s.StateStore.ListAttachments(ctx, accountID)
 }
 
-func providerAcceptancePreflightFixture(slot providerAcceptanceSlot) clients.MonthlyPreflight {
-	return clients.MonthlyPreflight{
-		PackageID: slot.PackageID, Zone: "ap-shanghai-2", Available: true, ChargeType: "PREPAID",
-		PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", ProviderPriceCNY: 8.8,
-	}
-}
-
 func seedCompleteProviderAcceptanceResources(t *testing.T, store StateStore, slot providerAcceptanceSlot, ownerID string) {
 	t.Helper()
 	workspaceID := primaryWorkspaceID(slot.AccountID)

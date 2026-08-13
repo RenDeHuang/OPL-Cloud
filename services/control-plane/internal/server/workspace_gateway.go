@@ -122,22 +122,8 @@ func providerAcceptanceWorkspaceBillingExempt(row map[string]any) bool {
 	return false
 }
 
-func (app *controlPlaneServer) saveWorkspaceProjection(workspace domain.WorkspaceProjection, acceptedBillingState map[string]any) error {
-	return app.tables.SaveWorkspace(context.Background(), workspaceProjectionBillingRow(workspace, acceptedBillingState))
-}
-
 func workspaceProjectionBillingRow(workspace domain.WorkspaceProjection, acceptedBillingState map[string]any) map[string]any {
 	row := workspaceProjectionRow(workspace)
-	for key, value := range acceptedBillingState {
-		row[key] = value
-	}
-	return row
-}
-
-func workspaceProjectionBillingResponseRow(workspace domain.WorkspaceProjection, acceptedBillingState map[string]any) map[string]any {
-	row := structToMap(workspace)
-	row["currentComputeAllocationId"] = workspace.ComputeID
-	row["currentAttachmentId"] = workspace.AttachmentID
 	for key, value := range acceptedBillingState {
 		row[key] = value
 	}
