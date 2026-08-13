@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 41,
+  "schemaVersion": 42,
   "owner": "OPL Platform Architecture",
   "purpose": "Enforce the physical boundaries between Console UI, Control Plane, Fabric, Ledger, and external Sub2API while pointing launch and settlement facts to their focused owners.",
   "state": "current",
@@ -11,7 +11,17 @@
   "physicalBoundaries": {
     "crossServiceTransport": "typed_public_http_contracts_only",
     "fabricMutationAuthorization": {
-      "issuer": "services/control-plane",
+      "defaultIssuer": "services/control-plane",
+      "operatorExceptions": [
+        {
+          "issuer": "opl-instance-medopl_protected_production_workflow",
+          "route": "POST /fabric/compute-pool-head/terminalization",
+          "caller": "operator",
+          "action": "terminalize_compute_pool_head",
+          "scopeSource": "fabric_persisted_candidate_or_exact_terminal_replay",
+          "deploymentRequiredForUse": true
+        }
+      ],
       "verifier": "services/fabric",
       "integrity": "hmac_sha256",
       "shortLived": true,

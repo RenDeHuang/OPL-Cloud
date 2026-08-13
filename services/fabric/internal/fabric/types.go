@@ -81,20 +81,27 @@ type ComputePoolHeadTerminalizationInput struct {
 	IdempotencyKey string `json:"-"`
 }
 
+type ComputePoolHeadTerminalizationAuthorization struct {
+	AccountID   string `json:"accountId"`
+	WorkspaceID string `json:"workspaceId"`
+	NodePoolID  string `json:"nodePoolId"`
+}
+
 type ComputePoolHeadTerminalizationReadback struct {
-	SchemaVersion              int    `json:"schemaVersion"`
-	Status                     string `json:"status"`
-	HeadStatus                 string `json:"headStatus"`
-	AllocationStatus           string `json:"allocationStatus"`
-	OwnershipStatus            string `json:"ownershipStatus"`
-	TerminalStatus             string `json:"terminalStatus,omitempty"`
-	ApprovalDigest             string `json:"approvalDigest"`
-	BindingDigest              string `json:"bindingDigest"`
-	ManualRecoveryLedgerDigest string `json:"manualRecoveryLedgerDigest"`
-	Replayed                   bool   `json:"replayed"`
-	Sub2APIMutationCount       int    `json:"sub2apiMutationCount"`
-	TencentMutationCount       int    `json:"tencentMutationCount"`
-	KubernetesMutationCount    int    `json:"kubernetesMutationCount"`
+	SchemaVersion              int                                          `json:"schemaVersion"`
+	Status                     string                                       `json:"status"`
+	HeadStatus                 string                                       `json:"headStatus"`
+	AllocationStatus           string                                       `json:"allocationStatus"`
+	OwnershipStatus            string                                       `json:"ownershipStatus"`
+	TerminalStatus             string                                       `json:"terminalStatus,omitempty"`
+	ApprovalDigest             string                                       `json:"approvalDigest"`
+	BindingDigest              string                                       `json:"bindingDigest"`
+	ManualRecoveryLedgerDigest string                                       `json:"manualRecoveryLedgerDigest"`
+	AuthorizationScope         *ComputePoolHeadTerminalizationAuthorization `json:"authorizationScope,omitempty"`
+	Replayed                   bool                                         `json:"replayed"`
+	Sub2APIMutationCount       int                                          `json:"sub2apiMutationCount"`
+	TencentMutationCount       int                                          `json:"tencentMutationCount"`
+	KubernetesMutationCount    int                                          `json:"kubernetesMutationCount"`
 }
 
 type MonthlyPreflightReportInput struct {

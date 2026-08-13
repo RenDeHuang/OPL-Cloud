@@ -114,6 +114,39 @@ func (s *Service) ReadComputePoolHeadTerminalization(ctx context.Context, nodePo
 	return candidate.readback, nil
 }
 
+func (s *Service) ComputePoolHeadTerminalizationAuthorization(ctx context.Context, input ComputePoolHeadTerminalizationInput) (ComputePoolHeadTerminalizationAuthorization, error) {
+	if !validComputePoolNodePoolID(input.NodePoolID) || !validComputePoolTerminalizationToken(input.ApprovalID) ||
+		input.IdempotencyKey != input.ApprovalID || !validSHA256Hex(input.ApprovalDigest) {
+		return ComputePoolHeadTerminalizationAuthorization{}, ErrInvalidComputePoolHeadTerminalization
+	}
+	operation, found, err := s.operations.ComputeClaimTerminalOperation(ctx, input.ApprovalID, input.IdempotencyKey)
+	if err != nil {
+		return ComputePoolHeadTerminalizationAuthorization{}, err
+	}
+	if found {
+		evidence, present, valid := decodeComputeClaimTerminalEvidence(operation)
+		var allocation ComputeAllocation
+		if !present || !valid || !decodeOperationResource(operation, &allocation) || operation.Status != "failed" || operation.ComputePoolKey != input.NodePoolID ||
+			allocation.NodePoolID != input.NodePoolID || evidence.OperatorApprovalID != input.ApprovalID ||
+			evidence.OperatorIdempotencyKey != input.IdempotencyKey || evidence.OperatorApprovalDigest != input.ApprovalDigest {
+			return ComputePoolHeadTerminalizationAuthorization{}, ErrComputePoolHeadTerminalizationConflict
+		}
+		return ComputePoolHeadTerminalizationAuthorization{
+			AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID, NodePoolID: allocation.NodePoolID,
+		}, nil
+	}
+	candidate, err := s.computePoolHeadTerminalizationCandidate(ctx, input.NodePoolID)
+	if err != nil {
+		return ComputePoolHeadTerminalizationAuthorization{}, err
+	}
+	if subtle.ConstantTimeCompare([]byte(candidate.readback.ApprovalDigest), []byte(input.ApprovalDigest)) != 1 {
+		return ComputePoolHeadTerminalizationAuthorization{}, ErrComputePoolHeadTerminalizationConflict
+	}
+	return ComputePoolHeadTerminalizationAuthorization{
+		AccountID: candidate.allocation.AccountID, WorkspaceID: candidate.allocation.WorkspaceID, NodePoolID: candidate.allocation.NodePoolID,
+	}, nil
+}
+
 func (s *Service) computePoolHeadTerminalizationCandidate(ctx context.Context, nodePoolID string) (computePoolHeadTerminalizationCandidate, error) {
 	if !validComputePoolNodePoolID(nodePoolID) {
 		return computePoolHeadTerminalizationCandidate{}, ErrInvalidComputePoolHeadTerminalization
@@ -155,6 +188,9 @@ func (s *Service) computePoolHeadTerminalizationCandidate(ctx context.Context, n
 	readback := ComputePoolHeadTerminalizationReadback{
 		SchemaVersion: 1, Status: "candidate", HeadStatus: operation.Status, AllocationStatus: allocation.Status, OwnershipStatus: ownership.Status,
 		ApprovalDigest: approvalDigest, BindingDigest: bindingDigest, ManualRecoveryLedgerDigest: ledgerDigest,
+		AuthorizationScope: &ComputePoolHeadTerminalizationAuthorization{
+			AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID, NodePoolID: allocation.NodePoolID,
+		},
 	}
 	return computePoolHeadTerminalizationCandidate{operation: operation, allocation: allocation, plan: plan, ownership: ownership, binding: binding, ledger: ledger, readback: readback}, nil
 }
@@ -182,6 +218,7 @@ func (s *Service) TerminalizeComputePoolHead(ctx context.Context, input ComputeP
 		return ComputePoolHeadTerminalizationReadback{}, err
 	}
 	result := candidate.readback
+	result.AuthorizationScope = nil
 	result.Status, result.HeadStatus, result.TerminalStatus = "succeeded", "failed", "terminal_unprovable"
 	return result, nil
 }
@@ -202,6 +239,7 @@ func (s *Service) ReadComputePoolHeadTerminalizationResult(ctx context.Context, 
 		return ComputePoolHeadTerminalizationReadback{}, ErrComputePoolHeadTerminalizationConflict
 	}
 	result := candidate.readback
+	result.AuthorizationScope = nil
 	result.Status = "pending"
 	return result, nil
 }

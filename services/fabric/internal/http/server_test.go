@@ -88,6 +88,15 @@ type capabilityBoundaryProvider struct {
 	computeCreates atomic.Int32
 }
 
+type staticFabricMutationScopeResolver struct {
+	authorization fabric.ComputePoolHeadTerminalizationAuthorization
+	err           error
+}
+
+func (r staticFabricMutationScopeResolver) ComputePoolHeadTerminalizationAuthorization(context.Context, fabric.ComputePoolHeadTerminalizationInput) (fabric.ComputePoolHeadTerminalizationAuthorization, error) {
+	return r.authorization, r.err
+}
+
 func (p *capabilityBoundaryProvider) CreateComputeAllocation(ctx context.Context, input fabric.ComputeAllocationExecution) (fabric.ComputeAllocation, error) {
 	p.computeCreates.Add(1)
 	return p.testProvider.CreateComputeAllocation(ctx, input)
@@ -258,7 +267,7 @@ func TestFabricMutationAuthorizationDerivesRuntimeUpdateAction(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/fabric/workspace-runtimes", nil)
 	req.Header.Set("Idempotency-Key", "runtime-credential-rotate:ws-alpha:once:runtime")
 
-	scope, ok := fabricMutationScopeForRequest(req, body)
+	scope, ok := fabricMutationScopeForRequest(context.Background(), nil, req, body)
 
 	if !ok || scope.Action != "update_workspace_runtime" || scope.OperationID != "runtime-credential-rotate:ws-alpha:once:runtime" {
 		t.Fatalf("runtime update scope=%#v ok=%v", scope, ok)
@@ -297,6 +306,16 @@ func TestFabricProviderMutationScopesAreStrict(t *testing.T) {
 			operationID: "destroy-once", resourceKind: "storage_snapshot", resourceID: "snapshot-alpha", action: "destroy_storage_snapshot", wantOK: true,
 		},
 		{
+			name: "compute pool head terminalization", path: "/fabric/compute-pool-head/terminalization",
+			body:        `{"nodePoolId":"np-basic","approvalId":"terminalize-operation","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+			operationID: "terminalize-operation", resourceKind: "compute_pool_head", resourceID: "np-basic", action: "terminalize_compute_pool_head", wantOK: true,
+		},
+		{
+			name: "terminalization approval mismatch", path: "/fabric/compute-pool-head/terminalization",
+			body:        `{"nodePoolId":"np-basic","approvalId":"another-operation","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+			operationID: "terminalize-operation",
+		},
+		{
 			name: "snapshot url body mismatch", path: "/fabric/storage-snapshots/snapshot-alpha/restore",
 			body:        `{"snapshotId":"snapshot-beta","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`,
 			operationID: "restore-once",
@@ -311,14 +330,22 @@ func TestFabricProviderMutationScopesAreStrict(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, tt.path, nil)
 			req.Header.Set("Idempotency-Key", tt.operationID)
-			scope, ok := fabricMutationScopeForRequest(req, []byte(tt.body))
+			resolver := fabricMutationScopeResolver(nil)
+			if tt.path == "/fabric/compute-pool-head/terminalization" {
+				resolver = staticFabricMutationScopeResolver{authorization: fabric.ComputePoolHeadTerminalizationAuthorization{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", NodePoolID: "np-basic"}}
+			}
+			scope, ok := fabricMutationScopeForRequest(context.Background(), resolver, req, []byte(tt.body))
 			if ok != tt.wantOK {
 				t.Fatalf("scope=%#v ok=%v", scope, ok)
 			}
 			if !tt.wantOK {
 				return
 			}
-			if scope.AccountID != "acct-alpha" || scope.WorkspaceID == "" || scope.ResourceKind != tt.resourceKind || scope.ResourceID != tt.resourceID || scope.Action != tt.action || scope.OperationID != tt.operationID {
+			wantCaller := "control-plane"
+			if tt.path == "/fabric/compute-pool-head/terminalization" {
+				wantCaller = "operator"
+			}
+			if scope.Caller != wantCaller || scope.AccountID != "acct-alpha" || scope.WorkspaceID == "" || scope.ResourceKind != tt.resourceKind || scope.ResourceID != tt.resourceID || scope.Action != tt.action || scope.OperationID != tt.operationID {
 				t.Fatalf("scope=%#v", scope)
 			}
 		})
@@ -338,6 +365,7 @@ func TestFabricProviderMutationsRequireCapabilityBeforeStateChange(t *testing.T)
 		{name: "snapshot create", path: "/fabric/storage-snapshots", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"volume-alpha"}`},
 		{name: "snapshot restore", path: "/fabric/storage-snapshots/snapshot-alpha/restore", body: `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`},
 		{name: "snapshot destroy", path: "/fabric/storage-snapshots/snapshot-alpha/destroy", body: `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha"}`},
+		{name: "compute pool head terminalization", path: "/fabric/compute-pool-head/terminalization", body: `{"nodePoolId":"np-basic","approvalId":"operation-alpha","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := fabric.NewMemoryOperationStore()
@@ -355,6 +383,53 @@ func TestFabricProviderMutationsRequireCapabilityBeforeStateChange(t *testing.T)
 			operations, err := store.List(context.Background())
 			if err != nil || len(operations) != 0 {
 				t.Fatalf("rejected mutation changed Fabric state: operations=%#v err=%v", operations, err)
+			}
+		})
+	}
+}
+
+func TestComputePoolHeadTerminalizationRequiresPersistedOwnerCapability(t *testing.T) {
+	body := []byte(`{"nodePoolId":"np-basic","approvalId":"terminalize-operation","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
+	resolver := staticFabricMutationScopeResolver{authorization: fabric.ComputePoolHeadTerminalizationAuthorization{
+		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", NodePoolID: "np-basic",
+	}}
+	matching := fabricCapabilityClaimsForTest{
+		Version: 1, Caller: "operator", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		ResourceKind: "compute_pool_head", ResourceID: "np-basic", Action: "terminalize_compute_pool_head", OperationID: "terminalize-operation",
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	for _, test := range []struct {
+		name       string
+		claims     fabricCapabilityClaimsForTest
+		capability bool
+		want       int
+	}{
+		{name: "transport token only", want: http.StatusForbidden},
+		{name: "control plane caller", claims: func() fabricCapabilityClaimsForTest { value := matching; value.Caller = "control-plane"; return value }(), capability: true, want: http.StatusForbidden},
+		{name: "other tenant", claims: func() fabricCapabilityClaimsForTest { value := matching; value.AccountID = "acct-other"; return value }(), capability: true, want: http.StatusForbidden},
+		{name: "persisted owner", claims: matching, capability: true, want: http.StatusNoContent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			})
+			server := authorizeFabricRequests(next, resolver, ServerAuthConfig{
+				ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey, Now: time.Now,
+			})
+			req := httptest.NewRequest(http.MethodPost, "/fabric/compute-pool-head/terminalization", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer internal-secret")
+			req.Header.Set("Idempotency-Key", "terminalize-operation")
+			if test.capability {
+				req.Header.Set(fabricCapabilityHeader, fabricCapabilityForTest(t, test.claims, body))
+			}
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != test.want || called != (test.want == http.StatusNoContent) {
+				t.Fatalf("status=%d want=%d called=%v body=%s", recorder.Code, test.want, called, recorder.Body.String())
 			}
 		})
 	}
@@ -394,7 +469,7 @@ func TestFabricProviderMutationCapabilitiesAcceptExactBodies(t *testing.T) {
 				called = true
 				w.WriteHeader(http.StatusNoContent)
 			})
-			server := authorizeFabricRequests(next, ServerAuthConfig{
+			server := authorizeFabricRequests(next, nil, ServerAuthConfig{
 				ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey, Now: time.Now,
 			})
 			body := []byte(test.body)

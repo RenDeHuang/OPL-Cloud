@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -30,11 +31,15 @@ type ServerAuthConfig struct {
 	Now               func() time.Time
 }
 
+type fabricMutationScopeResolver interface {
+	ComputePoolHeadTerminalizationAuthorization(context.Context, fabric.ComputePoolHeadTerminalizationInput) (fabric.ComputePoolHeadTerminalizationAuthorization, error)
+}
+
 func NewServerWithAuth(service *fabric.Service, config ServerAuthConfig) http.Handler {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
-	return authorizeFabricRequests(newFabricMux(service), config)
+	return authorizeFabricRequests(newFabricMux(service), service, config)
 }
 
 func newFabricMux(service *fabric.Service) http.Handler {
@@ -528,6 +533,7 @@ type fabricCapabilityClaims struct {
 }
 
 type fabricMutationScope struct {
+	Caller       string
 	AccountID    string
 	WorkspaceID  string
 	ResourceKind string
@@ -536,7 +542,7 @@ type fabricMutationScope struct {
 	OperationID  string
 }
 
-func authorizeFabricRequests(next http.Handler, config ServerAuthConfig) http.Handler {
+func authorizeFabricRequests(next http.Handler, resolver fabricMutationScopeResolver, config ServerAuthConfig) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
@@ -568,7 +574,7 @@ func authorizeFabricRequests(next http.Handler, config ServerAuthConfig) http.Ha
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
-		scope, ok := fabricMutationScopeForRequest(r, body)
+		scope, ok := fabricMutationScopeForRequest(r.Context(), resolver, r, body)
 		if !ok {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -619,7 +625,8 @@ func isFabricMutation(r *http.Request) bool {
 	}
 	if r.URL.Path == "/fabric/compute-allocations" || r.URL.Path == "/fabric/storage-volumes" || r.URL.Path == "/fabric/workspace-runtimes" ||
 		r.URL.Path == "/fabric/gateway-secrets" || r.URL.Path == "/fabric/workspace-launches/stages/ensure" ||
-		r.URL.Path == "/fabric/storage-snapshots" || r.URL.Path == "/fabric/storage-attachments" {
+		r.URL.Path == "/fabric/storage-snapshots" || r.URL.Path == "/fabric/storage-attachments" ||
+		r.URL.Path == "/fabric/compute-pool-head/terminalization" {
 		return true
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
@@ -634,7 +641,7 @@ func isFabricMutation(r *http.Request) bool {
 	}
 }
 
-func fabricMutationScopeForRequest(r *http.Request, body []byte) (fabricMutationScope, bool) {
+func fabricMutationScopeForRequest(ctx context.Context, resolver fabricMutationScopeResolver, r *http.Request, body []byte) (fabricMutationScope, bool) {
 	var input map[string]any
 	if len(body) == 0 || json.Unmarshal(body, &input) != nil {
 		return fabricMutationScope{}, false
@@ -643,7 +650,7 @@ func fabricMutationScopeForRequest(r *http.Request, body []byte) (fabricMutation
 		result, _ := input[name].(string)
 		return strings.TrimSpace(result)
 	}
-	scope := fabricMutationScope{AccountID: value("accountId"), WorkspaceID: value("workspaceId"), OperationID: strings.TrimSpace(r.Header.Get("Idempotency-Key"))}
+	scope := fabricMutationScope{Caller: "control-plane", AccountID: value("accountId"), WorkspaceID: value("workspaceId"), OperationID: strings.TrimSpace(r.Header.Get("Idempotency-Key"))}
 	path := strings.Trim(r.URL.Path, "/")
 	parts := strings.Split(path, "/")
 	switch {
@@ -664,6 +671,19 @@ func fabricMutationScopeForRequest(r *http.Request, body []byte) (fabricMutation
 		computeID, volumeID := value("computeId"), value("volumeId")
 		if computeID != "" && volumeID != "" {
 			scope.ResourceKind, scope.ResourceID, scope.Action = "storage_attachment", computeID+":"+volumeID, "create_storage_attachment"
+		}
+	case r.URL.Path == "/fabric/compute-pool-head/terminalization":
+		if resolver == nil {
+			return fabricMutationScope{}, false
+		}
+		input := fabric.ComputePoolHeadTerminalizationInput{
+			NodePoolID: value("nodePoolId"), ApprovalID: value("approvalId"), ApprovalDigest: value("approvalDigest"), IdempotencyKey: scope.OperationID,
+		}
+		authorization, err := resolver.ComputePoolHeadTerminalizationAuthorization(ctx, input)
+		if err == nil && authorization.NodePoolID == input.NodePoolID && input.ApprovalID == scope.OperationID {
+			scope.Caller = "operator"
+			scope.AccountID, scope.WorkspaceID = authorization.AccountID, authorization.WorkspaceID
+			scope.ResourceKind, scope.ResourceID, scope.Action = "compute_pool_head", authorization.NodePoolID, "terminalize_compute_pool_head"
 		}
 	case r.URL.Path == "/fabric/workspace-launches/stages/ensure":
 		binding, _ := input["binding"].(map[string]any)
@@ -734,7 +754,7 @@ func verifyFabricCapability(raw, key string, expected fabricMutationScope, body 
 		return false
 	}
 	digest := sha256.Sum256(body)
-	return claims.Version == 1 && claims.Caller == "control-plane" && claims.AccountID == expected.AccountID &&
+	return claims.Version == 1 && claims.Caller == expected.Caller && claims.AccountID == expected.AccountID &&
 		claims.WorkspaceID == expected.WorkspaceID && claims.ResourceKind == expected.ResourceKind && claims.ResourceID == expected.ResourceID &&
 		claims.Action == expected.Action && claims.OperationID == expected.OperationID && claims.ExpiresAt > now.Unix() &&
 		claims.ExpiresAt <= now.Add(2*time.Minute).Unix() && claims.BodySHA256 == hex.EncodeToString(digest[:])
