@@ -219,11 +219,11 @@ evidence therefore do not prove a published immutable product or an installed
 application.
 
 GitHub security controls were read back on 2026-08-13 for
-`main@54f524f8d635f3058b23ed17703f1a0128a9237f`. Private vulnerability
+`main@1f82df303052061356eb6691d22193a5a59ab6f3`. Private vulnerability
 reporting, Dependabot alerts and security updates, secret scanning and push
 protection, Actions full-SHA pin enforcement, and branch-protection admin
   enforcement are enabled. CodeQL default setup is configured weekly for Actions,
-  Go, and JavaScript/TypeScript; run `31668564843` completed successfully for all
+  Go, and JavaScript/TypeScript; run `31669155550` completed successfully for all
   three analyses at the current `main` SHA. The repository has zero open
 secret-scanning alerts and zero open Dependabot alerts. Secret validity checks
 remain disabled after the attempted setting change did not take effect. Actions
@@ -237,7 +237,7 @@ CodeQL success did not produce a zero-alert baseline.
 `SECURITY-CODEQL-TRIAGE-01` completed with `mutation_zero`: all 15 high-security-
 severity alerts were individually classified `not_actionable`, with zero
 `confirmed` and zero `needs_review`. Fresh GitHub API readback for
-`main@54f524f8d635f3058b23ed17703f1a0128a9237f` still reports those same 15
+`main@1f82df303052061356eb6691d22193a5a59ab6f3` still reports those same 15
 alerts open after the successful current-main run. They cover
 `go/weak-sensitive-data-hashing`, `js/weak-cryptographic-algorithm`, and
 `go/allocation-size-overflow`. Alerts `#1` through `#15` remain open; no alert
