@@ -30,40 +30,6 @@
   "availabilityAuthority": "GET /fabric/catalog workspacePackages[].available",
   "availabilityMeaning": "product_open_not_tencent_capacity",
   "capacityAuthority": "Tencent MonthlyPreflight immediately before first debit",
-  "workspacePackageNodePools": {
-    "basic": {
-      "poolName": "pool-basic-2c4g",
-      "packageId": "basic",
-      "resourceContract": {"cpu": 2, "memoryGb": 4},
-      "resolvedInstanceTypeSource": "deterministic_zone_prepaid_sell_shape_price_inventory_then_bootstrap_registration",
-      "replicasMayBeZero": true,
-      "maxReplicas": 50
-    },
-    "pro": {
-      "poolName": "pool-pro-8c16g",
-      "packageId": "pro",
-      "resourceContract": {"cpu": 8, "memoryGb": 16},
-      "resolvedInstanceTypeSource": "deterministic_zone_prepaid_sell_shape_price_inventory_then_bootstrap_registration",
-      "replicasMayBeZero": true,
-      "maxReplicas": 50
-    },
-    "maxReplicasPolicy": "required_explicit_configuration_no_default",
-    "bootstrapInventoryPolicy": {
-      "evidence": "sorted_complete_node_pool_ids_before_mutation",
-      "unknownNodePool": "fail_closed_before_create"
-    },
-    "customerLaunchBehavior": "scale_exact_configured_pool_from_N_to_N_plus_1_without_nodepool_creation_or_existing_machine_claim"
-    ,"nodeOwnership": {
-      "nodePoolOwner": "oplcloud.cn/package-id=<basic|pro>:NoSchedule",
-      "fabricOwnerLabels": ["medopl.cn/workload=workspace", "oplcloud.cn/resource-id", "oplcloud.cn/account-id", "oplcloud.cn/workspace-id"],
-      "unallocated": "exact_machine_identity_and_package_taint_with_zero_fabric_owner_labels",
-      "targetOwned": "exact_machine_identity_and_package_taint_with_all_four_fabric_owner_labels",
-      "conflict": "partial_duplicate_or_other_fabric_owner_labels_or_workspace_taint",
-      "claimWrites": ["metadata.resourceVersion", "metadata.labels"],
-      "claimTaintMutation": false,
-      "runtimeScheduling": {"selector": "kubernetes.io/hostname=<NodeName>", "toleration": "oplcloud.cn/package-id=<PackageID>:NoSchedule"}
-    }
-  },
   "pilotV2": {
     "computeAndStorageRole": "workspace_fulfillment_only",
     "customerChargeAuthority": false
