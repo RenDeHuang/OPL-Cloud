@@ -158,15 +158,6 @@ function pendingWorkspaceLaunch() {
   };
 }
 
-function recoveryPlan(executionId = "") {
-  return {
-    planId: "recovery-plan-fixture", planDigest: "sha256:recovery-plan-fixture", status: executionId ? "succeeded" : "ready",
-    operationId: "launch-recovery-fixture", stages: [{ stage: "diagnose", status: "succeeded", phase: "manual_review" }, { stage: "continue", status: executionId ? "succeeded" : "ready" }],
-    mismatches: [{ field: "workspace_image_digest", expectedDigest: "sha256:expected", actualDigest: "sha256:actual" }],
-    ...(executionId ? { executionId, runId: "run-recovery-fixture", url: "https://workspace.example.invalid/w/recovered/", receiptId: "receipt-recovery-fixture" } : {})
-  };
-}
-
 function operatorAccount(accountId, status, overrides = {}) {
   const disabled = status === "disabled";
   const userId = overrides.sub2apiUserId || (disabled ? "11" : "9");
@@ -256,7 +247,6 @@ export function createConsoleFixtureState({ faultInjection = true, seedDemoData 
     lostAnnouncementPublishResponses: new Set(), lostAnnouncementWithdrawResponses: new Set(), lostSupportResponses: new Set(),
     workspaceLaunchReadbacks: new Set(), operatorProvisionReadbacks: new Set(), announcementReadbackStatuses: new Map(), supportReadbacks: new Set(),
     operatorDisableWrites: new Set(),
-    recoveryPlanDiagnoses: 0, recoveryPlanValidations: 0, recoveryPlanExecutions: new Map(), recoveryPlanExecuteAttempts: new Map(),
     gatewayMutationWrites: new Set(), gatewayActions: [], revealCalls: new Map(), emptyGatewayReadbacks: 0,
     runtimeReads: new Map(), workspaceSecretReads: new Map(), workspacePageReads: [],
     customerRoutes: new Set(), loginSubmissions: 0,
@@ -722,34 +712,10 @@ export async function apiFixture(route, state, session = state) {
   }
   if (path === "/api/operator/workspaces/ws-1") return fulfillJson(route, source(operatorWorkspace(), "control-plane+fabric+ledger+sub2api"));
   if (path === "/api/operator/reconciliation") return fulfillJson(route, source({ items: [{
-    id: "review-recovery-fixture", resourceType: "workspace", status: "manual_review", accountId: "acct-operator",
-    billingOperationId: "launch-recovery-fixture", phase: "manual_review", errorCode: "provider_unknown",
-    progressionOwner: "control_plane_recovery_plan", allowedActions: ["diagnose_workspace_recovery_plan"], operationRef: "launch-recovery-fixture", receiptRef: "receipt-recovery-fixture"
+    id: "review-resume-fixture", resourceType: "workspace", status: "manual_review", accountId: "acct-operator",
+    billingOperationId: "launch-resume-fixture", phase: "manual_review", errorCode: "workspace_launch_manual_review",
+    progressionOwner: "control_plane_launch_reconciler", allowedActions: ["resume_workspace_launch"], operationRef: "launch-resume-fixture", receiptRef: "receipt-resume-fixture"
   }], total: 1, page: 1, pageSize: 20 }, "control-plane"));
-  const recoveryPlanMatch = path.match(/^\/api\/operator\/workspace-launches\/([^/]+)\/recovery-plan(?:\/(diagnose|validate|execute))?$/);
-  if (recoveryPlanMatch && recoveryPlanMatch[1] === "launch-recovery-fixture") {
-    const action = recoveryPlanMatch[2] || "read";
-    if (action === "read" && method === "GET") return fulfillJson(route, recoveryPlan([...state.recoveryPlanExecutions.values()][0] || ""));
-    const input = request.postDataJSON();
-    if (action === "diagnose" && method === "POST") {
-      if (JSON.stringify(input) !== JSON.stringify({ accountId: "acct-operator" })) return fulfillJson(route, { error: "recovery_plan_diagnose_shape_invalid" }, 400);
-      state.recoveryPlanDiagnoses += 1;
-      return fulfillJson(route, recoveryPlan());
-    }
-    if (action === "validate" && method === "POST") {
-      if (JSON.stringify(input) !== JSON.stringify({ planId: "recovery-plan-fixture", planDigest: "sha256:recovery-plan-fixture" })) return fulfillJson(route, { error: "recovery_plan_validate_shape_invalid" }, 400);
-      state.recoveryPlanValidations += 1;
-      return fulfillJson(route, recoveryPlan());
-    }
-    if (action === "execute" && method === "POST") {
-      if (JSON.stringify(input) !== JSON.stringify({ planId: "recovery-plan-fixture", planDigest: "sha256:recovery-plan-fixture", decision: "continue", confirmation: "CONTINUE_RECOVERY_PLAN" })) return fulfillJson(route, { error: "recovery_plan_execute_shape_invalid" }, 400);
-      const identity = request.headers()["idempotency-key"] || "";
-      if (!identity) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
-      state.recoveryPlanExecuteAttempts.set(identity, (state.recoveryPlanExecuteAttempts.get(identity) || 0) + 1);
-      if (!state.recoveryPlanExecutions.has(identity)) state.recoveryPlanExecutions.set(identity, "execution-recovery-fixture");
-      return fulfillJson(route, recoveryPlan(state.recoveryPlanExecutions.get(identity)));
-    }
-  }
   if (path === "/api/operator/announcements" && method === "GET") {
     const data = { items: state.announcements, total: state.announcements.length, page: 1, pageSize: 20 };
     for (const announcementId of state.announcementCreateWriteResults.values()) {
@@ -1524,15 +1490,11 @@ export async function runConsoleBrowserQa({
       await captureFixtureScreenshot(page, state, screenshotDir, "admin-overview", name);
       operatorReadStart = state.operatorPageReads.length;
       await page.goto(`${server.origin}/admin/billing?viewport=${name}`, { waitUntil: "networkidle" });
-      await page.getByRole("button", { name: "查看恢复计划", exact: true }).click();
-      await page.getByRole("dialog", { name: "复核详情与 Recovery Plan" }).getByRole("button", { name: "诊断恢复计划", exact: true }).click();
-      await waitForText(page, "recovery-plan-fixture");
-      await page.getByRole("button", { name: "查看已持久化计划", exact: true }).click();
-      await page.getByRole("button", { name: "校验计划", exact: true }).click();
-      await page.getByRole("checkbox", { name: "确认继续此 Recovery Plan" }).click();
-      await page.getByRole("button", { name: "确认继续", exact: true }).click();
-      await waitForText(page, "execution-recovery-fixture");
-      await page.getByRole("button", { name: "确认继续", exact: true }).click();
+      await page.getByRole("button", { name: "查看证据", exact: true }).click();
+      const reviewDialog = page.getByRole("dialog", { name: "复核详情", exact: true });
+      await reviewDialog.waitFor({ state: "visible" });
+      await waitForText(page, "resume_workspace_launch");
+      await reviewDialog.getByRole("button", { name: "关闭", exact: true }).last().click();
       assertOperatorPageReads(state, operatorReadStart, ["/api/operator/reconciliation"]);
       await assertNoViewportOverflow(page);
       await captureFixtureScreenshot(page, state, screenshotDir, "admin-reconciliation", name);
@@ -1626,9 +1588,6 @@ export async function runConsoleBrowserQa({
     if (state.consoleErrors.length) throw new Error(`console_browser_console_error:${state.consoleErrors.join(",")}`);
     if (state.gatewayWrites.size !== 1 || state.walletWrites.size !== 1) throw new Error("console_browser_idempotency_failed");
     if (state.operatorDisableWrites.size !== 1) throw new Error(`console_browser_operator_disable_failed:${state.operatorDisableWrites.size}`);
-    if (state.recoveryPlanDiagnoses !== 2 || state.recoveryPlanValidations !== 2 || state.recoveryPlanExecutions.size !== 1 || [...state.recoveryPlanExecuteAttempts.values()].some((attempts) => attempts !== 4)) {
-      throw new Error(`console_browser_recovery_plan_failed:${JSON.stringify({ diagnoses: state.recoveryPlanDiagnoses, validations: state.recoveryPlanValidations, executions: state.recoveryPlanExecutions.size, attempts: [...state.recoveryPlanExecuteAttempts.values()] })}`);
-    }
     const expectedGatewayActions = ["edit", "group", "disable", "enable", "quota-reset", "rate-reset", "delete"];
     if (state.gatewayMutationWrites.size !== expectedGatewayActions.length || JSON.stringify(state.gatewayActions) !== JSON.stringify(expectedGatewayActions)) {
       throw new Error(`console_browser_gateway_lifecycle_failed:${JSON.stringify(state.gatewayActions)}`);
@@ -1647,7 +1606,6 @@ export async function runConsoleBrowserQa({
       roles: ["customer", "operator"],
       sourceStates: ["available", "empty", "unavailable", "error"],
       repeatedWrites: { gatewayKey: state.gatewayWrites.size, walletAdjustment: state.walletWrites.size },
-      recoveryPlan: { diagnoses: state.recoveryPlanDiagnoses, validations: state.recoveryPlanValidations, executions: state.recoveryPlanExecutions.size },
       ...highRiskEvidence,
       operatorAccountDisableWrites: state.operatorDisableWrites.size,
       operatorAccountStatuses: Object.fromEntries(state.operatorAccounts.map((account) => [account.accountId, account.status])),

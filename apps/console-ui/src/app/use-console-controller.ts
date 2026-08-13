@@ -5,7 +5,6 @@ import {
   createSupportTicketMapping,
   createOperatorAnnouncement,
   createWalletAdjustment,
-  diagnoseWorkspaceLaunchRecoveryPlan,
   disableOperatorAccount as disableOperatorAccountCommand,
   getAnnouncements,
   getBillingReceipt,
@@ -27,15 +26,12 @@ import {
   getPricingCatalog,
   getSupportTickets,
   getWalletAdjustment,
-  getWorkspaceLaunchRecoveryPlan,
   markAnnouncementRead,
   previewPricing,
   provisionOperatorAccount,
   publishOperatorAnnouncement,
   recoverWalletAdjustment,
-  executeWorkspaceLaunchRecoveryPlan,
   revealGatewayKey,
-  validateWorkspaceLaunchRecoveryPlan,
   withdrawOperatorAnnouncement
 } from "../api/console-read-api.ts";
 import type {
@@ -46,16 +42,11 @@ import type {
   GatewayUsagePeriod,
   OperatorAccountDTO,
   OperatorAccountCommandDTO,
-  OperatorReconciliationItemDTO,
   PlanId,
   ProvisionAccountRequest,
   SourceEnvelope,
   WalletAdjustmentRecoveryRequest,
   WalletAdjustmentRequest,
-  DiagnoseWorkspaceLaunchRecoveryPlanRequest,
-  ExecuteWorkspaceLaunchRecoveryPlanRequest,
-  ValidateWorkspaceLaunchRecoveryPlanRequest,
-  WorkspaceLaunchRecoveryPlanDTO,
   WorkspaceLaunchRequest,
   WorkspacePricePreview
 } from "../api/dtos.ts";
@@ -226,7 +217,6 @@ export function useConsoleController() {
   const operatorProvisionIntent = useRef<{ input: ProvisionAccountRequest; idempotencyKey: string } | null>(null);
   const supportCreateIntent = useRef<{ input: CreateSupportTicketMappingRequest; idempotencyKey: string } | null>(null);
   const operatorDisableIntents = useRef(new Map<string, string>());
-  const recoveryPlanExecuteIntent = useRef<{ operationId: string; planDigest: string; idempotencyKey: string } | null>(null);
   const announcementCreateIntent = useRef<{ input: AnnouncementDraftRequest; idempotencyKey: string } | null>(null);
   const announcementPublishIntents = useRef(new Map<string, { input: AnnouncementScheduleRequest; idempotencyKey: string }>());
   const announcementWithdrawIntents = useRef(new Map<string, string>());
@@ -308,7 +298,6 @@ export function useConsoleController() {
     walletAdjustmentRecoveryIntent.current = null;
     operatorProvisionIntent.current = null;
     supportCreateIntent.current = null;
-    recoveryPlanExecuteIntent.current = null;
     announcementCreateIntent.current = null;
     operatorDisableIntents.current.clear();
     announcementPublishIntents.current.clear();
@@ -1335,79 +1324,6 @@ export function useConsoleController() {
     }
   };
 
-  const diagnoseRecoveryPlan = async (review: OperatorReconciliationItemDTO) => {
-    if (!session || !review.allowedActions.includes("diagnose_workspace_recovery_plan")) return null;
-    const requestStillCurrent = currentMutationRequest();
-    const input: DiagnoseWorkspaceLaunchRecoveryPlanRequest = { accountId: review.accountId };
-    setCommandBusy(true);
-    try {
-      const result = await diagnoseWorkspaceLaunchRecoveryPlan(review.billingOperationId, input, session.csrfToken);
-      if (!requestStillCurrent()) return null;
-      flash("恢复计划已生成");
-      return result;
-    } catch (error) {
-      if (!requestStillCurrent()) return null;
-      flash(mutationError(error), "danger");
-      return null;
-    } finally {
-      if (requestStillCurrent()) setCommandBusy(false);
-    }
-  };
-
-  const readRecoveryPlan = async (operationId: string) => {
-    if (!session) return null;
-    const requestStillCurrent = currentMutationRequest();
-    setCommandBusy(true);
-    try {
-      const result = await getWorkspaceLaunchRecoveryPlan(operationId);
-      return requestStillCurrent() ? result : null;
-    } catch (error) {
-      if (requestStillCurrent()) flash(mutationError(error), "danger");
-      return null;
-    } finally {
-      if (requestStillCurrent()) setCommandBusy(false);
-    }
-  };
-
-  const validateRecoveryPlan = async (operationId: string, plan: WorkspaceLaunchRecoveryPlanDTO) => {
-    if (!session) return null;
-    const requestStillCurrent = currentMutationRequest();
-    const input: ValidateWorkspaceLaunchRecoveryPlanRequest = { planId: plan.planId, planDigest: plan.planDigest };
-    setCommandBusy(true);
-    try {
-      const result = await validateWorkspaceLaunchRecoveryPlan(operationId, input, session.csrfToken);
-      if (!requestStillCurrent()) return null;
-      return result;
-    } catch (error) {
-      if (requestStillCurrent()) flash(mutationError(error), "danger");
-      return null;
-    } finally {
-      if (requestStillCurrent()) setCommandBusy(false);
-    }
-  };
-
-  const executeRecoveryPlan = async (operationId: string, plan: WorkspaceLaunchRecoveryPlanDTO) => {
-    if (!session || commandBusy) return null;
-    const requestStillCurrent = currentMutationRequest();
-    const input: ExecuteWorkspaceLaunchRecoveryPlanRequest = { planId: plan.planId, planDigest: plan.planDigest, decision: "continue", confirmation: "CONTINUE_RECOVERY_PLAN" };
-    if (!recoveryPlanExecuteIntent.current || recoveryPlanExecuteIntent.current.operationId !== operationId || recoveryPlanExecuteIntent.current.planDigest !== plan.planDigest) {
-      recoveryPlanExecuteIntent.current = { operationId, planDigest: plan.planDigest, idempotencyKey: `recovery-plan:${plan.planDigest}` };
-    }
-    setCommandBusy(true);
-    try {
-      const result = await executeWorkspaceLaunchRecoveryPlan(operationId, input, session.csrfToken, recoveryPlanExecuteIntent.current.idempotencyKey);
-      if (!requestStillCurrent()) return null;
-      flash("恢复计划已继续执行");
-      return result;
-    } catch (error) {
-      if (requestStillCurrent()) flash(mutationError(error), "danger");
-      return null;
-    }
-    finally {
-      if (requestStillCurrent()) setCommandBusy(false);
-    }
-  };
-
   const createAnnouncement = async (input: AnnouncementDraftRequest) => {
     if (!session) return false;
     const requestStillCurrent = currentMutationRequest();
@@ -1597,10 +1513,6 @@ export function useConsoleController() {
     operatorProvisionOperation,
     setOperatorProvisionOperation,
     provisionAccount,
-    diagnoseRecoveryPlan,
-    readRecoveryPlan,
-    validateRecoveryPlan,
-    executeRecoveryPlan,
     createAnnouncement,
     publishAnnouncement,
     withdrawAnnouncement

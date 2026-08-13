@@ -21,7 +21,6 @@ import type {
   OperatorAccountDTO,
   OperatorHealthDTO,
   OperatorReconciliationItemDTO,
-  WorkspaceLaunchRecoveryPlanDTO,
   OperatorResourceDTO,
   OperatorWorkspaceDTO,
   ReadinessFact,
@@ -29,7 +28,7 @@ import type {
   WalletAdjustmentRequest
 } from "../api/dtos.ts";
 import { SourceState } from "../components/source/SourceState.tsx";
-import { Badge, Button, Checkbox, Field, Modal, Select } from "../components/ui/index.ts";
+import { Badge, Button, Field, Modal, Select } from "../components/ui/index.ts";
 import { formatCount, formatDate, formatUsdMicros } from "../console-model.ts";
 
 type BadgeTone = "danger" | "info" | "secondary" | "success" | "warning";
@@ -561,53 +560,17 @@ function ReviewDetails({ review }: { review: OperatorReconciliationItemDTO }) {
   );
 }
 
-function RecoveryPlanDetails({ plan }: { plan: WorkspaceLaunchRecoveryPlanDTO }) {
-  return <>
-    <section className="data-section"><h2>Recovery Plan</h2><dl className="data-list">
-      <div><dt>plan ID</dt><dd>{plan.planId}</dd></div>
-      <div><dt>plan digest</dt><dd><code>{plan.planDigest}</code></dd></div>
-      <div><dt>状态</dt><dd><Badge color={statusTone(plan.status)}>{statusLabel(plan.status)}</Badge></dd></div>
-      <div><dt>execution ID</dt><dd>{plan.executionId || "暂不可用"}</dd></div>
-      <div><dt>run ID</dt><dd>{plan.runId || "暂不可用"}</dd></div>
-      <div><dt>最终 URL</dt><dd>{plan.url ? <a href={plan.url} rel="noreferrer" target="_blank">{plan.url}</a> : "暂不可用"}</dd></div>
-      <div><dt>Receipt</dt><dd>{plan.receiptId || "暂不可用"}</dd></div>
-    </dl></section>
-    <section className="data-section"><h2>逐阶段状态</h2>{plan.stages.length ? <dl className="data-list">{plan.stages.map((stage, index) => <div key={`${stage.stage}-${index}`}><dt>{stage.stage}</dt><dd>{stage.status}{stage.phase ? ` · ${stage.phase}` : ""}{stage.errorCode ? ` · ${stage.errorCode}` : ""}</dd></div>)}</dl> : <div className="empty-copy">暂无阶段状态</div>}</section>
-    <section className="data-section"><h2>mismatch</h2>{plan.mismatches.length ? <dl className="data-list">{plan.mismatches.map((mismatch, index) => <div key={`${mismatch.field}-${index}`}><dt>{mismatch.field}</dt><dd>expected: {mismatch.expectedDigest || mismatch.expected || "暂不可用"} · actual: {mismatch.actualDigest || mismatch.actual || "暂不可用"}</dd></div>)}</dl> : <div className="empty-copy">未报告 mismatch</div>}</section>
-  </>;
-}
-
-function ReviewModal({ controller, onClose, review }: { controller: ConsoleController; onClose: () => void; review: OperatorReconciliationItemDTO | null }) {
-  const [confirmed, setConfirmed] = useState(false);
-  const [plan, setPlan] = useState<WorkspaceLaunchRecoveryPlanDTO | null>(null);
-  const recoverable = Boolean(review?.allowedActions.includes("diagnose_workspace_recovery_plan"));
-  const close = () => { setConfirmed(false); setPlan(null); onClose(); };
-  const diagnose = async () => {
-    if (!review) return;
-    setPlan(await controller.diagnoseRecoveryPlan(review));
-  };
-  const readPlan = async () => {
-    if (!review) return;
-    setPlan(await controller.readRecoveryPlan(review.billingOperationId));
-  };
-  const validate = async () => {
-    if (!review || !plan) return;
-    setPlan(await controller.validateRecoveryPlan(review.billingOperationId, plan));
-  };
-  const execute = async () => {
-    if (!review || !plan || !confirmed) return;
-    setPlan(await controller.executeRecoveryPlan(review.billingOperationId, plan));
-  };
+function ReviewModal({ onClose, review }: { onClose: () => void; review: OperatorReconciliationItemDTO | null }) {
   return (
     <Modal
       className="modal"
-      description="由 Control Plane 生成、持久化并执行恢复计划。"
-      footer={<><Button onClick={close} variant="outline">关闭</Button>{recoverable && !plan ? <Button busy={controller.commandBusy} color="primary" onClick={() => void diagnose()}>诊断恢复计划</Button> : null}{plan ? <><Button busy={controller.commandBusy} onClick={() => void readPlan()} variant="outline">查看已持久化计划</Button><Button busy={controller.commandBusy} onClick={() => void validate()} variant="outline">校验计划</Button><Button busy={controller.commandBusy} color="primary" disabled={!confirmed} onClick={() => void execute()}>确认继续</Button></> : null}</>}
-      onClose={close}
+      description="服务端复核队列项目与证据，操作由 Control Plane 权威决定。"
+      footer={<Button onClick={onClose} variant="outline">关闭</Button>}
+      onClose={onClose}
       open={Boolean(review)}
-      title="复核详情与 Recovery Plan"
+      title="复核详情"
     >
-      {review ? <div data-slide="A-REC-02"><ReviewDetails review={review} /><section className="data-section"><h2>服务端允许动作</h2><dl className="data-list"><div><dt>allowedActions</dt><dd>{review.allowedActions.length ? review.allowedActions.join(", ") : "无自动修复动作"}</dd></div></dl></section>{plan ? <><RecoveryPlanDetails plan={plan} /><Checkbox checked={confirmed} label="确认继续此 Recovery Plan" onChange={setConfirmed} /></> : recoverable ? <div className="inline-notice"><ShieldAlert aria-hidden size={17} /><span>先诊断，再查看 Control Plane 已持久化的 Recovery Plan。</span></div> : <div className="inline-notice"><ShieldAlert aria-hidden size={17} /><span>该项目只展示阻断和证据，不提供自动修复。</span></div>}</div> : null}
+      {review ? <div data-slide="A-REC-02"><ReviewDetails review={review} /><section className="data-section"><h2>服务端允许动作</h2><dl className="data-list"><div><dt>allowedActions</dt><dd>{review.allowedActions.length ? review.allowedActions.join(", ") : "无自动修复动作"}</dd></div></dl></section><div className="inline-notice"><ShieldAlert aria-hidden size={17} /><span>该项目只展示阻断和证据，不提供自动修复。</span></div></div> : null}
     </Modal>
   );
 }
@@ -620,11 +583,10 @@ function ReconciliationPage({ controller }: { controller: ConsoleController }) {
       <div className="panel-title"><div><h2>计费复核</h2></div><span>服务端队列</span></div>
       <SourceState empty={reviews.length === 0} emptyTitle="暂无待复核项目" error={controller.sources.operatorReconciliation.error} loading={controller.sources.operatorReconciliation.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.operatorReconciliation.value} unavailableTitle="复核数据暂不可用">
         {(data) => <div className="table-wrap"><table><thead><tr><th>Account</th><th>资源类型</th><th>状态</th><th>billing operation</th><th>phase</th><th>errorCode</th><th>operation reference</th><th>Receipt reference</th><th>allowedActions</th><th>操作</th></tr></thead><tbody>{data.items.map((review) => {
-          const actionable = review.allowedActions.includes("diagnose_workspace_recovery_plan");
-          return <tr key={review.id}><td>{review.accountId || "暂不可用"}</td><td>{review.resourceType}</td><td><Badge color={statusTone(review.status)}>{statusLabel(review.status)}</Badge></td><td>{review.billingOperationId || "暂不可用"}</td><td>{review.phase || "暂不可用"}</td><td>{review.errorCode || "暂不可用"}</td><td>{review.operationRef || "暂不可用"}</td><td>{review.receiptRef || "暂不可用"}</td><td>{review.allowedActions.length ? review.allowedActions.join(", ") : "无"}</td><td><Button onClick={() => setSelectedReview(review)} size="sm" variant={actionable ? "outline" : "ghost"}>{actionable ? "查看恢复计划" : "查看证据"}</Button></td></tr>;
+          return <tr key={review.id}><td>{review.accountId || "暂不可用"}</td><td>{review.resourceType}</td><td><Badge color={statusTone(review.status)}>{statusLabel(review.status)}</Badge></td><td>{review.billingOperationId || "暂不可用"}</td><td>{review.phase || "暂不可用"}</td><td>{review.errorCode || "暂不可用"}</td><td>{review.operationRef || "暂不可用"}</td><td>{review.receiptRef || "暂不可用"}</td><td>{review.allowedActions.length ? review.allowedActions.join(", ") : "无"}</td><td><Button onClick={() => setSelectedReview(review)} size="sm" variant="ghost">查看证据</Button></td></tr>;
         })}</tbody></table></div>}
       </SourceState>
-      <ReviewModal controller={controller} onClose={() => setSelectedReview(null)} review={selectedReview} />
+      <ReviewModal onClose={() => setSelectedReview(null)} review={selectedReview} />
     </section>
   );
 }
