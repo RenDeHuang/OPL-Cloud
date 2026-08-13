@@ -309,17 +309,24 @@ terminal at the classification layer only, with alert disposition explicitly
 unperformed as recorded above.
 
 The repository security scan for canonical revision `b7217daddf1520d7f442cea5b8dba2c6df636cdf`
-reported eight source findings (five high, three medium). The current remediation
-candidate adds account/workspace/action/operation/body-bound HMAC capabilities to
-Ledger and the remaining Fabric storage mutations, pins the portable PostgreSQL
-runtime and local Docker helper image, constrains the Workspace proxy to an
-admitted DNS service identity and fixed port, and bounds Control Plane sessions,
-support mappings, retention, and proxy input. Focused regression tests and the
-Ledger/Fabric modules pass; the candidate is not yet canonical `main`, deployed,
-or rescanned. GitHub tag/Release/GHCR immutability remains an external-owner gap:
-fresh readback still reports no tag ruleset and `v0.1.0` `immutable=false`.
-The full Control Plane server suite requires a PostgreSQL test database and was
-not claimed from this local environment.
+reported eight source findings (five high, three medium). PR `#307` merged the
+account/workspace/action/operation/body-bound Ledger and Fabric capabilities,
+portable PostgreSQL and local Docker helper image pinning, admitted Workspace
+proxy destination, and Control Plane resource bounds as canonical revision
+`884e02c1e4242fc33ff6aea55dc4594e61c68cbc`. Its required CI passed. A fresh
+source review of that revision no longer reproduced those seven source-owned
+findings, but found one low-severity Fabric authorization omission: the
+compute-pool-head terminalization POST route was not classified as a mutation.
+The current candidate adds owner-derived account/Workspace scope and requires a
+short-lived `caller=operator` capability before the terminal operation-store
+CAS; focused Fabric HTTP and service tests pass. This candidate is not yet
+canonical `main` or a sealed scan result. The current `opl-instance-medopl`
+workflow and manifest have not yet adopted the full Fabric capability credential
+set, so source absorption does not prove a usable production operator path or a
+deployment. GitHub tag/Release/GHCR immutability also remains an external-owner
+gap: fresh readback still reports no tag ruleset and `v0.1.0`
+`immutable=false`. The full Control Plane server suite requires a PostgreSQL test
+database and was not claimed from this local environment.
 
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production

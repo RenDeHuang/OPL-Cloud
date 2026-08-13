@@ -259,6 +259,15 @@ expected scope from the typed request and rejects missing or mismatched
 capabilities before operation-store or provider mutation. Runner transport
 identity remains limited to job lease routes.
 
+The targeted compute-pool-head terminalization route is the only current
+operator exception. Its protected Instance workflow must sign `caller=operator`
+for the exact request body, while Fabric independently derives account,
+Workspace, node-pool, approval, and replay scope from its persisted candidate or
+exact terminal evidence before accepting the capability. The product source and
+tests define this protocol; Instance credential wiring, deployment, and runtime
+readback remain owned by `opl-instance-medopl` and are not implied by source
+absorption.
+
 ## Persistence
 
 Control Plane, Fabric, and Ledger each own their PostgreSQL schema and table

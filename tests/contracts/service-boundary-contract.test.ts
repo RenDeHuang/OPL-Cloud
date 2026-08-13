@@ -6,7 +6,17 @@ test("Fabric mutations use a scoped capability distinct from transport identity"
   const contract = JSON.parse(await readFile("packages/contracts/opl-cloud-service-boundary-contract.json", "utf8"));
   const authorization = contract.physicalBoundaries.fabricMutationAuthorization;
 
-  assert.equal(authorization.issuer, "services/control-plane");
+  assert.equal(authorization.defaultIssuer, "services/control-plane");
+  assert.deepEqual(authorization.operatorExceptions, [
+    {
+      issuer: "opl-instance-medopl_protected_production_workflow",
+      route: "POST /fabric/compute-pool-head/terminalization",
+      caller: "operator",
+      action: "terminalize_compute_pool_head",
+      scopeSource: "fabric_persisted_candidate_or_exact_terminal_replay",
+      deploymentRequiredForUse: true
+    }
+  ]);
   assert.equal(authorization.verifier, "services/fabric");
   assert.equal(authorization.integrity, "hmac_sha256");
   assert.equal(authorization.shortLived, true);
