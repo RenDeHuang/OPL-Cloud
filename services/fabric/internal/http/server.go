@@ -19,6 +19,10 @@ import (
 
 const fabricCapabilityHeader = "X-OPL-Fabric-Capability"
 
+const maxJSONBodyBytes int64 = 1 << 20
+
+var errRequestBodyTooLarge = errors.New("request body too large")
+
 type ServerAuthConfig struct {
 	ControlPlaneToken string
 	RunnerToken       string
@@ -144,7 +148,7 @@ func newFabricMux(service *fabric.Service) http.Handler {
 			return
 		}
 		var input fabric.ComputePoolHeadTerminalizationInput
-		decoder := json.NewDecoder(io.LimitReader(r.Body, 4097))
+		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -468,7 +472,7 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		secret, err := service.UpsertGatewaySecret(r.Context(), input)
 		writeResult(w, secret, err)
 	})
-	return mux
+	return limitRequestBody(mux)
 }
 
 type fabricCapabilityClaims struct {
@@ -516,12 +520,15 @@ func authorizeFabricRequests(next http.Handler, config ServerAuthConfig) http.Ha
 			next.ServeHTTP(w, r)
 			return
 		}
-		body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+		body, err := readBoundedBody(r)
 		if err != nil {
+			if errors.Is(err, errRequestBodyTooLarge) {
+				writeError(w, http.StatusRequestEntityTooLarge, "request_body_too_large")
+				return
+			}
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
 		scope, ok := fabricMutationScopeForRequest(r, body)
 		if !ok {
 			writeError(w, http.StatusForbidden, "forbidden")
@@ -701,6 +708,36 @@ func decodeWrite(w http.ResponseWriter, r *http.Request, idempotencyKey *string,
 		return false
 	}
 	return true
+}
+
+func limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := readBoundedBody(r); err != nil {
+			if errors.Is(err, errRequestBodyTooLarge) {
+				writeError(w, http.StatusRequestEntityTooLarge, "request_body_too_large")
+				return
+			}
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func readBoundedBody(r *http.Request) ([]byte, error) {
+	reader := r.Body
+	if reader == nil {
+		reader = http.NoBody
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, maxJSONBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxJSONBodyBytes {
+		return nil, errRequestBodyTooLarge
+	}
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	return data, nil
 }
 
 func exactQueryValue(r *http.Request, name string) (string, bool) {
