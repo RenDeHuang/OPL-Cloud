@@ -213,15 +213,15 @@ with `linux/amd64` and `linux/arm64` manifests. The GitHub Release contains
 SHA, image digest, platforms, and asset set. This proves publication of the
 portable product artifact, not installation or production readiness.
 
-The current canonical `main` is now
-`41744aaaab0a28ae6defeb6dc82b240ef871b0a9`, newer than the immutable `v0.1.0`
-product SHA and not silently substituted into that release. A clean Docker-host
-installation using only the release assets, a complete live Console
-create/readback/open/delete path, real external Sub2API authentication/balance/
-usage evidence, and Instance adoption/deployment remain open evidence gaps.
+The immutable `v0.1.0` product SHA is distinct from any later canonical `main`
+commit and is not silently substituted by subsequent documentation or source
+changes. A clean Docker-host installation using only the release assets, a
+complete live Console create/readback/open/delete path, real external Sub2API
+authentication/balance/usage evidence, and Instance adoption/deployment remain
+open evidence gaps.
 
-GitHub security controls were read back on 2026-08-13 for current
-`main@41744aaaab0a28ae6defeb6dc82b240ef871b0a9`. Private vulnerability
+GitHub security controls were read back on 2026-08-13 for the post-release
+canonical baseline before this documentation merge. Private vulnerability
 reporting, Dependabot alerts and security updates, secret scanning and push
 protection, Actions full-SHA pin enforcement, and branch-protection admin
   enforcement are enabled. CodeQL default setup is configured weekly for Actions,
