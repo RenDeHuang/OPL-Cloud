@@ -14,10 +14,33 @@ concrete installation.
 
 ## Start A Release
 
-Download `compose.yaml`, `opl-cloud.env.example`, and
-`opl-cloud-release.json` from one GitHub Release. Verify that the manifest's
-`productSha`, `releaseTag`, and immutable GHCR digest match the selected
-release, then prepare `.env` from the example.
+Download all five assets from one GitHub Release: `compose.yaml`,
+`compose.local-workspace.yaml`, `opl-cloud.env.example`,
+`opl-cloud-release.json`, and `SHA256SUMS`. Verify the downloaded bytes and
+their GitHub-hosted provenance before trusting the manifest:
+
+```bash
+if command -v sha256sum >/dev/null; then
+  sha256sum --check --strict SHA256SUMS
+else
+  shasum -a 256 -c SHA256SUMS
+fi
+for asset in compose.yaml compose.local-workspace.yaml opl-cloud.env.example opl-cloud-release.json SHA256SUMS; do
+  gh attestation verify "$asset" \
+    --repo gaofeng21cn/one-person-lab-cloud \
+    --signer-workflow gaofeng21cn/one-person-lab-cloud/.github/workflows/release-opl-cloud-image.yml \
+    --predicate-type https://github.com/gaofeng21cn/one-person-lab-cloud/attestations/opl-cloud-release/v1 \
+    --deny-self-hosted-runners
+done
+```
+
+The attestation predicate binds the signing workflow commit/ref, the separately
+selected product SHA, release tag, immutable image digest, and checksum-manifest
+digest. Verify that those predicate values and the manifest's `productSha`,
+`releaseTag`, and immutable GHCR digest match the selected release before
+preparing `.env` from the example. Release `v0.1.0` predates `SHA256SUMS` and artifact attestations;
+use its recorded immutable image digest and source SHA as historical evidence,
+not as proof of this newer provenance control.
 
 ```bash
 docker compose --env-file .env pull

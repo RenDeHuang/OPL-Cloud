@@ -23,13 +23,23 @@
     ],
     "releaseAssets": [
       "compose.yaml",
+      "compose.local-workspace.yaml",
       "opl-cloud.env.example",
-      "opl-cloud-release.json"
+      "opl-cloud-release.json",
+      "SHA256SUMS"
     ],
+    "assetIntegrity": {
+      "checksumManifest": "SHA256SUMS",
+      "provenance": "github_oidc_custom_attestation",
+      "predicateType": "https://github.com/gaofeng21cn/one-person-lab-cloud/attestations/opl-cloud-release/v1",
+      "signerWorkflow": ".github/workflows/release-opl-cloud-image.yml"
+    },
     "immutableIdentity": [
       "releaseTag",
       "productSha",
-      "imageDigest"
+      "imageDigest",
+      "releaseAssetSha256",
+      "releaseAssetProvenance"
     ]
   },
   "portableInstallation": {
