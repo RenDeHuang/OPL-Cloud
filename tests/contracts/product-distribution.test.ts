@@ -110,6 +110,10 @@ test("portable distribution is product-owned and instance-neutral", async () => 
     "${OPL_WORKSPACE_IMAGE:?Set OPL_WORKSPACE_IMAGE to an immutable Workspace image digest}"
   );
   assert.equal(localWorkspaceCompose.services["control-plane"].environment.OPL_WORKSPACE_LAUNCH_WORKER_ENABLED, "1");
+  assert.equal(
+    localWorkspaceCompose.services.fabric.environment.OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES,
+    "${OPL_WORKSPACE_IMAGE:?Set OPL_WORKSPACE_IMAGE to an immutable Workspace image digest}"
+  );
   assert.match(dockerfile, /^FROM docker:27\.5\.1-cli@sha256:[a-f0-9]{64} AS docker-cli$/m);
   assert.match(dockerfile, /^COPY --from=docker-cli \/usr\/local\/bin\/docker \/usr\/local\/bin\/docker$/m);
   assert.match(dockerfile, /apt-get install[^\n]*ca-certificates curl/);
