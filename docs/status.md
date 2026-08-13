@@ -219,11 +219,11 @@ evidence therefore do not prove a published immutable product or an installed
 application.
 
 GitHub security controls were read back on 2026-08-13 for
-`main@a7b7c4d2fd01001d0a7b00797219f118b13cb665`. Private vulnerability
+`main@98eac98b46fc872ed8c803363de7ed47edacd2ba`. Private vulnerability
 reporting, Dependabot alerts and security updates, secret scanning and push
 protection, Actions full-SHA pin enforcement, and branch-protection admin
   enforcement are enabled. CodeQL default setup is configured weekly for Actions,
-  Go, and JavaScript/TypeScript; run `31670378085` completed successfully for all
+  Go, and JavaScript/TypeScript; run `31674571131` completed successfully for all
   three analyses at the current `main` SHA. The repository has zero open
 secret-scanning alerts and zero open Dependabot alerts. Secret validity checks
 remain disabled after the attempted setting change did not take effect. Actions
@@ -234,16 +234,20 @@ The default workflow token is read-only and cannot approve pull requests.
 contexts, resolves review conversations, and forbids force pushes and deletion.
 
 CodeQL success did not produce a zero-alert baseline.
-`SECURITY-CODEQL-TRIAGE-01` completed with `mutation_zero`: all 15 high-security-
-severity alerts were individually classified `not_actionable`, with zero
-`confirmed` and zero `needs_review`. Fresh GitHub API readback for
-`main@a7b7c4d2fd01001d0a7b00797219f118b13cb665` still reports those same 15
-alerts open after the successful current-main run. They cover
-`go/weak-sensitive-data-hashing`, `js/weak-cryptographic-algorithm`, and
-`go/allocation-size-overflow`. Alerts `#1` through `#15` remain open; no alert
-dismissal, fix, setting mutation, or code write was performed. This triage
-result therefore does not establish a fix, dismissal, zero-alert baseline, or
-product readiness. A separate sealed, risk-based static scan of revision
+`SECURITY-CODEQL-TRIAGE-01` completed with `mutation_zero`: the original 15
+high-security-severity alerts were individually classified `not_actionable`, with
+zero `confirmed` and zero `needs_review`; GitHub now reports alerts `#12` and
+`#13` as `fixed`. Fresh GitHub API readback for
+`main@98eac98b46fc872ed8c803363de7ed47edacd2ba` reports 15 alerts still open:
+`#1`-`#11` and `#14`-`#17`. Alerts `#16` and `#17` are the newly surfaced
+`go/weak-sensitive-data-hashing` comments from merged PR `#287`; static review
+matches the already triaged Go fingerprint family: SHA-256 is used for opaque
+Workspace API-key fingerprints and replay/readback consistency, not password
+storage, password verification, or authorization. They remain open in GitHub;
+this classification does not authorize dismissal or a code change. No alert
+dismissal, settings mutation, or security-only code write was performed. This
+triage result therefore does not establish a zero-alert baseline or product
+readiness. A separate sealed, risk-based static scan of revision
 `24a065d4427b53d65ba0df9cb70b1a36327fb6af` reported three medium and seven low
 findings with partial coverage and no runtime exercise. None is recorded as
 fixed by the scan, by enabling GitHub controls, or by this documentation.
