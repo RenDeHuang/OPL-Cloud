@@ -21,14 +21,6 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
-func NewServer(service *controlplane.Service) http.Handler {
-	handler, err := NewPersistentServer(service, nil)
-	if err != nil {
-		panic(err)
-	}
-	return handler
-}
-
 type controlPlaneHTTPHandler struct {
 	app     *controlPlaneServer
 	next    http.Handler
