@@ -67,7 +67,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		if !app.workspaceAccessAllowed(w, workspace) {
+		if !app.workspaceAccessAllowed(w, r, workspace) {
 			return
 		}
 		unlock := app.lockEntitlementResources(
@@ -89,7 +89,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		if !app.workspaceAccessAllowed(w, workspace) {
+		if !app.workspaceAccessAllowed(w, r, workspace) {
 			return
 		}
 		switch stringValue(workspace["state"]) {
@@ -151,7 +151,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		if !ok {
 			return
 		}
-		if app.workspaceResponse(cloneMap(workspace))["openable"] != true {
+		if response, reason := app.workspaceAccessResponse(r.Context(), cloneMap(workspace), time.Now().UTC()); reason != "" || response["openable"] != true {
 			writeError(w, http.StatusConflict, "workspace_not_running")
 			return
 		}
@@ -456,14 +456,14 @@ func (app *controlPlaneServer) ownedWorkspaceForCredentialCommand(w http.Respons
 		writeError(w, http.StatusForbidden, "workspace_owner_required")
 		return nil, false
 	}
-	if !app.workspaceAccessAllowed(w, workspace) {
+	if !app.workspaceAccessAllowed(w, r, workspace) {
 		return nil, false
 	}
 	return workspace, true
 }
 
-func (app *controlPlaneServer) workspaceAccessAllowed(w http.ResponseWriter, workspace map[string]any) bool {
-	_, reason := app.workspaceAccessResponse(cloneMap(workspace), time.Now().UTC())
+func (app *controlPlaneServer) workspaceAccessAllowed(w http.ResponseWriter, r *http.Request, workspace map[string]any) bool {
+	_, reason := app.workspaceAccessResponse(r.Context(), cloneMap(workspace), time.Now().UTC())
 	if reason != "" {
 		writeError(w, http.StatusConflict, reason)
 		return false

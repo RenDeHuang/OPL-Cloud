@@ -30,6 +30,100 @@ func NewTestEntStateStore(t *testing.T, path string) StateStore {
 	return &postgresEntStateStore{client: client}
 }
 
+type workspaceAccessReadContextKey struct{}
+
+type workspaceAccessReadTrackingStore struct {
+	*memoryTableStore
+	computeLists    []string
+	storageLists    []string
+	attachmentLists []string
+	computeGets     []string
+	storageGets     []string
+	attachmentGets  []string
+	contextValues   []any
+}
+
+func (s *workspaceAccessReadTrackingStore) ListComputes(ctx context.Context, accountID string) ([]map[string]any, error) {
+	s.computeLists = append(s.computeLists, accountID)
+	return s.memoryTableStore.ListComputes(ctx, accountID)
+}
+
+func (s *workspaceAccessReadTrackingStore) ListStorages(ctx context.Context, accountID string) ([]map[string]any, error) {
+	s.storageLists = append(s.storageLists, accountID)
+	return s.memoryTableStore.ListStorages(ctx, accountID)
+}
+
+func (s *workspaceAccessReadTrackingStore) ListAttachments(ctx context.Context, accountID string) ([]map[string]any, error) {
+	s.attachmentLists = append(s.attachmentLists, accountID)
+	return s.memoryTableStore.ListAttachments(ctx, accountID)
+}
+
+func (s *workspaceAccessReadTrackingStore) recordContext(ctx context.Context) {
+	s.contextValues = append(s.contextValues, ctx.Value(workspaceAccessReadContextKey{}))
+}
+
+func (s *workspaceAccessReadTrackingStore) GetCompute(ctx context.Context, id string) (map[string]any, bool, error) {
+	s.computeGets = append(s.computeGets, id)
+	s.recordContext(ctx)
+	return s.memoryTableStore.GetCompute(ctx, id)
+}
+
+func (s *workspaceAccessReadTrackingStore) GetStorage(ctx context.Context, id string) (map[string]any, bool, error) {
+	s.storageGets = append(s.storageGets, id)
+	s.recordContext(ctx)
+	return s.memoryTableStore.GetStorage(ctx, id)
+}
+
+func (s *workspaceAccessReadTrackingStore) GetAttachment(ctx context.Context, id string) (map[string]any, bool, error) {
+	s.attachmentGets = append(s.attachmentGets, id)
+	s.recordContext(ctx)
+	return s.memoryTableStore.GetAttachment(ctx, id)
+}
+
+func TestWorkspaceAccessReadsPointResourcesWithRequestContext(t *testing.T) {
+	store := &workspaceAccessReadTrackingStore{memoryTableStore: newMemoryTableStore()}
+	ctx := context.WithValue(context.Background(), workspaceAccessReadContextKey{}, "request-context")
+	workspace := canonicalWorkspaceRenewalRow(false)
+	workspace["state"], workspace["status"] = "running", "running"
+	workspace["attachmentId"], workspace["currentAttachmentId"] = "attachment-renewal", "attachment-renewal"
+	workspace["runtime"] = map[string]any{"serviceName": "workspace-renewal", "status": "running", "ready": true}
+	for _, row := range []map[string]any{
+		{"id": "compute-renewal", "accountId": "acct-renewal", "workspaceId": "ws-renewal", "status": "running"},
+		{"id": "storage-renewal", "accountId": "acct-renewal", "workspaceId": "ws-renewal", "status": "available"},
+		{"id": "attachment-renewal", "accountId": "acct-renewal", "workspaceId": "ws-renewal", "status": "attached", "computeAllocationId": "compute-renewal", "storageId": "storage-renewal"},
+	} {
+		var err error
+		switch stringValue(row["id"]) {
+		case "compute-renewal":
+			err = store.SaveCompute(ctx, row)
+		case "storage-renewal":
+			err = store.SaveStorage(ctx, row)
+		default:
+			err = store.SaveAttachment(ctx, row)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	app, err := newControlPlaneAppWithStore(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, reason := app.workspaceAccessResponse(ctx, workspace, time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC))
+	if reason != "" || response["openable"] != true {
+		t.Fatalf("workspace access openable=%#v reason=%q response=%#v", response["openable"], reason, response)
+	}
+	if len(store.computeLists) != 0 || len(store.storageLists) != 0 || len(store.attachmentLists) != 0 {
+		t.Fatalf("workspace access materialized resource tables: computes=%#v storages=%#v attachments=%#v", store.computeLists, store.storageLists, store.attachmentLists)
+	}
+	if !reflect.DeepEqual(store.computeGets, []string{"compute-renewal"}) || !reflect.DeepEqual(store.storageGets, []string{"storage-renewal"}) || !reflect.DeepEqual(store.attachmentGets, []string{"attachment-renewal"}) {
+		t.Fatalf("workspace access point reads: computes=%#v storages=%#v attachments=%#v", store.computeGets, store.storageGets, store.attachmentGets)
+	}
+	if !reflect.DeepEqual(store.contextValues, []any{"request-context", "request-context", "request-context"}) {
+		t.Fatalf("workspace access context values=%#v", store.contextValues)
+	}
+}
+
 func TestEntIdentitySchemaEnforcesHardCut(t *testing.T) {
 	client := NewTestEntStateStore(t, t.TempDir()+"/identity-schema.sqlite").(*postgresEntStateStore).client
 	ctx := context.Background()
@@ -842,7 +936,7 @@ func TestWorkspaceRenewalGatewayRequiresCanonicalCoverage(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			workspace := cloneMap(base)
 			test.mutate(workspace)
-			response, reason := app.workspaceAccessResponse(workspace, now)
+			response, reason := app.workspaceAccessResponse(context.Background(), workspace, now)
 			if reason != test.reason || (response["openable"] == true) != test.open {
 				t.Fatalf("Workspace access openable=%#v reason=%q response=%#v", response["openable"], reason, response)
 			}
@@ -891,7 +985,7 @@ func TestWorkspaceRenewalManualReviewMarkerRoundTrips(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, reason := app.workspaceAccessResponse(rows[0], time.Now().UTC()); reason != "workspace_billing_manual_review" {
+			if _, reason := app.workspaceAccessResponse(context.Background(), rows[0], time.Now().UTC()); reason != "workspace_billing_manual_review" {
 				t.Fatalf("marker gateway reason=%q row=%#v", reason, rows[0])
 			}
 		})
@@ -923,7 +1017,7 @@ func TestWorkspaceProviderAcceptanceBillingExceptionIsNarrow(t *testing.T) {
 				"computeAllocationId": computeID, "currentComputeAllocationId": computeID, "storageId": storageID,
 				"attachmentId": attachmentID, "currentAttachmentId": attachmentID, "state": "running", "status": "running",
 			}
-			response, reason := app.workspaceAccessResponse(base, time.Now().UTC())
+			response, reason := app.workspaceAccessResponse(context.Background(), base, time.Now().UTC())
 			if reason != "" || response["openable"] != true {
 				t.Fatalf("fixed Provider Acceptance slot openable=%#v reason=%q", response["openable"], reason)
 			}
@@ -938,7 +1032,7 @@ func TestWorkspaceProviderAcceptanceBillingExceptionIsNarrow(t *testing.T) {
 			} {
 				workspace := cloneMap(base)
 				mutate(workspace)
-				if response, reason := app.workspaceAccessResponse(workspace, time.Now().UTC()); reason != "workspace_billing_state_invalid" || response["openable"] == true {
+				if response, reason := app.workspaceAccessResponse(context.Background(), workspace, time.Now().UTC()); reason != "workspace_billing_state_invalid" || response["openable"] == true {
 					t.Fatalf("non-slot billing exception openable=%#v reason=%q row=%#v", response["openable"], reason, workspace)
 				}
 			}
