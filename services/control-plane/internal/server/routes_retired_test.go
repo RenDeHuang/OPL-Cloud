@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,6 +96,19 @@ func TestRetiredConsoleAPIRoutesAreMethodlessTombstones(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestConsoleStateRouteIsRetiredBeforeAuthenticationOrFallback(t *testing.T) {
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut} {
+		t.Run(method, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, httptest.NewRequest(method, "/api/state", nil))
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -211,22 +223,12 @@ func (p *stateBalanceProbe) Balance(ctx context.Context, userID int64) (clients.
 	return p.testSub2APIClient.Balance(ctx, userID)
 }
 
-func TestConsoleStateDoesNotReadOrReturnGatewayIdentity(t *testing.T) {
+func TestRetiredConsoleStateDoesNotReadGatewayIdentity(t *testing.T) {
 	sub2API := &stateBalanceProbe{testSub2APIClient: testSub2APIClient{balance: 123, charges: map[string]int64{}}}
 	server, session := newGatewayOwnerTestServer(t, sub2API, nil)
 	response := requestWithSession(t, server, session, http.MethodGet, "/api/state", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("state = %d: %s", response.Code, response.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(response.Body).Decode(&state); err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := state["user"]; exists {
-		t.Fatalf("state returned user: %#v", state["user"])
-	}
-	if _, exists := state["balance"]; exists {
-		t.Fatalf("state returned balance: %#v", state["balance"])
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("state = %d, want 404: %s", response.Code, response.Body.String())
 	}
 	if sub2API.balanceCalls != 0 {
 		t.Fatalf("state read Sub2API balance %d times", sub2API.balanceCalls)

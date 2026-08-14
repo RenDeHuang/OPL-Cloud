@@ -299,35 +299,11 @@ type failingAuditStore struct{ *memoryTableStore }
 func (s *failingAuditStore) SaveAuditEvent(context.Context, map[string]any) error {
 	return errors.New("audit write failed")
 }
-func TestConsoleStateComputePoolsReadFabricCatalog(t *testing.T) {
-	server := NewServer(newTestService(fakeLedgerClient{}, &catalogFabricClient{}))
-	session := tenantAdminSessionForTest(t, server)
-	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addAuth(req, session)
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-	pools := state["computePools"].([]any)
-	first := pools[0].(map[string]any)
-	if len(pools) != 1 || first["id"] != "pool-ultra" || first["packageId"] != "ultra" || first["provider"] != "fabric-test" {
-		t.Fatalf("state compute pools must come from Fabric catalog: %#v", pools)
-	}
-}
-
 func TestPricingPackageAvailabilityFollowsFabricComputePools(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		path string
 	}{
-		{name: "console state", path: "/api/state?accountId=acct-alpha"},
 		{name: "pricing catalog", path: "/api/pricing/catalog"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -760,12 +736,12 @@ func TestCustomerOwnerCannotSelectAnotherAccount(t *testing.T) {
 	}
 	alpha := loginForTest(t, server, "alpha@lab.example", "CorrectHorseBatteryStaple!")
 
-	readOther := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-beta", nil)
+	readOther := httptest.NewRequest(http.MethodGet, "/api/workspaces?accountId=acct-beta", nil)
 	addSessionCookies(readOther, alpha)
 	readOtherRec := httptest.NewRecorder()
 	server.ServeHTTP(readOtherRec, readOther)
-	if readOtherRec.Code != http.StatusForbidden {
-		t.Fatalf("cross-account state status = %d, want 403: %s", readOtherRec.Code, readOtherRec.Body.String())
+	if readOtherRec.Code != http.StatusOK || strings.Contains(readOtherRec.Body.String(), "acct-beta") {
+		t.Fatalf("cross-account workspace list was not bound to the session account: status=%d body=%s", readOtherRec.Code, readOtherRec.Body.String())
 	}
 
 	retiredWrite := requestWithSession(t, server, alpha, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-beta","packageId":"basic"}`)
@@ -1359,7 +1335,7 @@ func TestResourceLedgerEvidencePreservesControlPlaneIdentity(t *testing.T) {
 		"status":       "succeeded",
 	}))
 
-	row := app.state("acct-alpha", nil)["resourceLedgerEvidence"].([]any)[0].(map[string]any)
+	row := app.resourceLedgerEvidenceLocked("acct-alpha")[0].(map[string]any)
 	if row["accountId"] != "acct-alpha" || row["workspaceId"] != "ws-alpha" || row["computeAllocationId"] != "compute-alpha" || row["storageId"] != "storage-alpha" || row["attachmentId"] != "attach-alpha" || row["operationId"] != "op-runtime-alpha" {
 		t.Fatalf("row missing Control Plane resource identity: %#v", row)
 	}
@@ -2064,7 +2040,6 @@ func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/auth/me", ""},
 		{http.MethodGet, "/api/healthz", ""},
-		{http.MethodGet, "/api/state", ""},
 		{http.MethodGet, "/api/management/state", ""},
 		{http.MethodGet, "/api/operator/overview", ""},
 		{http.MethodGet, "/api/runtime/readiness", ""},

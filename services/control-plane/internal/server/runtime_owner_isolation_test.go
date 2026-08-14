@@ -141,7 +141,7 @@ func TestRuntimeCredentialRevealOwnerOnly(t *testing.T) {
 		t.Fatalf("owner reveal calls = %#v", calls)
 	}
 
-	for _, path := range []string{"/api/state", "/api/workspaces"} {
+	for _, path := range []string{"/api/workspaces"} {
 		listed := requestWithSession(t, server, owner, http.MethodGet, path, "")
 		if strings.Contains(listed.Body.String(), "runtime-password-alpha") {
 			t.Fatalf("%s leaked revealed password: %s", path, listed.Body.String())

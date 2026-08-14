@@ -8,18 +8,7 @@ import (
 )
 
 func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
-	mux.HandleFunc("GET /api/state", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		accountID, ok := app.scopedAccountID(w, r, nil)
-		if !ok {
-			return
-		}
-		computePools, ok := fabricComputePools(w, r, service)
-		if !ok {
-			return
-		}
-		state := app.state(accountID, computePools)
-		writeJSON(w, http.StatusOK, state)
-	}))
+	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	mux.HandleFunc("GET /api/pricing/catalog", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		computePools, ok := fabricComputePools(w, r, service)
 		if !ok {

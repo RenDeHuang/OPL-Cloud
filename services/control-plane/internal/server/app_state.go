@@ -180,7 +180,6 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 		"storageAttachments":     rowsAsAnyFromMaps(app.listAttachments(accountID)),
 		"accounts":               accounts,
 		"supportTickets":         rowsAsAnyFromMaps(app.listSupportMappings(accountID)),
-		"auditEvents":            rowsAsAnyFromMaps(app.listAuditEvents(accountID)),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(accountID),
 		"notifications":          []any{},
 		"runtimeOperations":      rowsAsAnyFromMaps(app.runtimeOperationRows(runtimeOperationQuery{AccountID: accountID})),

@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type auditActorContextKey struct{}
@@ -14,6 +16,11 @@ type auditActor struct {
 	Role      string
 	AccountID string
 }
+
+const (
+	maxAuditIPAddressBytes = 64
+	maxAuditUserAgentBytes = 512
+)
 
 func findRecord(rows []map[string]any, id string) map[string]any {
 	for _, row := range rows {
@@ -112,14 +119,25 @@ func (app *controlPlaneServer) auditEvent(r *http.Request, action string, resour
 		"action":          action,
 		"resourceKind":    resourceKind,
 		"resourceId":      resourceID,
-		"ipAddress":       requestIP(r),
-		"userAgent":       r.UserAgent(),
+		"ipAddress":       boundedAuditText(requestIP(r), maxAuditIPAddressBytes),
+		"userAgent":       boundedAuditText(r.UserAgent(), maxAuditUserAgentBytes),
 		"before":          before,
 		"after":           after,
 		"result":          result,
 		"createdAt":       now,
 	}
 	return event
+}
+
+func boundedAuditText(value string, maxBytes int) string {
+	value = strings.ToValidUTF8(value, "")
+	if len(value) <= maxBytes {
+		return value
+	}
+	for maxBytes > 0 && !utf8.ValidString(value[:maxBytes]) {
+		maxBytes--
+	}
+	return value[:maxBytes]
 }
 
 func runtimeOperationSummary(operations []map[string]any) map[string]any {
