@@ -528,6 +528,25 @@ function listPayload(result) {
   throw new Error("production_basic_acceptance_b_list_invalid");
 }
 
+async function readFabricOperations(requestOptions) {
+  const operations = [];
+  const seenCursors = new Set();
+  let cursor = "";
+  for (;;) {
+    const path = `/fabric/operations?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const page = (await requestJson({ ...requestOptions, path })).payload;
+    if (!page || !Array.isArray(page.operations) || page.nextCursor !== undefined && typeof page.nextCursor !== "string") {
+      throw new Error("production_basic_acceptance_b_operations_page_invalid");
+    }
+    operations.push(...page.operations);
+    const nextCursor = String(page.nextCursor || "");
+    if (!nextCursor) return operations;
+    if (seenCursors.has(nextCursor)) throw new Error("production_basic_acceptance_b_operations_cursor_repeated");
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+}
+
 function availableFact(value, source, name) {
   if (!value || value.source !== source || value.available !== true || value.status !== "available") {
     throw new Error(`production_basic_acceptance_b_${name}_fact_invalid`);
@@ -1089,7 +1108,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   const computeAllocation = (await requestJson({ ...fabricOptions, path: `/fabric/compute-allocations/${encodeURIComponent(launch.computeAllocationId)}` })).payload;
   const ownership = (await requestJson({ ...fabricOptions, path: `/fabric/machine-ownerships/${encodeURIComponent(launch.computeAllocationId)}` })).payload;
   const truth = (await requestJson({ ...fabricOptions, path: `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(launch.computeAllocationId)}&storageVolumeId=${encodeURIComponent(launch.storageId)}` })).payload;
-  const operations = listPayload(await requestJson({ ...fabricOptions, path: "/fabric/operations" })).filter((operation) => operation?.workspaceId === launch.workspaceId);
+  const operations = (await readFabricOperations(fabricOptions)).filter((operation) => operation?.workspaceId === launch.workspaceId);
   const stageBudgets = productionBasicAcceptanceBStageBudgets(operations, launch);
   const cvmInstanceId = String(computeAllocation?.cvmInstanceId || computeAllocation?.instanceId || "");
   const nodeName = String(computeAllocation?.nodeName || "");

@@ -16,20 +16,16 @@ func (s *Service) CreateJob(ctx context.Context, input JobInput) (Job, error) {
 		return Job{}, ErrInvalidJobInput
 	}
 	requestHash := hashInput(input)
-	operations, err := s.operations.List(ctx)
+	stored, found, err := s.operations.OperationByActionIdempotency(ctx, "create_job", input.IdempotencyKey)
 	if err != nil {
 		return Job{}, err
 	}
-	// ponytail: linear scan is enough for the initial job volume; add an indexed store query when measured throughput requires it.
-	for _, operation := range operations {
-		if operation.ResourceKind != "job" || operation.Action != "create_job" || operation.IdempotencyKey != input.IdempotencyKey {
-			continue
-		}
-		if operation.RequestHash != requestHash {
+	if found {
+		if stored.RequestHash != requestHash {
 			return Job{}, ErrJobIdempotencyConflict
 		}
 		var job Job
-		if decodeOperationResource(operation, &job) {
+		if stored.ResourceKind == "job" && decodeOperationResource(stored, &job) {
 			job.Replayed = true
 			return job, nil
 		}
@@ -64,23 +60,15 @@ func (s *Service) Job(ctx context.Context, jobID string) (Job, error) {
 }
 
 func (s *Service) jobLocked(ctx context.Context, jobID string, expire bool) (Job, error) {
-	operations, err := s.operations.List(ctx)
+	operation, found, err := s.operations.LatestResourceOperation(ctx, "job", jobID)
 	if err != nil {
 		return Job{}, err
 	}
 	var job Job
-	leaseTokenHash := ""
-	found := false
-	for _, operation := range operations {
-		if operation.ResourceKind == "job" && operation.ResourceID == jobID && decodeOperationResource(operation, &job) {
-			found = true
-			leaseTokenHash, _ = operation.RedactedProviderPayload["leaseTokenHash"].(string)
-		}
-	}
-	if !found {
+	if !found || !decodeOperationResource(operation, &job) {
 		return Job{}, ErrJobNotFound
 	}
-	job.leaseTokenHash = leaseTokenHash
+	job.leaseTokenHash, _ = operation.RedactedProviderPayload["leaseTokenHash"].(string)
 	if expire && job.Status == "running" && job.LeaseExpiresAt != nil && !s.now().Before(*job.LeaseExpiresAt) {
 		job.Status = "timed_out"
 		job.ErrorCode = "lease_expired"
@@ -163,10 +151,6 @@ func (s *Service) HeartbeatJob(ctx context.Context, jobID string, input JobHeart
 	if jobID == "" || input.RunnerID == "" || input.LeaseToken == "" || input.IdempotencyKey == "" {
 		return Job{}, ErrInvalidJobInput
 	}
-	requestHash := hashInput(map[string]string{"jobId": jobID, "runnerId": input.RunnerID, "leaseTokenHash": stableSuffix(input.LeaseToken)})
-	if replayed, ok, err := s.replayedJobTransition(ctx, "heartbeat_job", jobID, input.IdempotencyKey, requestHash); ok || err != nil {
-		return replayed, err
-	}
 	job, err := s.activeLeasedJob(ctx, jobID, input.RunnerID, input.LeaseToken)
 	if err != nil {
 		return Job{}, err
@@ -175,7 +159,24 @@ func (s *Service) HeartbeatJob(ctx context.Context, jobID string, input JobHeart
 	expiresAt := now.Add(30 * time.Second)
 	job.LeaseExpiresAt = &expiresAt
 	job.UpdatedAt = now
-	if err := s.appendJobTransition(ctx, "heartbeat_job", input.IdempotencyKey, requestHash, job, "runner"); err != nil {
+	operationTime, err := s.nextJobOperationTime(ctx, job.JobID, now)
+	if err != nil {
+		return Job{}, err
+	}
+	heartbeatKey := fmt.Sprintf("heartbeat-%s-attempt-%d", job.JobID, job.Attempt)
+	requestHash := hashInput(map[string]any{
+		"jobId": jobID, "attempt": job.Attempt, "runnerId": input.RunnerID, "leaseTokenHash": stableSuffix(input.LeaseToken),
+	})
+	operation := newOperation("heartbeat_job", "job", job.JobID, "", job.WorkspaceID, heartbeatKey, requestHash, operationTime)
+	operation.ID = "fop_job_heartbeat_" + stableSuffix(job.JobID, fmt.Sprintf("%d", job.Attempt))[:16]
+	operation.CallerService = "runner"
+	operation.ProviderRequestID = job.JobID
+	operation.Status = job.Status
+	operation.FinishedAt = operationTime
+	operation.CreatedAt = operationTime
+	fillOperationResource(&operation, job)
+	operation.RedactedProviderPayload["requestIdempotencyKey"] = input.IdempotencyKey
+	if _, err := s.operations.SaveJobHeartbeat(ctx, operation); err != nil {
 		return Job{}, err
 	}
 	return job, nil
@@ -280,14 +281,11 @@ func (s *Service) activeLeasedJob(ctx context.Context, jobID, runnerID, leaseTok
 }
 
 func (s *Service) replayedJobTransition(ctx context.Context, action, jobID, idempotencyKey, requestHash string) (Job, bool, error) {
-	operations, err := s.operations.List(ctx)
+	operation, found, err := s.operations.OperationByResourceActionIdempotency(ctx, "job", jobID, action, idempotencyKey)
 	if err != nil {
 		return Job{}, false, err
 	}
-	for _, operation := range operations {
-		if operation.ResourceKind != "job" || operation.ResourceID != jobID || operation.Action != action || operation.IdempotencyKey != idempotencyKey {
-			continue
-		}
+	if found {
 		if operation.RequestHash != requestHash {
 			return Job{}, false, ErrJobIdempotencyConflict
 		}
@@ -301,10 +299,30 @@ func (s *Service) replayedJobTransition(ctx context.Context, action, jobID, idem
 }
 
 func (s *Service) appendJobTransition(ctx context.Context, action, idempotencyKey, requestHash string, job Job, caller string) error {
-	operation := newOperation(action, "job", job.JobID, "", job.WorkspaceID, idempotencyKey, requestHash, s.now())
+	operationTime, err := s.nextJobOperationTime(ctx, job.JobID, s.now())
+	if err != nil {
+		return err
+	}
+	operation := newOperation(action, "job", job.JobID, "", job.WorkspaceID, idempotencyKey, requestHash, operationTime)
 	operation.ProviderRequestID = job.JobID
 	operation.CallerService = caller
-	return s.recordOperation(ctx, operation, job.Status, job, nil)
+	operation.ID = fabricID("fop", firstNonEmpty(operation.OperationID, operation.ResourceID)+"_"+job.Status, operationTime)
+	operation.Status = job.Status
+	operation.CreatedAt = operationTime
+	operation.FinishedAt = operationTime
+	fillOperationResource(&operation, job)
+	return s.operations.Append(ctx, operation)
+}
+
+func (s *Service) nextJobOperationTime(ctx context.Context, jobID string, now time.Time) (time.Time, error) {
+	latest, found, err := s.operations.LatestResourceOperation(ctx, "job", jobID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if found && !now.After(latest.CreatedAt) {
+		return latest.CreatedAt.Add(time.Microsecond), nil
+	}
+	return now, nil
 }
 
 func newLeaseToken() (string, error) {

@@ -14,3 +14,20 @@ test("approved customer identity is enforced by normalized email digest", () => 
   assert.doesNotThrow(() => diagnostic.assertApprovedCustomerEmailDigests([approved, approved]));
   assert.throws(() => diagnostic.assertApprovedCustomerEmailDigests([]), /node_drift_approved_customer_identity_mismatch/);
 });
+
+test("Fabric operation readback follows cursor pages and rejects a repeated cursor", async () => {
+  const paths: string[] = [];
+  const operations = await diagnostic.readFabricOperationPages(async (path) => {
+    paths.push(path);
+    return path.includes("cursor=page-2")
+      ? { operations: [{ id: "operation-2" }] }
+      : { operations: [{ id: "operation-1" }], nextCursor: "page-2" };
+  });
+  assert.deepEqual(operations.map((operation) => operation.id), ["operation-1", "operation-2"]);
+  assert.deepEqual(paths, ["/fabric/operations?limit=100", "/fabric/operations?limit=100&cursor=page-2"]);
+
+  await assert.rejects(
+    diagnostic.readFabricOperationPages(async () => ({ operations: [], nextCursor: "same-cursor" })),
+    /node_drift_fabric_operations_cursor_repeated/
+  );
+});

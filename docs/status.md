@@ -321,23 +321,31 @@ finding and reported five new high-confidence source findings: one medium
 Control Plane body-limit bypass and four low findings covering Fabric Runtime
 credential disclosure, three zero-caller Fabric sync HTTP mutations, Ledger
 owner lookup before capability rejection, and unbounded Workspace renewal
-command history. Coverage was risk-based and partial across 648 inventoried
-files; no production, private-network, deployment, provider mutation, or live
-load test was performed.
+command history. PR `#309` absorbed their source remediation at canonical
+revision `d8a4df0f130a1545da0efe43dfebe16fa08e5844`.
 
-The current remediation candidate removes the `application/octet-stream`
-request-limit exception; makes already-disabled Workspace renewal a stable O(1)
-no-op; permanently redacts passwords from ordinary Fabric Runtime status while
-moving owner reveal to a persisted-owner and capability-bound POST; removes the
-three zero-caller sync HTTP routes while retaining internal Fabric reconciliation;
-and pre-verifies Ledger capability authenticity before owner lookup. Ledger now
-stores and indexes promoted artifact/review IDs so valid owner and review-gate
-reads avoid full-table JSON scans; review-gate ID sets are also explicitly
-bounded. Control Plane, Fabric, and Ledger full module tests, including each
-service's PostgreSQL-enabled suite, plus the Console idempotency test and diff
-checks pass locally. This candidate is not yet canonical `main`, and the five
-findings remain open until a fresh sealed scan of the absorbed revision no
-longer reproduces them.
+The ten occurrences still shown as unresolved in older scan
+`b07b4eaa-a94a-47fd-9023-5e7838bc657b` belong to revision
+`24a065d4427b53d65ba0df9cb70b1a36327fb6af`. Fresh source revalidation against
+the current canonical revision did not reproduce them; the UI disposition is
+historical occurrence workflow state, not current-source evidence.
+
+Sealed Standard scan `761fd61d-b7ee-41ff-afd2-34f5671b1af5` against canonical
+`d8a4df0f130a1545da0efe43dfebe16fa08e5844` reported one new low-severity,
+high-confidence finding: authenticated Fabric job heartbeat, Workspace Runtime
+status, and operation-list paths materialize unbounded shared operation history,
+while fresh heartbeat keys continually append rows. The current FG-184 source
+candidate replaces request-path full-list filtering with indexed bounded
+queries, keeps one mutable heartbeat row per job attempt, and requires
+`limit`/cursor pagination with a maximum page size of 100; all known production
+and recovery callers follow every cursor page and reject a repeated cursor.
+Focused memory-store, Fabric HTTP, caller, and PostgreSQL 16 integration tests
+pass, including point lookup, duplicate fail-closed behavior, 50 fresh heartbeat
+keys with three total job rows, and complete cursor traversal. This candidate is
+not yet canonical `main`, and the finding remains open pending absorption plus a
+fresh sealed scan of the absorbed revision. No
+production, private-network, deployment, provider mutation, or live load test
+was performed.
 
 The current `opl-instance-medopl` workflow and manifest have not yet adopted the
 full Fabric capability credential set, so source absorption does not prove a

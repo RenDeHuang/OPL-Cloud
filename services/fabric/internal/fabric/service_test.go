@@ -411,6 +411,43 @@ func TestRunnerCompletesJobAcrossServiceRestart(t *testing.T) {
 	}
 }
 
+func TestRunnerHeartbeatsUseBoundedPointQueriesAndPersistence(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	now := time.Date(2026, 8, 14, 2, 0, 0, 0, time.UTC)
+	service := NewServiceWithOperationStore(testProvider{}, store)
+	service.now = func() time.Time { return now }
+	created, err := service.CreateJob(ctx, JobInput{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", RequestID: "request-alpha", ApprovalID: "approval-alpha", IdempotencyKey: "bounded-heartbeat-job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := service.ClaimJob(ctx, created.JobID, JobClaimInput{RunnerID: "runner-alpha", IdempotencyKey: "bounded-heartbeat-claim"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewServiceWithOperationStore(testProvider{}, rejectFullOperationListStore{OperationStore: store})
+	for index := 0; index < 50; index++ {
+		now = now.Add(time.Second)
+		restarted.now = func() time.Time { return now }
+		heartbeat, heartbeatErr := restarted.HeartbeatJob(ctx, created.JobID, JobHeartbeatInput{
+			RunnerID: "runner-alpha", LeaseToken: claimed.LeaseToken, IdempotencyKey: fmt.Sprintf("heartbeat-%d", index),
+		})
+		if heartbeatErr != nil || heartbeat.Status != "running" {
+			t.Fatalf("heartbeat %d=%#v err=%v", index, heartbeat, heartbeatErr)
+		}
+	}
+	operations, err := store.List(ctx)
+	if err != nil || len(operations) != 3 {
+		t.Fatalf("operations=%#v err=%v, want create + claim + one bounded heartbeat", operations, err)
+	}
+	loadedService := NewServiceWithOperationStore(testProvider{}, rejectFullOperationListStore{OperationStore: store})
+	loadedService.now = func() time.Time { return now }
+	loaded, err := loadedService.Job(ctx, created.JobID)
+	if err != nil || loaded.Status != "running" || loaded.LeaseExpiresAt == nil || !loaded.LeaseExpiresAt.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("loaded heartbeat state=%#v err=%v", loaded, err)
+	}
+}
+
 func TestRunnerLeaseMismatchAndEvidenceValidation(t *testing.T) {
 	service := NewService(testProvider{})
 	created, err := service.CreateJob(context.Background(), JobInput{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", RequestID: "request-alpha", ApprovalID: "approval-alpha", IdempotencyKey: "lease-job"})
@@ -1208,6 +1245,7 @@ func TestWorkspaceRuntimeStatusBackfillsCreatedRuntimeIdentity(t *testing.T) {
 	if err != nil || created.ID != "runtime-stable" {
 		t.Fatalf("created runtime=%#v err=%v", created, err)
 	}
+	service.operations = rejectFullOperationListStore{OperationStore: service.operations}
 
 	live, err := service.WorkspaceRuntimeStatus(context.Background(), "workspace-alpha")
 	if err != nil {
@@ -1366,12 +1404,25 @@ func TestWorkspaceRuntimeStatusRejectsMultipleCreatedIdentityCandidates(t *testi
 }
 
 func TestWorkspaceRuntimeStatusFailsClosedWithoutCreatedIdentityEvidence(t *testing.T) {
+	malformed := NewMemoryOperationStore()
+	malformedOperation := newOperation(
+		"create_workspace_runtime", "workspace_runtime", "workspace-alpha", "acct-alpha", "workspace-alpha",
+		"runtime-malformed", "runtime-malformed-hash", time.Date(2026, 8, 14, 5, 0, 0, 0, time.UTC),
+	)
+	malformedOperation.ID = "fop-runtime-malformed"
+	malformedOperation.Status = "succeeded"
+	malformedOperation.CreatedAt = malformedOperation.StartedAt
+	malformedOperation.RedactedProviderPayload = map[string]any{"resource": "malformed"}
+	if err := malformed.Append(context.Background(), malformedOperation); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name  string
 		store OperationStore
 	}{
 		{name: "missing", store: NewMemoryOperationStore()},
-		{name: "store unavailable", store: failingListOperationStore{OperationStore: NewMemoryOperationStore()}},
+		{name: "malformed", store: malformed},
+		{name: "store unavailable", store: failingRuntimeIdentityCandidatesStore{OperationStore: NewMemoryOperationStore()}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			service := runtimeTestService(liveRuntimeWithoutIDProvider{}, tc.store)
@@ -2757,6 +2808,18 @@ type failingListOperationStore struct{ OperationStore }
 
 func (failingListOperationStore) List(context.Context) ([]FabricOperation, error) {
 	return nil, errors.New("operation store unavailable")
+}
+
+type rejectFullOperationListStore struct{ OperationStore }
+
+func (rejectFullOperationListStore) List(context.Context) ([]FabricOperation, error) {
+	return nil, errors.New("full operation list must not be used")
+}
+
+type failingRuntimeIdentityCandidatesStore struct{ OperationStore }
+
+func (failingRuntimeIdentityCandidatesStore) WorkspaceRuntimeIdentityCandidates(context.Context, string) ([]FabricOperation, error) {
+	return nil, errors.New("runtime identity candidates unavailable")
 }
 
 func (p liveRuntimeWithoutIDProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {

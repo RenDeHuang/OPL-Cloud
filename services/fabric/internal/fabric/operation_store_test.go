@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -62,6 +63,76 @@ func TestMemoryOperationStoreReadsExactIdentitiesAndFailsClosedOnDuplicates(t *t
 	}
 	if _, _, err := store.ComputeClaimTerminalOperation(ctx, "approval-exact-30970000001", "approval-exact-30970000001"); !errors.Is(err, ErrOperationIdentityConflict) {
 		t.Fatalf("terminal duplicate error=%v", err)
+	}
+}
+
+func TestMemoryOperationStoreBoundsResourceQueriesAndOperationPages(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	createdAt := time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC)
+	for index := 0; index < 8; index++ {
+		operation := newOperation("unrelated", "storage_volume", fmt.Sprintf("storage-%d", index), "acct-other", "workspace-other", fmt.Sprintf("other-%d", index), "other-hash", createdAt.Add(time.Duration(index)*time.Second))
+		operation.ID = fmt.Sprintf("fop-unrelated-%02d", index)
+		operation.Status = "succeeded"
+		operation.CreatedAt = createdAt.Add(time.Duration(index) * time.Second)
+		if err := store.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	job := Job{JobID: "job-alpha", WorkspaceID: "workspace-alpha", Status: "queued", Attempt: 1, CreatedAt: createdAt, UpdatedAt: createdAt}
+	jobOperation := newOperation("create_job", "job", job.JobID, "", job.WorkspaceID, "job-create", "job-hash", createdAt.Add(20*time.Second))
+	jobOperation.ID = "fop-job-create"
+	jobOperation.Status = job.Status
+	jobOperation.CreatedAt = createdAt.Add(20 * time.Second)
+	fillOperationResource(&jobOperation, job)
+	if err := store.Append(ctx, jobOperation); err != nil {
+		t.Fatal(err)
+	}
+	claim := jobOperation
+	claim.ID = "fop-job-claim"
+	claim.Action = "claim_job"
+	claim.IdempotencyKey = "claim-once"
+	claim.RequestHash = "claim-hash"
+	claim.CreatedAt = createdAt.Add(21 * time.Second)
+	claim.Status = "running"
+	if err := store.Append(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, found, err := store.LatestResourceOperation(ctx, "job", job.JobID)
+	if err != nil || !found || latest.ID != claim.ID {
+		t.Fatalf("latest=%#v found=%v err=%v", latest, found, err)
+	}
+	replayed, found, err := store.OperationByResourceActionIdempotency(ctx, "job", job.JobID, "claim_job", "claim-once")
+	if err != nil || !found || replayed.ID != claim.ID {
+		t.Fatalf("replayed=%#v found=%v err=%v", replayed, found, err)
+	}
+
+	runtime := newOperation("create_workspace_runtime", "workspace_runtime", "workspace-alpha", "acct-alpha", "workspace-alpha", "runtime-once", "runtime-hash", createdAt.Add(30*time.Second))
+	runtime.ID = "fop-runtime-alpha"
+	runtime.Status = "succeeded"
+	runtime.CreatedAt = createdAt.Add(30 * time.Second)
+	if err := store.Append(ctx, runtime); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := store.WorkspaceRuntimeIdentityCandidates(ctx, "workspace-alpha")
+	if err != nil || len(candidates) != 1 || candidates[0].ID != runtime.ID {
+		t.Fatalf("runtime candidates=%#v err=%v", candidates, err)
+	}
+
+	page, err := store.ListPage(ctx, "", 3)
+	if err != nil || len(page.Operations) != 3 || page.NextCursor == "" {
+		t.Fatalf("first page=%#v err=%v", page, err)
+	}
+	next, err := store.ListPage(ctx, page.NextCursor, 3)
+	if err != nil || len(next.Operations) != 3 || next.Operations[0].ID == page.Operations[0].ID {
+		t.Fatalf("second page=%#v err=%v", next, err)
+	}
+	if _, err := store.ListPage(ctx, "not-a-cursor", 3); !errors.Is(err, ErrInvalidOperationPage) {
+		t.Fatalf("invalid cursor error=%v", err)
+	}
+	if _, err := store.ListPage(ctx, strings.Repeat("a", maxFabricOperationCursorSize+1), 3); !errors.Is(err, ErrInvalidOperationPage) {
+		t.Fatalf("oversized cursor error=%v", err)
 	}
 }
 

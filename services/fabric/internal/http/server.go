@@ -12,6 +12,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -221,12 +223,39 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /fabric/operations", func(w http.ResponseWriter, r *http.Request) {
-		operations, err := service.ListOperations(r.Context())
+		query, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil || len(query["limit"]) > 1 || len(query["cursor"]) > 1 {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidOperationPage.Error())
+			return
+		}
+		for key := range query {
+			if key != "limit" && key != "cursor" {
+				writeError(w, http.StatusBadRequest, fabric.ErrInvalidOperationPage.Error())
+				return
+			}
+		}
+		limit := fabric.MaxFabricOperationPageSize
+		if rawLimit, ok := query["limit"]; ok {
+			limit, err = strconv.Atoi(rawLimit[0])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fabric.ErrInvalidOperationPage.Error())
+				return
+			}
+		}
+		cursor := ""
+		if rawCursor, ok := query["cursor"]; ok {
+			cursor = rawCursor[0]
+		}
+		page, err := service.ListOperationsPage(r.Context(), cursor, limit)
+		if errors.Is(err, fabric.ErrInvalidOperationPage) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, operations)
+		writeJSON(w, http.StatusOK, page)
 	})
 	mux.HandleFunc("GET /fabric/machine-ownerships/{resourceId}", func(w http.ResponseWriter, r *http.Request) {
 		ownership, err := service.MachineOwnership(r.Context(), r.PathValue("resourceId"))

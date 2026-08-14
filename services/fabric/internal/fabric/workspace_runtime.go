@@ -146,27 +146,18 @@ func (s *Service) workspaceRuntimeForUpdate(ctx context.Context, input Workspace
 	if strings.TrimSpace(input.RuntimeOperationID) == "" || strings.TrimSpace(input.WorkspaceID) == "" || compute.ID == "" {
 		return WorkspaceRuntime{}, fmt.Errorf("runtime_operation_identity_mismatch")
 	}
-	operations, err := s.operations.List(ctx)
+	operation, found, err := s.operations.OperationByResourceActionIdempotency(
+		ctx, "workspace_runtime", input.WorkspaceID, "create_workspace_runtime", input.RuntimeOperationID,
+	)
 	if err != nil {
 		return WorkspaceRuntime{}, err
 	}
-	matches := make([]WorkspaceRuntime, 0, 1)
-	for _, operation := range operations {
-		if operation.Action != "create_workspace_runtime" || operation.ResourceKind != "workspace_runtime" || operation.Status != "succeeded" ||
-			operation.ResourceID != input.WorkspaceID || operation.AccountID != compute.AccountID || operation.WorkspaceID != input.WorkspaceID ||
-			operation.IdempotencyKey != input.RuntimeOperationID {
-			continue
-		}
-		var runtime WorkspaceRuntime
-		if !decodeOperationResource(operation, &runtime) || runtime.ID == "" || runtime.WorkspaceID != input.WorkspaceID || runtime.OperationID != input.RuntimeOperationID {
-			return WorkspaceRuntime{}, fmt.Errorf("runtime_operation_identity_mismatch")
-		}
-		matches = append(matches, runtime)
-	}
-	if len(matches) != 1 {
+	var runtime WorkspaceRuntime
+	if !found || operation.Status != "succeeded" || operation.AccountID != compute.AccountID || operation.WorkspaceID != input.WorkspaceID ||
+		!decodeOperationResource(operation, &runtime) || runtime.ID == "" || runtime.WorkspaceID != input.WorkspaceID || runtime.OperationID != input.RuntimeOperationID {
 		return WorkspaceRuntime{}, fmt.Errorf("runtime_operation_identity_mismatch")
 	}
-	return matches[0], nil
+	return runtime, nil
 }
 
 func (s *Service) DestroyWorkspaceRuntime(ctx context.Context, workspaceID, idempotencyKey string) (WorkspaceRuntime, error) {
@@ -236,16 +227,9 @@ func (s *Service) workspaceRuntimeStatus(ctx context.Context, workspaceID string
 	if runtime.Status != "running" && runtime.Status != "unready" {
 		return runtime, FabricOperation{}, nil
 	}
-	operations, err := s.operations.List(ctx)
+	matches, err := s.operations.WorkspaceRuntimeIdentityCandidates(ctx, workspaceID)
 	if err != nil {
 		return runtime, FabricOperation{}, err
-	}
-	matches := make([]FabricOperation, 0, 1)
-	for _, operation := range operations {
-		if operation.Action != "create_workspace_runtime" || operation.ResourceKind != "workspace_runtime" || operation.Status != "succeeded" || operation.WorkspaceID != workspaceID || operation.ResourceID != workspaceID {
-			continue
-		}
-		matches = append(matches, operation)
 	}
 	var created WorkspaceRuntime
 	if runtime.WorkspaceID != workspaceID || len(matches) != 1 || matches[0].ID == "" || matches[0].CreatedAt.IsZero() || !decodeOperationResource(matches[0], &created) ||
