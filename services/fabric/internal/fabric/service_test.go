@@ -14,6 +14,137 @@ import (
 	"time"
 )
 
+type readinessRecordingProvider struct {
+	testProvider
+	calls        atomic.Int32
+	entered      chan int32
+	releaseFirst chan struct{}
+	probe        func(context.Context, int32) (map[string]any, error)
+}
+
+func (p *readinessRecordingProvider) Readiness(ctx context.Context) (map[string]any, error) {
+	call := p.calls.Add(1)
+	if p.entered != nil {
+		p.entered <- call
+	}
+	if call == 1 && p.releaseFirst != nil {
+		select {
+		case <-p.releaseFirst:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if p.probe != nil {
+		return p.probe(ctx, call)
+	}
+	return map[string]any{"provider": "test", "ready": true, "generation": call}, nil
+}
+
+func TestReadinessCachesSuccessfulResultAndSingleflightsRefresh(t *testing.T) {
+	const callers = 8
+	provider := &readinessRecordingProvider{
+		entered:      make(chan int32, callers),
+		releaseFirst: make(chan struct{}),
+	}
+	service := NewService(provider)
+	now := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	start := make(chan struct{})
+	results := make(chan map[string]any, callers)
+	errors := make(chan error, callers)
+	var ready sync.WaitGroup
+	var finished sync.WaitGroup
+	ready.Add(callers)
+	finished.Add(callers)
+	for range callers {
+		go func() {
+			defer finished.Done()
+			ready.Done()
+			<-start
+			result, err := service.Readiness(context.Background())
+			results <- result
+			errors <- err
+		}()
+	}
+	ready.Wait()
+	close(start)
+	<-provider.entered
+	select {
+	case call := <-provider.entered:
+		close(provider.releaseFirst)
+		finished.Wait()
+		t.Fatalf("concurrent readiness started provider call %d before the first refresh completed", call)
+	case <-time.After(100 * time.Millisecond):
+		close(provider.releaseFirst)
+	}
+	finished.Wait()
+
+	for range callers {
+		if err := <-errors; err != nil {
+			t.Fatalf("concurrent readiness error = %v", err)
+		}
+		if result := <-results; result["generation"] != int32(1) || result["ready"] != true {
+			t.Fatalf("concurrent readiness result = %#v", result)
+		}
+	}
+	if result, err := service.Readiness(context.Background()); err != nil || result["generation"] != int32(1) || provider.calls.Load() != 1 {
+		t.Fatalf("cached readiness = %#v, err=%v, provider calls=%d", result, err, provider.calls.Load())
+	}
+
+	now = now.Add(time.Minute)
+	result, err := service.Readiness(context.Background())
+	if err != nil || result["generation"] != int32(2) || provider.calls.Load() != 2 {
+		t.Fatalf("expired readiness = %#v, err=%v, provider calls=%d", result, err, provider.calls.Load())
+	}
+}
+
+func TestReadinessDoesNotCacheErrors(t *testing.T) {
+	provider := &readinessRecordingProvider{
+		probe: func(_ context.Context, call int32) (map[string]any, error) {
+			if call == 1 {
+				return nil, errors.New("provider readiness failed")
+			}
+			return map[string]any{"provider": "test", "ready": true}, nil
+		},
+	}
+	service := NewService(provider)
+
+	if result, err := service.Readiness(context.Background()); err == nil || err.Error() != "provider readiness failed" || result != nil {
+		t.Fatalf("failed readiness = %#v, err=%v", result, err)
+	}
+	result, err := service.Readiness(context.Background())
+	if err != nil || result["ready"] != true || provider.calls.Load() != 2 {
+		t.Fatalf("retried readiness = %#v, err=%v, provider calls=%d", result, err, provider.calls.Load())
+	}
+	if _, err := service.Readiness(context.Background()); err != nil || provider.calls.Load() != 2 {
+		t.Fatalf("successful retry was not cached: err=%v provider calls=%d", err, provider.calls.Load())
+	}
+}
+
+func TestReadinessBoundsProviderCallWithTimeout(t *testing.T) {
+	provider := &readinessRecordingProvider{
+		probe: func(ctx context.Context, _ int32) (map[string]any, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	service := NewService(provider)
+	service.readinessTimeout = 20 * time.Millisecond
+
+	started := time.Now()
+	result, err := service.Readiness(context.Background())
+	if !errors.Is(err, context.DeadlineExceeded) || result != nil {
+		t.Fatalf("timed readiness = %#v, err=%v", result, err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("provider timeout took %s", elapsed)
+	}
+	if provider.calls.Load() != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls.Load())
+	}
+}
+
 func TestMonthlyPreflightIsReadOnlyAndDoesNotRecordOperation(t *testing.T) {
 	store := NewMemoryOperationStore()
 	service := NewServiceWithOperationStore(testProvider{}, store)

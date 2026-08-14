@@ -17,13 +17,28 @@ const (
 	computeAllocationFinalizeTimeout = 2 * time.Minute
 	providerFactsBatchTimeout        = 5 * time.Second
 	providerFactsBatchWorkerCount    = 8
+	readinessProviderTimeout         = 5 * time.Second
+	readinessSuccessTTL              = 5 * time.Second
 	runtimeHealthSummaryTimeout      = 5 * time.Second
 )
+
+type readinessRefresh struct {
+	done   chan struct{}
+	result map[string]any
+	err    error
+}
 
 type Service struct {
 	provider                         Provider
 	mu                               sync.Mutex
 	jobMu                            sync.Mutex
+	readinessMu                      sync.Mutex
+	readinessCached                  bool
+	readinessResult                  map[string]any
+	readinessExpiresAt               time.Time
+	readinessRefresh                 *readinessRefresh
+	readinessTTL                     time.Duration
+	readinessTimeout                 time.Duration
 	computes                         map[string]ComputeAllocation
 	volumes                          map[string]StorageVolume
 	snapshots                        map[string]StorageSnapshot
@@ -51,6 +66,8 @@ func NewServiceWithOperationStore(provider Provider, operations OperationStore) 
 		provider: provider, computes: computes, volumes: volumes, snapshots: snapshots, attachments: attachments,
 		destroying: map[string]bool{}, reconciling: map[string]bool{}, operations: operations,
 		now:                           func() time.Time { return time.Now().UTC() },
+		readinessTTL:                  readinessSuccessTTL,
+		readinessTimeout:              readinessProviderTimeout,
 		computeAllocationPollInterval: computeAllocationPollInterval, computeAllocationPollWindow: computeAllocationPollWindow,
 		computeAllocationAttemptTimeout: computeAllocationAttemptTimeout, computeAllocationFinalizeTimeout: computeAllocationFinalizeTimeout,
 	}
@@ -88,7 +105,46 @@ func (s *Service) MonthlyPreflight(ctx context.Context, input MonthlyPreflightIn
 }
 
 func (s *Service) Readiness(ctx context.Context) (map[string]any, error) {
-	return s.provider.Readiness(ctx)
+	s.readinessMu.Lock()
+	if s.readinessCached && s.now().Before(s.readinessExpiresAt) {
+		result := s.readinessResult
+		s.readinessMu.Unlock()
+		return result, nil
+	}
+	refresh := s.readinessRefresh
+	if refresh == nil {
+		refresh = &readinessRefresh{done: make(chan struct{})}
+		s.readinessRefresh = refresh
+		go s.refreshReadiness(refresh)
+	}
+	s.readinessMu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-refresh.done:
+		return refresh.result, refresh.err
+	}
+}
+
+func (s *Service) refreshReadiness(refresh *readinessRefresh) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.readinessTimeout)
+	result, err := s.provider.Readiness(ctx)
+	cancel()
+
+	s.readinessMu.Lock()
+	refresh.result = result
+	refresh.err = err
+	if err == nil {
+		s.readinessCached = true
+		s.readinessResult = result
+		s.readinessExpiresAt = s.now().Add(s.readinessTTL)
+	}
+	if s.readinessRefresh == refresh {
+		s.readinessRefresh = nil
+	}
+	close(refresh.done)
+	s.readinessMu.Unlock()
 }
 
 func (s *Service) ListOperations(ctx context.Context) ([]FabricOperation, error) {
