@@ -19,7 +19,7 @@ const SAFE_MANAGER = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,255}$/;
 const SYSTEM_SERVICE_ACCOUNT = /^system:serviceaccount:[a-z0-9.-]+:[a-z0-9.-]+$/;
 const READ_ONLY_KUBECTL = new Set(["api-resources", "get"]);
 const READ_ONLY_TENCENT_ACTIONS = new Set(["DescribeLogSwitches", "SearchLog"]);
-const FABRIC_GET_PATH = /^\/fabric\/(?:operations|compute-allocations\/[A-Za-z0-9._-]+|machine-ownerships\/[A-Za-z0-9._-]+)$/;
+const FABRIC_GET_PATH = /^\/fabric\/(?:operations\?limit=100(?:&cursor=[A-Za-z0-9_-]{1,1024})?|compute-allocations\/[A-Za-z0-9._-]+|machine-ownerships\/[A-Za-z0-9._-]+)$/;
 
 function sha256(value) {
   return `sha256:${createHash("sha256").update(String(value)).digest("hex")}`;
@@ -735,6 +735,26 @@ async function fabricGET(origin, token, path) {
   return (await httpJSON(`${origin}${path}`, { headers: { Authorization: `Bearer ${token}` } })).payload;
 }
 
+export async function readFabricOperationPages(readPage) {
+  if (typeof readPage !== "function") throw new Error("node_drift_fabric_operations_reader_invalid");
+  const operations = [];
+  const seenCursors = new Set();
+  let cursor = "";
+  for (;;) {
+    const path = `/fabric/operations?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const page = await readPage(path);
+    if (!page || !Array.isArray(page.operations) || page.nextCursor !== undefined && typeof page.nextCursor !== "string") {
+      throw new Error("node_drift_fabric_operations_page_invalid");
+    }
+    operations.push(...page.operations);
+    const nextCursor = String(page.nextCursor || "");
+    if (!nextCursor) return operations;
+    if (seenCursors.has(nextCursor)) throw new Error("node_drift_fabric_operations_cursor_repeated");
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+}
+
 function kubectl(kubeconfig, args, { json = true, optional = false } = {}) {
   if (!READ_ONLY_KUBECTL.has(args[0])) throw new Error("node_drift_kubectl_mutation_forbidden");
   const result = spawnSync("kubectl", ["--kubeconfig", kubeconfig, ...args], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
@@ -849,7 +869,7 @@ async function collect(args, env) {
   const cp = assertControlPlanePreflight(JSON.parse(await readFile(identityPath, "utf8")), launchOperationId);
   const token = (await readFile(env.OPL_INTERNAL_SERVICE_TOKEN_PATH, "utf8")).trim();
   if (!token) throw new Error("node_drift_fabric_token_unavailable");
-  const operations = await fabricGET(env.OPL_FABRIC_INTERNAL_ORIGIN, token, "/fabric/operations");
+  const operations = await readFabricOperationPages((path) => fabricGET(env.OPL_FABRIC_INTERNAL_ORIGIN, token, path));
   const operationRef = `${launchOperationId}:compute`;
   const operationMatches = (operations || []).filter((operation) => operation?.action === "create_compute_allocation" &&
     (operation?.operationId === operationRef || operation?.idempotencyKey === operationRef));

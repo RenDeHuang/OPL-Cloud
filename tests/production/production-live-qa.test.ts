@@ -268,7 +268,10 @@ test("compute claim production readback derives the original resources and perfo
     calls.push({ command, args });
     if (args.includes("get") && args.includes("node")) return { stdout: JSON.stringify(node) };
     const path = args.at(-1);
-    const payload = path === "/fabric/operations" ? operations
+    const payload = path.startsWith("/fabric/operations?")
+      ? path.includes("cursor=storage-page")
+        ? { operations: [operations[1]] }
+        : { operations: [operations[0]], nextCursor: "storage-page" }
       : path.includes("/compute-allocations/") ? allocation
         : path.includes("/machine-ownerships/") ? ownership
           : path.includes("/storage-volumes/") ? { id: storageId, accountId, workspaceId: "ws-30e2861bbdf9805492", status: "pending" }
@@ -299,6 +302,7 @@ test("compute claim production readback derives the original resources and perfo
   assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
   assert.equal(result.reads.controlPlaneTrace, "unavailable");
   assert.deepEqual(result.readbackErrors, ["control_plane_trace_unavailable"]);
+  assert.equal(calls.filter((call) => String(call.args.at(-1)).startsWith("/fabric/operations?")).length, 2);
   assert.equal(calls.filter((call) => call.args.includes("patch")).length, 0);
   assert.equal(calls.filter((call) => call.args.includes("node") && call.args.includes("get")).length, 1);
 
@@ -339,7 +343,7 @@ test("compute claim production readback rejects missing exact package and pool i
   const execFileImpl = async (_command, args) => {
     calls.push(args);
     const path = args.at(-1);
-    if (path === "/fabric/operations") return { stdout: JSON.stringify({ statusCode: 200, payload: operations, errorCode: "none" }) };
+    if (path.startsWith("/fabric/operations?")) return { stdout: JSON.stringify({ statusCode: 200, payload: { operations }, errorCode: "none" }) };
     if (path.includes("/compute-allocations/")) return { stdout: JSON.stringify({ statusCode: 200, payload: allocation, errorCode: "none" }) };
     throw new Error("unexpected_followup_read");
   };
@@ -1291,7 +1295,7 @@ function basicCanaryFixture({
         storageClasses: [],
         ingressDomains: []
       });
-      if (url.pathname === "/fabric/operations") return json(fabricOperations());
+      if (url.pathname === "/fabric/operations") return json({ operations: fabricOperations() });
       if (url.pathname === "/fabric/compute-allocations/ca-basic-canary") return json({
         id: "ca-basic-canary", accountId: BASIC_CANARY_ACCOUNT_ID, workspaceId: BASIC_CANARY_WORKSPACE_ID, packageId: "basic",
         status: "running", provider: "tencent-tke", providerResourceId: "ins-basic-canary", nodePoolId: "np-basic",
@@ -5038,7 +5042,7 @@ function manualReviewDiagnosisFixture({
     assert.equal(headers.get("authorization"), "Bearer internal-service-token");
     if (url.pathname === `/fabric/compute-allocations/${MANUAL_REVIEW_DIAGNOSE_TARGET.computeAllocationId}`) return json(allocation);
     if (url.pathname === `/fabric/machine-ownerships/${MANUAL_REVIEW_DIAGNOSE_TARGET.computeAllocationId}`) return json(ownership);
-    if (url.pathname === "/fabric/operations") return json([computeOperation, ...(storageOperation ? [storageOperation] : [])]);
+    if (url.pathname === "/fabric/operations") return json({ operations: [computeOperation, ...(storageOperation ? [storageOperation] : [])] });
     if (url.pathname === "/fabric/monthly-provider-truth") {
       if (!providerTruthAvailable) return json({ error: "monthly_provider_truth_unavailable" }, 503);
       return json(truth);

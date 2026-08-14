@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -952,7 +953,8 @@ func TestServerMonthlyPreflightNeedsNoIdempotencyKeyAndRecordsNoOperation(t *tes
 	}
 	operations := httptest.NewRecorder()
 	server.ServeHTTP(operations, testRequest(http.MethodGet, "/fabric/operations", nil))
-	if operations.Code != http.StatusOK || strings.TrimSpace(operations.Body.String()) != "[]" {
+	var page fabric.FabricOperationPage
+	if operations.Code != http.StatusOK || json.NewDecoder(operations.Body).Decode(&page) != nil || len(page.Operations) != 0 || page.NextCursor != "" {
 		t.Fatalf("operations status=%d body=%s", operations.Code, operations.Body.String())
 	}
 }
@@ -1361,11 +1363,11 @@ func TestOperationsHTTPReturnsFabricAuditFacts(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("operations status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	var operations []fabric.FabricOperation
-	if err := json.NewDecoder(rec.Body).Decode(&operations); err != nil {
+	var page fabric.FabricOperationPage
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
 		t.Fatalf("decode operations: %v", err)
 	}
-	for _, operation := range operations {
+	for _, operation := range page.Operations {
 		if operation.Action == "create_storage_volume" && operation.ResourceKind == "storage_volume" && operation.Status == "succeeded" {
 			if operation.OperationID == "" || operation.ProviderRequestID != "storage-test" || operation.RequestHash == "" {
 				t.Fatalf("operation missing audit identity: %#v", operation)
@@ -1373,7 +1375,52 @@ func TestOperationsHTTPReturnsFabricAuditFacts(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("missing storage operation in %#v", operations)
+	t.Fatalf("missing storage operation in %#v", page.Operations)
+}
+
+func TestFabricOperationsHTTPRequiresBoundedCursorPages(t *testing.T) {
+	store := fabric.NewMemoryOperationStore()
+	createdAt := time.Date(2026, 8, 14, 3, 0, 0, 0, time.UTC)
+	for index := 0; index < fabric.MaxFabricOperationPageSize+2; index++ {
+		operation := fabric.FabricOperation{
+			ID: fmt.Sprintf("fop-page-%03d", index), OperationID: fmt.Sprintf("op-page-%03d", index), CallerService: "control-plane",
+			Action: "page_test", ResourceKind: "test", ResourceID: fmt.Sprintf("resource-%03d", index), Status: "succeeded",
+			StartedAt: createdAt.Add(time.Duration(index) * time.Second), CreatedAt: createdAt.Add(time.Duration(index) * time.Second),
+		}
+		if err := store.Append(context.Background(), operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := newTestServer(fabric.NewServiceWithOperationStore(testProvider{}, store), "internal-secret")
+
+	firstRequest := testRequest(http.MethodGet, "/fabric/operations?limit=2", nil)
+	first := httptest.NewRecorder()
+	server.ServeHTTP(first, firstRequest)
+	var firstPage fabric.FabricOperationPage
+	if first.Code != http.StatusOK || json.NewDecoder(first.Body).Decode(&firstPage) != nil || len(firstPage.Operations) != 2 || firstPage.NextCursor == "" {
+		t.Fatalf("first page status=%d page=%#v body=%s", first.Code, firstPage, first.Body.String())
+	}
+
+	secondRequest := testRequest(http.MethodGet, "/fabric/operations?limit=2&cursor="+url.QueryEscape(firstPage.NextCursor), nil)
+	second := httptest.NewRecorder()
+	server.ServeHTTP(second, secondRequest)
+	var secondPage fabric.FabricOperationPage
+	if second.Code != http.StatusOK || json.NewDecoder(second.Body).Decode(&secondPage) != nil || len(secondPage.Operations) != 2 || secondPage.Operations[0].ID == firstPage.Operations[0].ID {
+		t.Fatalf("second page status=%d page=%#v body=%s", second.Code, secondPage, second.Body.String())
+	}
+
+	for _, path := range []string{
+		fmt.Sprintf("/fabric/operations?limit=%d", fabric.MaxFabricOperationPageSize+1),
+		"/fabric/operations?cursor=not-a-cursor",
+		"/fabric/operations?limit=2&limit=3",
+		"/fabric/operations?unknown=1",
+	} {
+		invalid := httptest.NewRecorder()
+		server.ServeHTTP(invalid, testRequest(http.MethodGet, path, nil))
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("invalid page %q status=%d body=%s", path, invalid.Code, invalid.Body.String())
+		}
+	}
 }
 
 func TestJobHTTPLifecycle(t *testing.T) {
