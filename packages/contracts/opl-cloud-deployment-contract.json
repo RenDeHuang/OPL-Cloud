@@ -1185,6 +1185,8 @@
     "requiredEnv": [
       "OPL_CONSOLE_ORIGIN",
       "OPL_VERIFY_AUTH_USERS_JSON",
+      "OPL_SUB2API_ADMIN_EMAIL",
+      "OPL_SUB2API_ADMIN_PASSWORD",
       "OPL_VERIFY_ACCOUNT_ID",
       "OPL_VERIFY_SLOT_ID",
       "OPL_VERIFY_SLOT_DESCRIPTOR_JSON",
@@ -1196,7 +1198,9 @@
       "OPL_VERIFY_MANIFEST_PATH"
     ],
     "secretEnv": [
-      "OPL_VERIFY_AUTH_USERS_JSON"
+      "OPL_VERIFY_AUTH_USERS_JSON",
+      "OPL_SUB2API_ADMIN_EMAIL",
+      "OPL_SUB2API_ADMIN_PASSWORD"
     ],
     "steps": [
       "Checkout",

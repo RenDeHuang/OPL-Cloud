@@ -567,13 +567,29 @@ func (app *controlPlaneServer) revealGatewayKey(w http.ResponseWriter, r *http.R
 		writeSourceEnvelope(w, http.StatusBadGateway, "sub2api", "unavailable", nil)
 		return
 	}
-	if err := app.appendAuditEvent(r, "gateway.key_reveal", "gateway_key", strconv.FormatInt(key.ID, 10), stringValue(user["accountId"]), nil, gatewayKeyEvidence(key), "succeeded"); err != nil {
+	if err := app.appendGatewayKeyRevealAudit(r, user, key); err != nil {
 		writeError(w, http.StatusInternalServerError, "state_persist_failed")
 		return
 	}
 	writeSourceEnvelope(w, http.StatusOK, "sub2api", "available", map[string]any{
 		"id": strconv.FormatInt(key.ID, 10), "name": key.Name, "status": key.Status, "value": key.Key,
 	})
+}
+
+const gatewayKeyRevealAuditWindow = time.Hour
+
+func (app *controlPlaneServer) appendGatewayKeyRevealAudit(r *http.Request, user map[string]any, key clients.Sub2APIWorkspaceKey) error {
+	const action = "gateway.key_reveal"
+	resourceID := strconv.FormatInt(key.ID, 10)
+	accountID := stringValue(user["accountId"])
+	event := app.auditEvent(r, action, "gateway_key", resourceID, accountID, nil, gatewayKeyEvidence(key), "succeeded")
+	createdAt, err := time.Parse(time.RFC3339, stringValue(event["createdAt"]))
+	if err != nil {
+		return err
+	}
+	windowStart := createdAt.Truncate(gatewayKeyRevealAuditWindow).Format(time.RFC3339)
+	event["id"] = "audit-" + stableID(action, accountID, stringValue(event["actorUserId"]), resourceID, windowStart)[:12]
+	return app.tables.SaveAuditEvent(r.Context(), event)
 }
 
 func (app *controlPlaneServer) gatewayKeyUsage(w http.ResponseWriter, r *http.Request, service *controlplane.Service) {

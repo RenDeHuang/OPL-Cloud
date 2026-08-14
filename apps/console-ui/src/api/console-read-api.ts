@@ -104,10 +104,6 @@ function sourceDelete<T>(path: string, csrfToken: string, idempotencyKey: string
   return sourceWrite<T>(() => deleteJson<unknown>(path, csrfToken, idempotencyKey));
 }
 
-export function getConsoleState(): Promise<unknown> {
-  return getJson<unknown>("/api/state");
-}
-
 export function getSupportTickets(signal?: AbortSignal): Promise<SupportTicketPageDTO> {
   return getJson<unknown>("/api/support/tickets", { signal }).then(decodeDto<SupportTicketPageDTO>);
 }
