@@ -30,11 +30,11 @@ func (app *controlPlaneServer) workspaceStateRowsLocked(accountID string) []any 
 }
 
 func (app *controlPlaneServer) workspaceResponse(row map[string]any) map[string]any {
-	response, _ := app.workspaceAccessResponse(row, time.Now().UTC())
+	response, _ := app.workspaceAccessResponse(context.Background(), row, time.Now().UTC())
 	return response
 }
 
-func (app *controlPlaneServer) workspaceAccessResponse(row map[string]any, now time.Time) (map[string]any, string) {
+func (app *controlPlaneServer) workspaceAccessResponse(ctx context.Context, row map[string]any, now time.Time) (map[string]any, string) {
 	response := workspaceResponse(row)
 	canonicalComputeID, canonicalStorageID := stringValue(row["currentComputeAllocationId"]), stringValue(row["storageId"])
 	if !providerAcceptanceWorkspaceBillingExempt(row) {
@@ -55,7 +55,10 @@ func (app *controlPlaneServer) workspaceAccessResponse(row map[string]any, now t
 		}
 	}
 	accountID, workspaceID := firstNonEmpty(stringValue(response["accountId"]), stringValue(response["ownerAccountId"])), stringValue(response["id"])
-	storage, ok := app.getStorage(canonicalStorageID)
+	storage, ok, err := app.tables.GetStorage(ctx, canonicalStorageID)
+	if err != nil {
+		ok = false
+	}
 	if ok {
 		switch stringValue(storage["status"]) {
 		case "available", "ready", "bound", "attached":
@@ -71,7 +74,10 @@ func (app *controlPlaneServer) workspaceAccessResponse(row map[string]any, now t
 		return response, "workspace_storage_entitlement_inactive"
 	}
 
-	compute, ok := app.getCompute(canonicalComputeID)
+	compute, ok, err := app.tables.GetCompute(ctx, canonicalComputeID)
+	if err != nil {
+		ok = false
+	}
 	if ok {
 		switch stringValue(compute["status"]) {
 		case "running", "ready", "available", "active":
@@ -87,7 +93,10 @@ func (app *controlPlaneServer) workspaceAccessResponse(row map[string]any, now t
 		return response, "workspace_compute_entitlement_inactive"
 	}
 
-	attachment, ok := app.getAttachment(stringValue(row["currentAttachmentId"]))
+	attachment, ok, err := app.tables.GetAttachment(ctx, stringValue(row["currentAttachmentId"]))
+	if err != nil {
+		ok = false
+	}
 	if ok {
 		switch stringValue(attachment["status"]) {
 		case "attached", "ready":
@@ -754,7 +763,7 @@ func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusConflict, "workspace_suspended")
 		return
 	}
-	response, blockReason := app.workspaceAccessResponse(cloneMap(workspace), time.Now().UTC())
+	response, blockReason := app.workspaceAccessResponse(r.Context(), cloneMap(workspace), time.Now().UTC())
 	if blockReason != "" {
 		writeError(w, http.StatusConflict, blockReason)
 		return
