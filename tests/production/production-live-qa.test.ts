@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 
 import * as productionLiveQa from "../../tools/production-live-qa.ts";
 
@@ -32,6 +32,16 @@ const ADMIN_ACCOUNT_ID = "acct-admin";
 const ADMIN_USER_ID = "usr-admin";
 const ADMIN_EMAIL = "admin@medopl.cn";
 const ADMIN_PASSWORD = "existing-admin-password";
+const previousVerifierAdminEmail = process.env.OPL_SUB2API_ADMIN_EMAIL;
+const previousVerifierAdminPassword = process.env.OPL_SUB2API_ADMIN_PASSWORD;
+process.env.OPL_SUB2API_ADMIN_EMAIL = ADMIN_EMAIL;
+process.env.OPL_SUB2API_ADMIN_PASSWORD = ADMIN_PASSWORD;
+after(() => {
+  if (previousVerifierAdminEmail === undefined) delete process.env.OPL_SUB2API_ADMIN_EMAIL;
+  else process.env.OPL_SUB2API_ADMIN_EMAIL = previousVerifierAdminEmail;
+  if (previousVerifierAdminPassword === undefined) delete process.env.OPL_SUB2API_ADMIN_PASSWORD;
+  else process.env.OPL_SUB2API_ADMIN_PASSWORD = previousVerifierAdminPassword;
+});
 const ownerSeed = JSON.stringify([{
   id: "usr-verifier",
   email: "owner@example.com",
@@ -6641,9 +6651,28 @@ function liveFixture({
     if (url.hostname === "workspace.medopl.cn") return new Response("<main>workspace</main>", { status: 200 });
     if (url.pathname === "/api/production/readiness") return json({ ready: true, cloudImagesReady: true, workspaceImagesReady: true, immutableImagesReady: true });
     if (url.pathname === "/api/auth/login") {
+      const credentials = JSON.parse(init.body);
+      if (credentials.email === ADMIN_EMAIL && credentials.password === ADMIN_PASSWORD) {
+        return json({ user: { id: ADMIN_USER_ID, accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+          "set-cookie": "opl_session=session-admin; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-admin"
+        });
+      }
+      assert.deepEqual(credentials, { email: "owner@example.com", password: "console-password" });
       return json({ user: { accountId: BASIC_ACCOUNT_ID, role: "owner" } }, 200, {
         "set-cookie": "opl_session=session-alpha; Path=/; HttpOnly",
         "x-opl-csrf-token": "csrf-alpha"
+      });
+    }
+    if (url.pathname === "/api/state") throw new Error("retired_api_state_requested");
+    if (url.pathname === "/api/management/state") {
+      assert.match(headers.get("cookie") || "", /opl_session=session-admin/);
+      const accountState = resourceState();
+      return json({
+        computeAllocations: [...accountState.computeAllocations, { id: "compute-other", accountId: "acct-other", workspaceId: "workspace-other" }],
+        storageVolumes: [...accountState.storageVolumes, { id: "storage-other", accountId: "acct-other", workspaceId: "workspace-other" }],
+        workspaces: [...accountState.workspaces, { id: "workspace-other", accountId: "acct-other", ownerAccountId: "acct-other" }],
+        runtimeOperations: [...accountState.runtimeOperations, { id: "operation-other", accountId: "acct-other", action: "job.execute", status: "running" }]
       });
     }
     assert.match(headers.get("cookie") || "", /opl_session=session-alpha/);
@@ -6657,7 +6686,6 @@ function liveFixture({
         ]
       });
     }
-    if (url.pathname === "/api/state") return json(resourceState());
     if (url.pathname === "/api/gateway/wallet") {
       const charged = state.modelRequests > 0 && !usageStuck;
       const delta = charged ? liveUsage.actualCostUsdMicros + (balanceMismatch ? 1 : 0) : 0;

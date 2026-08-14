@@ -165,3 +165,13 @@ test("deployment contract keeps Acceptance outside ordinary deploy", async () =>
   assert.equal(deployment.lifecycle.type, "migration_guard");
   assert.equal(deployment.deliveryEvidence, undefined);
 });
+
+test("production verification contract requires the protected reserved admin credentials", async () => {
+  const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
+  const workflow = deployment.productionVerificationWorkflow;
+
+  for (const name of ["OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD"]) {
+    assert.equal(workflow.requiredEnv.includes(name), true, `${name} must be required`);
+    assert.equal(workflow.secretEnv.includes(name), true, `${name} must be protected`);
+  }
+});

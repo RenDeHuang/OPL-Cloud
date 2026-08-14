@@ -20,6 +20,7 @@ export const FIXED_VERIFICATION_SLOT_DESCRIPTORS = Object.freeze({
     cpu: 8, memoryGb: 16, cbsGb: 100, chargeType: "PREPAID", periodMonths: 1, renewFlag: "NOTIFY_AND_MANUAL_RENEW"
   })
 });
+const PRODUCTION_ADMIN = Object.freeze({ email: "admin@medopl.cn", userId: "usr-admin", accountId: "acct-admin", role: "admin" });
 const DEFAULT_URL_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -115,6 +116,29 @@ export function verificationOwnerFromSeed(raw, accountId = "") {
   const owner = owners[0];
   if (!Number.isSafeInteger(owner.sub2apiUserId) || owner.sub2apiUserId <= 0) throw new Error("verification_owner_mapping_required");
   return { accountId: owner.accountId, email: owner.email, password: owner.password, sub2apiUserId: owner.sub2apiUserId };
+}
+
+function verificationAdminCredentials(email, password) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (normalizedEmail !== PRODUCTION_ADMIN.email || typeof password !== "string" || !password) {
+    throw new Error("verification_admin_credentials_required");
+  }
+  return { email: normalizedEmail, password };
+}
+
+function reservedAccountState(state, accountId) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) throw new Error("management_state_account_inventory_invalid");
+  const inventory = {};
+  for (const name of ["workspaces", "computeAllocations", "storageVolumes", "runtimeOperations"]) {
+    const rows = state[name];
+    if (!Array.isArray(rows) || rows.some((row) =>
+      !row || typeof row !== "object" || Array.isArray(row) || typeof row.accountId !== "string" || !row.accountId.trim()
+    )) {
+      throw new Error("management_state_account_inventory_invalid");
+    }
+    inventory[name] = rows.filter((row) => row.accountId === accountId);
+  }
+  return inventory;
 }
 
 function withoutSecrets(value) {
@@ -437,6 +461,8 @@ export async function verifyProductionChain(options = {}) {
   const {
     origin,
     authUsersJson,
+    adminEmail = process.env.OPL_SUB2API_ADMIN_EMAIL,
+    adminPassword = process.env.OPL_SUB2API_ADMIN_PASSWORD,
     accountId = "",
     runId = new Date().toISOString().replace(/[^0-9TZ]/g, ""),
     slotId = FIXED_VERIFICATION_SLOT_ID,
@@ -465,6 +491,7 @@ export async function verifyProductionChain(options = {}) {
 
   const owner = verificationOwnerFromSeed(authUsersJson, accountId);
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  const adminCredentials = verificationAdminCredentials(adminEmail, adminPassword);
   const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
   const checks = [];
   const readiness = await requestJson({ ...requestOptions, path: "/api/production/readiness" });
@@ -475,7 +502,13 @@ export async function verifyProductionChain(options = {}) {
 
   const catalog = (await requestJson({ ...requestOptions, auth, path: "/api/pricing/catalog" })).payload;
   verifyCatalog(checks, catalog);
-  const state = (await requestJson({ ...requestOptions, auth, path: "/api/state" })).payload;
+  const adminAuth = await login({ ...requestOptions, ...adminCredentials });
+  if (adminAuth.user?.id !== PRODUCTION_ADMIN.userId || adminAuth.user?.accountId !== PRODUCTION_ADMIN.accountId || adminAuth.user?.role !== PRODUCTION_ADMIN.role) {
+    throw new Error("verification_admin_identity_invalid");
+  }
+  addCheck(checks, "management_admin_login", true);
+  const managementState = (await requestJson({ ...requestOptions, auth: adminAuth, path: "/api/management/state" })).payload;
+  const state = reservedAccountState(managementState, owner.accountId);
   const wallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), owner.sub2apiUserId);
   addCheck(checks, "live_sub2api_balance", true);
   const key = dedicatedWorkspaceKey(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/keys" }), "sub2api", true));
@@ -547,6 +580,8 @@ function verifierOptionsFromArgs({ argv, env, fetchImpl }) {
   return {
     origin: args.origin || env.OPL_CONSOLE_ORIGIN,
     authUsersJson: env.OPL_VERIFY_AUTH_USERS_JSON,
+    adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "",
+    adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "",
     accountId: args.account || env.OPL_VERIFY_ACCOUNT_ID || "",
     runId: args["run-id"] || env.OPL_VERIFY_RUN_ID || defaultRunId(),
     slotId: args.slot || env.OPL_VERIFY_SLOT_ID || FIXED_VERIFICATION_SLOT_ID,
@@ -573,7 +608,7 @@ export async function runProductionVerifierCli({
   fetchImpl = globalThis.fetch
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write(`Usage: npm run verify:production -- --read-only --origin <https-url> --account <id> [--run-id <id>] [--request-timeout-ms <ms>] [--browser-e2e]\nEvidence level: read-only. Requires OPL_VERIFY_SLOT_DESCRIPTOR_JSON and reuses ${FIXED_VERIFICATION_SLOT_ID}; mutation flags are rejected.\n`);
+    stdout.write(`Usage: npm run verify:production -- --read-only --origin <https-url> --account <id> [--run-id <id>] [--request-timeout-ms <ms>] [--browser-e2e]\nEvidence level: read-only. Requires OPL_VERIFY_SLOT_DESCRIPTOR_JSON plus OPL_SUB2API_ADMIN_EMAIL/PASSWORD and reuses ${FIXED_VERIFICATION_SLOT_ID}; mutation flags are rejected.\n`);
     return 0;
   }
   try {
