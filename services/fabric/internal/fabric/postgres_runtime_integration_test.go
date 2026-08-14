@@ -1266,8 +1266,8 @@ func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'fabric'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read Fabric migration journal: %v", err)
 	}
-	if migrationCount != 6 {
-		t.Fatalf("Fabric migration count = %d, want 6", migrationCount)
+	if migrationCount != 7 {
+		t.Fatalf("Fabric migration count = %d, want 7", migrationCount)
 	}
 	if _, err := db.Exec(`DROP TABLE machine_ownerships`); err != nil {
 		t.Fatal(err)

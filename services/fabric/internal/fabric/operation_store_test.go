@@ -3,6 +3,7 @@ package fabric
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -392,6 +393,239 @@ func TestPostgresOperationSchemaDropsRetiredWorkspaceRuntimeAccessTable(t *testi
 	dropAt := strings.Index(schema, "DROP TABLE IF EXISTS fabric_workspace_runtime_access")
 	if dropAt < 0 || dropAt < createAt {
 		t.Fatal("Fabric hard-cut migration must drop the retired runtime access table")
+	}
+}
+
+func TestPostgresOperationStoreMapsHistoricalCorrelationIDToOperationID(t *testing.T) {
+	for _, uniqueIdempotencyKey := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pk_only=%t", !uniqueIdempotencyKey), func(t *testing.T) {
+			databaseURL := fabricTestDatabaseURL(t)
+			db, err := sql.Open("postgres", databaseURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			createHistoricalFabricOperationsFixture(t, db, uniqueIdempotencyKey)
+
+			store, err := newTestPostgresOperationStore(databaseURL)
+			if err != nil {
+				t.Fatalf("install historical Fabric schema: %v", err)
+			}
+			defer store.client.Close()
+
+			var operationID, callerService, status string
+			var startedAt time.Time
+			if err := db.QueryRow(`
+				SELECT operation_id, caller_service, status, started_at
+				FROM fabric_operations WHERE id = 'legacy-operation-1'
+			`).Scan(&operationID, &callerService, &status, &startedAt); err != nil {
+				t.Fatal(err)
+			}
+			if operationID != "legacy-correlation-1" {
+				t.Fatalf("operation_id = %q, want preserved correlation_id", operationID)
+			}
+			if callerService != "legacy-requester" || status != "pending" {
+				t.Fatalf("historical identity/state not preserved: caller=%q status=%q", callerService, status)
+			}
+			if !startedAt.Equal(time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)) {
+				t.Fatalf("started_at = %s, want created_at", startedAt)
+			}
+
+			var inboundFKCount int
+			if err := db.QueryRow(`
+				SELECT count(*)
+				FROM pg_constraint
+				WHERE contype = 'f'
+				  AND confrelid = 'fabric_operations'::regclass
+			`).Scan(&inboundFKCount); err != nil {
+				t.Fatal(err)
+			}
+			if inboundFKCount != 4 {
+				t.Fatalf("inbound foreign keys = %d, want 4", inboundFKCount)
+			}
+
+			var legacyRefs, legacyEvidence string
+			if err := db.QueryRow(`
+				SELECT provider_refs::text, evidence_refs::text
+				FROM fabric_operations WHERE id = 'legacy-operation-1'
+			`).Scan(&legacyRefs, &legacyEvidence); err != nil {
+				t.Fatal(err)
+			}
+			if legacyRefs != `{"provider": "req-1"}` || legacyEvidence != `{"receipt": "evidence-1"}` {
+				t.Fatalf("historical references changed: provider_refs=%q evidence_refs=%q", legacyRefs, legacyEvidence)
+			}
+			assertMigrationCount(t, db, "fabric", "202607080001_fabric_operations_legacy_migration", 1)
+			assertMigrationCount(t, db, "fabric", "202607090001_ent_hard_cut", 1)
+
+			if err := store.Install(context.Background()); err != nil {
+				t.Fatalf("restart Fabric install: %v", err)
+			}
+			assertMigrationCount(t, db, "fabric", "202607080001_fabric_operations_legacy_migration", 1)
+			assertMigrationCount(t, db, "fabric", "202607090001_ent_hard_cut", 1)
+
+			var globalUnique bool
+			if err := db.QueryRow(`
+				SELECT EXISTS (
+					SELECT 1
+					FROM pg_index i
+					JOIN pg_class c ON c.oid = i.indexrelid
+					WHERE i.indrelid = 'fabric_operations'::regclass
+					  AND i.indisunique
+					  AND NOT i.indisprimary
+					  AND pg_get_indexdef(i.indexrelid) LIKE '%(idempotency_key)%'
+				)
+			`).Scan(&globalUnique); err != nil {
+				t.Fatal(err)
+			}
+			if globalUnique {
+				t.Fatal("historical global idempotency uniqueness remains")
+			}
+		})
+	}
+}
+
+func TestPostgresOperationStoreRejectsUnknownHistoricalOperationShapeBeforeHardCut(t *testing.T) {
+	testCases := []struct {
+		name   string
+		mutate string
+	}{
+		{name: "extra_column", mutate: `ALTER TABLE fabric_operations ADD COLUMN unexpected TEXT NOT NULL DEFAULT ''`},
+		{name: "wrong_type", mutate: `ALTER TABLE fabric_operations ALTER COLUMN attempts TYPE BIGINT`},
+		{name: "wrong_default", mutate: `ALTER TABLE fabric_operations ALTER COLUMN attempts SET DEFAULT 1`},
+		{name: "wrong_nullability", mutate: `ALTER TABLE fabric_operations ALTER COLUMN lease_expires_at SET NOT NULL`},
+		{name: "wrong_fk_count", mutate: `DROP TABLE idempotency_keys`},
+		{name: "wrong_fk_source", mutate: `ALTER TABLE workspaces RENAME TO unexpected_workspaces`},
+		{name: "wrong_fk_action", mutate: `ALTER TABLE workspaces DROP CONSTRAINT workspaces_operation_id_fkey; ALTER TABLE workspaces ADD CONSTRAINT workspaces_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES fabric_operations(id) ON DELETE CASCADE`},
+		{name: "extra_index", mutate: `CREATE INDEX unexpected_historical_fabric_operations_resource_idx ON fabric_operations(resource_id)`},
+		{name: "duplicate_correlation_id", mutate: `INSERT INTO fabric_operations (id, correlation_id, idempotency_key, requested_by, resource_id, resource_kind, state) VALUES ('legacy-operation-2', 'legacy-correlation-1', 'legacy-idempotency-2', 'legacy-requester-2', 'legacy-resource-2', 'legacy-resource-kind', 'pending')`},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testUnknownHistoricalOperationShape(t, testCase.mutate)
+		})
+	}
+}
+
+func testUnknownHistoricalOperationShape(t *testing.T, mutate string) {
+	t.Helper()
+	databaseURL := fabricTestDatabaseURL(t)
+	db, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	createHistoricalFabricOperationsFixture(t, db, false)
+	if _, err := db.Exec(mutate); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := newTestPostgresOperationStore(databaseURL); err == nil {
+		t.Fatal("unknown historical Fabric schema install succeeded")
+	} else if !strings.Contains(err.Error(), "202607080001_fabric_operations_legacy_migration") {
+		t.Fatalf("unknown historical Fabric schema failed after legacy migration: %v", err)
+	}
+	assertMigrationCount(t, db, "fabric", "202607080001_fabric_operations_legacy_migration", 0)
+	assertMigrationCount(t, db, "fabric", "202607090001_ent_hard_cut", 0)
+
+	var operationIDColumn bool
+	if err := db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_attribute
+			WHERE attrelid = 'fabric_operations'::regclass
+			  AND attname = 'operation_id'
+			  AND attnum > 0
+			  AND NOT attisdropped
+		)
+	`).Scan(&operationIDColumn); err != nil {
+		t.Fatal(err)
+	}
+	if operationIDColumn {
+		t.Fatal("unknown historical schema was mutated before failure")
+	}
+}
+
+func assertMigrationCount(t *testing.T, db *sql.DB, service, version string, want int) {
+	t.Helper()
+	var got int
+	if err := db.QueryRow(`
+		SELECT count(*)
+		FROM opl_schema_migrations
+		WHERE service = $1 AND version = $2
+	`, service, version).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("migration count for %s/%s = %d, want %d", service, version, got, want)
+	}
+}
+
+func TestHistoricalOperationMigrationMatchesFormalEmbeddedCopy(t *testing.T) {
+	formal, err := os.ReadFile("../../migrations/202607080001_fabric_operations_legacy_migration.sql")
+	if err != nil {
+		t.Fatalf("read formal migration: %v", err)
+	}
+	embedded, err := os.ReadFile("ent_migrations/202607080001_fabric_operations_legacy_migration.sql")
+	if err != nil {
+		t.Fatalf("read embedded migration: %v", err)
+	}
+	if !bytes.Equal(formal, embedded) {
+		t.Fatal("formal and embedded historical operation migrations differ")
+	}
+}
+
+func createHistoricalFabricOperationsFixture(t *testing.T, db *sql.DB, uniqueIdempotencyKey bool) {
+	t.Helper()
+	uniqueClause := ""
+	if uniqueIdempotencyKey {
+		uniqueClause = " UNIQUE"
+	}
+	if _, err := db.Exec(fmt.Sprintf(`
+		CREATE TABLE fabric_operations (
+			id TEXT PRIMARY KEY,
+			correlation_id TEXT NOT NULL,
+			idempotency_key TEXT NOT NULL%s,
+			requested_by TEXT NOT NULL,
+			resource_id TEXT NOT NULL,
+			resource_kind TEXT NOT NULL,
+			state TEXT NOT NULL,
+			lease_owner TEXT NOT NULL DEFAULT '',
+			lease_expires_at TIMESTAMPTZ,
+			attempts INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			provider_refs JSONB NOT NULL DEFAULT '{}'::jsonb,
+			evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)
+	`, uniqueClause)); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"workspaces", "fabric_events", "fabric_evidence_refs", "idempotency_keys"} {
+		if _, err := db.Exec(fmt.Sprintf(`
+			CREATE TABLE %s (id TEXT PRIMARY KEY, operation_id TEXT NOT NULL REFERENCES fabric_operations(id))
+		`, source)); err != nil {
+			t.Fatalf("create inbound FK source %s: %v", source, err)
+		}
+	}
+	if _, err := db.Exec(`
+		INSERT INTO fabric_operations (
+			id, correlation_id, idempotency_key, requested_by, resource_id, resource_kind,
+			state, lease_owner, lease_expires_at, attempts, last_error, provider_refs,
+			evidence_refs, created_at, updated_at
+		) VALUES (
+			'legacy-operation-1', 'legacy-correlation-1', 'legacy-idempotency-1', 'legacy-requester',
+			'legacy-resource-1', 'legacy-resource-kind', 'pending', 'legacy-lease-owner',
+			'2026-08-14T01:02:04Z', 2, 'legacy-error', '{"provider":"req-1"}',
+			'{"receipt":"evidence-1"}', '2026-08-14T01:02:03Z', '2026-08-14T01:02:05Z'
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"workspaces", "fabric_events", "fabric_evidence_refs", "idempotency_keys"} {
+		if _, err := db.Exec(`INSERT INTO `+source+` (id, operation_id) VALUES ($1, $2)`, source+"-row-1", "legacy-operation-1"); err != nil {
+			t.Fatalf("seed inbound FK source %s: %v", source, err)
+		}
 	}
 }
 
