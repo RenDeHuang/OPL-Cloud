@@ -160,6 +160,8 @@ func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *t
 			if response.Code != http.StatusAccepted {
 				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 			}
+			handler := server.(*controlPlaneHTTPHandler)
+			_ = handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service)
 			operations, err := store.ListRuntimeOperations(context.Background())
 			if err != nil {
 				t.Fatal(err)

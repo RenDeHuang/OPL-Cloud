@@ -40,6 +40,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 	if controlPlaneTestPostgresBaseURL() == "" {
 		t.Skip("PostgreSQL test gate is not configured")
 	}
+	t.Setenv("OPL_TENCENT_ZONE", "na-siliconvalley-1")
 	ledger, ledgerClient := startGatewayAccountingLedger(t)
 
 	t.Run("stable debit and replay", func(t *testing.T) {
@@ -492,6 +493,14 @@ func (f *gatewayAccountingFabric) PreflightWorkspaceLaunch(_ context.Context, in
 		SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, Available: true, Reason: "none",
 		LaunchOperationID: input.LaunchOperationID, RequestHash: input.RequestHash,
 		ProviderProfileRef: "local-provider-profile", BindingRef: "local-preflight-" + stableID(input.LaunchOperationID)[:12],
+	}, nil
+}
+
+func (*gatewayAccountingFabric) MonthlyPreflight(_ context.Context, input clients.MonthlyPreflightInput) (clients.MonthlyPreflight, error) {
+	return clients.MonthlyPreflight{
+		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
+		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+		ProviderPriceCNY: 12.34,
 	}, nil
 }
 
