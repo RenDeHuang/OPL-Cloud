@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 const root = new URL("../", import.meta.url);
 const workflowRoot = new URL(".github/workflows/", root);
 const allowedWorkflows = new Set([
+  "clean-host-qualification.yml",
   "pull-request-ci.yml",
   "release-opl-cloud-image.yml",
   "whitepaper.yml",
