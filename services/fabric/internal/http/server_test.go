@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -650,6 +651,38 @@ func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 			}
 		})
 	}
+}
+
+type readinessHTTPProvider struct {
+	testProvider
+	result map[string]any
+	err    error
+}
+
+func (p readinessHTTPProvider) Readiness(context.Context) (map[string]any, error) {
+	return p.result, p.err
+}
+
+func TestServerReadinessPreservesPublicResponseContract(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		want := map[string]any{"provider": "test", "ready": true, "status": "ready"}
+		server := newTestServer(fabric.NewService(readinessHTTPProvider{result: want}), "internal-secret")
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, testRequest(http.MethodGet, "/fabric/readiness", nil))
+		var got map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil || recorder.Code != http.StatusOK || !reflect.DeepEqual(got, want) {
+			t.Fatalf("status=%d readiness=%#v err=%v body=%s", recorder.Code, got, err, recorder.Body.String())
+		}
+	})
+
+	t.Run("provider error", func(t *testing.T) {
+		server := newTestServer(fabric.NewService(readinessHTTPProvider{err: errors.New("provider readiness failed")}), "internal-secret")
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, testRequest(http.MethodGet, "/fabric/readiness", nil))
+		if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), `"error":"provider readiness failed"`) {
+			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+	})
 }
 
 func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *testing.T) {
