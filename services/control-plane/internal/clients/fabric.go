@@ -34,6 +34,10 @@ type FabricWorkspaceRuntimeGatewaySecretClient interface {
 	WorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretBinding, error)
 }
 
+type FabricWorkspaceRuntimeCredentialClient interface {
+	RevealWorkspaceRuntimeCredentials(context.Context, string, string, string) (WorkspaceRuntime, error)
+}
+
 type FabricProviderFactsClient interface {
 	ProviderFactsBatch(context.Context, ProviderFactsBatchInput) (ProviderFactsBatch, error)
 }
@@ -507,6 +511,15 @@ func (c *fabricHTTPClient) DestroyWorkspaceRuntime(ctx context.Context, accountI
 func (c *fabricHTTPClient) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
 	var result WorkspaceRuntime
 	err := c.get(ctx, "/fabric/workspace-runtimes/"+workspaceID+"/status", &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) RevealWorkspaceRuntimeCredentials(ctx context.Context, accountID, workspaceID, idempotencyKey string) (WorkspaceRuntime, error) {
+	var result WorkspaceRuntime
+	input := map[string]string{"accountId": accountID, "workspaceId": workspaceID}
+	err := c.postMutation(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(workspaceID)+"/credentials/reveal", input, idempotencyKey, fabricMutationScope{
+		AccountID: accountID, WorkspaceID: workspaceID, ResourceKind: "workspace_runtime_credential", ResourceID: workspaceID, Action: "reveal_workspace_runtime_credential",
+	}, &result)
 	return result, err
 }
 

@@ -115,10 +115,15 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 	}))
 	mux.HandleFunc("POST /api/workspaces/{workspaceId}/runtime-credentials/reveal", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		workspaceID := r.PathValue("workspaceId")
-		if _, ok := app.ownedWorkspaceForCredentialCommand(w, r, workspaceID); !ok {
+		workspace, ok := app.ownedWorkspaceForCredentialCommand(w, r, workspaceID)
+		if !ok {
 			return
 		}
-		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), workspaceID)
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		runtime, err := service.RevealWorkspaceRuntimeCredentials(r.Context(), stringValue(workspace["accountId"]), workspaceID, key)
 		if err != nil {
 			writeUpstreamError(w, err)
 			return
@@ -250,6 +255,33 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 					return
 				}
 				writeJSON(w, http.StatusOK, result.Response)
+				return
+			}
+			if workspace["autoRenew"] == false {
+				paidThrough, parseErr := time.Parse(time.RFC3339, stringValue(workspace["paidThrough"]))
+				if parseErr != nil {
+					writeError(w, http.StatusConflict, "workspace_billing_state_invalid")
+					return
+				}
+				operation, found, queryErr := app.tables.GetRuntimeOperation(r.Context(), workspaceRenewalOperationID(workspaceID, paidThrough))
+				if queryErr != nil {
+					writeError(w, http.StatusInternalServerError, "state_read_failed")
+					return
+				}
+				operations := []map[string]any(nil)
+				if found {
+					operations = append(operations, operation)
+				}
+				response, responseErr := workspaceAutoRenewResponse(workspace, operations, false, time.Now().UTC())
+				if errors.Is(responseErr, errWorkspaceReactivationRequired) {
+					writeError(w, http.StatusConflict, responseErr.Error())
+					return
+				}
+				if responseErr != nil {
+					writeError(w, http.StatusConflict, "workspace_billing_state_invalid")
+					return
+				}
+				writeJSON(w, http.StatusOK, response)
 				return
 			}
 			operations, err := queryRuntimeOperations(r.Context(), app.tables, runtimeOperationQuery{WorkspaceID: workspaceID})

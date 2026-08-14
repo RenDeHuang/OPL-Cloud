@@ -317,10 +317,6 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, allocation)
 	})
-	mux.HandleFunc("POST /fabric/compute-allocations/{id}/sync", func(w http.ResponseWriter, r *http.Request) {
-		allocation, err := service.SyncComputeAllocation(r.Context(), strings.TrimSpace(r.PathValue("id")))
-		writeResult(w, allocation, err)
-	})
 	mux.HandleFunc("POST /fabric/compute-allocations/{id}/destroy", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Idempotency-Key") == "" {
 			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
@@ -375,10 +371,6 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		volume, err := service.DestroyStorageVolume(r.Context(), strings.TrimSpace(r.PathValue("id")))
 		writeResult(w, volume, err)
 	})
-	mux.HandleFunc("POST /fabric/storage-volumes/{id}/sync", func(w http.ResponseWriter, r *http.Request) {
-		volume, err := service.SyncStorageVolume(r.Context(), strings.TrimSpace(r.PathValue("id")))
-		writeResult(w, volume, err)
-	})
 	mux.HandleFunc("POST /fabric/storage-snapshots", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.StorageSnapshotInput
 		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
@@ -398,10 +390,6 @@ func newFabricMux(service *fabric.Service) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, snapshot)
-	})
-	mux.HandleFunc("POST /fabric/storage-snapshots/{id}/sync", func(w http.ResponseWriter, r *http.Request) {
-		snapshot, err := service.SyncStorageSnapshot(r.Context(), strings.TrimSpace(r.PathValue("id")))
-		writeResult(w, snapshot, err)
 	})
 	mux.HandleFunc("POST /fabric/storage-snapshots/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.StorageRestoreInput
@@ -490,6 +478,29 @@ func newFabricMux(service *fabric.Service) http.Handler {
 	})
 	mux.HandleFunc("GET /fabric/workspace-runtimes/{workspaceId}/status", func(w http.ResponseWriter, r *http.Request) {
 		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
+		writeResult(w, runtime, err)
+	})
+	mux.HandleFunc("POST /fabric/workspace-runtimes/{workspaceId}/credentials/reveal", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			AccountID   string `json:"accountId"`
+			WorkspaceID string `json:"workspaceId"`
+		}
+		key := r.Header.Get("Idempotency-Key")
+		if key == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		workspaceID := strings.TrimSpace(r.PathValue("workspaceId"))
+		accountID := strings.TrimSpace(input.AccountID)
+		if accountID == "" || input.WorkspaceID != workspaceID {
+			writeError(w, http.StatusBadRequest, "workspace_runtime_credential_input_required")
+			return
+		}
+		runtime, err := service.WorkspaceRuntimeCredentials(r.Context(), accountID, workspaceID)
 		writeResult(w, runtime, err)
 	})
 	mux.HandleFunc("POST /fabric/workspace-runtimes/{workspaceId}/gateway-secret", func(w http.ResponseWriter, r *http.Request) {
@@ -630,6 +641,9 @@ func isFabricMutation(r *http.Request) bool {
 		return true
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) == 5 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "credentials" && parts[4] == "reveal" {
+		return true
+	}
 	if len(parts) != 4 || parts[0] != "fabric" || parts[2] == "" {
 		return false
 	}
@@ -727,6 +741,11 @@ func fabricMutationScopeForRequest(ctx context.Context, resolver fabricMutationS
 		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime", parts[2], "destroy_workspace_runtime"
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "gateway-secret":
 		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime_gateway_secret", parts[2], "bind_workspace_runtime_gateway_secret"
+	case len(parts) == 5 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "credentials" && parts[4] == "reveal":
+		if value("workspaceId") != parts[2] {
+			return fabricMutationScope{}, false
+		}
+		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime_credential", parts[2], "reveal_workspace_runtime_credential"
 	}
 	return scope, scope.AccountID != "" && scope.WorkspaceID != "" && scope.ResourceKind != "" && scope.ResourceID != "" && scope.Action != "" && scope.OperationID != ""
 }

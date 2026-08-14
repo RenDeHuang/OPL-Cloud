@@ -138,6 +138,8 @@ func (s *PostgresStore) RecordReceipt(ctx context.Context, input ReceiptInput) (
 		SetProjectID(receipt.ProjectID).
 		SetTaskID(receipt.TaskID).
 		SetJobID(receipt.JobID).
+		SetArtifactID(receipt.ArtifactID).
+		SetReviewID(receipt.ReviewID).
 		SetPayloadJSON(string(payload)).
 		SetSupersedesReceiptID(receipt.SupersedesReceiptID).
 		SetIdempotencyKey(input.IdempotencyKey).
@@ -400,21 +402,15 @@ func (s *PostgresStore) RecordArtifact(ctx context.Context, input ArtifactInput)
 }
 
 func (s *PostgresStore) Artifact(ctx context.Context, artifactID string) (Artifact, error) {
-	rows, err := s.client.EvidenceReceipt.Query().Where(evidencereceipt.ReceiptType(artifactReceiptType)).All(ctx)
+	row, err := s.client.EvidenceReceipt.Query().Where(evidencereceipt.ReceiptType(artifactReceiptType), evidencereceipt.ArtifactID(artifactID)).Only(ctx)
+	if ledgerent.IsNotFound(err) {
+		return Artifact{}, ErrArtifactNotFound
+	}
 	if err != nil {
 		return Artifact{}, err
 	}
-	// ponytail: linear scan is enough for initial evidence volume; add indexed promoted columns when measured query load requires it.
-	for _, row := range rows {
-		receipt, err := receiptFromEnt(row)
-		if err != nil {
-			return Artifact{}, err
-		}
-		if receipt.ArtifactID == artifactID {
-			return artifactFromReceipt(receipt), nil
-		}
-	}
-	return Artifact{}, ErrArtifactNotFound
+	receipt, err := receiptFromEnt(row)
+	return artifactFromReceipt(receipt), err
 }
 
 func (s *PostgresStore) RecordReview(ctx context.Context, input ReviewInput) (Review, error) {
@@ -436,21 +432,15 @@ func (s *PostgresStore) RecordReview(ctx context.Context, input ReviewInput) (Re
 }
 
 func (s *PostgresStore) Review(ctx context.Context, reviewID string) (Review, error) {
-	rows, err := s.client.EvidenceReceipt.Query().Where(evidencereceipt.ReceiptType(reviewReceiptType)).All(ctx)
+	row, err := s.client.EvidenceReceipt.Query().Where(evidencereceipt.ReceiptType(reviewReceiptType), evidencereceipt.ReviewID(reviewID)).Only(ctx)
+	if ledgerent.IsNotFound(err) {
+		return Review{}, ErrReviewNotFound
+	}
 	if err != nil {
 		return Review{}, err
 	}
-	// ponytail: linear scan is enough for initial evidence volume; add indexed promoted columns when measured query load requires it.
-	for _, row := range rows {
-		receipt, err := receiptFromEnt(row)
-		if err != nil {
-			return Review{}, err
-		}
-		if receipt.ReviewID == reviewID {
-			return reviewFromReceipt(receipt), nil
-		}
-	}
-	return Review{}, ErrReviewNotFound
+	receipt, err := receiptFromEnt(row)
+	return reviewFromReceipt(receipt), err
 }
 
 func (s *PostgresStore) CreateReviewPolicy(ctx context.Context, input ReviewPolicyInput) (ReviewPolicy, error) {
@@ -613,7 +603,7 @@ func (s *PostgresStore) ListReviewPolicies(ctx context.Context, query ReviewPoli
 }
 
 func (s *PostgresStore) EvaluateReviewGate(ctx context.Context, input ReviewGateInput) (ReviewGateResult, error) {
-	if !validExecutionIdentity(input.ExecutionIdentity) {
+	if !validReviewGateInput(input) {
 		return ReviewGateResult{}, ErrInvalidReviewGateInput
 	}
 	row, err := s.client.ReviewPolicy.Query().Where(append(reviewPolicyScopePredicates(input.ExecutionIdentity), reviewpolicy.StatusEQ("active"))...).Only(ctx)
@@ -631,11 +621,14 @@ func (s *PostgresStore) EvaluateReviewGate(ctx context.Context, input ReviewGate
 	for _, id := range input.ReviewIDs {
 		wanted[id] = struct{}{}
 	}
-	reviewRows, err := s.client.EvidenceReceipt.Query().Where(evidencereceipt.ReceiptType(reviewReceiptType)).All(ctx)
+	reviews := make([]Review, 0, len(wanted))
+	if len(wanted) == 0 {
+		return evaluateReviewGate(policy, reviews), nil
+	}
+	reviewRows, err := s.client.EvidenceReceipt.Query().Where(evidencereceipt.ReceiptType(reviewReceiptType), evidencereceipt.ReviewIDIn(input.ReviewIDs...)).All(ctx)
 	if err != nil {
 		return ReviewGateResult{}, err
 	}
-	reviews := make([]Review, 0, len(wanted))
 	for _, reviewRow := range reviewRows {
 		receipt, err := receiptFromEnt(reviewRow)
 		if err != nil {
@@ -731,7 +724,7 @@ func (s *PostgresStore) receiptByIdempotencyKey(ctx context.Context, key string)
 }
 
 func receiptFromEnt(row *ledgerent.EvidenceReceipt) (Receipt, error) {
-	// ponytail: payload is canonical; promote fields to columns only when a real query needs an index.
+	// The payload remains canonical for flexible evidence; indexed identity columns override its projections.
 	var stored receiptPayload
 	if err := decodeStoredJSON(row.PayloadJSON, &stored); err != nil {
 		return Receipt{}, err
@@ -745,6 +738,8 @@ func receiptFromEnt(row *ledgerent.EvidenceReceipt) (Receipt, error) {
 	input.ProjectID = row.ProjectID
 	input.TaskID = row.TaskID
 	input.JobID = row.JobID
+	input.ArtifactID = row.ArtifactID
+	input.ReviewID = row.ReviewID
 	input.SupersedesReceiptID = row.SupersedesReceiptID
 	return Receipt{ReceiptInput: input, ReceiptID: row.ID, CreatedAt: row.CreatedAt, Retention: stored.Retention}, nil
 }

@@ -78,6 +78,53 @@ func TestLedgerCapabilityRejectsUnscopedBearerAndAcceptsBoundRequest(t *testing.
 	}
 }
 
+func TestLedgerCapabilityIsPreverifiedBeforeOwnerLookup(t *testing.T) {
+	const key = "ledger-capability-key-for-http-tests-32-chars"
+	store := &callCountingStore{Store: ledger.NewMemoryStore()}
+	server := NewServerWithAuth(store, "internal-secret", key)
+	for _, path := range []string{
+		"/ledger/receipts/receipt-alpha?accountId=acct-alpha&workspaceId=ws-alpha",
+		"/ledger/artifacts/artifact-alpha?workspaceId=ws-alpha",
+		"/ledger/reviews/review-alpha?workspaceId=ws-alpha",
+		"/ledger/review-policies/policy-alpha?workspaceId=ws-alpha",
+	} {
+		req := testRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+	if store.calls != 0 {
+		t.Fatalf("invalid capabilities reached owner lookup: calls=%d", store.calls)
+	}
+}
+
+func TestLedgerCapabilityComparesPersistedOwnerAfterPreverification(t *testing.T) {
+	const key = "ledger-capability-key-for-http-tests-32-chars"
+	store := ledger.NewMemoryStore()
+	artifact, err := store.RecordArtifact(context.Background(), ledger.ArtifactInput{
+		OrganizationID: "org-alpha", WorkspaceID: "ws-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", JobID: "job-alpha",
+		Digest: "sha256:artifact-alpha", MediaType: "application/json", SizeBytes: 42, StorageRef: "artifact-alpha", IdempotencyKey: "artifact-alpha",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServerWithAuth(store, "internal-secret", key)
+	path := "/ledger/artifacts/" + artifact.ArtifactID + "?workspaceId=ws-alpha"
+	req := testRequest(http.MethodGet, path, nil)
+	claims := ledgerCapabilityClaims{
+		Version: 1, Caller: "control-plane", WorkspaceID: "ws-alpha", ResourceKind: "artifact", ResourceID: artifact.ArtifactID,
+		Action: "read_artifact", OperationID: requestOperationID(req), ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	req.Header.Set(ledgerCapabilityHeader, testLedgerCapability(t, key, claims, nil))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), artifact.ArtifactID) {
+		t.Fatalf("valid capability status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func testLedgerCapability(t *testing.T, key string, claims ledgerCapabilityClaims, body []byte) string {
 	t.Helper()
 	digest := sha256.Sum256(body)
@@ -190,6 +237,26 @@ func TestJSONBodiesRejectTrailingDataWithoutPersistence(t *testing.T) {
 type callCountingStore struct {
 	ledger.Store
 	calls int
+}
+
+func (s *callCountingStore) Receipt(ctx context.Context, id string) (ledger.Receipt, error) {
+	s.calls++
+	return s.Store.Receipt(ctx, id)
+}
+
+func (s *callCountingStore) Artifact(ctx context.Context, id string) (ledger.Artifact, error) {
+	s.calls++
+	return s.Store.Artifact(ctx, id)
+}
+
+func (s *callCountingStore) Review(ctx context.Context, id string) (ledger.Review, error) {
+	s.calls++
+	return s.Store.Review(ctx, id)
+}
+
+func (s *callCountingStore) ReviewPolicy(ctx context.Context, id string) (ledger.ReviewPolicy, error) {
+	s.calls++
+	return s.Store.ReviewPolicy(ctx, id)
 }
 
 func (s *callCountingStore) RecordReceipt(context.Context, ledger.ReceiptInput) (ledger.Receipt, error) {

@@ -259,6 +259,15 @@ expected scope from the typed request and rejects missing or mismatched
 capabilities before operation-store or provider mutation. Runner transport
 identity remains limited to job lease routes.
 
+Ordinary Fabric Runtime status is a non-secret read and always redacts the
+provider password. Credential reveal is a separate POST issued only after the
+Control Plane verifies the Workspace owner; Fabric requires the same short-lived
+request-bound capability and independently matches account and Workspace to the
+persisted Runtime operation before returning the password. The former compute,
+volume, and snapshot sync HTTP routes had no product caller and are absent;
+Fabric's internal reconciliation methods remain owned by the service and are not
+transport-token-only public writes.
+
 The targeted compute-pool-head terminalization route is the only current
 operator exception. Its protected Instance workflow must sign `caller=operator`
 for the exact request body, while Fabric independently derives account,
@@ -276,6 +285,14 @@ another service's tables. Sub2API data remains in Sub2API. The portable Compose
 configuration and its source-built acceptance prove separate roles/databases and
 cross-owner denial. Legacy production credentials have not been replaced and
 read back through the Instance owner, so production adoption remains unproven.
+
+Ledger verifies capability signature, caller, resource, action, operation,
+expiry, and body digest before any owner lookup, then compares the claims with
+the persisted account and Workspace. Receipt and review-policy identities use
+their primary keys; artifact and review identities are promoted and indexed in
+the Ledger schema, and review-gate ID sets are bounded, so owner enrichment and
+review-gate reads do not scan all evidence payloads or issue unbounded `IN`
+queries.
 
 All three services serialize startup migrations with one database-wide PostgreSQL
 advisory lock. A migration is journaled in `opl_schema_migrations` by service and

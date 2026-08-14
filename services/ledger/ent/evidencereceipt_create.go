@@ -132,6 +132,34 @@ func (erc *EvidenceReceiptCreate) SetNillableJobID(s *string) *EvidenceReceiptCr
 	return erc
 }
 
+// SetArtifactID sets the "artifact_id" field.
+func (erc *EvidenceReceiptCreate) SetArtifactID(s string) *EvidenceReceiptCreate {
+	erc.mutation.SetArtifactID(s)
+	return erc
+}
+
+// SetNillableArtifactID sets the "artifact_id" field if the given value is not nil.
+func (erc *EvidenceReceiptCreate) SetNillableArtifactID(s *string) *EvidenceReceiptCreate {
+	if s != nil {
+		erc.SetArtifactID(*s)
+	}
+	return erc
+}
+
+// SetReviewID sets the "review_id" field.
+func (erc *EvidenceReceiptCreate) SetReviewID(s string) *EvidenceReceiptCreate {
+	erc.mutation.SetReviewID(s)
+	return erc
+}
+
+// SetNillableReviewID sets the "review_id" field if the given value is not nil.
+func (erc *EvidenceReceiptCreate) SetNillableReviewID(s *string) *EvidenceReceiptCreate {
+	if s != nil {
+		erc.SetReviewID(*s)
+	}
+	return erc
+}
+
 // SetPayloadJSON sets the "payload_json" field.
 func (erc *EvidenceReceiptCreate) SetPayloadJSON(s string) *EvidenceReceiptCreate {
 	erc.mutation.SetPayloadJSON(s)
@@ -301,6 +329,14 @@ func (erc *EvidenceReceiptCreate) defaults() {
 		v := evidencereceipt.DefaultJobID
 		erc.mutation.SetJobID(v)
 	}
+	if _, ok := erc.mutation.ArtifactID(); !ok {
+		v := evidencereceipt.DefaultArtifactID
+		erc.mutation.SetArtifactID(v)
+	}
+	if _, ok := erc.mutation.ReviewID(); !ok {
+		v := evidencereceipt.DefaultReviewID
+		erc.mutation.SetReviewID(v)
+	}
 	if _, ok := erc.mutation.PayloadJSON(); !ok {
 		v := evidencereceipt.DefaultPayloadJSON
 		erc.mutation.SetPayloadJSON(v)
@@ -352,6 +388,12 @@ func (erc *EvidenceReceiptCreate) check() error {
 	}
 	if _, ok := erc.mutation.JobID(); !ok {
 		return &ValidationError{Name: "job_id", err: errors.New(`ent: missing required field "EvidenceReceipt.job_id"`)}
+	}
+	if _, ok := erc.mutation.ArtifactID(); !ok {
+		return &ValidationError{Name: "artifact_id", err: errors.New(`ent: missing required field "EvidenceReceipt.artifact_id"`)}
+	}
+	if _, ok := erc.mutation.ReviewID(); !ok {
+		return &ValidationError{Name: "review_id", err: errors.New(`ent: missing required field "EvidenceReceipt.review_id"`)}
 	}
 	if _, ok := erc.mutation.PayloadJSON(); !ok {
 		return &ValidationError{Name: "payload_json", err: errors.New(`ent: missing required field "EvidenceReceipt.payload_json"`)}
@@ -458,6 +500,14 @@ func (erc *EvidenceReceiptCreate) createSpec() (*EvidenceReceipt, *sqlgraph.Crea
 	if value, ok := erc.mutation.JobID(); ok {
 		_spec.SetField(evidencereceipt.FieldJobID, field.TypeString, value)
 		_node.JobID = value
+	}
+	if value, ok := erc.mutation.ArtifactID(); ok {
+		_spec.SetField(evidencereceipt.FieldArtifactID, field.TypeString, value)
+		_node.ArtifactID = value
+	}
+	if value, ok := erc.mutation.ReviewID(); ok {
+		_spec.SetField(evidencereceipt.FieldReviewID, field.TypeString, value)
+		_node.ReviewID = value
 	}
 	if value, ok := erc.mutation.PayloadJSON(); ok {
 		_spec.SetField(evidencereceipt.FieldPayloadJSON, field.TypeString, value)

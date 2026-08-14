@@ -29,6 +29,10 @@ const (
 	FieldTaskID = "task_id"
 	// FieldJobID holds the string denoting the job_id field in the database.
 	FieldJobID = "job_id"
+	// FieldArtifactID holds the string denoting the artifact_id field in the database.
+	FieldArtifactID = "artifact_id"
+	// FieldReviewID holds the string denoting the review_id field in the database.
+	FieldReviewID = "review_id"
 	// FieldPayloadJSON holds the string denoting the payload_json field in the database.
 	FieldPayloadJSON = "payload_json"
 	// FieldSupersedesReceiptID holds the string denoting the supersedes_receipt_id field in the database.
@@ -60,6 +64,8 @@ var Columns = []string{
 	FieldProjectID,
 	FieldTaskID,
 	FieldJobID,
+	FieldArtifactID,
+	FieldReviewID,
 	FieldPayloadJSON,
 	FieldSupersedesReceiptID,
 	FieldProviderRequestID,
@@ -97,6 +103,10 @@ var (
 	DefaultTaskID string
 	// DefaultJobID holds the default value on creation for the "job_id" field.
 	DefaultJobID string
+	// DefaultArtifactID holds the default value on creation for the "artifact_id" field.
+	DefaultArtifactID string
+	// DefaultReviewID holds the default value on creation for the "review_id" field.
+	DefaultReviewID string
 	// DefaultPayloadJSON holds the default value on creation for the "payload_json" field.
 	DefaultPayloadJSON string
 	// DefaultSupersedesReceiptID holds the default value on creation for the "supersedes_receipt_id" field.
@@ -163,6 +173,16 @@ func ByTaskID(opts ...sql.OrderTermOption) OrderOption {
 // ByJobID orders the results by the job_id field.
 func ByJobID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldJobID, opts...).ToFunc()
+}
+
+// ByArtifactID orders the results by the artifact_id field.
+func ByArtifactID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldArtifactID, opts...).ToFunc()
+}
+
+// ByReviewID orders the results by the review_id field.
+func ByReviewID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldReviewID, opts...).ToFunc()
 }
 
 // ByPayloadJSON orders the results by the payload_json field.

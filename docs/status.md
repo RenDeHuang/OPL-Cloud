@@ -251,8 +251,9 @@ dismissal, settings mutation, or security-only code write was performed. This
 triage result therefore does not establish a zero-alert baseline or product
 readiness. A separate sealed, risk-based static scan of revision
 `24a065d4427b53d65ba0df9cb70b1a36327fb6af` reported three medium and seven low
-findings with partial coverage and no runtime exercise. None is recorded as
-fixed by the scan, by enabling GitHub controls, or by this documentation.
+findings with partial coverage and no runtime exercise. That sealed report
+remains immutable historical evidence; later source remediation and rescans are
+recorded separately below rather than rewriting its finding dispositions.
 
 The canonical S0 baseline includes the disclosure policy, read-only Dependency
 Review job, and expanded monthly Dependabot coverage. PR `#261` merged as
@@ -309,24 +310,40 @@ terminal at the classification layer only, with alert disposition explicitly
 unperformed as recorded above.
 
 The repository security scan for canonical revision `b7217daddf1520d7f442cea5b8dba2c6df636cdf`
-reported eight source findings (five high, three medium). PR `#307` merged the
-account/workspace/action/operation/body-bound Ledger and Fabric capabilities,
-portable PostgreSQL and local Docker helper image pinning, admitted Workspace
-proxy destination, and Control Plane resource bounds as canonical revision
-`884e02c1e4242fc33ff6aea55dc4594e61c68cbc`. Its required CI passed. A fresh
-source review of that revision no longer reproduced those seven source-owned
-findings, but found one low-severity Fabric authorization omission: the
-compute-pool-head terminalization POST route was not classified as a mutation.
-The current candidate adds owner-derived account/Workspace scope and requires a
-short-lived `caller=operator` capability before the terminal operation-store
-CAS; focused Fabric HTTP and service tests pass. This candidate is not yet
-canonical `main` or a sealed scan result. The current `opl-instance-medopl`
-workflow and manifest have not yet adopted the full Fabric capability credential
-set, so source absorption does not prove a usable production operator path or a
-deployment. GitHub tag/Release/GHCR immutability also remains an external-owner
-gap: fresh readback still reports no tag ruleset and `v0.1.0`
-`immutable=false`. The full Control Plane server suite requires a PostgreSQL test
-database and was not claimed from this local environment.
+reported eight source findings (five high, three medium). PR `#307` absorbed
+their source remediation at `884e02c1e4242fc33ff6aea55dc4594e61c68cbc`, and PR
+`#308` absorbed the subsequently discovered compute-pool-head terminalization
+capability omission at `5fc1e5fba29837c6fb2215c427992de966b6a5e5`.
+
+Standard scan `55437d10-456a-41ae-b39c-c7e4f0cdbd81` was then sealed against
+that exact canonical revision. It did not reproduce the earlier terminalization
+finding and reported five new high-confidence source findings: one medium
+Control Plane body-limit bypass and four low findings covering Fabric Runtime
+credential disclosure, three zero-caller Fabric sync HTTP mutations, Ledger
+owner lookup before capability rejection, and unbounded Workspace renewal
+command history. Coverage was risk-based and partial across 648 inventoried
+files; no production, private-network, deployment, provider mutation, or live
+load test was performed.
+
+The current remediation candidate removes the `application/octet-stream`
+request-limit exception; makes already-disabled Workspace renewal a stable O(1)
+no-op; permanently redacts passwords from ordinary Fabric Runtime status while
+moving owner reveal to a persisted-owner and capability-bound POST; removes the
+three zero-caller sync HTTP routes while retaining internal Fabric reconciliation;
+and pre-verifies Ledger capability authenticity before owner lookup. Ledger now
+stores and indexes promoted artifact/review IDs so valid owner and review-gate
+reads avoid full-table JSON scans; review-gate ID sets are also explicitly
+bounded. Control Plane, Fabric, and Ledger full module tests, including each
+service's PostgreSQL-enabled suite, plus the Console idempotency test and diff
+checks pass locally. This candidate is not yet canonical `main`, and the five
+findings remain open until a fresh sealed scan of the absorbed revision no
+longer reproduces them.
+
+The current `opl-instance-medopl` workflow and manifest have not yet adopted the
+full Fabric capability credential set, so source absorption does not prove a
+usable production operator path or a deployment. GitHub tag/Release/GHCR
+immutability also remains an external-owner gap: current evidence still reports
+no tag ruleset and `v0.1.0` `immutable=false`.
 
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production

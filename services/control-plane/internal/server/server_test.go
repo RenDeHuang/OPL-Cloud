@@ -1194,6 +1194,15 @@ func (f *fakeFabricClient) WorkspaceRuntimeStatus(_ context.Context, workspaceID
 	}, nil
 }
 
+func (f *fakeFabricClient) RevealWorkspaceRuntimeCredentials(ctx context.Context, _ string, workspaceID, _ string) (clients.WorkspaceRuntime, error) {
+	f.record("fabric.runtime-credentials")
+	calls := f.calls
+	f.calls = nil
+	runtime, err := f.WorkspaceRuntimeStatus(ctx, workspaceID)
+	f.calls = calls
+	return runtime, err
+}
+
 func (f *fakeFabricClient) Readiness(_ context.Context) (map[string]any, error) {
 	f.record("fabric.readiness")
 	return map[string]any{"provider": "fabric", "ready": true, "cloudImagesReady": true, "workspaceImagesReady": true, "immutableImagesReady": true, "missingEnv": []string{}, "missingTools": []string{}}, nil
@@ -1539,19 +1548,23 @@ func TestOperatorLoginRouteDoesNotCreateAUserSession(t *testing.T) {
 }
 
 func TestProtectedWriteRejectsOversizedJSONBody(t *testing.T) {
-	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	session := tenantAdminSessionForTest(t, server)
-	body := `{"name":"` + strings.Repeat("x", int(maxJSONBodyBytes)+1) + `","packageId":"basic","sizeGb":10,"autoRenew":false}`
-	req := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", "oversized-body")
-	addAuth(req, session)
-	rec := httptest.NewRecorder()
+	for _, contentType := range []string{"application/json", "application/octet-stream"} {
+		t.Run(contentType, func(t *testing.T) {
+			server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+			session := tenantAdminSessionForTest(t, server)
+			body := `{"name":"` + strings.Repeat("x", int(maxJSONBodyBytes)+1) + `","packageId":"basic","sizeGb":10,"autoRenew":false}`
+			req := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", contentType)
+			req.Header.Set("Idempotency-Key", "oversized-body")
+			addAuth(req, session)
+			rec := httptest.NewRecorder()
 
-	server.ServeHTTP(rec, req)
+			server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want 413: %s", rec.Code, rec.Body.String())
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want 413: %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
