@@ -144,6 +144,38 @@ flowchart TB
 | OPL Runway | Invocation/session lifecycle and execution-provider routing | Service identity, package lifecycle and domain verdicts |
 | Domain agent | Domain strategy, evidence judgment, quality verdict and delivery authority | Cloud infrastructure truth |
 
+## Framework Composition And Cloud Authority Boundary
+
+OPL Framework may use Cordis to compose in-process Runway, Connect, client,
+observer, and executor contributions. That Framework decision does not turn OPL
+Cloud services into Cordis plugins or move Cloud authority into a Framework
+composition. The integration boundary remains a typed public Cloud API with
+explicit capability, identity, idempotency, and owner-authoritative readback.
+
+```text
+OPL Framework process
+  -> curated Cordis composition
+       -> Framework-owned Cloud client or adapter plugin
+            -> typed public HTTP and capability contracts
+                 -> OPL Cloud Control Plane / Fabric / Ledger authorities
+```
+
+The Framework-owned plugin may select or observe client behavior inside its own
+process. It does not own a Cloud service identity, database, Workspace Launch
+cursor, provider resource, spendable balance, receipt, release, or deployment.
+Cloud provider selection and mutation remain behind the Fabric provider port and
+the owning Instance profile; a Framework composition profile cannot bypass or
+replace those decisions.
+
+The OPL Cloud target therefore does not include a Cordis runtime dependency,
+Cordis sidecar, parallel plugin registry, installed lock, durable event log, or
+service-lifecycle owner. Fabric provider adapters remain native implementations
+inside Fabric rather than Cordis plugins. A future Cloud process may adopt
+Cordis only through a new explicit architecture decision after one real
+in-process caller proves independent lifecycle, replacement, isolation, or
+teardown benefit without weakening the existing service, persistence, security,
+release, or authority boundaries.
+
 ## Core And Extension Boundary
 
 The MVP Core is one installable vertical product path:

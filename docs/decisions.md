@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-08-14: Framework Cordis Composition Stops At The Cloud API Boundary
+
+OPL Framework is adopting Cordis for in-process composition. OPL Cloud does not
+follow that change as a repository-wide or service-runtime migration. Cordis
+addresses Framework process composition, dependency injection, events, effects,
+and teardown; Cloud owns independently deployed service, persistence, provider,
+billing-coordination, and evidence authorities.
+
+The supported integration is a Framework-owned Cordis plugin that wraps a typed
+Cloud client and calls the existing public HTTP and capability contracts.
+Control Plane, Fabric, and Ledger remain Cloud authorities. Fabric provider
+adapters remain behind the native Fabric provider port, and the Instance owner
+continues to select the concrete provider profile and deployment.
+
+OPL Cloud will not add a Cordis dependency or sidecar, mirror Framework plugin
+state, or create a second plugin registry, installed lock, event log, or service
+lifecycle. Cordis plugin and composition versions do not authorize arbitrary
+mixing of Cloud service binaries or schemas; the Cloud product remains one
+intentional release unit with compatibility enforced at its typed contracts.
+
+Reconsidering Cordis inside a future Cloud process requires a new explicit
+decision backed by a real in-process caller and a verified replacement,
+isolation, diagnosis, or teardown outcome. Framework migration alone is not that
+evidence.
+
 ## 2026-08-11: Modularity And Deletion-First Work Proceed In Parallel
 
 The immediate execution portfolio gives module cohesion, physical deployment
