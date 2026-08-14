@@ -138,6 +138,21 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusBadGateway, "fabric_workspace_launch_preflight_invalid")
 			return
 		}
+		zone := controlplane.ProviderAcceptanceLaunchZone()
+		for _, input := range []clients.MonthlyPreflightInput{
+			{ResourceType: "compute", PackageID: packageID, Zone: zone},
+			{ResourceType: "storage", PackageID: packageID, SizeGB: int(storageGB), Zone: zone},
+		} {
+			result, err := service.PreflightMonthlyResource(r.Context(), input)
+			if err != nil {
+				writeUpstreamError(w, err)
+				return
+			}
+			if !monthlyPreflightConfirmed(input, result) {
+				writeError(w, http.StatusBadGateway, "fabric_monthly_preflight_invalid")
+				return
+			}
+		}
 
 		unlockAccount := app.lockResource("account", accountID)
 		defer unlockAccount()
