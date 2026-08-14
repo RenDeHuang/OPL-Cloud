@@ -34,6 +34,7 @@ var ErrInvalidReconciliationInput = errors.New("invalid reconciliation input")
 
 const artifactReceiptType = "artifact.manifest.v1"
 const reviewReceiptType = "review.result.v1"
+const maxReviewGateReviewIDs = 256
 
 type ReceiptInput struct {
 	Type                string         `json:"type"`
@@ -319,6 +320,10 @@ func validateReviewPolicyInput(input ReviewPolicyInput) error {
 
 func validExecutionIdentity(identity ExecutionIdentity) bool {
 	return identity.OrganizationID != "" && identity.WorkspaceID != "" && identity.ProjectID != "" && identity.TaskID != "" && identity.JobID != ""
+}
+
+func validReviewGateInput(input ReviewGateInput) bool {
+	return validExecutionIdentity(input.ExecutionIdentity) && len(input.ReviewIDs) <= maxReviewGateReviewIDs
 }
 
 func sameExecutionIdentity(left, right ExecutionIdentity) bool {

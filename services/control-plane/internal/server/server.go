@@ -262,7 +262,7 @@ func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFu
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if r.Header.Get("Content-Type") != "application/octet-stream" && !limitJSONBody(w, r) {
+			if !limitJSONBody(w, r) {
 				return
 			}
 			if r.Header.Get("x-opl-csrf") != stringValue(payload["csrfToken"]) {

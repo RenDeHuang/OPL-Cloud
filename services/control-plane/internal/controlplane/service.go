@@ -350,6 +350,14 @@ func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string
 	return s.fabric.WorkspaceRuntimeStatus(ctx, workspaceID)
 }
 
+func (s *Service) RevealWorkspaceRuntimeCredentials(ctx context.Context, accountID, workspaceID, idempotencyKey string) (clients.WorkspaceRuntime, error) {
+	client, ok := s.fabric.(clients.FabricWorkspaceRuntimeCredentialClient)
+	if !ok {
+		return clients.WorkspaceRuntime{}, errors.New("fabric_workspace_runtime_credentials_unavailable")
+	}
+	return client.RevealWorkspaceRuntimeCredentials(ctx, accountID, workspaceID, idempotencyKey)
+}
+
 func (s *Service) RuntimeReadiness(ctx context.Context) (map[string]any, error) {
 	return s.fabric.Readiness(ctx)
 }
@@ -514,7 +522,11 @@ func (s *Service) RotateWorkspaceCredential(ctx context.Context, input RotateWor
 	if applied.ID != input.RuntimeID || applied.OperationID != input.RuntimeOperationID || applied.WorkspaceID != input.WorkspaceID {
 		return clients.WorkspaceRuntime{}, clients.Receipt{}, ErrWorkspaceRuntimeIdentityMismatch
 	}
-	runtime, err := s.fabric.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
+	client, ok := s.fabric.(clients.FabricWorkspaceRuntimeCredentialClient)
+	if !ok {
+		return clients.WorkspaceRuntime{}, clients.Receipt{}, errors.New("fabric_workspace_runtime_credentials_unavailable")
+	}
+	runtime, err := client.RevealWorkspaceRuntimeCredentials(ctx, input.AccountID, input.WorkspaceID, operationKey+":reveal")
 	if err != nil {
 		return clients.WorkspaceRuntime{}, clients.Receipt{}, err
 	}

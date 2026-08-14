@@ -426,11 +426,16 @@ func authorizeLedgerRequests(next http.Handler, store ledger.Store, token, capab
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
+		claims, ok := preverifyLedgerCapability(r.Header.Get(ledgerCapabilityHeader), capabilityKey, scope, body, time.Now().UTC())
+		if !ok {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 		if err := enrichLedgerOwnerScope(r, store, &scope); err != nil {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
-		if !verifyLedgerCapability(r.Header.Get(ledgerCapabilityHeader), capabilityKey, scope, body, time.Now().UTC()) {
+		if claims.AccountID != scope.AccountID || claims.WorkspaceID != scope.WorkspaceID {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}

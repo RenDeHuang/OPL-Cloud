@@ -24,6 +24,22 @@ type workspaceRenewalAPIFixture struct {
 	workspace map[string]any
 }
 
+type workspaceRenewalQueryStore struct {
+	*memoryTableStore
+	queries []runtimeOperationQuery
+	gets    []string
+}
+
+func (s *workspaceRenewalQueryStore) PageRuntimeOperations(ctx context.Context, query runtimeOperationQuery) (tablePage, error) {
+	s.queries = append(s.queries, query)
+	return s.memoryTableStore.PageRuntimeOperations(ctx, query)
+}
+
+func (s *workspaceRenewalQueryStore) GetRuntimeOperation(ctx context.Context, id string) (map[string]any, bool, error) {
+	s.gets = append(s.gets, id)
+	return s.memoryTableStore.GetRuntimeOperation(ctx, id)
+}
+
 func newWorkspaceRenewalAPIFixture(t *testing.T) workspaceRenewalAPIFixture {
 	return newWorkspaceRenewalAPIFixtureWithStore(t, newMemoryTableStore())
 }
@@ -127,6 +143,56 @@ func TestWorkspaceAutoRenewAllowsDisable(t *testing.T) {
 	stored, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
 	if body["autoRenew"] != false || stored["autoRenew"] != false {
 		t.Fatalf("disable response=%#v stored=%#v", body, stored)
+	}
+}
+
+func TestWorkspaceAutoRenewRepeatedDisableIsStableNoOp(t *testing.T) {
+	store := &workspaceRenewalQueryStore{memoryTableStore: newMemoryTableStore()}
+	fixture := newWorkspaceRenewalAPIFixtureWithStore(t, store)
+	enableWorkspaceAutoRenewForTest(t, fixture)
+	ctx := context.Background()
+
+	first := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":false}`, "workspace-renewal-disable"))
+	operationsBefore, err := store.ListRuntimeOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditsBefore, err := store.ListAuditEvents(ctx, stringValue(fixture.workspace["accountId"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":false}`, "workspace-renewal-noop-1"))
+	third := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":false}`, "workspace-renewal-noop-2"))
+	if string(mustJSON(first)) != string(mustJSON(second)) || string(mustJSON(first)) != string(mustJSON(third)) {
+		t.Fatalf("repeated disable response changed: first=%#v second=%#v third=%#v", first, second, third)
+	}
+	operationsAfter, err := store.ListRuntimeOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditsAfter, err := store.ListAuditEvents(ctx, stringValue(fixture.workspace["accountId"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operationsAfter) != len(operationsBefore) || len(auditsAfter) != len(auditsBefore) {
+		t.Fatalf("no-op disable appended history: operations=%d/%d audits=%d/%d", len(operationsBefore), len(operationsAfter), len(auditsBefore), len(auditsAfter))
+	}
+	if len(store.queries) != 1 {
+		t.Fatalf("no-op disable paged operation history: %#v", store.queries)
+	}
+	paidThrough, err := time.Parse(time.RFC3339, stringValue(fixture.workspace["paidThrough"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRenewalID := workspaceRenewalOperationID(stringValue(fixture.workspace["id"]), paidThrough)
+	if len(store.gets) != 5 {
+		t.Fatalf("operation reads=%#v, want command plus exact renewal lookups", store.gets)
+	}
+	for _, got := range []string{store.gets[2], store.gets[4]} {
+		if got != wantRenewalID {
+			t.Fatalf("no-op disable read operation %q, want exact current renewal %q", got, wantRenewalID)
+		}
 	}
 }
 
@@ -280,6 +346,14 @@ func TestWorkspaceAutoRenewDisableBeforeAndAfterClaim(t *testing.T) {
 		wantEffective := nextBillingMonth(paidThrough, anchor).UTC().Format(time.RFC3339Nano)
 		if body["autoRenew"] != false || body["renewalStatus"] != "claimed" || body["effectiveAfter"] != wantEffective {
 			t.Fatalf("after-claim disable=%#v want effectiveAfter=%s", body, wantEffective)
+		}
+		operationsBefore, _ := fixture.app.tables.ListRuntimeOperations(context.Background())
+		auditsBefore, _ := fixture.app.tables.ListAuditEvents(context.Background(), stringValue(fixture.workspace["accountId"]))
+		repeated := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":false}`, "workspace-renewal-disable-after-claim-fresh"))
+		operationsAfter, _ := fixture.app.tables.ListRuntimeOperations(context.Background())
+		auditsAfter, _ := fixture.app.tables.ListAuditEvents(context.Background(), stringValue(fixture.workspace["accountId"]))
+		if string(mustJSON(repeated)) != string(mustJSON(body)) || len(operationsAfter) != len(operationsBefore) || len(auditsAfter) != len(auditsBefore) {
+			t.Fatalf("after-claim no-op response=%#v want=%#v operations=%d/%d audits=%d/%d", repeated, body, len(operationsBefore), len(operationsAfter), len(auditsBefore), len(auditsAfter))
 		}
 	})
 }

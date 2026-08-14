@@ -228,17 +228,17 @@ func (s *Service) saveRuntimeOperation(ctx context.Context, operation FabricOper
 	return s.operations.SaveRuntime(ctx, operation)
 }
 
-func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
+func (s *Service) workspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, FabricOperation, error) {
 	runtime, err := s.provider.WorkspaceRuntimeStatus(ctx, workspaceID)
 	if err != nil {
-		return runtime, err
+		return runtime, FabricOperation{}, err
 	}
 	if runtime.Status != "running" && runtime.Status != "unready" {
-		return runtime, nil
+		return runtime, FabricOperation{}, nil
 	}
 	operations, err := s.operations.List(ctx)
 	if err != nil {
-		return runtime, err
+		return runtime, FabricOperation{}, err
 	}
 	matches := make([]FabricOperation, 0, 1)
 	for _, operation := range operations {
@@ -251,9 +251,32 @@ func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string
 	if runtime.WorkspaceID != workspaceID || len(matches) != 1 || matches[0].ID == "" || matches[0].CreatedAt.IsZero() || !decodeOperationResource(matches[0], &created) ||
 		created.WorkspaceID != workspaceID || strings.TrimSpace(created.ID) == "" || strings.TrimSpace(created.OperationID) == "" ||
 		runtime.ID != "" && runtime.ID != created.ID || runtime.OperationID != "" && runtime.OperationID != created.OperationID {
-		return runtime, fmt.Errorf("workspace_runtime_identity_unavailable")
+		return runtime, FabricOperation{}, fmt.Errorf("workspace_runtime_identity_unavailable")
 	}
 	runtime.ID, runtime.OperationID = created.ID, created.OperationID
+	return runtime, matches[0], nil
+}
+
+func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
+	runtime, _, err := s.workspaceRuntimeStatus(ctx, workspaceID)
+	runtime.Access.Password = ""
+	return runtime, err
+}
+
+func (s *Service) WorkspaceRuntimeCredentials(ctx context.Context, accountID, workspaceID string) (WorkspaceRuntime, error) {
+	accountID = strings.TrimSpace(accountID)
+	runtime, owner, err := s.workspaceRuntimeStatus(ctx, workspaceID)
+	if err != nil {
+		return runtime, err
+	}
+	if runtime.Status != "running" && runtime.Status != "unready" {
+		runtime.Access.Password = ""
+		return runtime, fmt.Errorf("workspace_runtime_credentials_unavailable")
+	}
+	if accountID == "" || owner.AccountID != accountID || owner.WorkspaceID != workspaceID {
+		runtime.Access.Password = ""
+		return runtime, fmt.Errorf("workspace_runtime_owner_mismatch")
+	}
 	return runtime, nil
 }
 

@@ -137,7 +137,7 @@ func TestRuntimeCredentialRevealOwnerOnly(t *testing.T) {
 	if body["workspaceId"] != "ws-alpha" || nested(body, "access", "password") != "runtime-password-alpha" || nested(body, "access", "secretRef") != nil {
 		t.Fatalf("owner reveal response = %#v", body)
 	}
-	if len(calls) != 1 || calls[0] != "fabric.runtime-status" {
+	if len(calls) != 1 || calls[0] != "fabric.runtime-credentials" {
 		t.Fatalf("owner reveal calls = %#v", calls)
 	}
 

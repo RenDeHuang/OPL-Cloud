@@ -79,6 +79,30 @@ func TestFabricHTTPClientSignsShortLivedOperationBoundMutationCapability(t *test
 	}
 }
 
+func TestFabricHTTPClientUsesCapabilityForRuntimeCredentialReveal(t *testing.T) {
+	const capabilityKey = "test-capability-key"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/fabric/workspace-runtimes/ws-alpha/credentials/reveal" || r.Header.Get("Idempotency-Key") != "reveal-once" || r.Header.Get(FabricCapabilityHeader) == "" {
+			t.Fatalf("unexpected reveal request: %s %s key=%q capability=%q", r.Method, r.URL.Path, r.Header.Get("Idempotency-Key"), r.Header.Get(FabricCapabilityHeader))
+		}
+		var input map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input["accountId"] != "acct-alpha" || input["workspaceId"] != "ws-alpha" {
+			t.Fatalf("reveal input=%#v err=%v", input, err)
+		}
+		_ = json.NewEncoder(w).Encode(WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: "ws-alpha", Status: "running", Ready: true, Access: WorkspaceRuntimeAccess{Password: "secret"}})
+	}))
+	defer upstream.Close()
+
+	client, ok := NewFabricHTTPClientWithCapability(upstream.URL, "internal-secret", capabilityKey, upstream.Client()).(FabricWorkspaceRuntimeCredentialClient)
+	if !ok {
+		t.Fatal("Fabric HTTP client must implement runtime credential reveal")
+	}
+	runtime, err := client.RevealWorkspaceRuntimeCredentials(context.Background(), "acct-alpha", "ws-alpha", "reveal-once")
+	if err != nil || runtime.Access.Password != "secret" {
+		t.Fatalf("runtime credentials=%#v err=%v", runtime, err)
+	}
+}
+
 func TestFabricHTTPClientWritesWorkspaceScopedGatewaySecret(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/fabric/gateway-secrets" || r.Header.Get("Idempotency-Key") != "workspace-once:gateway-secret" || r.Header.Get("Authorization") != "Bearer internal-secret" {

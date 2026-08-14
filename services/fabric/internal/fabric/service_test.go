@@ -1216,6 +1216,29 @@ func TestWorkspaceRuntimeStatusBackfillsCreatedRuntimeIdentity(t *testing.T) {
 	if live.ID != created.ID || live.Status != "running" || !live.Ready || live.URL != "https://workspace.medopl.cn/w/workspace-alpha/" || live.ServiceName != "runtime-live" || !reflect.DeepEqual(live.Checks, []Check{{Name: "deployment_ready", OK: true}}) {
 		t.Fatalf("live runtime=%#v created=%#v", live, created)
 	}
+	if live.Access.Password != "" || live.Access.Username != "opl" {
+		t.Fatalf("runtime status leaked credentials: %#v", live.Access)
+	}
+	credentials, err := service.WorkspaceRuntimeCredentials(context.Background(), "acct-alpha", "workspace-alpha")
+	if err != nil || credentials.Access.Password != "runtime-password-alpha" || credentials.ID != created.ID {
+		t.Fatalf("runtime credentials=%#v err=%v", credentials, err)
+	}
+	other, err := service.WorkspaceRuntimeCredentials(context.Background(), "acct-other", "workspace-alpha")
+	if err == nil || other.Access.Password != "" {
+		t.Fatalf("cross-account runtime credentials=%#v err=%v", other, err)
+	}
+}
+
+func TestWorkspaceRuntimeCredentialsRejectsUnownedRuntimeState(t *testing.T) {
+	service := runtimeTestService(liveRuntimeWithoutIDProvider{status: "provisioning"}, NewMemoryOperationStore())
+	status, err := service.WorkspaceRuntimeStatus(context.Background(), "workspace-alpha")
+	if err != nil || status.Status != "provisioning" || status.Access.Password != "" {
+		t.Fatalf("runtime status=%#v err=%v", status, err)
+	}
+	credentials, err := service.WorkspaceRuntimeCredentials(context.Background(), "acct-alpha", "workspace-alpha")
+	if err == nil || credentials.Access.Password != "" {
+		t.Fatalf("unowned runtime credentials=%#v err=%v", credentials, err)
+	}
 }
 
 func TestProviderFactsBatchBackfillsRuntimeIdentity(t *testing.T) {
@@ -2727,6 +2750,7 @@ func (testProvider) WorkspaceRuntimeProviderFacts(runtime WorkspaceRuntime) Prov
 type liveRuntimeWithoutIDProvider struct {
 	testProvider
 	runtimeIDs map[string]string
+	status     string
 }
 
 type failingListOperationStore struct{ OperationStore }
@@ -2739,8 +2763,12 @@ func (p liveRuntimeWithoutIDProvider) CreateWorkspaceRuntime(_ context.Context, 
 	return WorkspaceRuntime{ID: p.runtimeIDs[input.IdempotencyKey], WorkspaceID: input.WorkspaceID, URL: "https://stale.invalid", Status: "unready", ServiceName: "runtime-created", ImageID: input.ImageID, Checks: []Check{{Name: "deployment_ready", OK: false}}}, nil
 }
 
-func (liveRuntimeWithoutIDProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (WorkspaceRuntime, error) {
-	return WorkspaceRuntime{WorkspaceID: workspaceID, URL: "https://workspace.medopl.cn/w/workspace-alpha/", Status: "running", ServiceName: "runtime-live", Ready: true, Checks: []Check{{Name: "deployment_ready", OK: true}}}, nil
+func (p liveRuntimeWithoutIDProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (WorkspaceRuntime, error) {
+	status := p.status
+	if status == "" {
+		status = "running"
+	}
+	return WorkspaceRuntime{WorkspaceID: workspaceID, URL: "https://workspace.medopl.cn/w/workspace-alpha/", Status: status, ServiceName: "runtime-live", Ready: status == "running", Access: RuntimeAccess{Username: "opl", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1"}, Checks: []Check{{Name: "deployment_ready", OK: status == "running"}}}, nil
 }
 
 type countingRuntimeProvider struct {

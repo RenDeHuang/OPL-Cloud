@@ -49,36 +49,44 @@ func init() {
 	evidencereceiptDescJobID := evidencereceiptFields[8].Descriptor()
 	// evidencereceipt.DefaultJobID holds the default value on creation for the job_id field.
 	evidencereceipt.DefaultJobID = evidencereceiptDescJobID.Default.(string)
+	// evidencereceiptDescArtifactID is the schema descriptor for artifact_id field.
+	evidencereceiptDescArtifactID := evidencereceiptFields[9].Descriptor()
+	// evidencereceipt.DefaultArtifactID holds the default value on creation for the artifact_id field.
+	evidencereceipt.DefaultArtifactID = evidencereceiptDescArtifactID.Default.(string)
+	// evidencereceiptDescReviewID is the schema descriptor for review_id field.
+	evidencereceiptDescReviewID := evidencereceiptFields[10].Descriptor()
+	// evidencereceipt.DefaultReviewID holds the default value on creation for the review_id field.
+	evidencereceipt.DefaultReviewID = evidencereceiptDescReviewID.Default.(string)
 	// evidencereceiptDescPayloadJSON is the schema descriptor for payload_json field.
-	evidencereceiptDescPayloadJSON := evidencereceiptFields[9].Descriptor()
+	evidencereceiptDescPayloadJSON := evidencereceiptFields[11].Descriptor()
 	// evidencereceipt.DefaultPayloadJSON holds the default value on creation for the payload_json field.
 	evidencereceipt.DefaultPayloadJSON = evidencereceiptDescPayloadJSON.Default.(string)
 	// evidencereceiptDescSupersedesReceiptID is the schema descriptor for supersedes_receipt_id field.
-	evidencereceiptDescSupersedesReceiptID := evidencereceiptFields[10].Descriptor()
+	evidencereceiptDescSupersedesReceiptID := evidencereceiptFields[12].Descriptor()
 	// evidencereceipt.DefaultSupersedesReceiptID holds the default value on creation for the supersedes_receipt_id field.
 	evidencereceipt.DefaultSupersedesReceiptID = evidencereceiptDescSupersedesReceiptID.Default.(string)
 	// evidencereceiptDescProviderRequestID is the schema descriptor for provider_request_id field.
-	evidencereceiptDescProviderRequestID := evidencereceiptFields[11].Descriptor()
+	evidencereceiptDescProviderRequestID := evidencereceiptFields[13].Descriptor()
 	// evidencereceipt.DefaultProviderRequestID holds the default value on creation for the provider_request_id field.
 	evidencereceipt.DefaultProviderRequestID = evidencereceiptDescProviderRequestID.Default.(string)
 	// evidencereceiptDescRedactedURL is the schema descriptor for redacted_url field.
-	evidencereceiptDescRedactedURL := evidencereceiptFields[12].Descriptor()
+	evidencereceiptDescRedactedURL := evidencereceiptFields[14].Descriptor()
 	// evidencereceipt.DefaultRedactedURL holds the default value on creation for the redacted_url field.
 	evidencereceipt.DefaultRedactedURL = evidencereceiptDescRedactedURL.Default.(string)
 	// evidencereceiptDescTokenVersion is the schema descriptor for token_version field.
-	evidencereceiptDescTokenVersion := evidencereceiptFields[13].Descriptor()
+	evidencereceiptDescTokenVersion := evidencereceiptFields[15].Descriptor()
 	// evidencereceipt.DefaultTokenVersion holds the default value on creation for the token_version field.
 	evidencereceipt.DefaultTokenVersion = evidencereceiptDescTokenVersion.Default.(string)
 	// evidencereceiptDescIdempotencyKey is the schema descriptor for idempotency_key field.
-	evidencereceiptDescIdempotencyKey := evidencereceiptFields[14].Descriptor()
+	evidencereceiptDescIdempotencyKey := evidencereceiptFields[16].Descriptor()
 	// evidencereceipt.IdempotencyKeyValidator is a validator for the "idempotency_key" field. It is called by the builders before save.
 	evidencereceipt.IdempotencyKeyValidator = evidencereceiptDescIdempotencyKey.Validators[0].(func(string) error)
 	// evidencereceiptDescRequestHash is the schema descriptor for request_hash field.
-	evidencereceiptDescRequestHash := evidencereceiptFields[15].Descriptor()
+	evidencereceiptDescRequestHash := evidencereceiptFields[17].Descriptor()
 	// evidencereceipt.RequestHashValidator is a validator for the "request_hash" field. It is called by the builders before save.
 	evidencereceipt.RequestHashValidator = evidencereceiptDescRequestHash.Validators[0].(func(string) error)
 	// evidencereceiptDescCreatedAt is the schema descriptor for created_at field.
-	evidencereceiptDescCreatedAt := evidencereceiptFields[16].Descriptor()
+	evidencereceiptDescCreatedAt := evidencereceiptFields[18].Descriptor()
 	// evidencereceipt.DefaultCreatedAt holds the default value on creation for the created_at field.
 	evidencereceipt.DefaultCreatedAt = evidencereceiptDescCreatedAt.Default.(func() time.Time)
 	// evidencereceiptDescID is the schema descriptor for id field.

@@ -119,31 +119,30 @@ func requestOperationID(r *http.Request) string {
 	return "request:" + hex.EncodeToString(hash[:])
 }
 
-func verifyLedgerCapability(raw, key string, expected ledgerCapabilityScope, body []byte, now time.Time) bool {
+func preverifyLedgerCapability(raw, key string, expected ledgerCapabilityScope, body []byte, now time.Time) (ledgerCapabilityClaims, bool) {
 	parts := strings.Split(raw, ".")
 	if key == "" || len(parts) != 2 {
-		return false
+		return ledgerCapabilityClaims{}, false
 	}
 	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return false
+		return ledgerCapabilityClaims{}, false
 	}
 	mac := hmac.New(sha256.New, []byte(key))
 	_, _ = mac.Write([]byte(parts[0]))
 	if !hmac.Equal(signature, mac.Sum(nil)) {
-		return false
+		return ledgerCapabilityClaims{}, false
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return false
+		return ledgerCapabilityClaims{}, false
 	}
 	var claims ledgerCapabilityClaims
 	if json.Unmarshal(payload, &claims) != nil {
-		return false
+		return ledgerCapabilityClaims{}, false
 	}
 	digest := sha256.Sum256(body)
-	return claims.Version == 1 && claims.Caller == "control-plane" && claims.AccountID == expected.AccountID &&
-		claims.WorkspaceID == expected.WorkspaceID && claims.ResourceKind == expected.ResourceKind && claims.ResourceID == expected.ResourceID &&
+	return claims, claims.Version == 1 && claims.Caller == "control-plane" && claims.ResourceKind == expected.ResourceKind && claims.ResourceID == expected.ResourceID &&
 		claims.Action == expected.Action && claims.OperationID == expected.OperationID && claims.ExpiresAt > now.Unix() &&
 		claims.ExpiresAt <= now.Add(2*time.Minute).Unix() && claims.BodySHA256 == hex.EncodeToString(digest[:])
 }

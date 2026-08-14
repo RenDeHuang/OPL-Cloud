@@ -19,6 +19,8 @@ func (EvidenceReceipt) Fields() []ent.Field {
 		field.String("project_id").Default(""),
 		field.String("task_id").Default(""),
 		field.String("job_id").Default(""),
+		field.String("artifact_id").Default(""),
+		field.String("review_id").Default(""),
 		field.String("payload_json").Default("{}"),
 		field.String("supersedes_receipt_id").Default(""),
 		field.String("provider_request_id").Default(""),
@@ -38,6 +40,8 @@ func (EvidenceReceipt) Indexes() []ent.Index {
 		index.Fields("project_id", "created_at", "id"),
 		index.Fields("task_id", "created_at", "id"),
 		index.Fields("job_id", "created_at", "id"),
+		index.Fields("artifact_id"),
+		index.Fields("review_id"),
 		index.Fields("receipt_type", "created_at", "id"),
 		index.Fields("status", "created_at", "id"),
 	}

@@ -24,7 +24,11 @@ func TestPostgresSchemaKeepsEvidenceAndDropsRetiredCommercialTables(t *testing.T
 	for _, marker := range []string{
 		"CREATE TABLE IF NOT EXISTS evidence_receipts",
 		"account_id TEXT NOT NULL DEFAULT ''",
+		"artifact_id TEXT NOT NULL DEFAULT ''",
+		"review_id TEXT NOT NULL DEFAULT ''",
 		"CREATE INDEX IF NOT EXISTS evidence_receipts_account_created",
+		"CREATE INDEX IF NOT EXISTS evidence_receipts_artifact_id",
+		"CREATE INDEX IF NOT EXISTS evidence_receipts_review_id",
 		"CREATE TABLE IF NOT EXISTS review_policies",
 		"CREATE TABLE IF NOT EXISTS reconciliation_reports",
 		"CREATE TABLE IF NOT EXISTS idempotency_keys",
@@ -43,6 +47,17 @@ func TestPostgresSchemaKeepsEvidenceAndDropsRetiredCommercialTables(t *testing.T
 	}
 	if strings.Contains(schema, "DROP TABLE IF EXISTS idempotency_keys") {
 		t.Fatal("schema drops receipt mutation idempotency table")
+	}
+}
+
+func TestPostgresStoreRejectsUnboundedReviewIDsBeforeQuery(t *testing.T) {
+	store := &PostgresStore{}
+	input := ReviewGateInput{
+		ExecutionIdentity: ExecutionIdentity{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", JobID: "job-alpha"},
+		ReviewIDs:         make([]string, maxReviewGateReviewIDs+1),
+	}
+	if _, err := store.EvaluateReviewGate(context.Background(), input); !errors.Is(err, ErrInvalidReviewGateInput) {
+		t.Fatalf("over-limit review gate error=%v, want ErrInvalidReviewGateInput", err)
 	}
 }
 
@@ -99,8 +114,12 @@ func TestPostgresStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'ledger'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read Ledger migration journal: %v", err)
 	}
-	if migrationCount != 1 {
-		t.Fatalf("Ledger migration count = %d, want 1", migrationCount)
+	migrations, err := ledgerEmbeddedMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrationCount != len(migrations) {
+		t.Fatalf("Ledger migration count = %d, want %d", migrationCount, len(migrations))
 	}
 	if _, err := db.Exec(`DROP TABLE evidence_receipts`); err != nil {
 		t.Fatal(err)

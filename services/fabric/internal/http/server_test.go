@@ -306,6 +306,11 @@ func TestFabricProviderMutationScopesAreStrict(t *testing.T) {
 			operationID: "destroy-once", resourceKind: "storage_snapshot", resourceID: "snapshot-alpha", action: "destroy_storage_snapshot", wantOK: true,
 		},
 		{
+			name: "runtime credential reveal", path: "/fabric/workspace-runtimes/ws-alpha/credentials/reveal",
+			body:        `{"accountId":"acct-alpha","workspaceId":"ws-alpha"}`,
+			operationID: "reveal-once", resourceKind: "workspace_runtime_credential", resourceID: "ws-alpha", action: "reveal_workspace_runtime_credential", wantOK: true,
+		},
+		{
 			name: "compute pool head terminalization", path: "/fabric/compute-pool-head/terminalization",
 			body:        `{"nodePoolId":"np-basic","approvalId":"terminalize-operation","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
 			operationID: "terminalize-operation", resourceKind: "compute_pool_head", resourceID: "np-basic", action: "terminalize_compute_pool_head", wantOK: true,
@@ -350,8 +355,8 @@ func TestFabricProviderMutationScopesAreStrict(t *testing.T) {
 			}
 		})
 	}
-	if isFabricMutation(httptest.NewRequest(http.MethodPost, "/fabric/storage-snapshots/snapshot-alpha/sync", nil)) {
-		t.Fatal("snapshot sync must remain outside provider mutation authorization")
+	if !isFabricMutation(httptest.NewRequest(http.MethodPost, "/fabric/workspace-runtimes/ws-alpha/credentials/reveal", nil)) {
+		t.Fatal("runtime credential reveal must require capability authorization")
 	}
 }
 
@@ -365,6 +370,7 @@ func TestFabricProviderMutationsRequireCapabilityBeforeStateChange(t *testing.T)
 		{name: "snapshot create", path: "/fabric/storage-snapshots", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"volume-alpha"}`},
 		{name: "snapshot restore", path: "/fabric/storage-snapshots/snapshot-alpha/restore", body: `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`},
 		{name: "snapshot destroy", path: "/fabric/storage-snapshots/snapshot-alpha/destroy", body: `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha"}`},
+		{name: "runtime credential reveal", path: "/fabric/workspace-runtimes/ws-alpha/credentials/reveal", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha"}`},
 		{name: "compute pool head terminalization", path: "/fabric/compute-pool-head/terminalization", body: `{"nodePoolId":"np-basic","approvalId":"operation-alpha","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1284,88 +1290,19 @@ func TestResourceBoundaryHTTPReturnsBadRequest(t *testing.T) {
 	}
 }
 
-type blockingComputeCreateHTTPProvider struct {
-	testProvider
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (p *blockingComputeCreateHTTPProvider) CreateComputeAllocation(ctx context.Context, input fabric.ComputeAllocationExecution) (fabric.ComputeAllocation, error) {
-	p.entered <- struct{}{}
-	select {
-	case <-p.release:
-		return p.testProvider.CreateComputeAllocation(ctx, input)
-	case <-ctx.Done():
-		return input.Allocation, ctx.Err()
-	}
-}
-
-func TestSyncComputeAllocationHTTPWaitsForMachineOwnership(t *testing.T) {
-	provider := &blockingComputeCreateHTTPProvider{entered: make(chan struct{}), release: make(chan struct{})}
-	defer close(provider.release)
-	service := fabric.NewService(provider)
-	server := newTestServer(service, "internal-secret")
-	create := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","nodePoolId":"np-basic"}`))
-	create.Header.Set("Idempotency-Key", "sync-http-create")
-	createRec := httptest.NewRecorder()
-	server.ServeHTTP(createRec, create)
-	if createRec.Code != http.StatusAccepted {
-		t.Fatalf("create status = %d, want %d: %s", createRec.Code, http.StatusAccepted, createRec.Body.String())
-	}
-	var created fabric.ComputeAllocation
-	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
-		t.Fatalf("decode create: %v", err)
-	}
-	<-provider.entered
-	if _, err := service.MachineOwnership(context.Background(), created.ID); !errors.Is(err, fabric.ErrMachineOwnershipNotFound) {
-		t.Fatalf("machine ownership before provider completion: %v", err)
-	}
-
-	req := testRequest(http.MethodPost, "/fabric/compute-allocations/"+created.ID+"/sync", bytes.NewBufferString(`{}`))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("sync status = %d, want %d: %s", rec.Code, http.StatusAccepted, rec.Body.String())
-	}
-	var allocation fabric.ComputeAllocation
-	if err := json.NewDecoder(rec.Body).Decode(&allocation); err != nil {
-		t.Fatalf("decode sync: %v", err)
-	}
-	if allocation.Status != "provisioning" {
-		t.Fatalf("sync before machine ownership = %#v", allocation)
-	}
-}
-
-func TestSyncStorageVolumeHTTPRefreshesProviderState(t *testing.T) {
-	service := fabric.NewService(testProvider{})
-	server := newTestServer(service, "internal-secret")
-	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "sync-storage-compute")
-	create := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(fmt.Sprintf(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)))
-	create.Header.Set("Idempotency-Key", "sync-http-storage")
-	createRec := httptest.NewRecorder()
-	server.ServeHTTP(createRec, create)
-	if createRec.Code != http.StatusAccepted {
-		t.Fatalf("create status = %d, want %d: %s", createRec.Code, http.StatusAccepted, createRec.Body.String())
-	}
-	var created fabric.StorageVolume
-	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil || created.ID == "" {
-		t.Fatalf("decode created storage: volume=%#v err=%v", created, err)
-	}
-
-	req := testRequest(http.MethodPost, "/fabric/storage-volumes/"+created.ID+"/sync", bytes.NewBufferString(`{}`))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("sync status = %d, want %d: %s", rec.Code, http.StatusAccepted, rec.Body.String())
-	}
-	var volume fabric.StorageVolume
-	if err := json.NewDecoder(rec.Body).Decode(&volume); err != nil {
-		t.Fatalf("decode sync: %v", err)
-	}
-	if volume.Status != "external_deleted" {
-		t.Fatalf("sync must return provider state, got %#v", volume)
+func TestFabricSyncHTTPRoutesAreRetired(t *testing.T) {
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
+	for _, path := range []string{
+		"/fabric/compute-allocations/compute-alpha/sync",
+		"/fabric/storage-volumes/storage-alpha/sync",
+		"/fabric/storage-snapshots/snapshot-alpha/sync",
+	} {
+		req := testRequest(http.MethodPost, path, bytes.NewBufferString(`{}`))
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 

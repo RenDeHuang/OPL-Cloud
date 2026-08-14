@@ -400,7 +400,7 @@ func (s *MemoryStore) EvaluateReviewGate(_ context.Context, input ReviewGateInpu
 }
 
 func (s *MemoryStore) evaluateReviewGateLocked(input ReviewGateInput) (ReviewGateResult, error) {
-	if !validExecutionIdentity(input.ExecutionIdentity) {
+	if !validReviewGateInput(input) {
 		return ReviewGateResult{}, ErrInvalidReviewGateInput
 	}
 	var active ReviewPolicy

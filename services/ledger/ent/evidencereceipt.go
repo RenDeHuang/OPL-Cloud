@@ -33,6 +33,10 @@ type EvidenceReceipt struct {
 	TaskID string `json:"task_id,omitempty"`
 	// JobID holds the value of the "job_id" field.
 	JobID string `json:"job_id,omitempty"`
+	// ArtifactID holds the value of the "artifact_id" field.
+	ArtifactID string `json:"artifact_id,omitempty"`
+	// ReviewID holds the value of the "review_id" field.
+	ReviewID string `json:"review_id,omitempty"`
 	// PayloadJSON holds the value of the "payload_json" field.
 	PayloadJSON string `json:"payload_json,omitempty"`
 	// SupersedesReceiptID holds the value of the "supersedes_receipt_id" field.
@@ -57,7 +61,7 @@ func (*EvidenceReceipt) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case evidencereceipt.FieldID, evidencereceipt.FieldReceiptType, evidencereceipt.FieldStatus, evidencereceipt.FieldAccountID, evidencereceipt.FieldOrganizationID, evidencereceipt.FieldWorkspaceID, evidencereceipt.FieldProjectID, evidencereceipt.FieldTaskID, evidencereceipt.FieldJobID, evidencereceipt.FieldPayloadJSON, evidencereceipt.FieldSupersedesReceiptID, evidencereceipt.FieldProviderRequestID, evidencereceipt.FieldRedactedURL, evidencereceipt.FieldTokenVersion, evidencereceipt.FieldIdempotencyKey, evidencereceipt.FieldRequestHash:
+		case evidencereceipt.FieldID, evidencereceipt.FieldReceiptType, evidencereceipt.FieldStatus, evidencereceipt.FieldAccountID, evidencereceipt.FieldOrganizationID, evidencereceipt.FieldWorkspaceID, evidencereceipt.FieldProjectID, evidencereceipt.FieldTaskID, evidencereceipt.FieldJobID, evidencereceipt.FieldArtifactID, evidencereceipt.FieldReviewID, evidencereceipt.FieldPayloadJSON, evidencereceipt.FieldSupersedesReceiptID, evidencereceipt.FieldProviderRequestID, evidencereceipt.FieldRedactedURL, evidencereceipt.FieldTokenVersion, evidencereceipt.FieldIdempotencyKey, evidencereceipt.FieldRequestHash:
 			values[i] = new(sql.NullString)
 		case evidencereceipt.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -129,6 +133,18 @@ func (er *EvidenceReceipt) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field job_id", values[i])
 			} else if value.Valid {
 				er.JobID = value.String
+			}
+		case evidencereceipt.FieldArtifactID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field artifact_id", values[i])
+			} else if value.Valid {
+				er.ArtifactID = value.String
+			}
+		case evidencereceipt.FieldReviewID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field review_id", values[i])
+			} else if value.Valid {
+				er.ReviewID = value.String
 			}
 		case evidencereceipt.FieldPayloadJSON:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -237,6 +253,12 @@ func (er *EvidenceReceipt) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("job_id=")
 	builder.WriteString(er.JobID)
+	builder.WriteString(", ")
+	builder.WriteString("artifact_id=")
+	builder.WriteString(er.ArtifactID)
+	builder.WriteString(", ")
+	builder.WriteString("review_id=")
+	builder.WriteString(er.ReviewID)
 	builder.WriteString(", ")
 	builder.WriteString("payload_json=")
 	builder.WriteString(er.PayloadJSON)
