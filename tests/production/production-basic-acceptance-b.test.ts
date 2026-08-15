@@ -410,6 +410,25 @@ test("Acceptance B prepare re-reads the wallet after an existing recharge operat
   assert.equal(fixture.requests.filter((request) => request.path === "/api/gateway/wallet").length, 2);
 });
 
+test("Acceptance B prepare skips recharge when the wallet already exceeds the quote", async () => {
+  const fixture = prepareFetchFixture({ walletValues: ["60000000"], adjustmentAvailable: false });
+  const result = await prepareProductionBasicAcceptanceBAccount({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: "admin@medopl.cn",
+    adminPassword: "admin-password",
+    customerEmail: fixture.email,
+    customerPassword: "customer-password",
+    mergedSha: MERGED_MAIN_SHA,
+    fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00.000Z")
+  });
+  assert.equal(result.wallet.beforeUsdMicros, "60000000");
+  assert.equal(result.wallet.afterUsdMicros, "60000000");
+  assert.equal(result.wallet.rechargeCount, 0);
+  assert.equal(result.writeCounts.walletAdjustmentPosts, 0);
+  assert.equal(fixture.requests.filter((request) => request.method === "POST" && request.path.endsWith("/wallet-adjustments")).length, 0);
+});
+
 test("Acceptance B prepare never retries a recharge after an untrusted POST when readback proves success", async () => {
   const fixture = prepareFetchFixture({ adjustmentAvailable: false, adjustmentPostStatus: 202, walletValues: ["0", "60000000"] });
   const result = await prepareProductionBasicAcceptanceBAccount({

@@ -215,7 +215,7 @@ test("request failure before the account-reconcile response uses a zero-digest f
   assert.doesNotMatch(stdout, /reconcile@example\.com|acct-admin|operationId|password|secret|token/i);
 });
 
-test("only prepared passes the CLI business gate while safe_to_retry_absent and unknown remain validator-valid but rejected", async () => {
+test("safe_to_retry_absent passes the CLI business gate while unknown remains rejected", async () => {
   const base = {
     OPL_MERGED_SHA: MERGED_SHA,
     OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
@@ -249,11 +249,43 @@ test("only prepared passes the CLI business gate while safe_to_retry_absent and 
       argv: ["--reconcile-account"], env: base, stdout: { write: (value) => { stdout += value; } }, stderr: { write: () => {} }, fetchImpl,
       now: new Date("2026-08-04T00:00:00.000Z")
     });
-    assert.equal(code, 1);
+    assert.equal(code, status === "safe_to_retry_absent" ? 0 : 1);
     const artifact = JSON.parse(stdout);
     assert.equal(artifact.status, status);
     assert.deepEqual(validateProductionBasicAcceptanceBReconcileReadback(artifact, { mergedSha: MERGED_SHA }), artifact);
   }
+});
+
+test("a manual-review account with active identity, available wallet, zero baseline, and absent adjustment is safe to retry", async () => {
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/api/auth/login") {
+      const body = JSON.parse(init.body);
+      return loginPayload(body.email === ADMIN_EMAIL ? "acct-admin" : "acct-reconcile", body.email === ADMIN_EMAIL ? "admin" : "owner");
+    }
+    if (parsed.pathname === "/api/operator/account-reconciliation") {
+      return response(envelope("control-plane+sub2api+ledger", routeData({
+        status: "manual_review",
+        walletAdjustment: "absent",
+        failureStage: "none",
+        readbackError: "none"
+      })));
+    }
+    if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
+    if (parsed.pathname === "/api/workspaces") return response(envelope("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/workspace-launches") return response([]);
+    if (parsed.pathname === "/api/gateway/keys") return response(envelope("sub2api", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/billing/receipts") return response(envelope("ledger", { receipts: [], nextCursor: "", hasMore: false }, "empty"));
+    throw new Error(`unexpected_request:${parsed.pathname}`);
+  };
+  const result = await reconcileProductionBasicAcceptanceBAccount(baseOptions(fetchImpl));
+  assert.equal(result.status, "safe_to_retry_absent");
+  assert.equal(result.failureStage, "none");
+  assert.equal(result.readbackError, "none");
+  assert.equal(result.errorCode, "none");
+  assert.equal(result.wallet, "available");
+  assert.equal(result.walletAdjustment, "absent");
+  assert.deepEqual(result.writeCounts, ZERO_COUNTS);
 });
 
 test("an HTTP response without a valid DTO uses a nonzero response digest, never a zero fallback, and validates", async () => {
@@ -391,7 +423,7 @@ test("manual-review server DTOs get a wallet-adjustment failure stage without lo
     }
     if (parsed.pathname === "/api/operator/account-reconciliation") {
       return response(envelope("control-plane+sub2api+ledger", routeData({
-        status: "manual_review", walletAdjustment: "absent", failureStage: "none", readbackError: "none"
+        status: "manual_review", walletAdjustment: "manual_review", failureStage: "none", readbackError: "none"
       })));
     }
     if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
