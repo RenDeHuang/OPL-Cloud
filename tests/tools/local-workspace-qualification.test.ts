@@ -271,6 +271,7 @@ test("package exposes one local Workspace qualification command", async () => {
   assert.match(compose, /source: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set a task-owned local Docker Secret root\}/);
   assert.match(compose, /target: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set a task-owned local Docker Secret root\}/);
   assert.match(compose, /OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set a task-owned local Docker Secret root\}/);
+  assert.match(compose, /OPL_TENCENT_ZONE: local/);
   const envExample = await readFile(new URL("../../deploy/portable/opl-cloud.env.example", import.meta.url), "utf8");
   assert.match(envExample, /^OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT=\/absolute\/path\/to\/opl-fabric-secrets$/m);
   const runner = await readFile(new URL("../../tools/local-workspace-qualification.ts", import.meta.url), "utf8");

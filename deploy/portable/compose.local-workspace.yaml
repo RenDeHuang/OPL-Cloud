@@ -17,3 +17,4 @@ services:
     environment:
       OPL_WORKSPACE_IMAGE: ${OPL_WORKSPACE_IMAGE:?Set OPL_WORKSPACE_IMAGE to an immutable Workspace image digest}
       OPL_WORKSPACE_LAUNCH_WORKER_ENABLED: "1"
+      OPL_TENCENT_ZONE: local

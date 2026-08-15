@@ -178,6 +178,44 @@ func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *t
 	}
 }
 
+func TestWorkspaceLaunchMissingProviderZoneParksReservedDebitWithoutAuthorityWrite(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv(controlledBasicPilotAccountsEnv, "acct-alpha")
+	t.Setenv("OPL_TENCENT_ZONE", "")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+
+	server, store, client, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+		`{"name":"Missing local provider zone","packageId":"basic","sizeGb":10,"autoRenew":false}`,
+		"missing-local-provider-zone")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	handler := server.(*controlPlaneHTTPHandler)
+	if err := handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service); err == nil || !errors.Is(err, errWorkspaceLaunchMonthlyPreflightInvalid) {
+		t.Fatalf("run launch error=%v, want %v", err, errWorkspaceLaunchMonthlyPreflightInvalid)
+	}
+	rows, err := store.ListRuntimeOperations(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("read launch operations=%#v err=%v", rows, err)
+	}
+	operation, err := decodeWorkspaceLaunchReconcileOperation(rows[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := operation.Attempts["debit"]
+	if operation.Status != "manual_review" || operation.Stage != "debit" ||
+		attempt.Attempted != 1 || attempt.Confirmed != 0 || attempt.Unknown != 1 || attempt.Max != 1 || attempt.Status != "unknown" ||
+		operation.Observations["debit"].State != workspaceLaunchStageUnknown {
+		t.Fatalf("unexpected debit failure transition: operation=%#v attempt=%#v", operation, attempt)
+	}
+	if len(client.charges) != 0 {
+		t.Fatalf("missing provider zone wrote debit authority: charges=%#v events=%#v", client.charges, *events)
+	}
+}
+
 func TestWorkspaceLaunchMonthlyPreflightRunsBeforeDebitAndProviderStages(t *testing.T) {
 	t.Setenv(controlledBasicPilotEnabledEnv, "1")
 	t.Setenv(controlledBasicPilotAccountsEnv, "acct-alpha")
