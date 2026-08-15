@@ -973,6 +973,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   const {
     origin,
     fabricOrigin,
+    fabricServiceToken,
     internalServiceToken,
     adminEmail,
     adminPassword,
@@ -993,14 +994,15 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   } = options;
   const approval = parseProductionBasicAcceptanceBApproval(approvalJson, { approvalId, now });
   if ((!readbackOnly && mergedSha !== approval.release.mergedMainSha) || !/^[a-f0-9]{40}$/.test(String(mergedSha || "")) || !String(customerPassword || "") ||
-    !String(internalServiceToken || "") || !String(kubeconfigPath || "").startsWith("/") ||
+    !String(fabricServiceToken || "") || !String(internalServiceToken || "") || fabricServiceToken === internalServiceToken ||
+    !String(kubeconfigPath || "").startsWith("/") ||
     !/^https:\/\/workspace\.medopl\.cn\/w\//.test(canonicalWorkspaceUrl(approval.launch.workspaceId))) {
     throw new Error("production_basic_acceptance_b_config_invalid");
   }
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
   if (!String(fabricOrigin || "").startsWith("http://127.0.0.1:")) throw new Error("production_basic_acceptance_b_fabric_origin_invalid");
   const requestOptions = { fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs };
-  const fabricOptions = { fetchImpl, origin: String(fabricOrigin), timeoutMs: requestTimeoutMs, headers: { authorization: `Bearer ${internalServiceToken}` } };
+  const fabricOptions = { fetchImpl, origin: String(fabricOrigin), timeoutMs: requestTimeoutMs, headers: { authorization: `Bearer ${fabricServiceToken}` } };
 
   const adminAuth = await login({ ...requestOptions, email: adminEmail, password: adminPassword });
   if (adminAuth.user?.accountId !== "acct-admin" || adminAuth.user?.role !== "admin") throw new Error("production_basic_acceptance_b_admin_login_failed");
@@ -1262,6 +1264,7 @@ export async function runProductionBasicAcceptanceBCli({
     const result = await runProductionBasicAcceptanceB({
       origin: env.OPL_CONSOLE_ORIGIN,
       fabricOrigin: env.OPL_FABRIC_INTERNAL_ORIGIN,
+      fabricServiceToken: env.OPL_FABRIC_SERVICE_TOKEN,
       internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN,
       adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
       adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
