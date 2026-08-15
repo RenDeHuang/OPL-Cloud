@@ -10,7 +10,10 @@ import {
   walletFact
 } from "./production-verifier.ts";
 import { readBasicCanaryRuntimePodEvidence } from "./production-live-qa.ts";
-import { validateProductionBasicAcceptanceBReconcileReadback } from "./production-basic-acceptance-b-reconcile.ts";
+import {
+  SUCCESS_STATUSES,
+  validateProductionBasicAcceptanceBReconcileReadback
+} from "./production-basic-acceptance-b-reconcile.ts";
 
 export const PRODUCTION_BASIC_ACCEPTANCE_B_CONFIRMATION = "RUN_ONE_INDEPENDENT_FRESH_BASIC_ORDER_FOR_ACCEPTANCE_B";
 
@@ -1036,7 +1039,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   let launch;
   if (readbackOnly) {
     const prepared = validateProductionBasicAcceptanceBReconcileReadback(baselineArtifact, { mergedSha: approval.release.mergedMainSha });
-    if (prepared.status !== "prepared" || [prepared.workspaceCount, prepared.launchCount, prepared.keyCount, prepared.receiptCount].some((count) => count !== 0)) {
+    if (!SUCCESS_STATUSES.has(prepared.status) || [prepared.workspaceCount, prepared.launchCount, prepared.keyCount, prepared.receiptCount].some((count) => count !== 0)) {
       throw new Error("production_basic_acceptance_b_baseline_artifact_invalid");
     }
     baseline = {

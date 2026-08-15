@@ -30,7 +30,7 @@ const FAILURE_STAGES = Object.freeze([
   "artifact_schema"
 ]);
 const FAILURE_STAGE_SET = new Set(FAILURE_STAGES);
-const SUCCESS_STATUSES = new Set(["prepared", "safe_to_retry_absent"]);
+export const SUCCESS_STATUSES = new Set(["prepared", "safe_to_retry_absent"]);
 const SAFE_READBACK_ERROR = /^(?:none|[a-z0-9_]{1,80})$/;
 const SAFE_ERROR_CODE = /^(?:none|acceptance_b_account_reconcile_[a-z0-9_]{1,80})$/;
 const ZERO_WRITE_COUNTS = Object.freeze({
@@ -409,6 +409,11 @@ export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
     failureStage = "baseline";
     readbackError = "baseline_not_zero";
   }
+  if (status === "manual_review" && data.localGraph === "complete" && data.remoteIdentity === "active" &&
+    customerLogin === "active" && data.wallet === "available" && data.walletAdjustment === "absent" &&
+    Object.values(baseline).every((count) => count === 0) && readbackError === "none") {
+    status = "safe_to_retry_absent";
+  }
   if (status === "prepared" && (customerLogin !== "active" || Object.values(baseline).some((count) => count !== 0))) {
     status = "unknown";
   }
@@ -489,7 +494,7 @@ export async function runProductionBasicAcceptanceBReconcileCli({
     const artifactPath = String(env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_ARTIFACT_PATH || "");
     if (artifactPath) await writeFile(artifactPath, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return result.status === "prepared" ? 0 : 1;
+    return SUCCESS_STATUSES.has(result.status) ? 0 : 1;
   } catch (error) {
     const hasServerResponse = error?.responseReceived === true;
     const artifact = blockedProductionBasicAcceptanceBReconcileArtifact({
