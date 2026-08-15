@@ -365,6 +365,17 @@ export function localBuildProxyArgs() {
     : ["--build-arg", `HTTP_PROXY=${proxy}`, "--build-arg", `HTTPS_PROXY=${proxy}`];
 }
 
+export function qualificationComposeEnvironment(baseEnvironment, exactEntries) {
+  const environment = { ...baseEnvironment };
+  for (const [key, value] of exactEntries) {
+    if (!/^[A-Z][A-Z0-9_]*$/.test(String(key)) || /[\r\n]/.test(String(value))) {
+      throw new Error("qualification compose environment entry is invalid");
+    }
+    environment[key] = String(value);
+  }
+  return environment;
+}
+
 async function buildSourceImages(sourceSha, project, registryPort) {
   const registryContainer = `${project}-registry`;
   const cloudRepository = `127.0.0.1:${registryPort}/${project}-cloud`;
@@ -722,7 +733,8 @@ export async function runLocalWorkspaceQualification(options) {
   const composePrefix = ["compose", "--project-name", project, "--env-file", envFile];
   const qualificationCompose = options.authorityMode === "fixture" ? "deploy/portable/compose.local-qualification.yaml" : "deploy/portable/compose.local-qualification-live.yaml";
   for (const file of [...baseComposeFiles, qualificationCompose]) composePrefix.push("-f", file);
-  const compose = (args, settings = {}) => runProcess("docker", [...composePrefix, ...args], settings);
+  let composeEnvironment = process.env;
+  const compose = (args, settings = {}) => runProcess("docker", [...composePrefix, ...args], { ...settings, env: composeEnvironment });
 
   try {
     await runProcess("docker", ["version"]);
@@ -742,45 +754,45 @@ export async function runLocalWorkspaceQualification(options) {
     const dockerHost = context.stdout.trim();
     const dockerSocket = dockerHost.startsWith("unix://") ? dockerHost.slice("unix://".length) : "/var/run/docker.sock";
     const secrets = Array.from({ length: 10 }, () => randomBytes(32).toString("hex"));
-    const envLines = [
-      `OPL_CLOUD_IMAGE=${cloudImage}`,
-      `OPL_WORKSPACE_IMAGE=${workspaceImage}`,
-      `OPL_QUALIFICATION_SOURCE_SHA=${options.sourceSha}`,
-      "OPL_BIND_ADDRESS=127.0.0.1",
-      `OPL_HTTP_PORT=${publicPort}`,
-      `OPL_PUBLIC_URL=http://127.0.0.1:${publicPort}`,
-      `OPL_DOCKER_SUBNET=10.251.${subnetOctet}.0/24`,
-      `OPL_POSTGRES_HOST=10.251.${subnetOctet}.10`,
-      `OPL_POSTGRES_ADMIN_PASSWORD=${secrets[0]}`,
-      `OPL_CONTROL_PLANE_DATABASE_PASSWORD=${secrets[1]}`,
-      `OPL_FABRIC_DATABASE_PASSWORD=${secrets[2]}`,
-      `OPL_LEDGER_DATABASE_PASSWORD=${secrets[3]}`,
-      `OPL_CONTROL_PLANE_SERVICE_TOKEN=${secrets[4]}`,
-      `OPL_FABRIC_SERVICE_TOKEN=${secrets[5]}`,
-      `OPL_LEDGER_SERVICE_TOKEN=${secrets[6]}`,
-      `OPL_FABRIC_RUNNER_SERVICE_TOKEN=${secrets[7]}`,
-      `OPL_FABRIC_CAPABILITY_KEY=${secrets[8]}`,
-      `OPL_LEDGER_CAPABILITY_KEY=${secrets[9]}`,
-      `OPL_AIONUI_ADMIN_PASSWORD_SEED=${randomBytes(32).toString("hex")}`,
-      `OPL_SUB2API_BASE_URL=${options.authorityMode === "live" ? String(process.env.OPL_SUB2API_BASE_URL || "") : "http://sub2api-authority:8080"}`,
-      `OPL_SUB2API_ADMIN_EMAIL=${options.authorityMode === "live" ? String(process.env.OPL_SUB2API_ADMIN_EMAIL || "") : adminEmail}`,
-      `OPL_SUB2API_ADMIN_PASSWORD=${options.authorityMode === "live" ? String(process.env.OPL_SUB2API_ADMIN_PASSWORD || "") : adminPassword}`,
-      `OPL_QUALIFICATION_USER_EMAIL=${adminEmail}`,
-      `OPL_QUALIFICATION_USER_PASSWORD=${adminPassword}`,
-      `OPL_QUALIFICATION_USER_TOKEN=${userToken}`,
-      `OPL_QUALIFICATION_AUTHORITY_TOKEN=${authorityToken}`,
-      `OPL_QUALIFICATION_AUTHORITY_HOST_PORT=${authorityPort}`,
-      "OPL_QUALIFICATION_INITIAL_USD_MICROS=1000000000",
-      `OPL_DOCKER_SOCKET_PATH=${dockerSocket}`,
-      `OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT=${fabricSecretRoot}`,
-      "OPL_SUB2API_REQUEST_TIMEOUT_MS=5000",
-      "OPL_MONTHLY_BILLING_WORKER_ENABLED=0",
-      "OPL_WORKSPACE_LAUNCH_WORKER_ENABLED=1",
-      `OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES=${workspaceImage}`,
-      "OPL_FABRIC_LOCAL_DOCKER_HOST=127.0.0.1",
-      ""
+    const envEntries = [
+      ["OPL_CLOUD_IMAGE", cloudImage],
+      ["OPL_WORKSPACE_IMAGE", workspaceImage],
+      ["OPL_QUALIFICATION_SOURCE_SHA", options.sourceSha],
+      ["OPL_BIND_ADDRESS", "127.0.0.1"],
+      ["OPL_HTTP_PORT", publicPort],
+      ["OPL_PUBLIC_URL", `http://127.0.0.1:${publicPort}`],
+      ["OPL_DOCKER_SUBNET", `10.251.${subnetOctet}.0/24`],
+      ["OPL_POSTGRES_HOST", `10.251.${subnetOctet}.10`],
+      ["OPL_POSTGRES_ADMIN_PASSWORD", secrets[0]],
+      ["OPL_CONTROL_PLANE_DATABASE_PASSWORD", secrets[1]],
+      ["OPL_FABRIC_DATABASE_PASSWORD", secrets[2]],
+      ["OPL_LEDGER_DATABASE_PASSWORD", secrets[3]],
+      ["OPL_CONTROL_PLANE_SERVICE_TOKEN", secrets[4]],
+      ["OPL_FABRIC_SERVICE_TOKEN", secrets[5]],
+      ["OPL_LEDGER_SERVICE_TOKEN", secrets[6]],
+      ["OPL_FABRIC_RUNNER_SERVICE_TOKEN", secrets[7]],
+      ["OPL_FABRIC_CAPABILITY_KEY", secrets[8]],
+      ["OPL_LEDGER_CAPABILITY_KEY", secrets[9]],
+      ["OPL_AIONUI_ADMIN_PASSWORD_SEED", randomBytes(32).toString("hex")],
+      ["OPL_SUB2API_BASE_URL", options.authorityMode === "live" ? String(process.env.OPL_SUB2API_BASE_URL || "") : "http://sub2api-authority:8080"],
+      ["OPL_SUB2API_ADMIN_EMAIL", options.authorityMode === "live" ? String(process.env.OPL_SUB2API_ADMIN_EMAIL || "") : adminEmail],
+      ["OPL_SUB2API_ADMIN_PASSWORD", options.authorityMode === "live" ? String(process.env.OPL_SUB2API_ADMIN_PASSWORD || "") : adminPassword],
+      ["OPL_QUALIFICATION_USER_EMAIL", adminEmail],
+      ["OPL_QUALIFICATION_USER_PASSWORD", adminPassword],
+      ["OPL_QUALIFICATION_USER_TOKEN", userToken],
+      ["OPL_QUALIFICATION_AUTHORITY_TOKEN", authorityToken],
+      ["OPL_QUALIFICATION_AUTHORITY_HOST_PORT", authorityPort],
+      ["OPL_QUALIFICATION_INITIAL_USD_MICROS", "1000000000"],
+      ["OPL_DOCKER_SOCKET_PATH", dockerSocket],
+      ["OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT", fabricSecretRoot],
+      ["OPL_SUB2API_REQUEST_TIMEOUT_MS", "5000"],
+      ["OPL_MONTHLY_BILLING_WORKER_ENABLED", "0"],
+      ["OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "1"],
+      ["OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES", workspaceImage],
+      ["OPL_FABRIC_LOCAL_DOCKER_HOST", "127.0.0.1"]
     ];
-    await writeFile(envFile, envLines.join("\n"), { mode: 0o600 });
+    composeEnvironment = qualificationComposeEnvironment(process.env, envEntries);
+    await writeFile(envFile, `${envEntries.map(([key, value]) => `${key}=${value}`).join("\n")}\n`, { mode: 0o600 });
     await compose(["config", "--quiet"]);
 
     stage = "compose_start";

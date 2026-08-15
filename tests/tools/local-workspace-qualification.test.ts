@@ -9,6 +9,7 @@ import {
   immutableImageDigest,
   liveAuthorityAdjustmentReadback,
   localBuildProxyArgs,
+  qualificationComposeEnvironment,
   parseLocalQualificationArgs,
   redactedError,
   validateQualificationSourceIdentity,
@@ -25,6 +26,22 @@ const sha = "a".repeat(40);
 const cloudDigest = `sha256:${"b".repeat(64)}`;
 const workspaceDigest = `sha256:${"c".repeat(64)}`;
 const workspaceReference = `ghcr.io/example/workspace@${workspaceDigest}`;
+
+test("qualification compose uses the runner-owned exact environment", () => {
+  const exactSecretRoot = "/tmp/opl-qualification/fabric-secrets";
+  const environment = qualificationComposeEnvironment({
+    PATH: "/usr/bin",
+    OPL_WORKSPACE_IMAGE: "registry.example/stale@sha256:" + "d".repeat(64),
+    OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT: "/tmp/stale-secrets"
+  }, [
+    ["OPL_WORKSPACE_IMAGE", workspaceReference],
+    ["OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT", exactSecretRoot]
+  ]);
+
+  assert.equal(environment.PATH, "/usr/bin");
+  assert.equal(environment.OPL_WORKSPACE_IMAGE, workspaceReference);
+  assert.equal(environment.OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT, exactSecretRoot);
+});
 
 test("source image tag inspection hands off one exact immutable RepoDigest", () => {
   const repository = "127.0.0.1:56287/opl-local-qualification-cloud";
@@ -257,7 +274,8 @@ test("package exposes one local Workspace qualification command", async () => {
   const envExample = await readFile(new URL("../../deploy/portable/opl-cloud.env.example", import.meta.url), "utf8");
   assert.match(envExample, /^OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT=\/absolute\/path\/to\/opl-fabric-secrets$/m);
   const runner = await readFile(new URL("../../tools/local-workspace-qualification.ts", import.meta.url), "utf8");
-  assert.match(runner, /OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT=\$\{fabricSecretRoot\}/);
+  assert.match(runner, /\["OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT", fabricSecretRoot\]/);
+  assert.match(runner, /env: composeEnvironment/);
   assert.match(runner, /exactRepoDigestFromInspection\(cloudRepository, await dockerImageInspection\(cloudTag\)\)/);
   assert.match(runner, /exactRepoDigestFromInspection\(workspaceRepository, await dockerImageInspection\(workspaceTag\)\)/);
   assert.match(runner, /await imageInspection\(cloudImage\)/);
