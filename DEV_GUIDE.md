@@ -29,10 +29,12 @@ thin Console
   -> Sub2API-authoritative balance, usage, debit, and refund
 ```
 
-The source already contains the thin Console and the Sub2API-backed Gateway
-accounting surfaces. It does not yet contain the `local-docker` provider, so the
-vertical path is not complete. Ledger records the required receipts and
-reconciliation evidence; it never owns spendable balance.
+The source contains the thin Console, the Sub2API-backed Gateway accounting
+surfaces, and Fabric's `local-docker` provider with an isolated Docker
+integration test. Closing the product Core path still requires the same-revision
+Console-to-Workspace acceptance evidence described in the roadmap. Ledger
+records the required receipts and reconciliation evidence; it never owns
+spendable balance.
 
 ## Local Console Preview
 
@@ -56,8 +58,8 @@ docker compose --env-file deploy/portable/opl-cloud.env.example config --quiet
 For an actual installation, use the three assets from one GitHub Release and
 replace the template values as described in
 [installation.md](docs/installation.md). A healthy Compose stack proves only
-that the Cloud control services start. Workspace create, readback, access, and
-delete remain unavailable until the real `local-docker` provider is implemented.
+that the Cloud control services start; it does not by itself prove Workspace
+create, readback, access, and delete through the local Docker provider.
 
 ## Provider Adapters
 
@@ -79,14 +81,20 @@ receipts to this repository.
 ## Pre-Commit Checks
 
 ```bash
-npm run validate:product-boundary
-npm test
-npm run typecheck
-npm run lint
-npm run build
-npm run build:whitepaper
-(cd services/control-plane && go test ./...)
-(cd services/fabric && go test ./...)
-(cd services/ledger && go test ./...)
-git diff --check
+npm run verify:local
 ```
+
+The default gate needs no database. It validates the product boundary, Node
+tests, Console typecheck/lint/build, whitepaper build, all four Go modules, and
+Git whitespace. Go coverage means all-module compilation plus the explicitly
+database-free package tests. Changes to persistence, capacity behavior, local Docker, or a
+cross-service path also run the complete local gate:
+
+```bash
+npm run verify:local:full
+```
+
+The complete gate uses Docker to start an ephemeral PostgreSQL 16 container,
+runs the PostgreSQL, capacity, and local-Docker integration tests with zero
+skips, and removes the temporary container on exit. Neither gate accesses a
+production network or dispatches an instance deployment.

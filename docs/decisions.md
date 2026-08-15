@@ -1,5 +1,29 @@
 # Decisions
 
+## 2026-08-15: Keep The Go/TypeScript Service Architecture And Adopt Frameworks By Evidence
+
+OPL Cloud keeps its current Go/TypeScript architecture. Control Plane, Fabric,
+and Ledger remain separate Go modules, processes, and PostgreSQL schema owners;
+Console remains a TypeScript browser application; cross-service integration
+continues through typed public HTTP contracts. The current cohesion problem is
+inside retained owner modules, not a missing application framework.
+
+Spring Modulith is not adopted. Using it would require a Java replatform while
+collapsing or duplicating process and persistence boundaries that already carry
+real authority. OPL Cloud also does not add Cordis, Dapr, Temporal, a second
+plugin registry, or a global event bus to make the architecture look more
+uniform. Framework maturity alone is not evidence that the product needs the
+framework's runtime model.
+
+The near-term architecture work is deliberately smaller: split large retained
+implementation files by their existing capability owners, preserve the public
+interfaces and behavior, and expose one repeatable local verification entry.
+Reconsider a framework only when a real caller and observed failure show a
+specific missing capability, such as durable recovery across process restarts,
+runtime plugin installation/isolation, or repeated service-infrastructure
+duplication, and a focused replacement proves measurable benefit without
+creating a second authority.
+
 ## 2026-08-14: Framework Cordis Composition Stops At The Cloud API Boundary
 
 OPL Framework is adopting Cordis for in-process composition. OPL Cloud does not
