@@ -111,6 +111,31 @@ become prerequisites for unrelated local development, CI, or preview work.
 Reusable deployment code and instance-specific application may progress in
 parallel and converge only for deployment qualification and readback.
 
+## Product Release Admission
+
+Do not dispatch a formal Product Release as a development checkpoint or to
+obtain debugging evidence. Before release, name one bounded release unit, its
+Product owner, scoped acceptance criteria, exact SHA/tree and verification
+evidence, artifact impact, prepared consumer, and the reason the preceding
+Release cannot satisfy that consumer. The Product owner must report `READY`
+with no known Product-side blocker remaining for that unit.
+
+Candidate CI output and exact-SHA images may be replaced before `READY`; Product
+owners must treat a formal Release as immutable after publication. Do not infer
+platform enforcement from exact SHA/digest binding or the create-only workflow:
+use `docs/status.md` for the current GitHub setting/API evidence and
+`docs/roadmap.md` for any residual gap. After publication, Instance deployment,
+configuration, environment, Secret, provider, account, approval, and
+runtime-data failures must reuse the same Release. Authorize a patch Release
+only after owner evidence proves that the published Product artifact or its
+consumer contract must change, then reopen and requalify the Product lane before
+publication.
+
+Documentation-only, test-only, CI-performance, and Instance-only changes do not
+independently justify a Product Release. Product publication remains portable
+and must not depend on a medopl or other production environment; Instance
+qualification is a separate conclusion for the exact released SHA and digest.
+
 ## Architecture Adoption And Cohesion
 
 The default architecture is the current Go/TypeScript service system, not a

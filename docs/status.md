@@ -220,21 +220,26 @@ rollback, or production path. Existing Tencent/TKE evidence applies only to
 medopl instance provenance.
 
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
-workflow, and focused distribution checks exist at source level. The split
-workflow was executed successfully as run `31685878938` and published immutable
-Cloud release `v0.1.0` from exact product SHA
-`98eac98b46fc872ed8c803363de7ed47edacd2ba`. Its GHCR multi-architecture index
-digest is `sha256:68771bb25c8131c931d03f32210ce0fcb119ace90c05dcfe65555f4800db0fe7`,
+workflow, and focused distribution checks exist at source level. Eight Product
+Releases, `v0.1.0` through `v0.1.7`, were published between
+2026-08-13T09:50:02Z and 2026-08-15T10:49:30Z. The current Release workflow run
+`31879240411` published `v0.1.7` from exact product SHA
+`a59bde68397528186a5220f73195fa1f3eda311b`. Its GHCR multi-architecture index
+digest is `sha256:e64504731f8b61c0864cf59faa647a1150e8a2a5eada34b26faf3a5487d28e8f`,
 with `linux/amd64` and `linux/arm64` manifests. The GitHub Release contains
-`compose.yaml`, `compose.local-workspace.yaml`, `opl-cloud.env.example`, and
-`opl-cloud-release.json`; manifest readback matched the release tag, product
-SHA, image digest, platforms, and asset set. This proves publication of the
-portable product artifact, not installation or production readiness.
+`compose.yaml`, `compose.local-workspace.yaml`, `opl-cloud.env.example`,
+`SHA256SUMS`, and `opl-cloud-release.json`; manifest readback matched the
+release tag, product SHA, image digest, platforms, and asset set. This proves
+publication of the portable product artifact, not installation, Instance
+qualification, or production readiness.
 
-The immutable `v0.1.0` product SHA is distinct from any later canonical `main`
-commit and is not silently substituted by subsequent documentation or source
-changes. A clean Docker-host installation using only the release assets, a
-complete live Console create/readback/open/delete path, real external Sub2API
+Product policy and the create-only workflow treat the exact `v0.1.7` tag,
+Release, product SHA, and image digest as fixed; later canonical `main` commits
+must not silently substitute them. GitHub platform enforcement remains
+separate: the repository immutable-release setting is disabled, the `v0.1.7`
+Release API reports `immutable=false`, and no tag ruleset is present. A clean
+Docker-host installation using only one admitted Release, a complete live
+Console create/readback/open/delete path, real external Sub2API
 authentication/balance/usage evidence, and Instance adoption/deployment remain
 open evidence gaps.
 
@@ -281,7 +286,7 @@ merge. GitHub now requires strict `validate` and `dependency-review` on `main`.
 The `cloud-release` Environment exists with protected branches as its only
 protection rule and has no Secrets or variables. The release workflow is
 create-only: it rejects an existing Git tag, GitHub Release, or GHCR release tag
-before publication. GitHub currently reports no tag ruleset and the `v0.1.0`
+before publication. GitHub currently reports no tag ruleset and the `v0.1.7`
 Release API object has `immutable=false`, so workflow-level no-overwrite and
 digest/product-SHA binding are verified, while platform-enforced release/tag
 immutability remains an explicit gap. These controls and checks do not prove
@@ -318,12 +323,14 @@ the canonical release-boundary validator. Current workflow source also emits a
 per-asset `SHA256SUMS`, creates GitHub OIDC-backed provenance attestations for
 the exact Release asset bytes, binds both the signing workflow revision and the
 separately selected product SHA, and verifies downloaded assets against the
-checksum manifest, signer workflow, release identity, and image digest. The published `v0.1.0` predates this
-addition, so the new provenance control is source/test evidence until a later
-release executes it; it is not retroactive evidence for `v0.1.0`.
+checksum manifest, signer workflow, release identity, and image digest. Release
+`v0.1.7` executed this path: hosted run `31879240411` completed both the
+`Attest release assets` and `Read back release` steps, and the published asset
+set includes `SHA256SUMS`. This is exact `v0.1.7` publication evidence, not
+retroactive proof for earlier Releases.
 Clean-host installation and production deployment remain `PRODUCT-RELEASE-01`
 / Instance evidence gaps, not another S4 source lane. These controls are source,
-test, and immutable publication evidence only. CodeQL triage is
+test, and policy-immutable publication evidence only. CodeQL triage is
 terminal at the classification layer only, with alert disposition explicitly
 unperformed as recorded above.
 
@@ -369,7 +376,7 @@ The current `opl-instance-medopl` workflow and manifest have not yet adopted the
 full Fabric capability credential set, so source absorption does not prove a
 usable production operator path or a deployment. GitHub tag/Release/GHCR
 immutability also remains an external-owner gap: current evidence still reports
-no tag ruleset and `v0.1.0` `immutable=false`.
+no tag ruleset and `v0.1.7` `immutable=false`.
 
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production

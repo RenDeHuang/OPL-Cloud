@@ -1,5 +1,53 @@
 # Decisions
 
+## 2026-08-15: Release Units Gate Product Publication
+
+An OPL Cloud Release is treated as an immutable product handoff by Product
+policy after publication; it is not a development checkpoint or a production
+debugging mechanism. Before publication, one named release unit must identify
+the product problem being closed, its primary owner, the product-artifact
+impact, the exact source and verification evidence, the consumer ready to adopt
+it, and why the preceding Release cannot satisfy that consumer. The Product
+owner declares the unit ready only after its scoped acceptance criteria pass
+and no known product-side blocker for that unit remains.
+
+This decision responds to observed version churn rather than a hypothetical
+process preference. Eight Releases, `v0.1.0` through `v0.1.7`, were published in
+roughly 49 hours. Every Release from `v0.1.2` through `v0.1.7` included another
+increment toward the same Acceptance B path, so durable Git tags, GitHub
+Releases, multi-architecture manifests, checksums, attestations, and downstream
+identity bindings were repeatedly used where a replaceable candidate and one
+qualified handoff were needed. The release workflow correctly proved artifact
+integrity, but it had no semantic admission rule proving that publication was
+necessary.
+
+Policy immutability and platform enforcement are separate facts. The current
+workflow is create-only and binds a Release to an exact product SHA and image
+digest; Product owners must not overwrite, reuse, or delete that published
+identity. This decision does not claim that GitHub prevents those mutations.
+GitHub's current immutable-release setting, Release API state, tag protection,
+and any residual enforcement gap remain current evidence in `docs/status.md`
+and open acceptance in `docs/roadmap.md`.
+
+Candidate verification and Product Release remain distinct. CI output and an
+exact-SHA candidate may be rebuilt or rejected while a release unit is still
+open. A formal Release is published once for a ready unit and is then reused by
+Instance deployment, configuration, retry, rollback, and qualification work.
+An Instance, environment, Secret, provider, deployment, account, or runtime-data
+failure does not authorize another Product Release. A new patch Release is
+admitted only when owner evidence proves that the published product artifact or
+its consumer contract must change; the Product lane then reopens and qualifies
+a new candidate before publication.
+
+Product Release and Instance qualification remain separate owner conclusions.
+Cloud publication stays portable and provider-neutral and does not require a
+medopl or other production environment. An Instance may claim deployment or a
+business outcome only after its own protected workflow qualifies the exact
+released SHA and digest. Documentation-only, test-only, CI-performance, and
+Instance-only changes do not independently justify a Product Release. A
+security fix may form its own release unit when its scoped owner, evidence,
+artifact impact, and consumer urgency are explicit.
+
 ## 2026-08-15: Keep The Go/TypeScript Service Architecture And Adopt Frameworks By Evidence
 
 OPL Cloud keeps its current Go/TypeScript architecture. Control Plane, Fabric,
