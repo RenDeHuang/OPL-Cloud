@@ -790,10 +790,13 @@ async function readPrepareBaseline(requestOptions, customerAuth) {
   if (keyPages.some((page, index) => page.total !== keyTotal || page.page !== index + 1)) throw new Error("production_basic_acceptance_b_baseline_not_fresh");
   const keys = { items: keyPages.flatMap((page) => page.items), total: keyTotal };
   const receipts = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=50" }), "ledger", true);
+  if (keys.items.some((key) => !["general", "workspace"].includes(key?.kind))) {
+    throw new Error("production_basic_acceptance_b_baseline_not_fresh");
+  }
   const workspaceKeys = (keys?.items || []).filter((key) => key?.kind === "workspace");
   const workspaceReceipts = (receipts?.receipts || []).filter((receipt) => receipt?.type === "billing.workspace_purchased.v1" || receipt?.workspaceId);
   if (!Array.isArray(workspacePage?.items) || workspacePage.total !== 0 || workspacePage.items.length !== 0 || launches.length !== 0 ||
-    keys.total !== 0 || keys.items.length !== 0 || workspaceKeys.length !== 0 ||
+    workspaceKeys.length !== 0 ||
     !Array.isArray(receipts?.receipts) || workspaceReceipts.length !== 0 || receipts.hasMore !== false) {
     throw new Error("production_basic_acceptance_b_baseline_not_fresh");
   }

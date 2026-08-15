@@ -258,7 +258,13 @@ function prepareFetchFixture({ keys = [], walletValues = ["0"], adjustmentAvaila
     if (parsed.pathname === "/api/auth/me") return response(sourcePayload("sub2api", { accountId, email, role: "owner", status: "active", consoleUserId: "usr-prepare", sub2apiUserId: "41" }));
     if (parsed.pathname === "/api/workspaces") return response(sourcePayload("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }, "empty"));
     if (parsed.pathname === "/api/workspace-launches") return response({ items: [] });
-    if (parsed.pathname === "/api/gateway/keys") return response(sourcePayload("sub2api", { items: keys, total: keys.length, page: 1, pageSize: 50 }, keys.length ? "available" : "empty"));
+    if (parsed.pathname === "/api/gateway/keys") {
+      const page = Number(parsed.searchParams.get("page"));
+      const pageSize = Number(parsed.searchParams.get("pageSize"));
+      const start = (page - 1) * pageSize;
+      const items = keys.slice(start, start + pageSize);
+      return response(sourcePayload("sub2api", { items, total: keys.length, page, pageSize }, keys.length ? "available" : "empty"));
+    }
     if (parsed.pathname === "/api/billing/receipts") return response(sourcePayload("ledger", { receipts: [], hasMore: false }, "empty"));
     if (parsed.pathname === "/api/pricing/preview") return response({ resourceType: "workspace", packageId: "basic", currency: "USD", priceVersion: "pilot-usd-2026-07-v1", totalChargeUsdMicros: 52580000, storage: { priceSnapshot: { sizeGb: 10 } } });
     if (parsed.pathname === "/api/gateway/wallet") {
@@ -443,8 +449,52 @@ test("Acceptance B prepare never retries a provision after an untrusted POST whe
   assert.equal(fixture.requests.filter((request) => request.method === "POST" && request.path === "/api/operator/accounts").length, 1);
 });
 
-test("Acceptance B prepare rejects any pre-existing API key, not only workspace keys", async () => {
-  const fixture = prepareFetchFixture({ keys: [{ id: "41", kind: "general", status: "active" }] });
+test("Acceptance B prepare treats five non-Workspace gateway keys as a fresh baseline", async () => {
+  const fixture = prepareFetchFixture({
+    keys: Array.from({ length: 5 }, (_, index) => ({ id: `general-${index + 1}`, kind: "general", status: "active" })),
+    walletValues: ["60000000"]
+  });
+  const result = await prepareProductionBasicAcceptanceBAccount({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: "admin@medopl.cn",
+    adminPassword: "admin-password",
+    customerEmail: fixture.email,
+    customerPassword: "customer-password",
+    mergedSha: MERGED_MAIN_SHA,
+    fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00.000Z")
+  });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.baseline.workspaceKeyCount, 0);
+  assert.deepEqual(validateProductionBasicAcceptanceBPrepareReadback(result, { mergedSha: MERGED_MAIN_SHA }), result);
+});
+
+test("Acceptance B prepare finds a Workspace key on a later gateway page and blocks", async () => {
+  const fixture = prepareFetchFixture({
+    keys: [
+      ...Array.from({ length: 50 }, (_, index) => ({ id: `general-${index + 1}`, kind: "general", status: "active" })),
+      { id: "workspace-1", kind: "workspace", status: "active" }
+    ],
+    walletValues: ["60000000"]
+  });
+  await assert.rejects(() => prepareProductionBasicAcceptanceBAccount({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: "admin@medopl.cn",
+    adminPassword: "admin-password",
+    customerEmail: fixture.email,
+    customerPassword: "customer-password",
+    mergedSha: MERGED_MAIN_SHA,
+    fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00.000Z")
+  }), /production_basic_acceptance_b_baseline_not_fresh/);
+  assert.equal(fixture.requests.filter((request) => request.path.startsWith("/api/gateway/keys?")).length, 2);
+});
+
+test("Acceptance B prepare fails closed when a gateway key kind cannot be classified", async () => {
+  const fixture = prepareFetchFixture({
+    keys: [{ id: "unknown-1", status: "active" }],
+    walletValues: ["60000000"]
+  });
   await assert.rejects(() => prepareProductionBasicAcceptanceBAccount({
     origin: "https://cloud.medopl.cn",
     adminEmail: "admin@medopl.cn",
