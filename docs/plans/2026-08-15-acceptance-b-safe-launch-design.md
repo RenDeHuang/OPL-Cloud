@@ -111,7 +111,7 @@ Wallet delta and general usage are never substituted for the exact debit.
 
 | Lane | Owner | Write set | Acceptance gate blocked |
 | --- | --- | --- | --- |
-| Product reconcile | `product_chain` | `services/control-plane/internal/server/account_reconcile.go`, its focused Go tests, `tools/production-basic-acceptance-b-reconcile.ts`, reconcile tests, the deployment contract | A false `prepared`/retry decision cannot reach the writer |
+| Product reconcile | `product_chain` | `services/control-plane/internal/server/account_reconcile.go`, `services/control-plane/internal/server/workspace_launch_admission.go`, their focused Go tests, `tools/production-basic-acceptance-b-reconcile.ts`, reconcile tests, the deployment contract | A false `prepared`/retry decision cannot reach the writer |
 | Product writer | `product_chain` under serial integration | `tools/production-basic-acceptance-b.ts` and focused tests | The single Workspace POST cannot run on stale or unbound evidence |
 | Release/deployment | `deployment_chain` for diagnostics; root for mutation | No release-performance write set in P0. Instance changes are allowed only if the new product contract cannot be consumed by the current workflow | The deployed SHA/digests/approval must be one immutable identity |
 | Runtime evidence | `runtime_evidence` | No repository writes and no production mutations | GET-only preflight and terminal evidence must be complete |
