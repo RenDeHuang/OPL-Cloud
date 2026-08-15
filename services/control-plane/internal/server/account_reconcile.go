@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -34,12 +35,20 @@ type acceptanceBAccountReconcileData struct {
 	CustomerIdentitySHA256         string `json:"customerIdentitySha256"`
 	AccountProvisionIdentitySHA256 string `json:"accountProvisionIdentitySha256"`
 	WalletAdjustmentIdentitySHA256 string `json:"walletAdjustmentIdentitySha256"`
+	ApprovalIdentitySHA256         string `json:"approvalIdentitySha256"`
+	WorkspaceDebitIdentitySHA256   string `json:"workspaceDebitIdentitySha256"`
 	LocalGraph                     string `json:"localGraph"`
 	RemoteIdentity                 string `json:"remoteIdentity"`
 	CustomerLogin                  string `json:"customerLogin"`
 	Wallet                         string `json:"wallet"`
 	WalletUSDMicros                string `json:"walletUsdMicros,omitempty"`
 	WalletAdjustment               string `json:"walletAdjustment"`
+	ApprovalState                  string `json:"approvalState"`
+	WorkspaceLaunchState           string `json:"workspaceLaunchState"`
+	WorkspaceState                 string `json:"workspaceState"`
+	WorkspaceKeyState              string `json:"workspaceKeyState"`
+	WorkspaceReceiptState          string `json:"workspaceReceiptState"`
+	WorkspaceDebitState            string `json:"workspaceDebitState"`
 	WorkspaceCount                 int    `json:"workspaceCount"`
 	LaunchCount                    int    `json:"launchCount"`
 	KeyCount                       int    `json:"keyCount"`
@@ -114,7 +123,8 @@ func (app *controlPlaneServer) reconcileAcceptanceBAccount(ctx context.Context, 
 		AccountProvisionIdentitySHA256: acceptanceBAccountIdentityDigest(email),
 		WalletAdjustmentIdentitySHA256: acceptanceBWalletIdentityDigest(accountID, email),
 		LocalGraph:                     "unknown", RemoteIdentity: "unknown", CustomerLogin: "not_attempted",
-		Wallet: "unknown", WalletAdjustment: "unknown",
+		Wallet: "unknown", WalletAdjustment: "unknown", ApprovalState: "unknown", WorkspaceLaunchState: "unknown",
+		WorkspaceState: "unknown", WorkspaceKeyState: "unknown", WorkspaceReceiptState: "unknown", WorkspaceDebitState: "unknown",
 	}
 
 	localState, localAccount, localUser, err := app.acceptanceBLocalGraph(ctx, accountID, userID, email)
@@ -159,51 +169,132 @@ func (app *controlPlaneServer) reconcileAcceptanceBAccount(ctx context.Context, 
 	}
 	if !found {
 		data.WalletAdjustment = "absent"
-		data.Status = "manual_review"
-		return data, nil
-	}
-	if operation.AccountID != accountID || operation.Kind != "recharge" || operation.AmountUSDMicros != acceptanceBAccountReconcileRechargeMicros ||
+	} else if operation.AccountID != accountID || operation.Kind != "recharge" || operation.AmountUSDMicros != acceptanceBAccountReconcileRechargeMicros ||
 		operation.Reason != acceptanceBAccountReconcileReason || operation.Status != "succeeded" || operation.Phase != "complete" ||
 		!operation.BeforeBalanceKnown || !operation.AfterBalanceKnown || operation.AfterBalanceMicros-operation.BeforeBalanceMicros != acceptanceBAccountReconcileRechargeMicros {
 		data.WalletAdjustment = "manual_review"
 		data.Status = "manual_review"
 		return data, nil
+	} else {
+		data.WalletAdjustment = "succeeded"
 	}
-	data.WalletAdjustment = "succeeded"
 
-	workspaces, err := app.tables.ListWorkspaces(ctx, accountID)
+	approval, parsed := parseProductionAcceptanceBApproval()
+	if !parsed || !productionAcceptanceBDeploymentApproved(approval, accountID, email, time.Now()) {
+		data.ReadbackError = "approval_authority_invalid"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	data.ApprovalState = "bound"
+	data.ApprovalIdentitySHA256 = acceptanceBDigestParts(
+		approval.ApprovalID, approval.Release.MergedMainSHA, approval.Release.CloudImageDigest, approval.Release.WorkspaceImageDigest,
+		accountID, email, approval.Launch.IdempotencyKey, approval.Launch.OperationID, approval.Launch.WorkspaceID,
+	)
+
+	launch, launchFound, err := app.tables.GetRuntimeOperation(ctx, approval.Launch.OperationID)
+	if err != nil {
+		data.ReadbackError = "launch_authority_unavailable"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	data.WorkspaceLaunchState = "absent"
+	if launchFound {
+		data.LaunchCount = 1
+		data.WorkspaceLaunchState = "present"
+		if stringValue(launch["id"]) != approval.Launch.OperationID || stringValue(launch["accountId"]) != accountID ||
+			stringValue(launch["workspaceId"]) != approval.Launch.WorkspaceID || !isWorkspaceLaunchAction(stringValue(launch["action"])) {
+			data.WorkspaceLaunchState = "conflict"
+		}
+	}
+
+	workspace, workspaceFound, err := app.tables.GetWorkspace(ctx, approval.Launch.WorkspaceID)
 	if err != nil {
 		data.ReadbackError = "workspace_authority_unavailable"
 		return data, errAcceptanceBAccountReconcileUnknown
 	}
-	data.WorkspaceCount = len(workspaces)
-	currentLaunches, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{AccountID: accountID, Action: workspaceLaunchAction})
-	if err != nil {
-		data.ReadbackError = "launch_authority_unavailable"
-		return data, errAcceptanceBAccountReconcileUnknown
+	data.WorkspaceState = "absent"
+	if workspaceFound {
+		data.WorkspaceCount = 1
+		data.WorkspaceState = "present"
+		if stringValue(workspace["id"]) != approval.Launch.WorkspaceID || stringValue(workspace["ownerAccountId"]) != accountID {
+			data.WorkspaceState = "conflict"
+		}
 	}
-	legacyLaunches, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{AccountID: accountID, Action: "workspace.launch"})
-	if err != nil {
-		data.ReadbackError = "launch_authority_unavailable"
-		return data, errAcceptanceBAccountReconcileUnknown
-	}
-	data.LaunchCount = len(currentLaunches) + len(legacyLaunches)
-	data.KeyCount, err = service.AdminUserKeyCount(ctx, remote.ID)
+
+	keyName := workspaceReservedKeyName(approval.Launch.WorkspaceID)
+	keys, err := service.WorkspaceKeysForConvergence(ctx, remote.ID, keyName)
 	if err != nil {
 		data.ReadbackError = "key_authority_unavailable"
 		return data, errAcceptanceBAccountReconcileUnknown
 	}
-	data.ReceiptCount, err = acceptanceBBillingReceiptCount(ctx, service, accountID)
+	data.WorkspaceKeyState = "absent"
+	data.KeyCount = len(keys)
+	if len(keys) > 0 {
+		data.WorkspaceKeyState = "present"
+		for _, key := range keys {
+			if key.UserID != remote.ID || key.Name != keyName {
+				data.WorkspaceKeyState = "conflict"
+				break
+			}
+		}
+	}
+
+	data.ReceiptCount, err = acceptanceBWorkspaceReceiptCount(ctx, service, accountID, approval.Launch.WorkspaceID)
 	if err != nil {
 		data.ReadbackError = "ledger_authority_unavailable"
 		return data, errAcceptanceBAccountReconcileUnknown
 	}
-	if data.WorkspaceCount != 0 || data.LaunchCount != 0 || data.KeyCount != 0 || data.ReceiptCount != 0 {
+	data.WorkspaceReceiptState = "absent"
+	if data.ReceiptCount > 0 {
+		data.WorkspaceReceiptState = "present"
+	}
+
+	redeemCode := monthlyRedeemCode(monthlyEnvironment(), approval.Launch.OperationID)
+	data.WorkspaceDebitIdentitySHA256 = acceptanceBDigestParts(accountID, strconv.FormatInt(remote.ID, 10), approval.Launch.OperationID, approval.Launch.WorkspaceID, redeemCode)
+	history, err := service.FinancialBalanceHistoryByCodes(ctx, remote.ID, []string{redeemCode})
+	if err != nil {
+		data.ReadbackError = "workspace_debit_authority_unavailable"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	data.WorkspaceDebitState = "absent"
+	if debit, found := history[redeemCode]; found {
+		data.WorkspaceDebitState = "confirmed"
+		if len(history) != 1 || debit.Code != redeemCode || debit.Type != "balance" || debit.Status != "used" || debit.UsedBy == nil || *debit.UsedBy != remote.ID || debit.UsedAt == nil || debit.ValueUSDMicros >= 0 {
+			data.WorkspaceDebitState = "conflict"
+		}
+	} else if len(history) != 0 {
+		data.WorkspaceDebitState = "conflict"
+	}
+
+	if data.WorkspaceLaunchState != "absent" || data.WorkspaceState != "absent" || data.WorkspaceKeyState != "absent" ||
+		data.WorkspaceReceiptState != "absent" || data.WorkspaceDebitState != "absent" {
 		data.Status = "partial"
 		return data, nil
 	}
 	data.Status = "prepared"
 	return data, nil
+}
+
+func acceptanceBWorkspaceReceiptCount(ctx context.Context, service *controlplane.Service, accountID, workspaceID string) (int, error) {
+	cursor := ""
+	count := 0
+	for page := 0; page < acceptanceBAccountReconcileMaxPages; page++ {
+		result, err := service.BillingReceipts(ctx, clients.ReceiptQuery{AccountID: accountID, TypePrefix: "billing.", Cursor: cursor, Limit: 100})
+		if err != nil {
+			return 0, err
+		}
+		for _, receipt := range result.Receipts {
+			if receipt.Type == "billing.workspace_purchased.v1" && receipt.AccountID == accountID && receipt.WorkspaceID == workspaceID {
+				count++
+			}
+		}
+		if !result.HasMore {
+			return count, nil
+		}
+		if strings.TrimSpace(result.NextCursor) == "" || result.NextCursor == cursor {
+			return 0, errAcceptanceBAccountReconcileUnknown
+		}
+		cursor = result.NextCursor
+	}
+	return 0, errAcceptanceBAccountReconcileUnknown
 }
 
 func (app *controlPlaneServer) acceptanceBLocalGraph(ctx context.Context, accountID, userID, email string) (string, map[string]any, map[string]any, error) {
