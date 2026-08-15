@@ -1171,6 +1171,33 @@ func TestLocalDockerRuntimeUsesExactReadOnlySecretBindAndIdentityLabels(t *testi
 	}
 }
 
+func TestLocalDockerRuntimeCreateKeepsStartingHealthPendingUntilAuthoritativeReady(t *testing.T) {
+	provider, runner, ctx, store, input, compute, volume := localDockerRuntimeReplayFixture(t, 0)
+	runner.container.State.Health.Status = "starting"
+
+	runtime, err := provider.CreateWorkspaceRuntime(ctx, input, compute, volume)
+	if !errors.Is(err, ErrWorkspaceLaunchPending) || runtime.Ready || runtime.Status != "unready" {
+		t.Fatalf("starting runtime=%#v err=%v", runtime, err)
+	}
+	childID := providerMutationOperationID(
+		providerMutationJournalFromContext(ctx).parent, "local_docker_runtime_create", "workspace_runtime", localRuntimeID(input.WorkspaceID), localRuntimeName(input.WorkspaceID),
+	)
+	child, childErr := store.Get(context.Background(), childID)
+	if childErr != nil || child.Status != "succeeded" || runner.runCalls != 1 {
+		t.Fatalf("starting child=%#v err=%v runCalls=%d", child, childErr, runner.runCalls)
+	}
+
+	runner.container.State.Health.Status = "healthy"
+	runtime, err = provider.CreateWorkspaceRuntime(ctx, input, compute, volume)
+	if err != nil || !runtime.Ready || runtime.Status != "running" || runner.runCalls != 1 {
+		t.Fatalf("ready runtime=%#v err=%v runCalls=%d", runtime, err, runner.runCalls)
+	}
+	child, childErr = store.Get(context.Background(), childID)
+	if childErr != nil || child.Status != "succeeded" {
+		t.Fatalf("ready child=%#v err=%v", child, childErr)
+	}
+}
+
 func TestLocalDockerRuntimeStatusFailsClosedOnSecretIdentityOrMountDrift(t *testing.T) {
 	provider, runner, _, _, input, _, _ := localDockerRuntimeReplayFixture(t, 1)
 	if runtime, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err != nil || !runtime.Ready {

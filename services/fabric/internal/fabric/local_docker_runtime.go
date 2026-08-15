@@ -471,6 +471,9 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 	if completeErr := attempt.complete(ctx, resource.ProviderRequestID, resource, nil); completeErr != nil {
 		return WorkspaceRuntime{}, completeErr
 	}
+	if !resource.Ready {
+		return resource, ErrWorkspaceLaunchPending
+	}
 	return resource, nil
 }
 
