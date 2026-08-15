@@ -311,9 +311,9 @@ async function writeJSONAtomic(path, value) {
   await rename(temporary, path);
 }
 
-async function imageInspection(image) {
+async function dockerImageInspection(image, { pullIfMissing = false } = {}) {
   let inspected = await runProcess("docker", ["image", "inspect", image], { allowFailure: true });
-  if (inspected.code !== 0) {
+  if (inspected.code !== 0 && pullIfMissing) {
     await runProcess("docker", ["pull", image], { capture: false });
     inspected = await runProcess("docker", ["image", "inspect", image]);
   }
@@ -321,13 +321,30 @@ async function imageInspection(image) {
   if (!Array.isArray(values) || values.length !== 1 || !digestPattern.test(String(values[0]?.Id || ""))) {
     throw new Error("Docker image inspection did not return one immutable image ID");
   }
-  const inspection = values[0];
+  return values[0];
+}
+
+async function imageInspection(image) {
   if (!immutableImageReference(image)) throw new Error("qualified image input must be repository@sha256 digest");
+  const inspection = await dockerImageInspection(image, { pullIfMissing: true });
   const [repository, digest] = image.split("@");
   if (!Array.isArray(inspection.RepoDigests) || !inspection.RepoDigests.includes(`${repository}@${digest}`)) {
     throw new Error(`Docker RepoDigest does not match admitted image ${repository}`);
   }
   return inspection;
+}
+
+export function exactRepoDigestFromInspection(repository, inspection) {
+  const repoDigests = inspection?.RepoDigests;
+  if (!String(repository || "").trim() || /[@\s]/.test(repository) || !digestPattern.test(String(inspection?.Id || "")) ||
+    !Array.isArray(repoDigests) || repoDigests.length !== 1) {
+    throw new Error(`source-built image ${repository || "unknown"} has no unique registry manifest digest`);
+  }
+  const [actualRepository, digest, extra] = String(repoDigests[0]).split("@");
+  if (extra !== undefined || actualRepository !== repository || !digestPattern.test(String(digest || ""))) {
+    throw new Error(`source-built image ${repository} has no unique registry manifest digest`);
+  }
+  return `${actualRepository}@${digest}`;
 }
 
 export function localBuildProxyArgs() {
@@ -350,8 +367,10 @@ export function localBuildProxyArgs() {
 
 async function buildSourceImages(sourceSha, project, registryPort) {
   const registryContainer = `${project}-registry`;
-  const cloudTag = `127.0.0.1:${registryPort}/${project}-cloud:source`;
-  const workspaceTag = `127.0.0.1:${registryPort}/${project}-workspace:source`;
+  const cloudRepository = `127.0.0.1:${registryPort}/${project}-cloud`;
+  const workspaceRepository = `127.0.0.1:${registryPort}/${project}-workspace`;
+  const cloudTag = `${cloudRepository}:source`;
+  const workspaceTag = `${workspaceRepository}:source`;
   try {
     await runProcess("docker", ["run", "-d", "--name", registryContainer, "-p", `127.0.0.1:${registryPort}:5000`, "registry:2"]);
     const proxyArgs = localBuildProxyArgs();
@@ -362,15 +381,11 @@ async function buildSourceImages(sourceSha, project, registryPort) {
     ], { capture: false });
     await runProcess("docker", ["push", cloudTag], { capture: false });
     await runProcess("docker", ["push", workspaceTag], { capture: false });
-    const cloud = await imageInspection(cloudTag);
-    const workspace = await imageInspection(workspaceTag);
-    const exact = (tag, inspection) => {
-      const repository = tag.slice(0, tag.lastIndexOf(":"));
-      const digest = inspection.RepoDigests?.find((candidate) => candidate.startsWith(`${repository}@sha256:`));
-      if (!digest) throw new Error(`source-built image ${repository} has no registry manifest digest`);
-      return digest;
-    };
-    return { cloudImage: exact(cloudTag, cloud), workspaceImage: exact(workspaceTag, workspace), tags: [cloudTag, workspaceTag], registryContainer };
+    const cloudImage = exactRepoDigestFromInspection(cloudRepository, await dockerImageInspection(cloudTag));
+    const workspaceImage = exactRepoDigestFromInspection(workspaceRepository, await dockerImageInspection(workspaceTag));
+    await imageInspection(cloudImage);
+    await imageInspection(workspaceImage);
+    return { cloudImage, workspaceImage, tags: [cloudTag, workspaceTag], registryContainer };
   } catch (error) {
     for (const tag of [cloudTag, workspaceTag]) await runProcess("docker", ["image", "rm", tag], { allowFailure: true });
     await runProcess("docker", ["rm", "-f", registryContainer], { allowFailure: true });

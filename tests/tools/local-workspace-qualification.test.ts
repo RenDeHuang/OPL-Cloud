@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  exactRepoDigestFromInspection,
   immutableImageDigest,
   liveAuthorityAdjustmentReadback,
   localBuildProxyArgs,
@@ -24,6 +25,25 @@ const sha = "a".repeat(40);
 const cloudDigest = `sha256:${"b".repeat(64)}`;
 const workspaceDigest = `sha256:${"c".repeat(64)}`;
 const workspaceReference = `ghcr.io/example/workspace@${workspaceDigest}`;
+
+test("source image tag inspection hands off one exact immutable RepoDigest", () => {
+  const repository = "127.0.0.1:56287/opl-local-qualification-cloud";
+  const exact = `${repository}@${cloudDigest}`;
+  assert.equal(exactRepoDigestFromInspection(repository, {
+    Id: cloudDigest,
+    RepoDigests: [exact]
+  }), exact);
+
+  for (const [name, inspection] of Object.entries({
+    missing: { Id: cloudDigest, RepoDigests: [] },
+    "wrong repository": { Id: cloudDigest, RepoDigests: [`127.0.0.1:56287/other@${cloudDigest}`] },
+    mutable: { Id: cloudDigest, RepoDigests: [`${repository}:source`] },
+    duplicate: { Id: cloudDigest, RepoDigests: [exact, exact] },
+    "invalid image identity": { Id: "sha256:not-a-digest", RepoDigests: [exact] }
+  })) {
+    assert.throws(() => exactRepoDigestFromInspection(repository, inspection), /source-built image/, name);
+  }
+});
 
 function liveAuthorityHistoryFetch({ duplicate = false } = {}) {
   const requestedPages = [];
@@ -238,6 +258,11 @@ test("package exposes one local Workspace qualification command", async () => {
   assert.match(envExample, /^OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT=\/absolute\/path\/to\/opl-fabric-secrets$/m);
   const runner = await readFile(new URL("../../tools/local-workspace-qualification.ts", import.meta.url), "utf8");
   assert.match(runner, /OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT=\$\{fabricSecretRoot\}/);
+  assert.match(runner, /exactRepoDigestFromInspection\(cloudRepository, await dockerImageInspection\(cloudTag\)\)/);
+  assert.match(runner, /exactRepoDigestFromInspection\(workspaceRepository, await dockerImageInspection\(workspaceTag\)\)/);
+  assert.match(runner, /await imageInspection\(cloudImage\)/);
+  assert.match(runner, /await imageInspection\(workspaceImage\)/);
+  assert.doesNotMatch(runner, /imageInspection\((?:cloud|workspace)Tag\)/);
 });
 
 test("live authority configuration fails closed before Docker and writes a redacted receipt", async () => {
