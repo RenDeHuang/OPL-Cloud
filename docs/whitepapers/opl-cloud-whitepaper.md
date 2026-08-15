@@ -56,6 +56,16 @@ OPL Cloud 因此以五组用户矛盾为设计起点：
 
 用户真正面对的是 OPL App 或 OPL Workspace。两者都围绕项目、材料、任务、产物、审阅和下一步组织体验。Cloud 能力只在需要时进入这条工作链。
 
+从整个 OPL 生态看，用户日常维护的是 `OPL Base`、`OPL App` 和 `OPL Packages`；
+Cloud 是按需接入的在线产品层。Base 提供共同运行底座，App 提供统一工作台产品，
+Packages 提供专业能力，Cloud 再增加账号、协作、在线 Workspace、远端资源和治理。
+
+App 可以有不同界面实现，但产品只有一个。当前 AionUI Shell 与下一代
+DSH-derived Studio Shell 都服从同一份 App 产品合同和 Framework 状态/动作接口；切换
+界面不改变 Cloud 的账号、资源、账单和证据 authority。类似地，Framework 中名为
+Console 的运行投影不等于 OPL Cloud Console：前者帮助 App 显示运行状态，后者是本仓
+负责的账号和管理员产品。
+
 ```text
 用户工作面        OPL App / OPL Workspace
                         |

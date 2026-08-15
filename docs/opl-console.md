@@ -12,6 +12,14 @@ manages account onboarding, the account's Workspace collection, plans, balance
 and charge projections, quotas, budgets, approvals, and policy for Cloud-hosted
 or explicitly managed resources and Agent Services.
 
+This Cloud product is distinct from the Framework `Console` brand contribution.
+The Framework contribution only projects runtime/read-model facts inside the
+single Framework Cordis Host. It may provide typed client contributions for an
+App Shell to render, but it does not own Cloud accounts, policy, quotas,
+Workspace lifecycle, billing, Control Plane APIs, databases, or this product's
+release. `opl-aion-shell` and `opl-studio` are App GUI carriers, not Console
+authorities.
+
 Console is not the package manager, Serve service-state owner, resource
 executor, connector runtime, Ledger truth, or domain authority.
 
