@@ -556,19 +556,25 @@ func TestTencentOwnershipReplayResponseLossConvergesByGETOnly(t *testing.T) {
 
 func TestTencentOwnershipReplayConcurrentResumeHasOneWriter(t *testing.T) {
 	fixture := newTencentOwnershipReplayFixture(t, "concurrent")
-	fixture.reserveChild(t, "tencent_cvm_ownership_tag", fixture.allocation.InstanceID, "started")
+	childID := fixture.reserveChild(t, "tencent_cvm_ownership_tag", fixture.allocation.InstanceID, "started")
 	var truthCalls, tagCalls atomic.Int64
+	var nodeMutationCalls atomic.Int64
 	var cvmOwned atomic.Bool
-	readBarrier := make(chan struct{})
+	firstReadEntered := make(chan struct{})
+	secondReadEntered := make(chan struct{})
+	mutationCompleted := make(chan struct{})
+	staleCompletionReturned := make(chan struct{})
 	fixture.provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
 		switch request.Action {
 		case "compute_claim_truth":
 			call := truthCalls.Add(1)
-			if call <= 2 {
-				if call == 2 {
-					close(readBarrier)
-				}
-				<-readBarrier
+			switch call {
+			case 1:
+				close(firstReadEntered)
+				<-secondReadEntered
+			case 2:
+				close(secondReadEntered)
+				<-mutationCompleted
 			}
 			response := tencentTargetOwnedProofResponse(fixture.allocation, fixture.prepared)
 			if !cvmOwned.Load() {
@@ -578,6 +584,8 @@ func TestTencentOwnershipReplayConcurrentResumeHasOneWriter(t *testing.T) {
 		case "tag_compute_machine":
 			tagCalls.Add(1)
 			cvmOwned.Store(true)
+			close(mutationCompleted)
+			<-staleCompletionReturned
 			return provisionerResponse{OK: true, Status: "tagged", MutationCount: 1, MutationEvidence: &ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}}, nil
 		default:
 			t.Fatalf("unexpected action %q", request.Action)
@@ -586,20 +594,35 @@ func TestTencentOwnershipReplayConcurrentResumeHasOneWriter(t *testing.T) {
 	}
 	fixture.provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		if args[0] != "get" {
-			t.Fatalf("concurrent replay attempted node mutation: %#v", args)
+			nodeMutationCalls.Add(1)
+			return nil, errors.New("concurrent replay attempted node mutation")
 		}
 		return tencentOwnershipNodeReadback(fixture.allocation, fixture.ownership, true), nil
 	}
-	results := make(chan error, 2)
-	for range 2 {
-		go func() { results <- fixture.converge() }()
+	firstResult, secondResult := make(chan error, 1), make(chan error, 1)
+	go func() { firstResult <- fixture.converge() }()
+	<-firstReadEntered
+	go func() {
+		secondResult <- fixture.converge()
+		close(staleCompletionReturned)
+	}()
+	first, second := <-firstResult, <-secondResult
+	if first != nil || !errors.Is(second, ErrRuntimeOperationNotCurrent) {
+		t.Fatalf("concurrent mutation writer=%v stale reader=%v", first, second)
 	}
-	first, second := <-results, <-results
-	if (first == nil) == (second == nil) || first != nil && !errors.Is(first, ErrWorkspaceLaunchPending) || second != nil && !errors.Is(second, ErrWorkspaceLaunchPending) {
-		t.Fatalf("concurrent results first=%v second=%v", first, second)
+	if err := fixture.provider.readComputeMachineOwnership(context.Background(), fixture.allocation, fixture.prepared, fixture.ownership, true); err != nil {
+		t.Fatalf("authoritative final ownership: %v", err)
 	}
-	if tagCalls.Load() != 1 {
-		t.Fatalf("concurrent replay tag mutations=%d truth=%d", tagCalls.Load(), truthCalls.Load())
+	if tagCalls.Load() != 1 || nodeMutationCalls.Load() != 0 {
+		t.Fatalf("concurrent replay mutations tag=%d node=%d truth=%d", tagCalls.Load(), nodeMutationCalls.Load(), truthCalls.Load())
+	}
+	persisted, err := fixture.store.Get(context.Background(), childID)
+	binding, bindingOK := decodeProviderMutationBinding(persisted)
+	epoch, epochOK := decodeProviderMutationReplayEpoch(persisted)
+	if err != nil || persisted.Status != "succeeded" || persisted.ID != childID || persisted.OperationID != childID || persisted.IdempotencyKey != childID ||
+		!bindingOK || binding.Parent != fixture.parent || binding.FabricOperationID != childID || !epochOK || epoch.State != "succeeded" ||
+		epoch.ParentFabricOperationID != fixture.parent.FabricOperationID || epoch.ChildOperationID != childID || epoch.IdempotencyKey != childID {
+		t.Fatalf("concurrent final child=%#v binding=%#v/%v epoch=%#v/%v err=%v", persisted, binding, bindingOK, epoch, epochOK, err)
 	}
 }
 

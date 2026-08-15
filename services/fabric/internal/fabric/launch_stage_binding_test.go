@@ -151,6 +151,57 @@ func TestProviderMutationReplayEpochConvergesTerminalAndCannotReclaim(t *testing
 	}
 }
 
+func TestProviderMutationStalePreLeaseCompletionCannotOverwriteReplayEpoch(t *testing.T) {
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(testProvider{}, store)
+	now := time.Date(2026, 8, 15, 5, 30, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	parent := testWorkspaceLaunchBinding("storage", "ensure_storage", "launch-alpha:storage")
+	operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, now)
+	operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+	if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+		t.Fatal(err)
+	}
+	ctx := service.providerMutationContext(context.Background(), operation)
+	fresh, err := beginProviderMutation(ctx, "provider_storage_create", "storage_volume", "vol-alpha", "volume/vol-alpha")
+	if err != nil || fresh == nil || !fresh.Fresh {
+		t.Fatalf("fresh attempt=%#v err=%v", fresh, err)
+	}
+	stale, err := beginProviderMutation(ctx, "provider_storage_create", "storage_volume", "vol-alpha", "volume/vol-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	winner, err := beginProviderMutation(ctx, "provider_storage_create", "storage_volume", "vol-alpha", "volume/vol-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, claimErr := winner.claimReplay(ctx); claimErr != nil || !claimed {
+		t.Fatalf("winner claim=%v err=%v", claimed, claimErr)
+	}
+	if err := winner.markReplayDispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	volume := StorageVolume{ID: "vol-alpha", AccountID: parent.AccountID, WorkspaceID: parent.WorkspaceID, ProviderRequestID: "provider-storage-alpha"}
+	if err := stale.complete(ctx, volume.ProviderRequestID, volume, nil); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+		t.Fatalf("stale pre-lease completion err=%v, want %v", err, ErrRuntimeOperationNotCurrent)
+	}
+	persisted, err := store.Get(ctx, fresh.operation.ID)
+	epoch, epochOK := decodeProviderMutationReplayEpoch(persisted)
+	if err != nil || !epochOK || epoch.State != "awaiting_readback" || persisted.Status != "started" {
+		t.Fatalf("stale completion changed owner operation=%#v epoch=%#v/%v err=%v", persisted, epoch, epochOK, err)
+	}
+	if err := winner.complete(ctx, volume.ProviderRequestID, volume, nil); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err = store.Get(ctx, fresh.operation.ID)
+	epoch, epochOK = decodeProviderMutationReplayEpoch(persisted)
+	if err != nil || persisted.Status != "succeeded" || persisted.ID != fresh.operation.ID || persisted.OperationID != fresh.operation.OperationID ||
+		persisted.IdempotencyKey != fresh.operation.IdempotencyKey || !epochOK || epoch.State != "succeeded" ||
+		epoch.ChildOperationID != fresh.operation.ID || epoch.IdempotencyKey != fresh.operation.IdempotencyKey {
+		t.Fatalf("winner terminal operation=%#v epoch=%#v/%v err=%v", persisted, epoch, epochOK, err)
+	}
+}
+
 func TestProviderMutationReplayEpochRejectsStaleLeaseGeneration(t *testing.T) {
 	store := NewMemoryOperationStore()
 	service := NewServiceWithOperationStore(testProvider{}, store)

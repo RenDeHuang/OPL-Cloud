@@ -325,6 +325,13 @@ func (a *providerMutationAttempt) complete(ctx context.Context, providerRequestI
 	} else {
 		next.Status, next.ErrorCode = "failed", errorCode(mutationErr)
 	}
+	if !a.Fresh && a.operation.Status == "started" && mutationErr == nil {
+		converger, ok := a.journal.operations.(runtimeReadbackConverger)
+		if !ok {
+			return ErrRuntimeOperationNotCurrent
+		}
+		return converger.ConvergeRuntimeReadback(ctx, a.operation, next)
+	}
 	if !a.Fresh && a.operation.Status == "failed" {
 		if mutationErr != nil {
 			return nil
