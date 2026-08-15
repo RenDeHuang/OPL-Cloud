@@ -11,10 +11,42 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
+
+const qualificationWorkspaceDockerfilePath = "../../../../deploy/portable/qualification-workspace.Dockerfile"
+
+var exactDockerfileImagePattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
+
+func qualificationWorkspaceDockerfile(t *testing.T) string {
+	t.Helper()
+	body, err := os.ReadFile(qualificationWorkspaceDockerfilePath)
+	if err != nil {
+		t.Fatalf("read qualification Workspace Dockerfile: %v", err)
+	}
+	fromCount := 0
+	for _, line := range strings.Split(string(body), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !strings.EqualFold(fields[0], "FROM") {
+			continue
+		}
+		fromCount++
+		if len(fields) != 2 || !exactDockerfileImagePattern.MatchString(fields[1]) {
+			t.Fatalf("qualification Workspace Dockerfile FROM must use exact repository@sha256: %q", line)
+		}
+	}
+	if fromCount == 0 {
+		t.Fatal("qualification Workspace Dockerfile has no FROM instruction")
+	}
+	return qualificationWorkspaceDockerfilePath
+}
+
+func TestQualificationWorkspaceDockerfileUsesExactImageReferences(t *testing.T) {
+	qualificationWorkspaceDockerfile(t)
+}
 
 func localDockerSecretTestRoot(t *testing.T) string {
 	t.Helper()
@@ -115,6 +147,7 @@ type localDockerRuntimeReplayRunner struct {
 	containerVisibleOnRead int
 	containerReads         int
 	runCalls               int
+	secretArchive          []byte
 }
 
 func (r *localDockerRuntimeReplayRunner) Run(_ context.Context, _ []byte, args ...string) ([]byte, error) {
@@ -137,6 +170,8 @@ func (r *localDockerRuntimeReplayRunner) Run(_ context.Context, _ []byte, args .
 		return json.Marshal(dockerObjectInventoryRow{ID: r.container.ID, Names: strings.TrimPrefix(r.container.Name, "/")})
 	case len(args) == 3 && args[0] == "container" && args[1] == "inspect":
 		return json.Marshal([]dockerContainerInspect{r.container})
+	case len(args) == 4 && args[0] == "container" && args[1] == "cp":
+		return append([]byte(nil), r.secretArchive...), nil
 	case len(args) > 0 && args[0] == "run":
 		r.runCalls++
 		r.containerVisible = true
@@ -153,8 +188,12 @@ func localDockerReadyRuntimeContainer(t *testing.T, name, id, image string, labe
 		"Config":          map[string]any{"Image": image, "Labels": labels},
 		"State":           map[string]any{"Status": "running", "Running": true, "Health": map[string]any{"Status": "healthy"}},
 		"NetworkSettings": map[string]any{"Ports": map[string]any{"3000/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": "30123"}}}},
+		"HostConfig": map[string]any{"Mounts": []map[string]any{
+			{"Type": "volume", "Source": volumeName, "Target": "/data"},
+			{"Type": "bind", "Source": secretPath, "Target": "/run/secrets", "ReadOnly": true, "BindOptions": map[string]any{"Propagation": "rprivate"}},
+		}},
 		"Mounts": []map[string]any{
-			{"Type": "volume", "Name": volumeName, "Destination": "/data", "RW": true},
+			{"Type": "volume", "Name": volumeName, "Source": "/var/lib/docker/volumes/" + volumeName + "/_data", "Destination": "/data", "RW": true},
 			{"Type": "bind", "Source": secretPath, "Destination": "/run/secrets", "RW": false, "Propagation": "rprivate"},
 		},
 	})
@@ -191,17 +230,19 @@ func localDockerRuntimeReplayFixture(t *testing.T, visibleOnRead int) (*LocalDoc
 		labels[key] = value
 	}
 	secretPath := filepath.Join(root, input.GatewaySecretRef, localDockerGatewayVersionsDir, "sha256-"+digest)
+	metadata := localDockerGatewayMetadata{
+		AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: 7, SecretRef: input.GatewaySecretRef,
+		Fingerprint: "sha256:" + digest, Version: digest[:16],
+	}
 	runner := &localDockerRuntimeReplayRunner{
 		network:                dockerNetworkInspect{ID: "network-runtime", Name: localDockerName("opl-compute", compute.ID), Labels: localDockerLabels(accountID, workspaceID, compute.ID, compute.OperationID, "compute")},
 		volume:                 dockerVolumeInspect{Name: localDockerName("opl-storage", volume.ID), Labels: localDockerLabels(accountID, workspaceID, volume.ID, volume.OperationID, "storage")},
 		containerVisibleOnRead: visibleOnRead,
+		secretArchive:          validRuntimeSecretArchive(t, key, metadata),
 	}
 	runner.container = localDockerReadyRuntimeContainer(t, localRuntimeName(workspaceID), "container-runtime", input.ImageID, labels, runner.volume.Name, secretPath)
 	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root, RuntimeHost: "127.0.0.1"}, runner)
-	if err := provider.writeGatewaySecret(input.GatewaySecretRef, key, localDockerGatewayMetadata{
-		AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: 7, SecretRef: input.GatewaySecretRef,
-		Fingerprint: "sha256:" + digest, Version: digest[:16],
-	}); err != nil {
+	if err := provider.writeGatewaySecret(input.GatewaySecretRef, key, metadata); err != nil {
 		t.Fatal(err)
 	}
 	binding := WorkspaceLaunchStageBinding{
@@ -220,6 +261,7 @@ type localDockerDestroyRunner struct {
 	calls          [][]string
 	containers     map[string]dockerContainerInspect
 	volumes        map[string]dockerVolumeInspect
+	archives       map[string][]byte
 	containerRMErr map[string]error
 	volumeRMErr    map[string]error
 }
@@ -250,6 +292,13 @@ func (r *localDockerDestroyRunner) Run(_ context.Context, _ []byte, args ...stri
 			return nil, errors.New("container inventory drift")
 		}
 		return json.Marshal([]dockerContainerInspect{container})
+	case len(args) == 4 && args[0] == "container" && args[1] == "cp":
+		name := strings.TrimSuffix(args[2], ":"+localDockerRuntimeSecretMountPath+"/.")
+		archive, ok := r.archives[name]
+		if !ok {
+			return nil, errors.New("runtime Secret archive unavailable")
+		}
+		return append([]byte(nil), archive...), nil
 	case len(args) == 4 && args[0] == "container" && args[1] == "rm" && args[2] == "-f":
 		name := args[3]
 		if err := r.containerRMErr[name]; err != nil {
@@ -298,6 +347,29 @@ func localDockerDestroyRuntimeContainer(workspaceID string) dockerContainerInspe
 		"opl.image.ref":       container.Config.Image,
 	}
 	return container
+}
+
+func bindLocalDockerDestroyRuntimeSecret(t *testing.T, container dockerContainerInspect, root, accountID, workspaceID string, key []byte) (dockerContainerInspect, []byte) {
+	t.Helper()
+	digest := fmt.Sprintf("%x", sha256.Sum256(key))
+	metadata := localDockerGatewayMetadata{
+		AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: 1, SecretRef: gatewaySecretName(workspaceID),
+		Fingerprint: "sha256:" + digest, Version: digest[:16],
+	}
+	for key, value := range map[string]string{
+		"opl.account.id": metadata.AccountID, "opl.workspace.id": metadata.WorkspaceID, "opl.secret.ref": metadata.SecretRef,
+		"opl.secret.version": metadata.Version, "opl.secret.fingerprint": metadata.Fingerprint,
+	} {
+		container.Config.Labels[key] = value
+	}
+	secretPath := filepath.Join(root, metadata.SecretRef, localDockerGatewayVersionsDir, "sha256-"+digest)
+	hostMount := dockerHostMount{Type: "bind", Source: secretPath, Target: localDockerRuntimeSecretMountPath, ReadOnly: true}
+	hostMount.BindOptions.Propagation = "rprivate"
+	container.HostConfig.Mounts = []dockerHostMount{hostMount}
+	container.Mounts = []dockerRuntimeMount{{
+		Type: "bind", Source: "/host_mnt" + secretPath, Destination: localDockerRuntimeSecretMountPath, RW: false, Propagation: "rprivate",
+	}}
+	return container, validRuntimeSecretArchive(t, key, metadata)
 }
 
 func localDockerDestroySecretVolume(workspaceID string) dockerVolumeInspect {
@@ -509,11 +581,14 @@ func TestLocalDockerDestroyWorkspaceRuntimeDeletesExactSecretAndPreservesSibling
 	runtimeName := localRuntimeName(workspaceID)
 	runner := &localDockerDestroyRunner{containers: map[string]dockerContainerInspect{
 		runtimeName: localDockerDestroyRuntimeContainer(workspaceID), localRuntimeName(otherWorkspaceID): localDockerDestroyRuntimeContainer(otherWorkspaceID),
-	}, volumes: map[string]dockerVolumeInspect{}}
+	}, volumes: map[string]dockerVolumeInspect{}, archives: map[string][]byte{}}
 	root := localDockerSecretTestRoot(t)
 	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, runner)
 	secretRef := seedLocalDockerGatewaySecret(t, provider, "acct-alpha", workspaceID)
 	otherSecretRef := seedLocalDockerGatewaySecret(t, provider, "acct-beta", otherWorkspaceID)
+	runner.containers[runtimeName], runner.archives[runtimeName] = bindLocalDockerDestroyRuntimeSecret(
+		t, runner.containers[runtimeName], root, "acct-alpha", workspaceID, []byte("key-"+workspaceID),
+	)
 
 	runtime, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
 	if err != nil || runtime.Status != "destroyed" {
@@ -603,13 +678,9 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		t.Fatalf("docker daemon unavailable: %v: %s", err, output)
 	}
 
-	temp := t.TempDir()
-	dockerfile := "FROM alpine:3.20\nEXPOSE 3000\nHEALTHCHECK --interval=1s --timeout=1s --retries=20 CMD wget -q -O- http://127.0.0.1:3000/ || exit 1\nCMD [\"sh\",\"-c\",\"while true; do { printf 'HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok'; } | nc -l -p 3000; done\"]\n"
-	if err := os.WriteFile(filepath.Join(temp, "Dockerfile"), []byte(dockerfile), 0600); err != nil {
-		t.Fatal(err)
-	}
+	dockerfile := qualificationWorkspaceDockerfile(t)
 	tag := "opl-fabric-local-test:" + stableSuffix(t.Name(), time.Now().String())[:12]
-	build := exec.CommandContext(ctx, "docker", "build", "--quiet", "--tag", tag, temp)
+	build := exec.CommandContext(ctx, "docker", "build", "--quiet", "--file", dockerfile, "--tag", tag, filepath.Dir(dockerfile))
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build local runtime image: %v: %s", err, output)
 	}
@@ -721,6 +792,16 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		if err != nil || operation.Status != "succeeded" || operation.Action != action {
 			t.Fatalf("provider mutation %s=%#v err=%v", action, operation, err)
 		}
+	}
+	destroyed, err := provider.DestroyWorkspaceRuntime(ctx, workspaceID)
+	if err != nil || destroyed.Status != "destroyed" {
+		t.Fatalf("destroy runtime=%#v err=%v", destroyed, err)
+	}
+	if _, err := provider.WorkspaceRuntimeStatus(ctx, workspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("destroyed runtime readback err=%v", err)
+	}
+	if _, err := provider.WorkspaceRuntimeGatewaySecret(ctx, workspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("destroyed Secret readback err=%v", err)
 	}
 }
 
@@ -1045,5 +1126,31 @@ func TestLocalDockerDestroyWorkspaceRuntimeRejectsForeignRuntimeBeforeMutation(t
 	}
 	if _, err := os.Stat(filepath.Join(root, secretRef)); err != nil {
 		t.Fatalf("secret removed after foreign runtime: %v", err)
+	}
+}
+
+func TestLocalDockerDestroyWorkspaceRuntimeRejectsMountedSecretArchiveDriftBeforeMutation(t *testing.T) {
+	workspaceID, accountID := "ws-alpha", "acct-alpha"
+	runtimeName := localRuntimeName(workspaceID)
+	runner := &localDockerDestroyRunner{
+		containers: map[string]dockerContainerInspect{runtimeName: localDockerDestroyRuntimeContainer(workspaceID)},
+		volumes:    map[string]dockerVolumeInspect{}, archives: map[string][]byte{},
+	}
+	root := localDockerSecretTestRoot(t)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, runner)
+	secretRef := seedLocalDockerGatewaySecret(t, provider, accountID, workspaceID)
+	runner.containers[runtimeName], _ = bindLocalDockerDestroyRuntimeSecret(
+		t, runner.containers[runtimeName], root, accountID, workspaceID, []byte("key-"+workspaceID),
+	)
+	runner.archives[runtimeName] = []byte("invalid archive")
+
+	if runtime, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID); err == nil || runtime.Status == "destroyed" {
+		t.Fatalf("runtime=%#v err=%v", runtime, err)
+	}
+	if got := localDockerRemoveCalls(runner.calls, "container"); len(got) != 0 {
+		t.Fatalf("runtime removed after archive drift: %#v", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, secretRef)); err != nil {
+		t.Fatalf("Secret removed after archive drift: %v", err)
 	}
 }
