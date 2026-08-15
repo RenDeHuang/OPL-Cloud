@@ -308,6 +308,17 @@ for still-absent resources. Budget exhaustion records `unknown/manual_review`.
 Schema-v3 rows missing the new fields decode with zero authorization and cannot
 read or mutate until explicitly reviewed.
 
+Fresh post-mutation typed `pending` uses a distinct system continuation record,
+not the operator Resume record. The mutation's mandatory owner read persists
+`PendingReadbacks=1`, a zero-mutation/zero-replay authorization, and an exact
+account/Launch/Workspace/stage/idempotency/attempt/version binding in one CAS.
+At most two subsequent reads are allowed. Before each GET, Control Plane claims
+and increments the exact ordinal by CAS; a loser stops before GET, and a crashed
+claim is never refunded or reissued. Ready consumes the authorization and
+advances, pending may claim only a remaining slot, and unknown/conflict/error or
+exact exhaustion records `unknown/manual_review`. A schema-v3 row without the
+new authorization and claim maps is explicitly zero-budget.
+
 Fabric's child transport claim is a local replay epoch, not Control Plane
 operator authorization and not a second business attempt budget. It binds the
 parent operation, exact child identity, original idempotency key, and lease

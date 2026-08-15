@@ -152,11 +152,23 @@ schemas, workflows, and focused tests.
   creates a second launch, debit, Key, resource, Runtime, or receipt.
 - External writes are reserved before execution. A reserved or unknown result
   is reconciled through authoritative readback and is never blindly reissued.
+- The exact first owner read after a fresh stage mutation is mandatory. If and
+  only if it returns typed `pending`, Control Plane may atomically persist a
+  system continuation authorization in the same operation CAS. It binds the
+  account, Launch, Workspace, stage, original idempotency key, attempt, and
+  operation version; has zero mutation and replay budget; and authorizes only a
+  finite number of additional owner reads. Each read slot is claimed by CAS
+  before the owner GET, so a concurrent loser performs no GET and a crashed
+  claim is consumed rather than refunded or replayed. The mandatory post-write
+  read is count one; two additional claims bound post-write owner reads at
+  three. An expired crash claim must be marked consumed before a distinct
+  remaining slot is claimed and can never be reissued under its old ordinal.
 - Each stage keeps `Max=1`; recovery never resets `Attempted` or raises `Max`.
   A separately persisted idempotent replay authorization may reuse only the
-  original stage key after fresh owner-authoritative `absent` evidence. A
-  separately persisted continuation-read budget may consume only typed owner
-  `pending` evidence. It is operator authorization, not a polling heuristic.
+  original stage key after fresh owner-authoritative `absent` evidence. An
+  operator continuation-read authorization may consume only typed owner
+  `pending` evidence and remains distinct from the fresh system authorization.
+  Neither path is an unbounded poll or provider-failure heuristic.
   Exhaustion becomes `unknown/manual_review`; it never proves absence or permits
   another mutation.
 - Recovery is an authorization path for the original Launch, not a second
@@ -164,9 +176,10 @@ schemas, workflows, and focused tests.
   authorization. The authorization binds the launch ID, current CAS version,
   current stage, independent mutation/replay/read budgets, the server-bound
   readback baseline, reviewer, timestamp, and reason; it is persisted by Control
-  Plane CAS before the same Reconciler can continue. Legacy schema-v3 rows that
-  lack replay/read fields receive an explicit zero budget and no invented owner
-  fact.
+  Plane CAS before the same Reconciler can continue. It never impersonates or
+  widens the fresh system authorization. Legacy schema-v3 rows that lack the
+  explicit fresh or operator authorization fields receive zero budget and no
+  invented owner fact.
 - Recovery owns no business stage, reducer, provider/resource identity, or
   Fabric/provider mutation. Console, workflow, review, and Ledger input cannot
   provide or rewrite a resource ID, reset a budget, create a successor Launch,

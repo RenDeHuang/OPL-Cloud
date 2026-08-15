@@ -11,7 +11,7 @@ test("Control Plane owns the launch identity and recovery authorization", async 
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
   assert.equal(contract.owner, "services/control-plane");
-  assert.equal(contract.schemaVersion, 3);
+  assert.equal(contract.schemaVersion, 4);
   assert.equal(contract.launchOperation.action, "workspace.launch.v2");
   assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
@@ -32,7 +32,8 @@ test("Control Plane owns the launch identity and recovery authorization", async 
     statusField: "status",
     durableResultControlFields: [
       "schemaVersion", "version", "stage", "attempts", "observations", "consumedResumeAuthorizations",
-      "resumeAuthorization", "resumeAuthorizationConsumedAt", "idempotentReplayClaims"
+      "resumeAuthorization", "resumeAuthorizationConsumedAt", "idempotentReplayClaims",
+      "freshContinuationAuthorizations", "continuationReadClaims"
     ],
     forbiddenResultFields: ["phase", "currentDecision"],
     cas: "exact_prior_result_and_launch_identity_single_winner"
@@ -52,6 +53,37 @@ test("Control Plane owns the launch identity and recovery authorization", async 
       "increment_attempted_and_set_idempotency_key", "persist_exact_result_cas", "invoke_stage_mutation"
     ],
     forbiddenLegacyFields: ["ChargeAttempted"]
+  });
+  assert.deepEqual(contract.stageDecision.freshTypedPendingContinuation, {
+    authority: "services/control-plane",
+    authorizationClass: "fresh_typed_pending_system",
+    trigger: "same_CAS_after_first_stage_mutation_exact_owner_typed_pending",
+    authorizationFields: [
+      "schemaVersion", "authorizationId", "authorizationClass", "accountId", "operationId", "workspaceId", "stage",
+      "idempotencyKey", "attempt", "operationVersion", "mutationBudget", "idempotentReplayBudget",
+      "authoritativeReadBudget", "readbacksAtAuthorization", "status", "consumedAt"
+    ],
+    bindingFields: ["accountId", "operationId", "workspaceId", "stage", "idempotencyKey", "attempt", "operationVersion"],
+    mutationBudget: 0,
+    idempotentReplayBudget: 0,
+    mandatoryPostMutationReadbacks: 1,
+    readbacksAtAuthorization: 1,
+    authoritativeReadBudget: 2,
+    maximumPostMutationOwnerReadbacks: 3,
+    readClaimFields: [
+      "schemaVersion", "authorizationId", "stage", "idempotencyKey", "readback", "status", "leaseExpiresAt", "completedAt"
+    ],
+    readClaimCAS: "increment_and_persist_exact_result_before_owner_GET_single_winner",
+    concurrentLoser: "stop_before_owner_GET",
+    claimCrash: "claimed_slot_is_consumed_and_never_refunded_or_reissued",
+    claimExpiry: "expire_consumed_slot_before_claiming_a_distinct_remaining_slot_without_reissuing_the_expired_readback",
+    ready: "confirm_exact_attempt_consume_authorization_and_advance_same_operation",
+    pending: "complete_claim_and_authorize_next_read_only_below_exact_budget",
+    budgetExhaustion: "unknown_manual_review_without_absence_or_mutation",
+    unknownConflictError: "fail_closed_without_new_mutation",
+    legacyV3MissingAuthorizationAndClaimFields:
+      "explicit_zero_system_authorization_and_zero_read_claim_compatibility_that_creates_no_external_fact_read_or_mutation",
+    forbidden: ["operator_resume_impersonation", "attempt_or_max_increase", "second_mutation", "background_timer_or_poll", "unbounded_poll", "heuristic_ready"]
   });
   assert.deepEqual(contract.recovery, {
     authority: "services/control-plane",

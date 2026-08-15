@@ -40,7 +40,7 @@ test("current launch and settlement facts have four focused owners", async () =>
 test("Control Plane durable launch chain keeps preflight outside mutation stages", async () => {
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
-  assert.equal(contract.schemaVersion, 3);
+  assert.equal(contract.schemaVersion, 4);
   assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
     "launchOperationId", "accountId", "ownerUserId", "workspaceId", "requestHash"
@@ -67,7 +67,8 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
     statusField: "status",
     durableResultControlFields: [
       "schemaVersion", "version", "stage", "attempts", "observations", "consumedResumeAuthorizations",
-      "resumeAuthorization", "resumeAuthorizationConsumedAt", "idempotentReplayClaims"
+      "resumeAuthorization", "resumeAuthorizationConsumedAt", "idempotentReplayClaims",
+      "freshContinuationAuthorizations", "continuationReadClaims"
     ],
     forbiddenResultFields: ["phase", "currentDecision"],
     cas: "exact_prior_result_and_launch_identity_single_winner"
@@ -78,6 +79,23 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
   assert.equal(contract.stageDecision.attemptPersistence.maxPerStage, 1);
   assert.deepEqual(contract.stageDecision.attemptPersistence.forbiddenLegacyFields, ["ChargeAttempted"]);
   assert.equal(contract.stageDecision.fabricOperationBinding, "opl-cloud-fabric-launch-binding-contract.json");
+  assert.equal(contract.stageDecision.freshTypedPendingContinuation.authorizationClass, "fresh_typed_pending_system");
+  assert.equal(contract.stageDecision.freshTypedPendingContinuation.trigger,
+    "same_CAS_after_first_stage_mutation_exact_owner_typed_pending");
+  assert.deepEqual(contract.stageDecision.freshTypedPendingContinuation.bindingFields,
+    ["accountId", "operationId", "workspaceId", "stage", "idempotencyKey", "attempt", "operationVersion"]);
+  assert.equal(contract.stageDecision.freshTypedPendingContinuation.mutationBudget, 0);
+  assert.equal(contract.stageDecision.freshTypedPendingContinuation.idempotentReplayBudget, 0);
+  assert.equal(contract.stageDecision.freshTypedPendingContinuation.mandatoryPostMutationReadbacks, 1);
+  assert.equal(contract.stageDecision.freshTypedPendingContinuation.readbacksAtAuthorization, 1);
+  assert.equal(contract.stageDecision.freshTypedPendingContinuation.authoritativeReadBudget, 2);
+  assert.equal(contract.stageDecision.freshTypedPendingContinuation.maximumPostMutationOwnerReadbacks, 3);
+  assert.match(contract.stageDecision.freshTypedPendingContinuation.readClaimCAS, /before_owner_GET/);
+  assert.equal(contract.stageDecision.freshTypedPendingContinuation.concurrentLoser, "stop_before_owner_GET");
+  assert.match(contract.stageDecision.freshTypedPendingContinuation.claimCrash, /never_refunded_or_reissued/);
+  assert.match(contract.stageDecision.freshTypedPendingContinuation.claimExpiry, /distinct_remaining_slot/);
+  assert.match(contract.stageDecision.freshTypedPendingContinuation.legacyV3MissingAuthorizationAndClaimFields,
+    /zero_system_authorization_and_zero_read_claim/);
   assert.equal(contract.recovery.route, "POST /api/operator/workspace-launches/{operationId}/resume");
   assert.deepEqual(contract.recovery.requestFields, [
     "launchVersion", "authorizedStage", "reason", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"

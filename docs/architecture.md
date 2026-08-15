@@ -354,6 +354,19 @@ Launch, or call a provider directly. The exact public binding shape is admitted
 only with a real caller, source implementation in both owners, and focused
 tests; this architecture does not freeze a speculative universal JSON contract.
 
+Fresh mutation continuation is a separate Control Plane system authorization,
+never an operator Resume authorization. It exists only when the mandatory first
+post-mutation owner read returns exact typed `pending`, and the same operation
+CAS binds account, Launch, Workspace, stage, original idempotency key, attempt,
+and operation version with zero mutation and replay budget. The mandatory read
+is count one and only two additional owner reads may be claimed. Each claim is
+persisted before its GET; concurrent CAS losers perform no GET, and a crashed
+claim consumes its ordinal permanently. `ready` advances the same Launch,
+`pending` consumes the finite budget, and unknown, conflict, error, or exact
+exhaustion enters `unknown/manual_review` without another external mutation.
+Legacy schema-v3 rows without these explicit authorization and claim fields
+have zero system continuation budget.
+
 ## Modularity And Simplification Boundary
 
 Each implementation module is paid for by a current product responsibility,

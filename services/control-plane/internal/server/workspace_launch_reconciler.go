@@ -15,6 +15,10 @@ const workspaceLaunchReconcileSchemaVersion = 3
 const workspaceLaunchIdempotentReplayLease = 30 * time.Second
 const workspaceLaunchAuthoritativeReadBudget = 3
 const workspaceLaunchLegacyV3AuthoritativeReadBudget = 0
+const workspaceLaunchFreshContinuationSchemaVersion = 1
+const workspaceLaunchFreshContinuationAuthorizationClass = "fresh_typed_pending_system"
+const workspaceLaunchFreshContinuationAdditionalReadBudget = 2
+const workspaceLaunchFreshContinuationReadClaimLease = 30 * time.Second
 
 const (
 	workspaceLaunchStageAbsent  = "absent"
@@ -175,21 +179,53 @@ type workspaceLaunchIdempotentReplayClaim struct {
 	CompletedAt     string `json:"completedAt,omitempty"`
 }
 
+type workspaceLaunchFreshContinuationAuthorization struct {
+	SchemaVersion            int    `json:"schemaVersion"`
+	AuthorizationID          string `json:"authorizationId"`
+	AuthorizationClass       string `json:"authorizationClass"`
+	AccountID                string `json:"accountId"`
+	OperationID              string `json:"operationId"`
+	WorkspaceID              string `json:"workspaceId"`
+	Stage                    string `json:"stage"`
+	IdempotencyKey           string `json:"idempotencyKey"`
+	Attempt                  int    `json:"attempt"`
+	OperationVersion         int    `json:"operationVersion"`
+	MutationBudget           int    `json:"mutationBudget"`
+	IdempotentReplayBudget   int    `json:"idempotentReplayBudget"`
+	AuthoritativeReadBudget  int    `json:"authoritativeReadBudget"`
+	ReadbacksAtAuthorization int    `json:"readbacksAtAuthorization"`
+	Status                   string `json:"status"`
+	ConsumedAt               string `json:"consumedAt,omitempty"`
+}
+
+type workspaceLaunchContinuationReadClaim struct {
+	SchemaVersion   int    `json:"schemaVersion"`
+	AuthorizationID string `json:"authorizationId"`
+	Stage           string `json:"stage"`
+	IdempotencyKey  string `json:"idempotencyKey"`
+	Readback        int    `json:"readback"`
+	Status          string `json:"status"`
+	LeaseExpiresAt  string `json:"leaseExpiresAt,omitempty"`
+	CompletedAt     string `json:"completedAt,omitempty"`
+}
+
 type workspaceLaunchReconcileOperation struct {
-	ID                            string                                          `json:"-"`
-	Status                        string                                          `json:"-"`
-	CreatedAt                     string                                          `json:"-"`
-	PersistedResult               string                                          `json:"-"`
-	SchemaVersion                 int                                             `json:"schemaVersion"`
-	Version                       int                                             `json:"version"`
-	Stage                         string                                          `json:"stage"`
-	Attempts                      map[string]workspaceLaunchStageAttempt          `json:"attempts"`
-	Observations                  map[string]workspaceLaunchStageObservation      `json:"observations,omitempty"`
-	ConsumedResumeAuthorizations  []workspaceLaunchConsumedResumeAuthorization    `json:"consumedResumeAuthorizations,omitempty"`
-	ResumeAuthorization           *workspaceLaunchResumeAuthorization             `json:"resumeAuthorization,omitempty"`
-	ResumeAuthorizationConsumedAt string                                          `json:"resumeAuthorizationConsumedAt,omitempty"`
-	IdempotentReplayClaims        map[string]workspaceLaunchIdempotentReplayClaim `json:"idempotentReplayClaims,omitempty"`
-	raw                           map[string]json.RawMessage
+	ID                              string                                                   `json:"-"`
+	Status                          string                                                   `json:"-"`
+	CreatedAt                       string                                                   `json:"-"`
+	PersistedResult                 string                                                   `json:"-"`
+	SchemaVersion                   int                                                      `json:"schemaVersion"`
+	Version                         int                                                      `json:"version"`
+	Stage                           string                                                   `json:"stage"`
+	Attempts                        map[string]workspaceLaunchStageAttempt                   `json:"attempts"`
+	Observations                    map[string]workspaceLaunchStageObservation               `json:"observations,omitempty"`
+	ConsumedResumeAuthorizations    []workspaceLaunchConsumedResumeAuthorization             `json:"consumedResumeAuthorizations,omitempty"`
+	ResumeAuthorization             *workspaceLaunchResumeAuthorization                      `json:"resumeAuthorization,omitempty"`
+	ResumeAuthorizationConsumedAt   string                                                   `json:"resumeAuthorizationConsumedAt,omitempty"`
+	IdempotentReplayClaims          map[string]workspaceLaunchIdempotentReplayClaim          `json:"idempotentReplayClaims,omitempty"`
+	FreshContinuationAuthorizations map[string]workspaceLaunchFreshContinuationAuthorization `json:"freshContinuationAuthorizations,omitempty"`
+	ContinuationReadClaims          map[string]workspaceLaunchContinuationReadClaim          `json:"continuationReadClaims,omitempty"`
+	raw                             map[string]json.RawMessage
 }
 
 type workspaceLaunchReconcileCreate struct {
@@ -306,6 +342,9 @@ func (r *WorkspaceLaunchReconciler) Reconcile(ctx context.Context, operationID s
 		return operation, nil
 	}
 	attempt := operation.Attempts[operation.Stage]
+	if authorization, ok := operation.activeFreshContinuationAuthorization(); ok {
+		return r.continueFreshTypedPending(ctx, operation, attempt, authorization)
+	}
 	if attempt.Status == "reserved" && operation.Observations[operation.Stage].State == workspaceLaunchStagePending &&
 		!workspaceLaunchContinuationReadAuthorized(operation, attempt) {
 		operation.Status = "manual_review"
@@ -400,6 +439,113 @@ func (r *WorkspaceLaunchReconciler) Reconcile(ctx context.Context, operationID s
 		return workspaceLaunchReconcileOperation{}, err
 	}
 	return r.mutateReservedStage(ctx, reserved)
+}
+
+func (r *WorkspaceLaunchReconciler) continueFreshTypedPending(
+	ctx context.Context,
+	operation workspaceLaunchReconcileOperation,
+	attempt workspaceLaunchStageAttempt,
+	authorization workspaceLaunchFreshContinuationAuthorization,
+) (workspaceLaunchReconcileOperation, error) {
+	now := r.clockNow()
+	for key, claim := range operation.ContinuationReadClaims {
+		if claim.AuthorizationID != authorization.AuthorizationID || claim.Status != "claimed" {
+			continue
+		}
+		lease, err := time.Parse(time.RFC3339Nano, claim.LeaseExpiresAt)
+		if err != nil {
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
+		if lease.After(now) {
+			return operation, nil
+		}
+		claim.Status, claim.LeaseExpiresAt, claim.CompletedAt = "expired", "", now.Format(time.RFC3339Nano)
+		operation.ContinuationReadClaims[key] = claim
+	}
+	if attempt.PendingReadbacks >= attempt.MaxPendingReadbacks {
+		return r.parkFreshTypedPending(ctx, operation, attempt, authorization, "")
+	}
+
+	attempt.PendingReadbacks++
+	claimKey := workspaceLaunchFreshContinuationClaimKey(authorization.AuthorizationID, attempt.PendingReadbacks)
+	if _, exists := operation.ContinuationReadClaims[claimKey]; exists {
+		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	}
+	claim := workspaceLaunchContinuationReadClaim{
+		SchemaVersion:   workspaceLaunchFreshContinuationSchemaVersion,
+		AuthorizationID: authorization.AuthorizationID,
+		Stage:           operation.Stage, IdempotencyKey: attempt.IdempotencyKey, Readback: attempt.PendingReadbacks,
+		Status: "claimed", LeaseExpiresAt: now.Add(workspaceLaunchFreshContinuationReadClaimLease).Format(time.RFC3339Nano),
+	}
+	operation.Attempts[operation.Stage] = attempt
+	operation.ContinuationReadClaims[claimKey] = claim
+	claimed, err := r.persist(ctx, operation)
+	if err != nil {
+		return workspaceLaunchReconcileOperation{}, err
+	}
+
+	observation, readErr := r.adapter.ReadStage(ctx, claimed)
+	if readErr != nil {
+		observation = workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}
+	}
+	claim = claimed.ContinuationReadClaims[claimKey]
+	claim.LeaseExpiresAt, claim.CompletedAt = "", r.clockNow().Format(time.RFC3339Nano)
+	claimed.ContinuationReadClaims[claimKey] = claim
+	switch observation.State {
+	case workspaceLaunchStageReady:
+		reduced, reduceErr := reduceWorkspaceLaunchStageObservation(&claimed, observation)
+		if reduceErr != nil {
+			return workspaceLaunchReconcileOperation{}, reduceErr
+		}
+		claim.Status = "ready"
+		claimed.ContinuationReadClaims[claimKey] = claim
+		attempt = claimed.Attempts[claimed.Stage]
+		attempt.Confirmed, attempt.Unknown, attempt.Status = 1, 0, "confirmed"
+		claimed.Attempts[claimed.Stage] = attempt
+		claimed.Observations[claimed.Stage] = reduced
+		authorization.Status, authorization.ConsumedAt = "consumed", claim.CompletedAt
+		claimed.FreshContinuationAuthorizations[claimed.Stage] = authorization
+		claimed.advance()
+		return r.persist(ctx, claimed)
+	case workspaceLaunchStagePending:
+		claim.Status = "pending"
+		claimed.ContinuationReadClaims[claimKey] = claim
+		attempt = claimed.Attempts[claimed.Stage]
+		if attempt.PendingReadbacks >= attempt.MaxPendingReadbacks {
+			return r.parkFreshTypedPending(ctx, claimed, attempt, authorization, claimKey)
+		}
+		claimed.Observations[claimed.Stage] = workspaceLaunchStageObservation{State: workspaceLaunchStagePending}
+		return r.persist(ctx, claimed)
+	case workspaceLaunchStageAbsent, workspaceLaunchStageUnknown:
+		claim.Status = "failed"
+		claimed.ContinuationReadClaims[claimKey] = claim
+		return r.parkFreshTypedPending(ctx, claimed, claimed.Attempts[claimed.Stage], authorization, claimKey)
+	default:
+		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	}
+}
+
+func (r *WorkspaceLaunchReconciler) parkFreshTypedPending(
+	ctx context.Context,
+	operation workspaceLaunchReconcileOperation,
+	attempt workspaceLaunchStageAttempt,
+	authorization workspaceLaunchFreshContinuationAuthorization,
+	claimKey string,
+) (workspaceLaunchReconcileOperation, error) {
+	if claimKey != "" {
+		claim := operation.ContinuationReadClaims[claimKey]
+		if claim.Status == "claimed" {
+			claim.Status, claim.LeaseExpiresAt, claim.CompletedAt = "failed", "", r.clockNow().Format(time.RFC3339Nano)
+			operation.ContinuationReadClaims[claimKey] = claim
+		}
+	}
+	attempt.Unknown, attempt.Status = 1, "unknown"
+	operation.Attempts[operation.Stage] = attempt
+	operation.Observations[operation.Stage] = workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}
+	authorization.Status, authorization.ConsumedAt = "failed", r.clockNow().Format(time.RFC3339Nano)
+	operation.FreshContinuationAuthorizations[operation.Stage] = authorization
+	operation.Status = "manual_review"
+	return r.persist(ctx, operation)
 }
 
 func (r *WorkspaceLaunchReconciler) replayReservedStage(ctx context.Context, operation workspaceLaunchReconcileOperation, attempt workspaceLaunchStageAttempt) (workspaceLaunchReconcileOperation, error) {
@@ -521,8 +667,22 @@ func (r *WorkspaceLaunchReconciler) mutateReservedStage(ctx context.Context, res
 		if _, replay := reserved.IdempotentReplayClaims[reserved.Stage]; replay {
 			return r.waitClaimedReplay(ctx, reserved)
 		}
+		attempt.PendingReadbacks = 1
+		attempt.MaxPendingReadbacks = workspaceLaunchAuthoritativeReadBudget
+		reserved.Attempts[reserved.Stage] = attempt
+		authorization := workspaceLaunchFreshContinuationAuthorization{
+			SchemaVersion:      workspaceLaunchFreshContinuationSchemaVersion,
+			AuthorizationID:    workspaceLaunchFreshContinuationAuthorizationID(reserved, attempt, reserved.Version+1),
+			AuthorizationClass: workspaceLaunchFreshContinuationAuthorizationClass,
+			AccountID:          reserved.stringFact("accountId"), OperationID: reserved.ID, WorkspaceID: reserved.stringFact("workspaceId"),
+			Stage: reserved.Stage, IdempotencyKey: attempt.IdempotencyKey, Attempt: attempt.Attempted, OperationVersion: reserved.Version + 1,
+			MutationBudget: 0, IdempotentReplayBudget: 0,
+			AuthoritativeReadBudget: workspaceLaunchFreshContinuationAdditionalReadBudget, ReadbacksAtAuthorization: 1, Status: "active",
+		}
+		reserved.FreshContinuationAuthorizations[reserved.Stage] = authorization
+		reserved.consumeResumeAuthorization(r.clockNow())
 		reserved.Observations[reserved.Stage] = workspaceLaunchStageObservation{State: workspaceLaunchStagePending}
-		reserved.Status = "manual_review"
+		reserved.Status = "pending"
 		return r.persist(ctx, reserved)
 	}
 	reserved.Observations[reserved.Stage] = workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}
@@ -558,6 +718,20 @@ func workspaceLaunchContinuationReadAuthorized(operation workspaceLaunchReconcil
 		authorization.ReadbacksAtAuthorization >= 0 && authorization.ReadbacksAtAuthorization <= attempt.PendingReadbacks &&
 		authorization.ReadbacksAtAuthorization+authorization.AuthoritativeReadBudget == attempt.MaxPendingReadbacks &&
 		attempt.PendingReadbacks < attempt.MaxPendingReadbacks
+}
+
+func workspaceLaunchFreshContinuationAuthorizationID(operation workspaceLaunchReconcileOperation, attempt workspaceLaunchStageAttempt, operationVersion int) string {
+	return operation.ID + ":" + operation.stringFact("accountId") + ":" + operation.stringFact("workspaceId") + ":" + operation.Stage + ":" +
+		attempt.IdempotencyKey + ":fresh-typed-pending:" + strconv.Itoa(attempt.Attempted) + ":version:" + strconv.Itoa(operationVersion)
+}
+
+func workspaceLaunchFreshContinuationClaimKey(authorizationID string, readback int) string {
+	return authorizationID + ":readback:" + strconv.Itoa(readback)
+}
+
+func (operation workspaceLaunchReconcileOperation) activeFreshContinuationAuthorization() (workspaceLaunchFreshContinuationAuthorization, bool) {
+	authorization, ok := operation.FreshContinuationAuthorizations[operation.Stage]
+	return authorization, ok && authorization.Status == "active"
 }
 
 func workspaceLaunchStageIdempotencyKey(operation workspaceLaunchReconcileOperation, attempt int) string {
@@ -772,6 +946,7 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 		ID:     firstNonEmpty(stringValue(row["operationId"]), stringValue(row["id"])),
 		Status: stringValue(row["status"]), CreatedAt: stringValue(row["createdAt"]), PersistedResult: result, raw: raw,
 		Attempts: map[string]workspaceLaunchStageAttempt{}, Observations: map[string]workspaceLaunchStageObservation{}, IdempotentReplayClaims: map[string]workspaceLaunchIdempotentReplayClaim{},
+		FreshContinuationAuthorizations: map[string]workspaceLaunchFreshContinuationAuthorization{}, ContinuationReadClaims: map[string]workspaceLaunchContinuationReadClaim{},
 	}
 	if json.Unmarshal(raw["schemaVersion"], &operation.SchemaVersion) != nil || operation.SchemaVersion != workspaceLaunchReconcileSchemaVersion ||
 		json.Unmarshal(raw["version"], &operation.Version) != nil || operation.Version <= 0 ||
@@ -810,6 +985,12 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 	}
 	if value := raw["idempotentReplayClaims"]; len(value) > 0 && json.Unmarshal(value, &operation.IdempotentReplayClaims) != nil {
+		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	}
+	if value := raw["freshContinuationAuthorizations"]; len(value) > 0 && json.Unmarshal(value, &operation.FreshContinuationAuthorizations) != nil {
+		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	}
+	if value := raw["continuationReadClaims"]; len(value) > 0 && json.Unmarshal(value, &operation.ContinuationReadClaims) != nil {
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 	}
 	if operation.ResumeAuthorization != nil && !validWorkspaceLaunchResumeAuthorization(*operation.ResumeAuthorization) {
@@ -870,6 +1051,78 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 		}
 	}
+	freshAuthorizationsByID := make(map[string]workspaceLaunchFreshContinuationAuthorization, len(operation.FreshContinuationAuthorizations))
+	for stage, authorization := range operation.FreshContinuationAuthorizations {
+		attempt, exists := operation.Attempts[stage]
+		boundOperation := operationWithStage(operation, stage)
+		if !exists || stage != authorization.Stage || !workspaceLaunchReconcileStageValid(stage) || stage == "succeeded" ||
+			authorization.SchemaVersion != workspaceLaunchFreshContinuationSchemaVersion || authorization.AuthorizationClass != workspaceLaunchFreshContinuationAuthorizationClass ||
+			authorization.AuthorizationID != workspaceLaunchFreshContinuationAuthorizationID(boundOperation, attempt, authorization.OperationVersion) ||
+			authorization.AccountID != operation.stringFact("accountId") || authorization.OperationID != operation.ID || authorization.WorkspaceID != operation.stringFact("workspaceId") ||
+			authorization.IdempotencyKey != workspaceLaunchStageIdempotencyKey(boundOperation, 1) || authorization.Attempt != 1 ||
+			authorization.OperationVersion <= 0 || authorization.OperationVersion > operation.Version || authorization.MutationBudget != 0 ||
+			authorization.IdempotentReplayBudget != 0 || authorization.AuthoritativeReadBudget != workspaceLaunchFreshContinuationAdditionalReadBudget ||
+			authorization.ReadbacksAtAuthorization != 1 || attempt.Attempted != 1 || attempt.Max != 1 ||
+			attempt.MaxPendingReadbacks != workspaceLaunchAuthoritativeReadBudget || attempt.PendingReadbacks < authorization.ReadbacksAtAuthorization {
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
+		if _, duplicate := freshAuthorizationsByID[authorization.AuthorizationID]; duplicate {
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
+		freshAuthorizationsByID[authorization.AuthorizationID] = authorization
+		switch authorization.Status {
+		case "active":
+			if authorization.ConsumedAt != "" || operation.Stage != stage || operation.Status != "pending" || attempt.Status != "reserved" ||
+				attempt.Confirmed != 0 || attempt.Unknown != 0 || operation.Observations[stage].State != workspaceLaunchStagePending {
+				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			}
+		case "consumed":
+			if !validWorkspaceLaunchResumeAuthorizationConsumedAt(authorization.ConsumedAt) || attempt.Confirmed != 1 || attempt.Unknown != 0 || attempt.Status != "confirmed" {
+				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			}
+		case "failed":
+			if !validWorkspaceLaunchResumeAuthorizationConsumedAt(authorization.ConsumedAt) || operation.Stage != stage || operation.Status != "manual_review" ||
+				attempt.Confirmed != 0 || attempt.Unknown != 1 || attempt.Status != "unknown" || operation.Observations[stage].State != workspaceLaunchStageUnknown {
+				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			}
+		default:
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
+	}
+	for key, claim := range operation.ContinuationReadClaims {
+		authorization, found := freshAuthorizationsByID[claim.AuthorizationID]
+		attempt := operation.Attempts[claim.Stage]
+		if !found || claim.SchemaVersion != workspaceLaunchFreshContinuationSchemaVersion || claim.Stage != authorization.Stage ||
+			claim.IdempotencyKey != authorization.IdempotencyKey || claim.Readback <= authorization.ReadbacksAtAuthorization ||
+			claim.Readback > authorization.ReadbacksAtAuthorization+authorization.AuthoritativeReadBudget ||
+			key != workspaceLaunchFreshContinuationClaimKey(claim.AuthorizationID, claim.Readback) || claim.Readback > attempt.PendingReadbacks {
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
+		switch claim.Status {
+		case "claimed":
+			if authorization.Status != "active" || claim.CompletedAt != "" {
+				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			}
+			if _, err := time.Parse(time.RFC3339Nano, claim.LeaseExpiresAt); err != nil {
+				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			}
+		case "pending", "ready", "failed", "expired":
+			if claim.LeaseExpiresAt != "" || !validWorkspaceLaunchResumeAuthorizationConsumedAt(claim.CompletedAt) ||
+				claim.Status == "ready" && authorization.Status != "consumed" || claim.Status == "failed" && authorization.Status != "failed" {
+				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			}
+		default:
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
+	}
+	for stage, authorization := range operation.FreshContinuationAuthorizations {
+		attempt := operation.Attempts[stage]
+		for readback := authorization.ReadbacksAtAuthorization + 1; readback <= attempt.PendingReadbacks; readback++ {
+			if _, exists := operation.ContinuationReadClaims[workspaceLaunchFreshContinuationClaimKey(authorization.AuthorizationID, readback)]; !exists {
+				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			}
+		}
+	}
 	if operation.ID == "" || operation.stringFact("requestHash") == "" || operation.stringFact("accountId") == "" || operation.stringFact("ownerUserId") == "" ||
 		operation.int64Fact("sub2apiUserId") <= 0 || operation.int64Fact("workspaceKeyGroupId") <= 0 ||
 		operation.stringFact("workspaceId") == "" || operation.stringFact("name") == "" || operation.stringFact("packageId") == "" ||
@@ -916,10 +1169,13 @@ func workspaceLaunchReconcileOperationRow(operation workspaceLaunchReconcileOper
 		"schemaVersion": operation.SchemaVersion, "version": operation.Version, "stage": operation.Stage, "attempts": operation.Attempts,
 		"observations": operation.Observations, "consumedResumeAuthorizations": operation.ConsumedResumeAuthorizations, "resumeAuthorization": operation.ResumeAuthorization,
 		"resumeAuthorizationConsumedAt": operation.ResumeAuthorizationConsumedAt, "idempotentReplayClaims": operation.IdempotentReplayClaims,
+		"freshContinuationAuthorizations": operation.FreshContinuationAuthorizations, "continuationReadClaims": operation.ContinuationReadClaims,
 	} {
 		if key == "consumedResumeAuthorizations" && len(operation.ConsumedResumeAuthorizations) == 0 ||
 			key == "resumeAuthorization" && operation.ResumeAuthorization == nil || key == "resumeAuthorizationConsumedAt" && operation.ResumeAuthorizationConsumedAt == "" ||
-			key == "idempotentReplayClaims" && len(operation.IdempotentReplayClaims) == 0 {
+			key == "idempotentReplayClaims" && len(operation.IdempotentReplayClaims) == 0 ||
+			key == "freshContinuationAuthorizations" && len(operation.FreshContinuationAuthorizations) == 0 ||
+			key == "continuationReadClaims" && len(operation.ContinuationReadClaims) == 0 {
 			delete(raw, key)
 			continue
 		}

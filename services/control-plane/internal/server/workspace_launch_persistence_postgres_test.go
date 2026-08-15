@@ -4,11 +4,71 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"opl-cloud/services/control-plane/internal/domain"
 )
+
+type workspaceLaunchPendingReadGateStore struct {
+	workspaceLaunchReconcileStore
+	mu      sync.Mutex
+	reads   int
+	ready   chan struct{}
+	release chan struct{}
+}
+
+func (s *workspaceLaunchPendingReadGateStore) GetRuntimeOperation(ctx context.Context, operationID string) (map[string]any, bool, error) {
+	row, found, err := s.workspaceLaunchReconcileStore.GetRuntimeOperation(ctx, operationID)
+	if err != nil || !found {
+		return row, found, err
+	}
+	s.mu.Lock()
+	s.reads++
+	if s.reads == 2 {
+		close(s.ready)
+	}
+	release := s.release
+	s.mu.Unlock()
+	<-release
+	return row, found, nil
+}
+
+func seedPostgresWorkspaceLaunchFreshTypedPending(
+	t *testing.T,
+	suffix string,
+) (workspaceLaunchReconcileStore, *workspaceLaunchUnitAdapter, workspaceLaunchReconcileOperation) {
+	t.Helper()
+	ctx := context.Background()
+	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+	accountID, ownerID := "acct-fresh-pending-"+suffix, "usr-fresh-pending-"+suffix
+	account, owner, organization, membership := provisionedAccountRowsFor(accountID, ownerID, "org-fresh-pending-"+suffix, "fresh-pending-"+suffix+"@example.com", 840)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+	command := workspaceLaunchUnitCommand()
+	command.OperationID, command.AccountID, command.OwnerUserID = "workspace-launch-fresh-pending-"+suffix, accountID, ownerID
+	command.WorkspaceID, command.Sub2APIUserID = "ws-fresh-pending-"+suffix, 840
+	operation, err := newWorkspaceLaunchReconcileOperation(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Version, operation.Stage, operation.Status = 4, "runtime", "pending"
+	row, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileClaim{AccountID: accountID, DesiredOperation: row}); err != nil {
+		t.Fatal(err)
+	}
+	absent := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}}
+	pending := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStagePending}}
+	adapter := &workspaceLaunchUnitAdapter{readResultsByStage: map[string][]workspaceLaunchUnitReadResult{"runtime": {absent, pending}}}
+	seeded, err := NewWorkspaceLaunchReconciler(store, adapter).Reconcile(ctx, operation.ID)
+	if err != nil || seeded.Status != "pending" || seeded.Stage != "runtime" {
+		t.Fatalf("seed PostgreSQL fresh pending: operation=%s err=%v", workspaceLaunchReconcileResultSummary(seeded), err)
+	}
+	return store, adapter, seeded
+}
 
 func TestPostgresWorkspaceLaunchClaimPersistAndActivate(t *testing.T) {
 	ctx := context.Background()
@@ -246,5 +306,126 @@ func TestPostgresWorkspaceLaunchConcurrentReplayResumeAllowsOneWriter(t *testing
 				t.Fatalf("PostgreSQL replay CAS mismatch: operation=%s successes=%d conflicts=%d mutations=%#v err=%v", workspaceLaunchReconcileResultSummary(durable), successes, conflicts, adapter.mutationsByStage, err)
 			}
 		})
+	}
+}
+
+func TestPostgresWorkspaceLaunchFreshPendingReadClaimSurvivesCrashAndRestart(t *testing.T) {
+	ctx := context.Background()
+	store, adapter, seeded := seedPostgresWorkspaceLaunchFreshTypedPending(t, "restart")
+	startedAt := time.Date(2026, 8, 16, 2, 0, 0, 0, time.UTC)
+	adapter.panicOnReadNumber = 3
+	first := NewWorkspaceLaunchReconciler(store, adapter)
+	first.now = func() time.Time { return startedAt }
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected simulated process crash")
+			}
+		}()
+		_, _ = first.Reconcile(ctx, seeded.ID)
+	}()
+	durableRow, found, err := store.GetRuntimeOperation(ctx, seeded.ID)
+	if err != nil || !found {
+		t.Fatalf("read durable fresh claim found=%v err=%v", found, err)
+	}
+	durable, err := decodeWorkspaceLaunchReconcileOperation(durableRow)
+	authorization := durable.FreshContinuationAuthorizations["runtime"]
+	claim2 := durable.ContinuationReadClaims[workspaceLaunchFreshContinuationClaimKey(authorization.AuthorizationID, 2)]
+	if err != nil || durable.Attempts["runtime"].PendingReadbacks != 2 || claim2.Status != "claimed" || adapter.mutationsByStage["runtime"] != 1 {
+		t.Fatalf("PostgreSQL crash claim not durable: operation=%s claim=%#v mutations=%#v err=%v", workspaceLaunchReconcileResultSummary(durable), claim2, adapter.mutationsByStage, err)
+	}
+
+	adapter.panicOnReadNumber = 0
+	adapter.stageObservations = map[string]workspaceLaunchStageObservation{"runtime": {State: workspaceLaunchStageReady, Facts: workspaceLaunchReadyFacts("runtime")}}
+	restarted := NewWorkspaceLaunchReconciler(store, adapter)
+	restarted.now = func() time.Time { return startedAt.Add(workspaceLaunchFreshContinuationReadClaimLease + time.Second) }
+	got, err := restarted.Reconcile(ctx, seeded.ID)
+	if err != nil || got.Stage != "activation" || got.Attempts["runtime"].PendingReadbacks != 3 ||
+		got.ContinuationReadClaims[workspaceLaunchFreshContinuationClaimKey(authorization.AuthorizationID, 2)].Status != "expired" ||
+		got.ContinuationReadClaims[workspaceLaunchFreshContinuationClaimKey(authorization.AuthorizationID, 3)].Status != "ready" ||
+		got.FreshContinuationAuthorizations["runtime"].Status != "consumed" || adapter.mutationsByStage["runtime"] != 1 {
+		t.Fatalf("PostgreSQL restart skipped or refunded claim: operation=%s claims=%#v mutations=%#v err=%v",
+			workspaceLaunchReconcileResultSummary(got), got.ContinuationReadClaims, adapter.mutationsByStage, err)
+	}
+}
+
+func TestPostgresWorkspaceLaunchFreshPendingContinuationCASAllowsOneOwnerRead(t *testing.T) {
+	ctx := context.Background()
+	store, adapter, seeded := seedPostgresWorkspaceLaunchFreshTypedPending(t, "concurrent")
+	adapter.stageObservations = map[string]workspaceLaunchStageObservation{"runtime": {State: workspaceLaunchStageReady, Facts: workspaceLaunchReadyFacts("runtime")}}
+	gate := &workspaceLaunchPendingReadGateStore{
+		workspaceLaunchReconcileStore: store,
+		ready:                         make(chan struct{}), release: make(chan struct{}),
+	}
+	reconciler := NewWorkspaceLaunchReconciler(gate, adapter)
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := reconciler.Reconcile(ctx, seeded.ID)
+			results <- err
+		}()
+	}
+	<-gate.ready
+	close(gate.release)
+	var successes, conflicts int
+	for range 2 {
+		switch err := <-results; {
+		case err == nil:
+			successes++
+		case errors.Is(err, errWorkspaceLaunchCASConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected concurrent fresh continuation error: %v", err)
+		}
+	}
+	durableRow, found, err := store.GetRuntimeOperation(ctx, seeded.ID)
+	if err != nil || !found {
+		t.Fatalf("read durable concurrent continuation found=%v err=%v", found, err)
+	}
+	durable, err := decodeWorkspaceLaunchReconcileOperation(durableRow)
+	if err != nil || successes != 1 || conflicts != 1 || durable.Stage != "activation" || durable.Attempts["runtime"].PendingReadbacks != 2 ||
+		adapter.reads != 3 || adapter.mutationsByStage["runtime"] != 1 || durable.FreshContinuationAuthorizations["runtime"].Status != "consumed" {
+		t.Fatalf("PostgreSQL fresh continuation CAS mismatch: operation=%s successes=%d conflicts=%d reads=%d mutations=%#v err=%v",
+			workspaceLaunchReconcileResultSummary(durable), successes, conflicts, adapter.reads, adapter.mutationsByStage, err)
+	}
+}
+
+func TestPostgresWorkspaceLaunchLegacyV3MissingFreshContinuationFieldsHasZeroBudget(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+	account, owner, organization, membership := provisionedAccountRowsFor(
+		"acct-fresh-legacy", "usr-fresh-legacy", "org-fresh-legacy", "fresh-legacy@example.com", 841,
+	)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+	command := workspaceLaunchUnitCommand()
+	command.OperationID, command.AccountID, command.OwnerUserID = "workspace-launch-fresh-legacy", "acct-fresh-legacy", "usr-fresh-legacy"
+	command.WorkspaceID, command.Sub2APIUserID = "ws-fresh-legacy", 841
+	operation, err := newWorkspaceLaunchReconcileOperation(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Version, operation.Stage, operation.Status = 4, "runtime", "pending"
+	attempt := operation.Attempts["runtime"]
+	attempt.Attempted, attempt.Status = 1, "reserved"
+	attempt.IdempotencyKey = workspaceLaunchStageIdempotencyKey(operation, 1)
+	operation.Attempts["runtime"] = attempt
+	operation.Observations["runtime"] = workspaceLaunchStageObservation{State: workspaceLaunchStagePending}
+	row, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileClaim{AccountID: command.AccountID, DesiredOperation: row}); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &workspaceLaunchUnitAdapter{
+		stageObservations: map[string]workspaceLaunchStageObservation{"runtime": {State: workspaceLaunchStageReady, Facts: workspaceLaunchReadyFacts("runtime")}},
+		replayableStages:  map[string]bool{"runtime": true},
+	}
+	got, err := NewWorkspaceLaunchReconciler(store, adapter).Reconcile(ctx, operation.ID)
+	if err != nil || got.Status != "manual_review" || got.Stage != "runtime" || adapter.reads != 0 || adapter.mutations != 0 ||
+		got.Attempts["runtime"].PendingReadbacks != 0 || got.Attempts["runtime"].MaxPendingReadbacks != workspaceLaunchLegacyV3AuthoritativeReadBudget ||
+		len(got.FreshContinuationAuthorizations) != 0 || len(got.ContinuationReadClaims) != 0 {
+		t.Fatalf("PostgreSQL legacy v3 row invented continuation authority: operation=%s reads=%d mutations=%d err=%v",
+			workspaceLaunchReconcileResultSummary(got), adapter.reads, adapter.mutations, err)
 	}
 }
