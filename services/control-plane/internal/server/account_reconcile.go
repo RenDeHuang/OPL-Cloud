@@ -95,6 +95,23 @@ func acceptanceBWalletIdentityDigest(accountID, email string) string {
 	return acceptanceBDigestParts(accountID, acceptanceBWalletOperationID(accountID, email))
 }
 
+func productionAcceptanceBApprovalIdentityDigest(approval productionAcceptanceBApproval) string {
+	parts := []string{
+		"acceptance-b-approval-v1",
+		strconv.Itoa(approval.SchemaVersion), approval.OperationMode, approval.ApprovalID, approval.ExpiresAt, approval.Confirmation,
+		approval.Release.MergedMainSHA, approval.Release.CloudImageDigest, approval.Release.WorkspaceImageDigest,
+		approval.Customer.Email, approval.Customer.AccountID,
+		approval.Launch.IdempotencyKey, approval.Launch.OperationID, approval.Launch.WorkspaceID, approval.Launch.Name,
+		approval.Launch.PackageID, strconv.Itoa(approval.Launch.SizeGB), strconv.FormatBool(approval.Launch.AutoRenew),
+		approval.Expected.NodePoolID, approval.Expected.ResolvedInstanceType,
+		"allowed-writes",
+	}
+	parts = append(parts, approval.AllowedWrites...)
+	parts = append(parts, "forbidden-writes")
+	parts = append(parts, approval.ForbiddenWrites...)
+	return acceptanceBDigestParts(parts...)
+}
+
 func acceptanceBDigestParts(parts ...string) string {
 	hash := sha256.New()
 	for _, part := range parts {
@@ -185,10 +202,7 @@ func (app *controlPlaneServer) reconcileAcceptanceBAccount(ctx context.Context, 
 		return data, errAcceptanceBAccountReconcileUnknown
 	}
 	data.ApprovalState = "bound"
-	data.ApprovalIdentitySHA256 = acceptanceBDigestParts(
-		approval.ApprovalID, approval.Release.MergedMainSHA, approval.Release.CloudImageDigest, approval.Release.WorkspaceImageDigest,
-		accountID, email, approval.Launch.IdempotencyKey, approval.Launch.OperationID, approval.Launch.WorkspaceID,
-	)
+	data.ApprovalIdentitySHA256 = productionAcceptanceBApprovalIdentityDigest(approval)
 
 	launch, launchFound, err := app.tables.GetRuntimeOperation(ctx, approval.Launch.OperationID)
 	if err != nil {

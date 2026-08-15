@@ -81,6 +81,44 @@ func TestAcceptanceBReconcileIdentityDigestsAreDeterministic(t *testing.T) {
 	}
 }
 
+func TestAcceptanceBApprovalIdentityDigestCoversCompleteAuthorization(t *testing.T) {
+	configureProductionAcceptanceBEnvironment(t)
+	baseFixture := canonicalProductionAcceptanceBApproval(t)
+	base, ok := parseProductionAcceptanceBApprovalFixture(t, baseFixture)
+	if !ok {
+		t.Fatal("canonical approval did not parse")
+	}
+	want := productionAcceptanceBApprovalIdentityDigest(base)
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "expiry", mutate: func(value map[string]any) { value["expiresAt"] = "2098-08-05T00:00:00Z" }},
+		{name: "confirmation", mutate: func(value map[string]any) { value["confirmation"] = "OTHER_CONFIRMATION" }},
+		{name: "launch name", mutate: func(value map[string]any) { value["launch"].(map[string]any)["name"] = "Other Workspace" }},
+		{name: "launch package", mutate: func(value map[string]any) { value["launch"].(map[string]any)["packageId"] = "pro" }},
+		{name: "launch size", mutate: func(value map[string]any) { value["launch"].(map[string]any)["sizeGb"] = 20 }},
+		{name: "launch renewal", mutate: func(value map[string]any) { value["launch"].(map[string]any)["autoRenew"] = true }},
+		{name: "node pool", mutate: func(value map[string]any) { value["expected"].(map[string]any)["nodePoolId"] = "np-other" }},
+		{name: "instance type", mutate: func(value map[string]any) { value["expected"].(map[string]any)["resolvedInstanceType"] = "SA5.LARGE8" }},
+		{name: "allowed writes", mutate: func(value map[string]any) { value["allowedWrites"].([]string)[0] = "submit_other_workspace_launch" }},
+		{name: "forbidden writes", mutate: func(value map[string]any) { value["forbiddenWrites"].([]string)[0] = "allow_account_provision" }},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := canonicalProductionAcceptanceBApproval(t)
+			testCase.mutate(fixture)
+			candidate, parsed := parseProductionAcceptanceBApprovalFixture(t, fixture)
+			if !parsed {
+				t.Fatal("structurally valid approval drift did not parse")
+			}
+			if got := productionAcceptanceBApprovalIdentityDigest(candidate); got == want {
+				t.Fatal("approval authorization drift did not change identity digest")
+			}
+		})
+	}
+}
+
 func TestAcceptanceBReconcileLocalGraphDistinguishesAbsentAndComplete(t *testing.T) {
 	const email = "reconcile@example.com"
 	accountID := "acct-" + stableID("account", email)[:18]

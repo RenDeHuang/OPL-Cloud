@@ -8,6 +8,7 @@ import {
   PRODUCTION_BASIC_ACCEPTANCE_B_FORBIDDEN_WRITES,
   PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION,
   PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION,
+  admitProductionBasicAcceptanceBFreshLaunch,
   blockedProductionBasicAcceptanceBArtifact,
   blockedProductionBasicAcceptanceBPrepareArtifact,
   findUniqueProductionBasicAcceptanceBAccount,
@@ -130,7 +131,7 @@ function readbackFixture(approval, overrides = {}) {
     release: { ...approval.release },
     baseline: { workspaceCount: 0, workspaceLaunchCount: 0, workspaceKeyCount: 0, workspaceReceiptCount: 0 },
     quote: { packageId: "basic", sizeGb: 10, priceVersion: "pilot-usd-2026-07-v1", currency: "USD", totalChargeUsdMicros },
-    debit: { operationId: `${approval.launch.operationId}:charge`, count: 1, amountUsdMicros: totalChargeUsdMicros },
+    debit: { operationId: `${approval.launch.operationId}:charge`, count: 1, amountUsdMicros: totalChargeUsdMicros, identitySha256: "d".repeat(64) },
     launch: {
       operationId: approval.launch.operationId,
       accountId: approval.customer.accountId,
@@ -185,7 +186,8 @@ function readbackFixture(approval, overrides = {}) {
       computeAllocationId: "ca_acceptance_b_01",
       storageId: "vol_acceptance_b_01",
       runtimeId: "runtime_acceptance_b_01",
-      totalChargeUsdMicros
+      totalChargeUsdMicros,
+      chargeReferenceSha256: createHash("sha256").update(`opl:${stableId("sub2api-monthly-charge-v1", "production", approval.launch.operationId).slice(0, 28)}`).digest("hex")
     },
     workspaceUrl: { url, statusCode: 200 },
     stageBudgets: exactStageBudgets(),
@@ -209,6 +211,74 @@ function response(payload, status = 200, headers = {}) {
     status,
     headers: { "cache-control": "private, no-store", ...headers }
   });
+}
+
+function digestParts(...parts) {
+  const hash = createHash("sha256");
+  for (const part of parts) {
+    hash.update(String(part));
+    hash.update(Buffer.from([0]));
+  }
+  return hash.digest("hex");
+}
+
+function reconcileRouteData(approval, overrides = {}) {
+  const redeemCode = `opl:${stableId("sub2api-monthly-charge-v1", "production", approval.launch.operationId).slice(0, 28)}`;
+  return {
+    schemaVersion: 1,
+    operationMode: "acceptance_b_account_reconcile",
+    status: "prepared",
+    customerIdentitySha256: "1".repeat(64),
+    accountProvisionIdentitySha256: "2".repeat(64),
+    walletAdjustmentIdentitySha256: "3".repeat(64),
+    approvalIdentitySha256: "4".repeat(64),
+    workspaceDebitIdentitySha256: digestParts(approval.customer.accountId, "41", approval.launch.operationId, approval.launch.workspaceId, redeemCode),
+    localGraph: "complete",
+    remoteIdentity: "active",
+    customerLogin: "not_attempted",
+    wallet: "available",
+    walletUsdMicros: "60000000",
+    walletAdjustment: "absent",
+    approvalState: "bound",
+    workspaceLaunchState: "absent",
+    workspaceState: "absent",
+    workspaceKeyState: "absent",
+    workspaceReceiptState: "absent",
+    workspaceDebitState: "absent",
+    workspaceCount: 0,
+    launchCount: 0,
+    keyCount: 0,
+    receiptCount: 0,
+    ...overrides
+  };
+}
+
+function acceptanceBFreshAdmissionFixture(approval, routeOverrides = {}) {
+  const requests = [];
+  const launch = {
+    operationId: approval.launch.operationId,
+    workspaceId: approval.launch.workspaceId,
+    accountId: approval.customer.accountId,
+    status: "queued",
+    phase: "compute_fulfilling"
+  };
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    requests.push({ method, path: url.pathname, search: url.search });
+    if (url.pathname === "/api/operator/account-reconciliation") return response(sourcePayload("control-plane+sub2api+ledger", reconcileRouteData(approval, routeOverrides)));
+    if (url.pathname === "/api/auth/me") return response(sourcePayload("sub2api", { email: approval.customer.email, role: "owner", status: "active" }));
+    if (url.pathname === "/api/workspaces") return response(sourcePayload("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }, "empty"));
+    if (url.pathname === "/api/workspace-launches" && method === "GET") return response([]);
+    if (url.pathname === "/api/gateway/keys") return response(sourcePayload("sub2api", { items: [{ id: "general-1", kind: "general", totalUsageUsdMicros: "9000000" }], total: 1, page: 1, pageSize: 50 }));
+    if (url.pathname === "/api/billing/receipts") return response(sourcePayload("ledger", { receipts: [], nextCursor: "", hasMore: false }, "empty"));
+    if (url.pathname === "/api/pricing/preview") return response({ resourceType: "workspace", packageId: "basic", currency: "USD", priceVersion: "pilot-usd-2026-07-v1", totalChargeUsdMicros: 52_580_000, storage: { priceSnapshot: { sizeGb: 10 } } });
+    if (url.pathname === "/api/gateway/wallet") return response(sourcePayload("sub2api", { userId: "41", currency: "USD", usdMicros: "60000000", status: "active" }));
+    if (url.pathname === `/api/workspace-launches/${approval.launch.operationId}`) return response({ error: "not_found" }, 404);
+    if (url.pathname === "/api/workspace-launches" && method === "POST") return response(launch, 202);
+    throw new Error(`unexpected_request:${method}:${url.pathname}`);
+  };
+  return { requests, fetchImpl, launch };
 }
 
 function prepareFetchFixture({ keys = [], walletValues = ["0"], adjustmentAvailable = true, adjustmentPostStatus = 201, accountAvailable = true, accountPostStatus = 201 } = {}) {
@@ -558,6 +628,64 @@ test("Acceptance B write accounting accepts only the frozen one-order cardinalit
   }
 });
 
+test("Acceptance B fresh admission orders reconcile, quote, wallet, exact operation GET, and one launch POST", async () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const fixture = acceptanceBFreshAdmissionFixture(approval);
+  const result = await admitProductionBasicAcceptanceBFreshLaunch({
+    requestOptions: { fetchImpl: fixture.fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
+    adminAuth: { cookie: "admin=test", csrfToken: "csrf", user: { accountId: "acct-admin", role: "admin" } },
+    customerAuth: { cookie: "customer=test", csrfToken: "csrf", user: { accountId: approval.customer.accountId, role: "owner" } },
+    identity: { sub2apiUserId: "41" },
+    approval,
+    internalServiceToken: "acceptance-b-capability",
+    mergedSha: approval.release.mergedMainSha,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  assert.deepEqual(result.launch, fixture.launch);
+  const index = (method, path) => fixture.requests.findIndex((request) => request.method === method && request.path === path);
+  const ordered = [
+    index("GET", "/api/operator/account-reconciliation"),
+    index("POST", "/api/pricing/preview"),
+    index("GET", "/api/gateway/wallet"),
+    index("GET", `/api/workspace-launches/${approval.launch.operationId}`),
+    index("POST", "/api/workspace-launches")
+  ];
+  assert.equal(ordered.every((value, position) => value >= 0 && (position === 0 || value > ordered[position - 1])), true);
+  assert.equal(fixture.requests.filter((request) => request.method === "POST" && request.path === "/api/workspace-launches").length, 1);
+});
+
+test("Acceptance B fresh admission blocks every non-absent approved footprint before launch POST", async () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const cases = [
+    { approvalState: "unknown" },
+    { workspaceLaunchState: "present", launchCount: 1 },
+    { workspaceState: "present", workspaceCount: 1 },
+    { workspaceKeyState: "present", keyCount: 1 },
+    { workspaceReceiptState: "present", receiptCount: 1 },
+    { workspaceDebitState: "confirmed" }
+  ];
+  for (const state of cases) {
+    const fixture = acceptanceBFreshAdmissionFixture(approval, { status: "partial", ...state });
+    await assert.rejects(() => admitProductionBasicAcceptanceBFreshLaunch({
+      requestOptions: { fetchImpl: fixture.fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
+      adminAuth: { cookie: "admin=test", csrfToken: "csrf", user: { accountId: "acct-admin", role: "admin" } },
+      customerAuth: { cookie: "customer=test", csrfToken: "csrf", user: { accountId: approval.customer.accountId, role: "owner" } },
+      identity: { sub2apiUserId: "41" },
+      approval,
+      internalServiceToken: "acceptance-b-capability",
+      mergedSha: approval.release.mergedMainSha,
+      now: new Date("2026-08-02T00:00:00Z")
+    }), /production_basic_acceptance_b_preflight_reconcile_invalid/);
+    assert.equal(fixture.requests.some((request) => request.method === "POST" && request.path === "/api/workspace-launches"), false);
+  }
+});
+
 test("Acceptance B launch reads the deterministic identity before its single POST and reconciles a lost response", async () => {
   const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
     approvalId: APPROVAL_ID,
@@ -856,8 +984,10 @@ test("Acceptance B readback fails closed on non-fresh baseline, count, image, re
     { ...base, baseline: { ...base.baseline, workspaceCount: 1 } },
     { ...base, writeCounts: exactWriteCounts({ receiptCreates: 0 }) },
     { ...base, stageBudgets: exactStageBudgets({ static_binding_apply: { attempted: 1, confirmed: 0, unknown: 1, max: 1 } }) },
+    { ...base, debit: { ...base.debit, identitySha256: "not-a-digest" } },
     { ...base, runtime: { ...base.runtime, podImageId: `containerd://workspace@sha256:${"d".repeat(64)}` } },
     { ...base, receipt: { ...base.receipt, workspaceId: "ws-drift" } },
+    { ...base, receipt: { ...base.receipt, chargeReferenceSha256: "e".repeat(64) } },
     { ...base, workspaceUrl: { ...base.workspaceUrl, statusCode: 503 } }
   ];
   for (const value of cases) {
