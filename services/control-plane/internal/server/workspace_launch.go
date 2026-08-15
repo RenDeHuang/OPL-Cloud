@@ -1,8 +1,10 @@
 package server
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"strconv"
@@ -40,11 +42,40 @@ func newWorkspaceLaunchDescriptor(accountID, ownerUserID, name, packageID string
 	if operationID == "" || imageDigest == "" {
 		return workspaceLaunchDescriptor{}, errInvalidWorkspaceLaunchOperation
 	}
+	requestHash, err := workspaceLaunchRequestHash(accountID, ownerUserID, name, packageID, storageGB, autoRenew, priceVersion)
+	if err != nil {
+		return workspaceLaunchDescriptor{}, err
+	}
 	return workspaceLaunchDescriptor{
 		OperationID: operationID,
-		RequestHash: stableID("workspace-launch-v2", accountID, ownerUserID, name, packageID, strconv.Itoa(storageGB), strconv.FormatBool(autoRenew), priceVersion, imageDigest),
+		RequestHash: requestHash,
 		WorkspaceID: workspaceID, WorkspaceImageDigest: imageDigest,
 	}, nil
+}
+
+func workspaceLaunchRequestHash(accountID, ownerUserID, name, packageID string, storageGB int, autoRenew bool, priceVersion string) (string, error) {
+	payload, err := json.Marshal(struct {
+		AccountID    string `json:"accountId"`
+		OwnerUserID  string `json:"ownerUserId"`
+		Name         string `json:"name"`
+		PackageID    string `json:"packageId"`
+		SizeGB       int    `json:"sizeGb"`
+		AutoRenew    bool   `json:"autoRenew"`
+		PriceVersion string `json:"priceVersion"`
+	}{
+		AccountID:    accountID,
+		OwnerUserID:  ownerUserID,
+		Name:         name,
+		PackageID:    packageID,
+		SizeGB:       storageGB,
+		AutoRenew:    autoRenew,
+		PriceVersion: priceVersion,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal workspace launch request hash payload: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return fmt.Sprintf("%x", sum), nil
 }
 
 func workspaceLaunchOperationID(accountID, key string) string {
