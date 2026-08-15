@@ -166,6 +166,56 @@ test("deployment contract keeps Acceptance outside ordinary deploy", async () =>
   assert.equal(deployment.deliveryEvidence, undefined);
 });
 
+test("deployment contract keeps Acceptance B approval-bound and prepared-only", async () => {
+  const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
+  const fresh = deployment.productionBasicAcceptanceB;
+  const reconcile = deployment.productionBasicAcceptanceBAccountReconcile;
+
+  assert.equal(fresh.admission.prePostReadback, "approval_bound_reconcile_required_immediately_before_single_workspace_post");
+  assert.equal(fresh.readback.workspaceDebitAuthority, "exact_approval_bound_sub2api_history_code");
+  assert.equal(fresh.readback.terminalDebitReceiptBinding, "same_account_operation_workspace_code_and_quote_amount");
+  assert.equal(fresh.readback.generalUsage, "allowed_and_non_blocking");
+  assert.equal(fresh.readback.walletDelta, "not_debit_identity");
+  assert.equal(reconcile.readback.successStatus, "prepared_only");
+  assert.equal(reconcile.readback.workspaceDebitAuthority, "exact_approval_bound_sub2api_history_code");
+  assert.equal(reconcile.readback.generalUsage, "allowed_and_non_blocking");
+  assert.equal(reconcile.readback.walletDelta, "not_debit_identity");
+  assert.deepEqual(reconcile.readback.redactedArtifactFields, [
+    "customerIdentitySha256", "accountProvisionIdentitySha256", "walletAdjustmentIdentitySha256",
+    "approvalIdentitySha256", "workspaceDebitIdentitySha256", "status", "localGraph", "remoteIdentity",
+    "customerLogin", "wallet", "walletUsdMicros", "walletAdjustment", "approvalState", "workspaceLaunchState",
+    "workspaceState", "workspaceKeyState", "workspaceReceiptState", "workspaceDebitState", "workspaceCount",
+    "launchCount", "keyCount", "receiptCount", "writeCounts", "runnerDirectMutationCounts", "failureStage",
+    "readbackError", "errorCode"
+  ]);
+  assert.deepEqual(reconcile.readback.forbiddenArtifactFields, [
+    "email", "password", "accountId", "consoleUserId", "sub2apiUserId", "operationId", "workspaceId",
+    "secret", "token", "cookie", "csrf"
+  ]);
+  assert.deepEqual(fresh.productionParameterMatrix, {
+    reconcile: {
+      operation_mode: "acceptance_b_account_reconcile",
+      approval_id: "",
+      resume_run_id: "",
+      confirm_account_provision: false,
+      confirm_wallet_recharge: false,
+      confirm_workspace_purchase: false,
+      confirm_single_model_request: false,
+      confirm_recovery_plan_execute: false
+    },
+    freshOrder: {
+      operation_mode: "acceptance_b_fresh_order",
+      approval_id: "exact_installed_approval_id",
+      resume_run_id: "",
+      confirm_account_provision: false,
+      confirm_wallet_recharge: false,
+      confirm_workspace_purchase: true,
+      confirm_single_model_request: false,
+      confirm_recovery_plan_execute: false
+    }
+  });
+});
+
 test("production verification contract requires the protected reserved admin credentials", async () => {
   const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
   const workflow = deployment.productionVerificationWorkflow;

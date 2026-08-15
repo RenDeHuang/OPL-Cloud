@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func canonicalProductionAcceptanceBApproval(t *testing.T) map[string]any {
@@ -118,6 +119,51 @@ func TestProductionAcceptanceBAdmissionMatchesCanonicalProductApproval(t *testin
 	}
 	if !productionAcceptanceBFixtureApproved(productionAcceptanceBHeaders(), approval) {
 		t.Fatal("canonical product approval was not admitted")
+	}
+}
+
+func TestProductionAcceptanceBApprovalMatchesDeployedTargetWithoutRequestHeaders(t *testing.T) {
+	configureProductionAcceptanceBEnvironment(t)
+	approval, ok := parseProductionAcceptanceBApprovalFixture(t, canonicalProductionAcceptanceBApproval(t))
+	if !ok {
+		t.Fatal("canonical product approval did not parse")
+	}
+	if !productionAcceptanceBDeploymentApproved(approval, "acct-alpha", "alpha@example.com", time.Now()) {
+		t.Fatal("canonical approval was not bound to the deployed target")
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "release SHA", mutate: func(value map[string]any) {
+			value["release"].(map[string]any)["mergedMainSha"] = strings.Repeat("d", 40)
+		}},
+		{name: "cloud image", mutate: func(value map[string]any) {
+			value["release"].(map[string]any)["cloudImageDigest"] = "sha256:" + strings.Repeat("d", 64)
+		}},
+		{name: "workspace image", mutate: func(value map[string]any) {
+			value["release"].(map[string]any)["workspaceImageDigest"] = "sha256:" + strings.Repeat("d", 64)
+		}},
+		{name: "customer", mutate: func(value map[string]any) { value["customer"].(map[string]any)["accountId"] = "acct-other" }},
+		{name: "operation", mutate: func(value map[string]any) { value["launch"].(map[string]any)["operationId"] = "workspace-launch-other" }},
+		{name: "workspace", mutate: func(value map[string]any) { value["launch"].(map[string]any)["workspaceId"] = "ws-other" }},
+		{name: "expired", mutate: func(value map[string]any) { value["expiresAt"] = "2000-01-01T00:00:00Z" }},
+		{name: "allowed writes", mutate: func(value map[string]any) { value["allowedWrites"].([]string)[0] = "submit_two_workspace_launches" }},
+		{name: "forbidden writes", mutate: func(value map[string]any) { value["forbiddenWrites"].([]string)[0] = "adjust_wallet_twice" }},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := canonicalProductionAcceptanceBApproval(t)
+			testCase.mutate(fixture)
+			candidate, parsed := parseProductionAcceptanceBApprovalFixture(t, fixture)
+			if !parsed {
+				t.Fatal("structurally valid approval drift did not parse")
+			}
+			if productionAcceptanceBDeploymentApproved(candidate, "acct-alpha", "alpha@example.com", time.Now()) {
+				t.Fatal("drifted approval was bound to the deployed target")
+			}
+		})
 	}
 }
 
