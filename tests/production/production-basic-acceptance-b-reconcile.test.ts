@@ -143,6 +143,63 @@ test("reconcile account mode uses only login and GET readbacks for an active acc
   assert.equal(requests.filter((request) => request.method === "POST").length, 2);
 });
 
+test("reconcile treats non-Workspace gateway keys as a fresh Acceptance B baseline", async () => {
+  const keys = Array.from({ length: 5 }, (_, index) => ({
+    id: `general-${index + 1}`,
+    kind: "general",
+    status: "active"
+  }));
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/api/auth/login") {
+      const body = JSON.parse(init.body);
+      return loginPayload(body.email === ADMIN_EMAIL ? "acct-admin" : "acct-reconcile", body.email === ADMIN_EMAIL ? "admin" : "owner");
+    }
+    if (parsed.pathname === "/api/operator/account-reconciliation") {
+      return response(envelope("control-plane+sub2api+ledger", routeData()));
+    }
+    if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
+    if (parsed.pathname === "/api/workspaces") return response(envelope("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/workspace-launches") return response([]);
+    if (parsed.pathname === "/api/gateway/keys") return response(envelope("sub2api", { items: keys, total: keys.length, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/billing/receipts") return response(envelope("ledger", { receipts: [], nextCursor: "", hasMore: false }, "empty"));
+    throw new Error(`unexpected_request:${parsed.pathname}`);
+  };
+
+  const result = await reconcileProductionBasicAcceptanceBAccount(baseOptions(fetchImpl));
+  assert.equal(result.status, "prepared");
+  assert.equal(result.keyCount, 0);
+  assert.equal(result.failureStage, "none");
+  assert.equal(result.readbackError, "none");
+  assert.equal(result.errorCode, "none");
+  assert.deepEqual(validateProductionBasicAcceptanceBReconcileReadback(result, { mergedSha: MERGED_SHA }), result);
+});
+
+test("reconcile fails closed when a gateway key kind cannot be classified", async () => {
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/api/auth/login") {
+      const body = JSON.parse(init.body);
+      return loginPayload(body.email === ADMIN_EMAIL ? "acct-admin" : "acct-reconcile", body.email === ADMIN_EMAIL ? "admin" : "owner");
+    }
+    if (parsed.pathname === "/api/operator/account-reconciliation") {
+      return response(envelope("control-plane+sub2api+ledger", routeData()));
+    }
+    if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
+    if (parsed.pathname === "/api/workspaces") return response(envelope("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/workspace-launches") return response([]);
+    if (parsed.pathname === "/api/gateway/keys") return response(envelope("sub2api", { items: [{ id: "unknown-1" }], total: 1, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/billing/receipts") return response(envelope("ledger", { receipts: [], nextCursor: "", hasMore: false }, "empty"));
+    throw new Error(`unexpected_request:${parsed.pathname}`);
+  };
+
+  const result = await reconcileProductionBasicAcceptanceBAccount(baseOptions(fetchImpl));
+  assert.equal(result.status, "unknown");
+  assert.equal(result.failureStage, "baseline");
+  assert.equal(result.readbackError, "baseline_authority_unavailable");
+  assert.equal(result.errorCode, "acceptance_b_account_reconcile_unknown");
+});
+
 test("reconcile preserves an authority unknown without attempting customer login or mutation", async () => {
   const requests = [];
   const fetchImpl = async (url, init = {}) => {
