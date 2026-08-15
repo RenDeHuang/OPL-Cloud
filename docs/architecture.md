@@ -15,8 +15,9 @@ currently deployed.
 
 ## OPL Family Position
 
-The stable external product model is `OPL Base + OPL App + OPL Packages`, with
-`OPL Cloud` as the optional online product layer. Internally these are separate
+The stable external product model is `OPL Base + OPL App + OPL Packages + OPL
+Cloud`. OPL Cloud is the online product layer under active implementation;
+individual Cloud capabilities are adopted according to the user's work. Internally these are separate
 authorities:
 
 ```text

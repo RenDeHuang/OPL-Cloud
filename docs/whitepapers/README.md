@@ -14,10 +14,10 @@ Framework owns the only renderer, style and publication readback implementation.
 `scripts/build-opl-cloud-whitepaper.ts` only locates Framework and calls its
 `scripts/run-domain-whitepaper.ts` with the Cloud Profile.
 
-A push to `main` builds a reviewable immutable bundle through the Framework
-reusable workflow. Publishing is a separate manual dispatch with
-`publish=true`; it uses the same bundle, requires the `whitepaper-production`
-Environment, and closes only after exact-byte public readback.
+A push to `main` builds a reviewable immutable candidate through the Framework
+reusable workflow. The Framework repository assembles Cloud with the other four
+whitepapers, publishes one branded family bundle, and closes only after
+exact-byte public readback from the One Person Lab whitepaper site.
 
 Current source:
 
