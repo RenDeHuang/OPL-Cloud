@@ -92,16 +92,15 @@ Run the checks affected by your change before pushing. The repository-wide
 baseline is:
 
 ```bash
-npm test
-npm run typecheck
-npm run lint
-npm run build
-(cd services/control-plane && go test ./... -count=1)
-(cd services/fabric && go test ./... -count=1)
-(cd services/ledger && go test ./... -count=1)
-(cd services/internal/postgresmigrate && go test ./... -count=1)
-git diff --check
+npm run verify:local
 ```
+
+For persistence, capacity, local-Docker, or cross-service behavior changes, run
+`npm run verify:local:full`. It starts an ephemeral PostgreSQL 16 container and
+requires the PostgreSQL, capacity, and local-Docker integration tests to finish
+without skips before removing the container. Both local gates remain source
+verification only; they do not access production or replace the required hosted
+`validate` check.
 
 Documentation-only changes still run the shared PR gate. This keeps one stable
 required context and avoids a second change-classification authority.

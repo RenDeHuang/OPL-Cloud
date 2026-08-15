@@ -26,6 +26,24 @@ Sub2API management origin and credentials are never exposed to the browser.
 
 ## Implementation Snapshot
 
+- Control Plane's retained Ent persistence implementation is split inside the
+  existing `server` package into identity, resource, and Workspace capability
+  files. Fabric's retained Tencent provider implementation is likewise split
+  into compute, storage, and Runtime capability files. The existing receivers,
+  public interfaces, typed HTTP contracts, PostgreSQL schemas, provider
+  operations, and authority boundaries are unchanged. Focused tests plus the
+  repository's complete local PostgreSQL, capacity, and local-Docker gate pass;
+  no live Tencent mutation or Instance deployment was run. The remaining mixed
+  facades stay in the cohesion backlog and require caller-led slices rather than
+  a new cross-service framework.
+- `npm run verify:local` is the repeatable source gate for product boundaries,
+  Node tests, Console typecheck/lint/build, whitepaper rendering, all-module Go
+  compilation, database-free Go tests, and Git whitespace. The separate
+  `npm run verify:local:full` gate starts an ephemeral PostgreSQL 16 container,
+  requires every PostgreSQL, Control Plane capacity, and Fabric local-Docker
+  test to finish with zero skips, and removes the container on exit. These are
+  local source/runtime test facts only; neither command accesses production or
+  proves Instance adoption.
 - Structural over-design cleanup landed through PR `#285`: staticcheck-U1000 and
   zero-caller dead symbols were removed from Control Plane server/app-state and
   Fabric operator-identity/service/provider/provisioner surfaces, including two
