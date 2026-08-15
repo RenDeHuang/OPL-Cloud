@@ -13,6 +13,33 @@ workspaces, account-managed resources and remote execution. This document
 defines responsibility boundaries; it does not claim that every service is
 currently deployed.
 
+## OPL Family Position
+
+The stable external product model is `OPL Base + OPL App + OPL Packages`, with
+`OPL Cloud` as the optional online product layer. Internally these are separate
+authorities:
+
+```text
+OPL Base           Framework runtime product; implemented by the single Cordis Host
+OPL Packages       independently published installable capabilities and owner revisions
+OPL Framework      Host-side discovery/projection and runtime/state/action producer
+one-person-lab-app App product, Client profile, GUI ABI and release authority
+opl-aion-shell     current Stable AionUI Shell carrier
+opl-studio         DSH-derived candidate Shell carrier
+OPL Cloud          Console, Control Plane, Fabric, Ledger and Workspace product
+```
+
+Cloud is not a second Framework Host and does not own the desktop App or either
+Shell. A desktop or browser Shell may render Cloud projections through the same
+App-owned contribution and state/action ABI, while Cloud services retain their
+process, database, API, release and provider authorities. Changing the selected
+App Shell therefore does not migrate Cloud authority or make Cloud a GUI plugin.
+
+The name `Console` appears in two layers but does not identify one authority:
+the Framework Console contribution is an in-process read-model/inspection
+projection; OPL Console in this repository is the account and administrator
+product for policy, quota, approval, Workspace and billing views.
+
 ## Family Capability Domains And Cloud Surfaces
 
 Names such as Console, Workspace, Fabric, Ledger, Connect, Runway, and Packages
@@ -51,7 +78,6 @@ For Cloud, the authority surfaces are concrete products and services:
 
 This rebaseline keeps the family vocabulary useful without making a Cloud
 directory, service, API, package, or plugin the owner of the whole brand.
-
 ```text
 OPL Cloud
 ├─ OPL Gateway       user-visible AI access, routing and usage
@@ -65,7 +91,7 @@ Package owners       identity, capabilities, entrypoints and publication revisio
 Native carriers      install, update, remove and installed/callable readback
 
 OPL Framework
-├─ OPL Packages      discovery, carrier delegation and state aggregation
+├─ Package projection discovery, carrier delegation and state aggregation
 └─ OPL Runway       invocation, session and execution-provider lifecycle
 
 Domain agents        domain strategy, quality verdict and delivery authority

@@ -1,5 +1,11 @@
 # OPL Cloud Implementation Architecture
 
+This repository implements the optional OPL Cloud product layer. It does not
+implement the OPL Framework Cordis Host, the `one-person-lab-app` product
+authority, OPL Package publication/lifecycle, or either GUI Shell. Browser Console calls Cloud Control Plane APIs;
+App Shells may consume Cloud-facing projections through App/Framework contracts,
+but neither path moves Cloud service or database authority into a GUI plugin.
+
 ## Request Path
 
 ```text
