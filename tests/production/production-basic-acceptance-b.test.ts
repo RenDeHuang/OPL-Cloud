@@ -758,7 +758,7 @@ test("Acceptance B launch classifies a deterministic HTTP rejection without trea
     customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
     approval,
     internalServiceToken: "acceptance-b-capability"
-  }), /production_basic_acceptance_b_launch_rejected_http_409/);
+  }), /production_basic_acceptance_b_launch_rejected_http_409_workspace_launch_admission_disabled/);
   assert.equal(calls.filter((call) => call.method === "POST").length, 1);
   assert.equal(calls.filter((call) => call.method === "GET").length, 1);
 });
