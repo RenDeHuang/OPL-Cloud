@@ -228,7 +228,7 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 	if err != nil {
 		return WorkspaceRuntime{}, err
 	}
-	secretPath, err := p.gatewaySecretHostPath(input.GatewaySecretRef)
+	secretPath, err := p.gatewaySecretVersionHostPath(input.GatewaySecretRef, secretMetadata)
 	if err != nil {
 		return WorkspaceRuntime{}, err
 	}
@@ -337,6 +337,19 @@ func (p *LocalDockerProvider) WorkspaceRuntimeStatus(ctx context.Context, worksp
 	if !exists {
 		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "not_found"}, fmt.Errorf("local_docker_runtime_not_found")
 	}
+	secretRef := gatewaySecretName(workspaceID)
+	metadata, err := p.gatewayMetadata(ctx, secretRef)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	secretPath, err := p.gatewaySecretVersionHostPath(secretRef, metadata)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	if container.Config.Labels["opl.secret.ref"] != secretRef || container.Config.Labels["opl.secret.version"] != metadata.Version ||
+		container.Config.Labels["opl.secret.fingerprint"] != metadata.Fingerprint || !runtimeBindMountPresent(container, secretPath, "/run/secrets") {
+		return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_secret_binding_mismatch")
+	}
 	return p.runtimeFromContainer(container)
 }
 
@@ -352,9 +365,23 @@ func (p *LocalDockerProvider) DestroyWorkspaceRuntime(ctx context.Context, works
 	}
 	result := WorkspaceRuntime{ID: localRuntimeID(workspaceID), WorkspaceID: workspaceID, ServiceName: name, ProviderRequestID: providerRequestID("docker-runtime-destroy", workspaceID)}
 	if exists {
-		if current, readErr := p.runtimeFromContainer(container); readErr == nil {
-			result = current
+		current, readErr := p.runtimeFromContainer(container)
+		if readErr != nil || current.WorkspaceID != workspaceID || current.ID != localRuntimeID(workspaceID) || current.ServiceName != name ||
+			container.Config.Labels["opl.fabric.provider"] != "local-docker" || container.Config.Labels["opl.fabric.kind"] != "runtime" ||
+			container.Config.Labels["opl.account.id"] == "" {
+			return result, fmt.Errorf("local_docker_runtime_destroy_ownership_mismatch")
 		}
+		result = current
+	}
+	secretRef := gatewaySecretName(workspaceID)
+	_, metadata, secretErr := p.readGatewaySecretFiles(secretRef)
+	if secretErr != nil && !errors.Is(secretErr, ErrWorkspaceLaunchResourceAbsent) {
+		return result, secretErr
+	}
+	if secretErr == nil && (metadata.WorkspaceID != workspaceID || metadata.SecretRef != secretRef) {
+		return result, fmt.Errorf("local_docker_secret_destroy_ownership_mismatch")
+	}
+	if exists {
 		if _, err := p.runner.Run(ctx, nil, "container", "rm", "-f", name); err != nil {
 			return result, err
 		}
@@ -371,7 +398,7 @@ func (p *LocalDockerProvider) BindWorkspaceRuntimeGatewaySecret(ctx context.Cont
 	if err != nil {
 		return WorkspaceRuntimeGatewaySecretBinding{}, err
 	}
-	secretPath, pathErr := p.gatewaySecretHostPath(input.SecretRef)
+	secretPath, pathErr := p.gatewaySecretVersionHostPath(input.SecretRef, metadata)
 	if pathErr != nil {
 		return WorkspaceRuntimeGatewaySecretBinding{}, pathErr
 	}
@@ -393,7 +420,7 @@ func (p *LocalDockerProvider) WorkspaceRuntimeGatewaySecret(ctx context.Context,
 	if err != nil {
 		return WorkspaceRuntimeGatewaySecretBinding{}, err
 	}
-	secretPath, pathErr := p.gatewaySecretHostPath(secretRef)
+	secretPath, pathErr := p.gatewaySecretVersionHostPath(secretRef, metadata)
 	if pathErr != nil {
 		return WorkspaceRuntimeGatewaySecretBinding{}, pathErr
 	}

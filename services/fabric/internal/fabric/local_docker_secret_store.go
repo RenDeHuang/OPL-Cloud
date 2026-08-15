@@ -1,12 +1,14 @@
 package fabric
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +28,17 @@ func validateLocalDockerGatewaySecretRoot(path string) error {
 	if err != nil {
 		return fmt.Errorf("local_docker_gateway_secret_root_invalid")
 	}
-	return root.Close()
+	defer root.Close()
+	directory, err := root.Open(".")
+	if err != nil {
+		return fmt.Errorf("local_docker_gateway_secret_root_invalid")
+	}
+	defer directory.Close()
+	openedInfo, err := directory.Stat()
+	if err != nil || !openedInfo.IsDir() || openedInfo.Mode().Perm() != 0700 {
+		return fmt.Errorf("local_docker_gateway_secret_root_invalid")
+	}
+	return nil
 }
 
 func validLocalDockerGatewaySecretRef(secretRef string) bool {
@@ -45,6 +57,9 @@ func (p *LocalDockerProvider) openGatewaySecretRoot() (*os.Root, error) {
 	if p.gatewaySecretRootErr != nil {
 		return nil, p.gatewaySecretRootErr
 	}
+	if err := validateLocalDockerGatewaySecretRoot(p.gatewaySecretRoot); err != nil {
+		return nil, err
+	}
 	root, err := os.OpenRoot(p.gatewaySecretRoot)
 	if err != nil {
 		return nil, fmt.Errorf("local_docker_gateway_secret_root_unavailable")
@@ -52,11 +67,23 @@ func (p *LocalDockerProvider) openGatewaySecretRoot() (*os.Root, error) {
 	return root, nil
 }
 
-func (p *LocalDockerProvider) gatewaySecretHostPath(secretRef string) (string, error) {
+func (p *LocalDockerProvider) gatewaySecretVersionHostPath(secretRef string, metadata localDockerGatewayMetadata) (string, error) {
 	if p.gatewaySecretRootErr != nil || !validLocalDockerGatewaySecretRef(secretRef) {
 		return "", fmt.Errorf("local_docker_gateway_secret_path_invalid")
 	}
-	return filepath.Join(p.gatewaySecretRoot, secretRef), nil
+	_, current, err := p.readGatewaySecretFiles(secretRef)
+	if err != nil {
+		return "", err
+	}
+	if current != metadata {
+		return "", ErrLaunchStageBindingConflict
+	}
+	digest := strings.TrimPrefix(metadata.Fingerprint, "sha256:")
+	versionName, err := localDockerGatewayVersionDir(digest)
+	if err != nil || metadata.Version != digest[:16] {
+		return "", ErrLaunchStageBindingConflict
+	}
+	return filepath.Join(p.gatewaySecretRoot, secretRef, localDockerGatewayVersionsDir, versionName), nil
 }
 
 func localDockerGatewayVersionDir(digest string) (string, error) {
@@ -127,6 +154,12 @@ func (p *LocalDockerProvider) writeGatewaySecret(secretRef string, key []byte, m
 	if err := root.MkdirAll(secretRef+"/"+localDockerGatewayVersionsDir, 0711); err != nil {
 		return err
 	}
+	for _, directory := range []string{secretRef, secretRef + "/" + localDockerGatewayVersionsDir} {
+		info, statErr := root.Lstat(directory)
+		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0711 {
+			return ErrLaunchStageBindingConflict
+		}
+	}
 	versionPath := secretRef + "/" + localDockerGatewayVersionsDir + "/" + versionName
 	if info, statErr := root.Lstat(versionPath); statErr == nil {
 		if !info.IsDir() {
@@ -166,24 +199,12 @@ func (p *LocalDockerProvider) writeGatewaySecret(secretRef string, key []byte, m
 			return err
 		}
 	}
-	keyLink := secretRef + "/" + localDockerGatewayKeyFile
-	if target, linkErr := root.Readlink(keyLink); linkErr == nil {
-		if target != "current/"+localDockerGatewayKeyFile {
-			return ErrLaunchStageBindingConflict
-		}
-	} else if !errors.Is(linkErr, os.ErrNotExist) {
-		return linkErr
-	} else {
-		tempKeyLink := secretRef + "/.key-link-" + versionName
-		if err := root.Symlink("current/"+localDockerGatewayKeyFile, tempKeyLink); err != nil {
-			return err
-		}
-		if err := root.Rename(tempKeyLink, keyLink); err != nil {
-			return err
-		}
-	}
 	currentTarget, _ := localDockerGatewayCurrentTarget(digest)
-	tempCurrent := secretRef + "/.current-" + versionName
+	tempName, err := localDockerSecretStagingName()
+	if err != nil {
+		return err
+	}
+	tempCurrent := secretRef + "/.current-" + tempName
 	if err := root.Symlink(currentTarget, tempCurrent); err != nil {
 		return err
 	}
@@ -197,13 +218,13 @@ func readLocalDockerGatewayVersion(root *os.Root, secretRef, versionName string)
 	base := secretRef + "/" + localDockerGatewayVersionsDir + "/" + versionName
 	for _, directory := range []string{secretRef, secretRef + "/" + localDockerGatewayVersionsDir, base} {
 		info, err := root.Lstat(directory)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0711 {
 			return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
 		}
 	}
-	for _, name := range []string{localDockerGatewayKeyFile, localDockerGatewayMetaFile} {
+	for name, mode := range map[string]os.FileMode{localDockerGatewayKeyFile: 0444, localDockerGatewayMetaFile: 0400} {
 		info, err := root.Lstat(base + "/" + name)
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != mode {
 			return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
 		}
 	}
@@ -216,7 +237,9 @@ func readLocalDockerGatewayVersion(root *os.Root, secretRef, versionName string)
 		return nil, localDockerGatewayMetadata{}, err
 	}
 	var metadata localDockerGatewayMetadata
-	if json.Unmarshal(body, &metadata) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&metadata) != nil || !errors.Is(decoder.Decode(&struct{}{}), io.EOF) {
 		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
 	}
 	return key, metadata, nil
@@ -241,12 +264,12 @@ func (p *LocalDockerProvider) readGatewaySecretFiles(secretRef string) ([]byte, 
 	if !secretInfo.IsDir() || secretInfo.Mode()&os.ModeSymlink != 0 {
 		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
 	}
+	if secretInfo.Mode().Perm() != 0711 {
+		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
+	}
 	currentTarget, err := root.Readlink(secretRef + "/current")
 	if errors.Is(err, os.ErrNotExist) {
-		if _, keyErr := root.Lstat(secretRef + "/" + localDockerGatewayKeyFile); errors.Is(keyErr, os.ErrNotExist) {
-			return nil, localDockerGatewayMetadata{}, ErrWorkspaceLaunchResourceAbsent
-		}
-		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
+		return nil, localDockerGatewayMetadata{}, ErrWorkspaceLaunchResourceAbsent
 	}
 	if err != nil || !strings.HasPrefix(currentTarget, localDockerGatewayVersionsDir+"/sha256-") || strings.Contains(currentTarget, "..") || filepath.IsAbs(currentTarget) {
 		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
@@ -254,10 +277,6 @@ func (p *LocalDockerProvider) readGatewaySecretFiles(secretRef string) ([]byte, 
 	versionName := strings.TrimPrefix(currentTarget, localDockerGatewayVersionsDir+"/")
 	digest := strings.TrimPrefix(versionName, "sha256-")
 	if expected, targetErr := localDockerGatewayCurrentTarget(digest); targetErr != nil || expected != currentTarget {
-		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
-	}
-	keyTarget, err := root.Readlink(secretRef + "/" + localDockerGatewayKeyFile)
-	if err != nil || keyTarget != "current/"+localDockerGatewayKeyFile {
 		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
 	}
 	key, metadata, err := readLocalDockerGatewayVersion(root, secretRef, versionName)
