@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"time"
 )
@@ -12,6 +13,7 @@ const WorkspaceLaunchFabricSchemaVersion = 1
 
 const workspaceLaunchPreflightPayloadKey = "workspaceLaunchPreflight"
 const workspaceLaunchStageRecordPayloadKey = "workspaceLaunchStageRecord"
+const workspaceLaunchStageRecordSchemaVersion = 2
 
 var (
 	ErrWorkspaceLaunchInputInvalid   = errors.New("workspace_launch_input_invalid")
@@ -330,9 +332,66 @@ func setWorkspaceLaunchStageRecord(operation *FabricOperation, record workspaceL
 	if operation.RedactedProviderPayload == nil {
 		operation.RedactedProviderPayload = map[string]any{}
 	}
-	operation.RedactedProviderPayload[workspaceLaunchStageRecordPayloadKey] = persistedWorkspaceLaunchStageRecord{
-		Record: record, Digest: hashInput(record),
+	digest := hashInput(record)
+	if record.SchemaVersion == workspaceLaunchStageRecordSchemaVersion {
+		digest = workspaceLaunchStageRecordDigest(record)
 	}
+	operation.RedactedProviderPayload[workspaceLaunchStageRecordPayloadKey] = persistedWorkspaceLaunchStageRecord{
+		Record: record, Digest: digest,
+	}
+}
+
+func workspaceLaunchStageRecordDigest(record workspaceLaunchStageRecord) string {
+	if len(record.ProviderState) == 0 {
+		return hashInput(record)
+	}
+	var state map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(record.ProviderState)))
+	decoder.UseNumber()
+	if decoder.Decode(&state) != nil || state == nil {
+		return ""
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return ""
+	}
+	canonical, err := json.Marshal(state)
+	if err != nil {
+		return ""
+	}
+	record.ProviderState = canonical
+	return hashInput(record)
+}
+
+func legacyWorkspaceLaunchStageRecordDigest(record workspaceLaunchStageRecord) string {
+	if len(record.ProviderState) == 0 {
+		return hashInput(record)
+	}
+	switch record.ProviderProfileRef {
+	case "local-docker":
+		var state localDockerWorkspaceLaunchState
+		if json.Unmarshal(record.ProviderState, &state) != nil {
+			return ""
+		}
+		providerState, err := encodeLocalDockerWorkspaceLaunchState(state)
+		if err != nil {
+			return ""
+		}
+		record.ProviderState = providerState
+	case "tencent-tke":
+		var state tencentWorkspaceLaunchState
+		if json.Unmarshal(record.ProviderState, &state) != nil {
+			return ""
+		}
+		providerState, err := encodeTencentWorkspaceLaunchState(state)
+		if err != nil {
+			return ""
+		}
+		record.ProviderState = providerState
+	default:
+		return ""
+	}
+	return hashInput(record)
 }
 
 func decodeWorkspaceLaunchStageRecord(operation FabricOperation) (workspaceLaunchStageRecord, bool) {
@@ -345,8 +404,15 @@ func decodeWorkspaceLaunchStageRecord(operation FabricOperation) (workspaceLaunc
 		return workspaceLaunchStageRecord{}, false
 	}
 	var persisted persistedWorkspaceLaunchStageRecord
-	if json.Unmarshal(body, &persisted) != nil || persisted.Record.SchemaVersion != 1 ||
-		persisted.Digest == "" || persisted.Digest != hashInput(persisted.Record) ||
+	if json.Unmarshal(body, &persisted) != nil {
+		return workspaceLaunchStageRecord{}, false
+	}
+	expectedDigest := legacyWorkspaceLaunchStageRecordDigest(persisted.Record)
+	if persisted.Record.SchemaVersion == workspaceLaunchStageRecordSchemaVersion {
+		expectedDigest = workspaceLaunchStageRecordDigest(persisted.Record)
+	}
+	if (persisted.Record.SchemaVersion != 1 && persisted.Record.SchemaVersion != workspaceLaunchStageRecordSchemaVersion) ||
+		persisted.Digest == "" || persisted.Digest != expectedDigest ||
 		persisted.Record.ProviderProfileRef == "" || persisted.Record.PreflightBindingRef == "" {
 		return workspaceLaunchStageRecord{}, false
 	}
@@ -363,7 +429,7 @@ func workspaceLaunchStageCredentialKeyID(input WorkspaceLaunchStageInput) int64 
 func newWorkspaceLaunchStageOperation(input WorkspaceLaunchStageInput, provider string, now func() time.Time) (FabricOperation, workspaceLaunchStageRecord, error) {
 	binding := input.Binding
 	record := workspaceLaunchStageRecord{
-		SchemaVersion: 1, ProviderProfileRef: provider, PreflightBindingRef: input.PreflightBindingRef,
+		SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: provider, PreflightBindingRef: input.PreflightBindingRef,
 		RequestResources: input.Resources, Resources: input.Resources, GatewayKeyID: workspaceLaunchStageCredentialKeyID(input),
 	}
 	operation := newOperation(binding.Action, "workspace_launch_stage", binding.FabricOperationID, binding.AccountID, binding.WorkspaceID, binding.IdempotencyKey, binding.RequestHash, now())

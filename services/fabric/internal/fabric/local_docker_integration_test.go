@@ -138,6 +138,40 @@ func (r *recordingDockerRunner) Run(_ context.Context, _ []byte, args ...string)
 	return nil, fmt.Errorf("unexpected docker call: %q", args)
 }
 
+type localDockerComputeRoundTripRunner struct {
+	network       dockerNetworkInspect
+	mutationCalls int
+}
+
+func (r *localDockerComputeRoundTripRunner) Run(_ context.Context, _ []byte, args ...string) ([]byte, error) {
+	switch {
+	case len(args) >= 1 && args[0] == "info":
+		return []byte("test-docker-version"), nil
+	case len(args) == 7 && args[0] == "network" && args[1] == "ls":
+		if r.network.ID == "" {
+			return nil, nil
+		}
+		return json.Marshal(dockerObjectInventoryRow{ID: r.network.ID, Name: r.network.Name})
+	case len(args) >= 4 && args[0] == "network" && args[1] == "create":
+		r.mutationCalls++
+		r.network = dockerNetworkInspect{ID: "network-round-trip", Name: args[len(args)-1], Labels: map[string]string{}}
+		for index := 0; index+1 < len(args); index++ {
+			if args[index] != "--label" {
+				continue
+			}
+			key, value, found := strings.Cut(args[index+1], "=")
+			if found {
+				r.network.Labels[key] = value
+			}
+		}
+		return []byte(r.network.ID), nil
+	case len(args) == 3 && args[0] == "network" && args[1] == "inspect" && r.network.ID != "":
+		return json.Marshal([]dockerNetworkInspect{r.network})
+	default:
+		return nil, fmt.Errorf("unexpected docker call: %q", args)
+	}
+}
+
 type localDockerRuntimeReplayRunner struct {
 	calls                  [][]string
 	network                dockerNetworkInspect
@@ -665,6 +699,81 @@ func TestLocalDockerDestroyWorkspaceRuntimeFailsClosedOnSecretIdentityDrift(t *t
 	}
 	if _, statErr := os.Stat(filepath.Join(root, secretRef)); statErr != nil {
 		t.Fatalf("drifted secret was removed: %v", statErr)
+	}
+}
+
+func TestLocalDockerComputeStageSurvivesPostgresJSONBRoundTrip(t *testing.T) {
+	for _, schemaVersion := range []int{1, workspaceLaunchStageRecordSchemaVersion} {
+		t.Run(fmt.Sprintf("record-v%d", schemaVersion), func(t *testing.T) {
+			ctx := context.Background()
+			runner := &localDockerComputeRoundTripRunner{}
+			store := NewMemoryOperationStore()
+			provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t)}, runner)
+			service := NewServiceWithOperationStore(provider, store)
+			image := defaultLocalDockerWorkspaceImageRepository + "@sha256:" + strings.Repeat("a", 64)
+			launchID, accountID, workspaceID := fmt.Sprintf("launch-jsonb-v%d", schemaVersion), "acct-jsonb", "ws-jsonb"
+			launchHash := strings.Repeat("b", 64)
+			preflight, err := service.PreflightWorkspaceLaunch(ctx, WorkspaceLaunchPreflightInput{
+				SchemaVersion: 1, LaunchOperationID: launchID, AccountID: accountID, WorkspaceID: workspaceID,
+				PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image, RequestHash: launchHash,
+			})
+			if err != nil || !preflight.Available {
+				t.Fatalf("preflight=%#v err=%v", preflight, err)
+			}
+			input := WorkspaceLaunchStageInput{
+				Binding:            localLaunchBinding(launchID, accountID, workspaceID, "ensure_compute_allocation", "ensure_compute_allocation", launchID+":ensure-compute-allocation"),
+				ProviderProfileRef: "local-docker", PreflightBindingRef: preflight.BindingRef,
+				PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image,
+			}
+			input.Binding.RequestHash = workspaceLaunchStageRequestHash(input, launchHash)
+
+			result, err := service.EnsureWorkspaceLaunchStage(ctx, input)
+			if err != nil || result.State != "ready" || runner.mutationCalls != 1 {
+				t.Fatalf("ensure result=%#v mutations=%d err=%v", result, runner.mutationCalls, err)
+			}
+			childID := providerMutationOperationID(input.Binding, "local_docker_network_create", "compute_allocation", result.Resources.ComputeAllocationID, runner.network.Name)
+			parent, parentErr := store.Get(ctx, input.Binding.FabricOperationID)
+			child, childErr := store.Get(ctx, childID)
+			if parentErr != nil || childErr != nil || parent.Status != "succeeded" || child.Status != "succeeded" {
+				t.Fatalf("parent=%#v parentErr=%v child=%#v childErr=%v", parent, parentErr, child, childErr)
+			}
+			if schemaVersion == 1 {
+				record, ok := decodeWorkspaceLaunchStageRecord(parent)
+				if !ok {
+					t.Fatal("new parent record did not decode before legacy conversion")
+				}
+				record.SchemaVersion = 1
+				setWorkspaceLaunchStageRecord(&parent, record)
+				store.mu.Lock()
+				for index := range store.operation {
+					if store.operation[index].ID == parent.ID {
+						store.operation[index] = parent
+					}
+				}
+				store.mu.Unlock()
+			}
+
+			store.mu.Lock()
+			for index := range store.operation {
+				body, marshalErr := json.Marshal(store.operation[index].RedactedProviderPayload)
+				if marshalErr != nil {
+					store.mu.Unlock()
+					t.Fatal(marshalErr)
+				}
+				var normalized map[string]any
+				if unmarshalErr := json.Unmarshal(body, &normalized); unmarshalErr != nil {
+					store.mu.Unlock()
+					t.Fatal(unmarshalErr)
+				}
+				store.operation[index].RedactedProviderPayload = normalized
+			}
+			store.mu.Unlock()
+
+			readback, err := service.ReadWorkspaceLaunchStage(ctx, input)
+			if err != nil || readback.State != "ready" || readback.Reason != "none" || runner.mutationCalls != 1 {
+				t.Fatalf("authoritative readback=%#v mutations=%d parentStatus=%s childStatus=%s err=%v", readback, runner.mutationCalls, parent.Status, child.Status, err)
+			}
+		})
 	}
 }
 
