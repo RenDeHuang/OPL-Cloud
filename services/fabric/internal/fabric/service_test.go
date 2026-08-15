@@ -2188,6 +2188,72 @@ func TestWorkspaceRuntimePersistsStableAttachmentAndRuntimeOperationIdentity(t *
 	}
 }
 
+func TestWorkspaceRuntimeObservationClassifiesTypedOwnerReadback(t *testing.T) {
+	workspaceID := "workspace-alpha"
+	runtime := WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: workspaceID, Status: "running", Ready: true}
+	for _, testCase := range []struct {
+		name      string
+		result    WorkspaceRuntime
+		err       error
+		wantState string
+		wantBody  bool
+	}{
+		{name: "ready", result: runtime, wantState: WorkspaceOwnerObservationReady, wantBody: true},
+		{name: "running pending readiness", result: WorkspaceRuntime{ID: runtime.ID, WorkspaceID: workspaceID, Status: "running"}, wantState: WorkspaceOwnerObservationPending, wantBody: true},
+		{name: "pending", result: WorkspaceRuntime{ID: runtime.ID, WorkspaceID: workspaceID, Status: "destroying"}, wantState: WorkspaceOwnerObservationPending, wantBody: true},
+		{name: "pending status with ready drift", result: WorkspaceRuntime{ID: runtime.ID, WorkspaceID: workspaceID, Status: "destroying", Ready: true}, wantState: WorkspaceOwnerObservationError},
+		{name: "absent", err: ErrWorkspaceLaunchResourceAbsent, wantState: WorkspaceOwnerObservationAbsent},
+		{name: "conflict sentinel", err: ErrLaunchStageBindingConflict, wantState: WorkspaceOwnerObservationConflict},
+		{name: "identity conflict", result: WorkspaceRuntime{ID: runtime.ID, WorkspaceID: "workspace-other", Status: "running", Ready: true}, wantState: WorkspaceOwnerObservationConflict},
+		{name: "unknown status", result: WorkspaceRuntime{ID: runtime.ID, WorkspaceID: workspaceID, Status: "destroyed"}, wantState: WorkspaceOwnerObservationError},
+		{name: "provider error", err: errors.New("provider unavailable"), wantState: WorkspaceOwnerObservationError},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			observation := workspaceRuntimeOwnerObservation(workspaceID, testCase.result, testCase.err)
+			if observation.SchemaVersion != WorkspaceOwnerObservationSchemaVersion || observation.WorkspaceID != workspaceID || observation.State != testCase.wantState {
+				t.Fatalf("observation=%#v", observation)
+			}
+			if (observation.Runtime != nil) != testCase.wantBody {
+				t.Fatalf("runtime body=%#v wantBody=%v", observation.Runtime, testCase.wantBody)
+			}
+			if observation.Runtime != nil && observation.Runtime.Access.Password != "" {
+				t.Fatal("runtime observation leaked password")
+			}
+		})
+	}
+}
+
+func TestWorkspaceRuntimeGatewaySecretObservationClassifiesTypedOwnerReadback(t *testing.T) {
+	workspaceID := "workspace-alpha"
+	binding := WorkspaceRuntimeGatewaySecretBinding{
+		WorkspaceID: workspaceID, WorkspaceAPIKeyID: 19, SecretRef: gatewaySecretName(workspaceID), Fingerprint: "sha256:alpha", Bound: true,
+	}
+	for _, testCase := range []struct {
+		name      string
+		result    WorkspaceRuntimeGatewaySecretBinding
+		err       error
+		wantState string
+		wantBody  bool
+	}{
+		{name: "ready", result: binding, wantState: WorkspaceOwnerObservationReady, wantBody: true},
+		{name: "pending", result: WorkspaceRuntimeGatewaySecretBinding{WorkspaceID: workspaceID, WorkspaceAPIKeyID: 19, SecretRef: gatewaySecretName(workspaceID), Fingerprint: "sha256:alpha"}, wantState: WorkspaceOwnerObservationPending, wantBody: true},
+		{name: "absent", err: ErrWorkspaceLaunchResourceAbsent, wantState: WorkspaceOwnerObservationAbsent},
+		{name: "conflict sentinel", err: ErrLaunchStageBindingConflict, wantState: WorkspaceOwnerObservationConflict},
+		{name: "identity conflict", result: WorkspaceRuntimeGatewaySecretBinding{WorkspaceID: "workspace-other", WorkspaceAPIKeyID: 19, SecretRef: gatewaySecretName(workspaceID), Fingerprint: "sha256:alpha", Bound: true}, wantState: WorkspaceOwnerObservationConflict},
+		{name: "provider error", err: errors.New("provider unavailable"), wantState: WorkspaceOwnerObservationError},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			observation := workspaceRuntimeGatewaySecretOwnerObservation(workspaceID, testCase.result, testCase.err)
+			if observation.SchemaVersion != WorkspaceOwnerObservationSchemaVersion || observation.WorkspaceID != workspaceID || observation.State != testCase.wantState {
+				t.Fatalf("observation=%#v", observation)
+			}
+			if (observation.Binding != nil) != testCase.wantBody {
+				t.Fatalf("binding=%#v wantBody=%v", observation.Binding, testCase.wantBody)
+			}
+		})
+	}
+}
+
 func TestWorkspaceRuntimeCredentialUpdateKeepsSingleCreateIdentity(t *testing.T) {
 	provider := &countingRuntimeProvider{}
 	service := runtimeTestService(provider, NewMemoryOperationStore())

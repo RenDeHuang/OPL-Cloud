@@ -421,6 +421,86 @@ func TestFabricHTTPClientUsesTypedWorkspaceDeleteRoutes(t *testing.T) {
 	}
 }
 
+func TestFabricHTTPClientReadsTypedWorkspaceOwnerObservations(t *testing.T) {
+	requests := []string{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path+" "+r.Header.Get("Idempotency-Key"))
+		switch r.URL.Path {
+		case "/fabric/workspace-runtimes/ws-alpha/observation":
+			_ = json.NewEncoder(w).Encode(WorkspaceRuntimeObservation{
+				SchemaVersion: WorkspaceOwnerObservationSchemaVersion, State: WorkspaceOwnerObservationAbsent, WorkspaceID: "ws-alpha",
+			})
+		case "/fabric/workspace-runtimes/ws-alpha/gateway-secret/observation":
+			_ = json.NewEncoder(w).Encode(WorkspaceRuntimeGatewaySecretObservation{
+				SchemaVersion: WorkspaceOwnerObservationSchemaVersion, State: WorkspaceOwnerObservationReady, WorkspaceID: "ws-alpha",
+				Binding: &WorkspaceRuntimeGatewaySecretBinding{WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, SecretRef: "opl-gateway-ws-alpha", Fingerprint: "sha256:alpha", Bound: true},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	client, ok := NewFabricHTTPClientWithCapability(upstream.URL, "internal-secret", "", upstream.Client()).(FabricWorkspaceDeleteObservationClient)
+	if !ok {
+		t.Fatal("Fabric HTTP client must implement Workspace delete observation capability")
+	}
+	runtime, err := client.ObserveWorkspaceRuntime(context.Background(), "ws-alpha")
+	if err != nil || runtime.SchemaVersion != WorkspaceOwnerObservationSchemaVersion || runtime.State != WorkspaceOwnerObservationAbsent || runtime.WorkspaceID != "ws-alpha" || runtime.Runtime != nil {
+		t.Fatalf("runtime observation=%#v err=%v", runtime, err)
+	}
+	secret, err := client.ObserveWorkspaceRuntimeGatewaySecret(context.Background(), "ws-alpha")
+	if err != nil || secret.SchemaVersion != WorkspaceOwnerObservationSchemaVersion || secret.State != WorkspaceOwnerObservationReady || secret.WorkspaceID != "ws-alpha" || secret.Binding == nil || secret.Binding.WorkspaceAPIKeyID != 19 {
+		t.Fatalf("secret observation=%#v err=%v", secret, err)
+	}
+	want := []string{
+		"GET /fabric/workspace-runtimes/ws-alpha/observation ",
+		"GET /fabric/workspace-runtimes/ws-alpha/gateway-secret/observation ",
+	}
+	if strings.Join(requests, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("observation requests=%#v want=%#v", requests, want)
+	}
+}
+
+func TestFabricHTTPClientRejectsInconsistentWorkspaceRuntimeObservations(t *testing.T) {
+	workspaceID := "ws-alpha"
+	for _, testCase := range []struct {
+		name        string
+		observation WorkspaceRuntimeObservation
+	}{
+		{
+			name: "ready state without ready runtime",
+			observation: WorkspaceRuntimeObservation{SchemaVersion: 1, State: WorkspaceOwnerObservationReady, WorkspaceID: workspaceID,
+				Runtime: &WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: workspaceID, Status: "running"}},
+		},
+		{
+			name: "pending state with ready runtime",
+			observation: WorkspaceRuntimeObservation{SchemaVersion: 1, State: WorkspaceOwnerObservationPending, WorkspaceID: workspaceID,
+				Runtime: &WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: workspaceID, Status: "destroying", Ready: true}},
+		},
+		{
+			name: "pending state with terminal status",
+			observation: WorkspaceRuntimeObservation{SchemaVersion: 1, State: WorkspaceOwnerObservationPending, WorkspaceID: workspaceID,
+				Runtime: &WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: workspaceID, Status: "destroyed"}},
+		},
+		{
+			name:        "unknown state",
+			observation: WorkspaceRuntimeObservation{SchemaVersion: 1, State: "unknown", WorkspaceID: workspaceID},
+		},
+		{
+			name: "absent state with resource body",
+			observation: WorkspaceRuntimeObservation{SchemaVersion: 1, State: WorkspaceOwnerObservationAbsent, WorkspaceID: workspaceID,
+				Runtime: &WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: workspaceID, Status: "destroyed"}},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if validWorkspaceRuntimeObservation(testCase.observation, workspaceID) {
+				t.Fatalf("accepted inconsistent observation=%#v", testCase.observation)
+			}
+		})
+	}
+}
+
 func TestFabricClientReturnsErrorOnUpstreamFailure(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "fabric unavailable", http.StatusServiceUnavailable)

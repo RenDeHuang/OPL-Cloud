@@ -39,6 +39,26 @@ type runtimeHealthSummaryHTTPProvider struct {
 	calls int
 }
 
+type workspaceOwnerObservationHTTPProvider struct {
+	testProvider
+	runtime       fabric.WorkspaceRuntime
+	runtimeErr    error
+	secretBinding fabric.WorkspaceRuntimeGatewaySecretBinding
+	secretErr     error
+}
+
+func (p workspaceOwnerObservationHTTPProvider) WorkspaceRuntimeStatus(_ context.Context, _ string) (fabric.WorkspaceRuntime, error) {
+	return p.runtime, p.runtimeErr
+}
+
+func (p workspaceOwnerObservationHTTPProvider) WorkspaceRuntimeGatewaySecret(_ context.Context, _ string) (fabric.WorkspaceRuntimeGatewaySecretBinding, error) {
+	return p.secretBinding, p.secretErr
+}
+
+func (p workspaceOwnerObservationHTTPProvider) BindWorkspaceRuntimeGatewaySecret(_ context.Context, input fabric.WorkspaceRuntimeGatewaySecretInput) (fabric.WorkspaceRuntimeGatewaySecretBinding, error) {
+	return fabric.WorkspaceRuntimeGatewaySecretBinding{WorkspaceID: input.WorkspaceID, WorkspaceAPIKeyID: input.WorkspaceAPIKeyID, SecretRef: input.SecretRef, Fingerprint: input.Fingerprint, Bound: true}, nil
+}
+
 const testFabricCapabilityKey = "test-fabric-capability-key-not-a-transport-token"
 
 func newTestServer(service *fabric.Service, token string) http.Handler {
@@ -949,6 +969,86 @@ func TestServerDestroysWorkspaceRuntime(t *testing.T) {
 
 	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"status":"destroyed"`) || !strings.Contains(rec.Body.String(), `"workspaceId":"workspace-alpha"`) {
 		t.Fatalf("destroy status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServerReturnsTypedWorkspaceOwnerObservations(t *testing.T) {
+	provider := workspaceOwnerObservationHTTPProvider{
+		runtime: fabric.WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: "workspace-alpha", Status: "destroying"},
+		secretBinding: fabric.WorkspaceRuntimeGatewaySecretBinding{
+			WorkspaceID: "workspace-alpha", WorkspaceAPIKeyID: 19, SecretRef: "opl-gateway-a0ba8c07d0462e6b", Fingerprint: "sha256:alpha", Bound: true,
+		},
+	}
+	server := newTestServer(fabric.NewService(provider), "internal-secret")
+	for _, testCase := range []struct {
+		path      string
+		wantState string
+		decode    func(*json.Decoder) (string, int, string)
+	}{
+		{
+			path: "/fabric/workspace-runtimes/workspace-alpha/observation", wantState: fabric.WorkspaceOwnerObservationPending,
+			decode: func(decoder *json.Decoder) (string, int, string) {
+				var observation fabric.WorkspaceRuntimeObservation
+				if err := decoder.Decode(&observation); err != nil || observation.Runtime == nil || observation.Runtime.ID != "runtime-alpha" {
+					t.Fatalf("runtime observation=%#v err=%v", observation, err)
+				}
+				return observation.State, observation.SchemaVersion, observation.WorkspaceID
+			},
+		},
+		{
+			path: "/fabric/workspace-runtimes/workspace-alpha/gateway-secret/observation", wantState: fabric.WorkspaceOwnerObservationReady,
+			decode: func(decoder *json.Decoder) (string, int, string) {
+				var observation fabric.WorkspaceRuntimeGatewaySecretObservation
+				if err := decoder.Decode(&observation); err != nil || observation.Binding == nil || observation.Binding.WorkspaceAPIKeyID != 19 {
+					t.Fatalf("secret observation=%#v err=%v", observation, err)
+				}
+				return observation.State, observation.SchemaVersion, observation.WorkspaceID
+			},
+		},
+	} {
+		t.Run(testCase.path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, testRequest(http.MethodGet, testCase.path, nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			state, version, workspaceID := testCase.decode(json.NewDecoder(recorder.Body))
+			if state != testCase.wantState || version != fabric.WorkspaceOwnerObservationSchemaVersion || workspaceID != "workspace-alpha" {
+				t.Fatalf("state=%q version=%d workspaceId=%q", state, version, workspaceID)
+			}
+		})
+	}
+}
+
+func TestServerWorkspaceOwnerObservationPreservesAbsentConflictAndError(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "absent", err: fabric.ErrWorkspaceLaunchResourceAbsent, want: fabric.WorkspaceOwnerObservationAbsent},
+		{name: "conflict", err: fabric.ErrLaunchStageBindingConflict, want: fabric.WorkspaceOwnerObservationConflict},
+		{name: "error", err: errors.New("provider unavailable"), want: fabric.WorkspaceOwnerObservationError},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := newTestServer(fabric.NewService(workspaceOwnerObservationHTTPProvider{runtimeErr: testCase.err, secretErr: testCase.err}), "internal-secret")
+			for _, endpoint := range []string{"runtime", "secret"} {
+				t.Run(endpoint, func(t *testing.T) {
+					path := "/fabric/workspace-runtimes/workspace-alpha/observation"
+					if endpoint == "secret" {
+						path = "/fabric/workspace-runtimes/workspace-alpha/gateway-secret/observation"
+					}
+					recorder := httptest.NewRecorder()
+					server.ServeHTTP(recorder, testRequest(http.MethodGet, path, nil))
+					var observation struct {
+						State string `json:"state"`
+					}
+					if recorder.Code != http.StatusOK || json.NewDecoder(recorder.Body).Decode(&observation) != nil || observation.State != testCase.want {
+						t.Fatalf("status=%d observation=%#v body=%s", recorder.Code, observation, recorder.Body.String())
+					}
+				})
+			}
+		})
 	}
 }
 

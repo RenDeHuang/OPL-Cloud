@@ -421,6 +421,30 @@ type WorkspaceRuntimeGatewaySecretBinding struct {
 	Bound             bool   `json:"bound"`
 }
 
+const WorkspaceOwnerObservationSchemaVersion = 1
+
+const (
+	WorkspaceOwnerObservationReady    = "ready"
+	WorkspaceOwnerObservationAbsent   = "absent"
+	WorkspaceOwnerObservationPending  = "pending"
+	WorkspaceOwnerObservationConflict = "conflict"
+	WorkspaceOwnerObservationError    = "error"
+)
+
+type WorkspaceRuntimeObservation struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	State         string            `json:"state"`
+	WorkspaceID   string            `json:"workspaceId"`
+	Runtime       *WorkspaceRuntime `json:"runtime,omitempty"`
+}
+
+type WorkspaceRuntimeGatewaySecretObservation struct {
+	SchemaVersion int                                   `json:"schemaVersion"`
+	State         string                                `json:"state"`
+	WorkspaceID   string                                `json:"workspaceId"`
+	Binding       *WorkspaceRuntimeGatewaySecretBinding `json:"binding,omitempty"`
+}
+
 type ProviderFactInput struct {
 	AccountID    string `json:"accountId"`
 	WorkspaceID  string `json:"workspaceId"`
