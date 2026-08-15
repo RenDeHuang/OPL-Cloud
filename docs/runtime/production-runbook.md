@@ -2,7 +2,7 @@
 
 OPL Cloud does not operate or automatically deploy a concrete instance. This
 repository publishes reusable source, contracts, installation assets, and
-immutable releases only.
+versioned create-only releases only.
 
 - Generic Docker installation: [Install OPL Cloud](../installation.md)
 - Product/instance ownership: [Architecture](../architecture.md)
@@ -14,9 +14,10 @@ and receipts must remain with the selected instance owner.
 
 ## Product Release Admission
 
-A formal OPL Cloud Release transfers one immutable, portable product artifact
-from the Product owner to a prepared consumer. It is not a CI checkpoint, a
-record of every merged change, or a way to diagnose an Instance.
+A formal OPL Cloud Release transfers one portable product artifact that Product
+owners treat as immutable after publication to a prepared consumer. It is not a
+CI checkpoint, a record of every merged change, or a way to diagnose an
+Instance.
 
 ### Release Unit
 
@@ -29,7 +30,7 @@ one reviewable release unit with all of the following:
 - **Acceptance:** the scoped criteria and exact source, test, contract, and
   artifact evidence proving the Product side is ready;
 - **Artifact impact:** the runtime image, public contract, schema, dependency,
-  installation asset, or security boundary that requires new immutable bytes;
+  installation asset, or security boundary that requires new released bytes;
 - **Consumer:** the Instance or installer prepared to adopt the Release after
   publication;
 - **Predecessor gap:** why the current Release cannot satisfy that consumer;
@@ -55,11 +56,18 @@ responsibility and binds the exact released SHA and image digest.
 ### Publication And Handoff
 
 After `READY`, the Product Release owner verifies the unused version, exact
-canonical SHA, required checks, release assets, immutable image identity,
+canonical SHA, required checks, release assets, digest-bound image identity,
 checksums, provenance, and prepared consumer. One formal Release is then
 published for the release unit and handed to the consumer. The consumer reuses
 that same Release for deployment, configuration correction, retry, rollback,
 and qualification.
+
+Product policy requires published tags, Releases, and image identities to
+remain fixed, and the create-only workflow rejects reuse of an existing tag,
+Release, or GHCR release tag. That does not prove platform-enforced
+immutability. Report GitHub's immutable-release setting, Release API state, and
+tag protection separately in `docs/status.md`; keep any missing enforcement or
+accepted residual risk in `docs/roadmap.md`.
 
 Do not publish a new Product Release solely for:
 

@@ -120,12 +120,16 @@ evidence, artifact impact, prepared consumer, and the reason the preceding
 Release cannot satisfy that consumer. The Product owner must report `READY`
 with no known Product-side blocker remaining for that unit.
 
-Candidate CI output and exact-SHA images may be replaced before `READY`; a
-formal Release may not. After publication, Instance deployment, configuration,
-environment, Secret, provider, account, approval, and runtime-data failures must
-reuse the same Release. Authorize a patch Release only after owner evidence
-proves that the immutable Product artifact or its consumer contract must change,
-then reopen and requalify the Product lane before publication.
+Candidate CI output and exact-SHA images may be replaced before `READY`; Product
+owners must treat a formal Release as immutable after publication. Do not infer
+platform enforcement from exact SHA/digest binding or the create-only workflow:
+use `docs/status.md` for the current GitHub setting/API evidence and
+`docs/roadmap.md` for any residual gap. After publication, Instance deployment,
+configuration, environment, Secret, provider, account, approval, and
+runtime-data failures must reuse the same Release. Authorize a patch Release
+only after owner evidence proves that the published Product artifact or its
+consumer contract must change, then reopen and requalify the Product lane before
+publication.
 
 Documentation-only, test-only, CI-performance, and Instance-only changes do not
 independently justify a Product Release. Product publication remains portable

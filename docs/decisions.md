@@ -1,24 +1,33 @@
 # Decisions
 
-## 2026-08-15: Release Units Gate Immutable Product Publication
+## 2026-08-15: Release Units Gate Product Publication
 
-An OPL Cloud Release is an immutable product handoff, not a development
-checkpoint or a production debugging mechanism. Before publication, one named
-release unit must identify the product problem being closed, its primary owner,
-the product-artifact impact, the exact source and verification evidence, the
-consumer ready to adopt it, and why the preceding Release cannot satisfy that
-consumer. The Product owner declares the unit ready only after its scoped
-acceptance criteria pass and no known product-side blocker for that unit
-remains.
+An OPL Cloud Release is treated as an immutable product handoff by Product
+policy after publication; it is not a development checkpoint or a production
+debugging mechanism. Before publication, one named release unit must identify
+the product problem being closed, its primary owner, the product-artifact
+impact, the exact source and verification evidence, the consumer ready to adopt
+it, and why the preceding Release cannot satisfy that consumer. The Product
+owner declares the unit ready only after its scoped acceptance criteria pass
+and no known product-side blocker for that unit remains.
 
 This decision responds to observed version churn rather than a hypothetical
 process preference. Eight Releases, `v0.1.0` through `v0.1.7`, were published in
-roughly 49 hours. Most changes from `v0.1.2` through `v0.1.7` progressively
-closed one Acceptance B path, so permanent Git tags, GitHub Releases,
-multi-architecture manifests, checksums, attestations, and downstream identity
-bindings were repeatedly used where a replaceable candidate and one qualified
-handoff were needed. The release workflow correctly proved artifact integrity,
-but it had no semantic admission rule proving that publication was necessary.
+roughly 49 hours. Every Release from `v0.1.2` through `v0.1.7` included another
+increment toward the same Acceptance B path, so durable Git tags, GitHub
+Releases, multi-architecture manifests, checksums, attestations, and downstream
+identity bindings were repeatedly used where a replaceable candidate and one
+qualified handoff were needed. The release workflow correctly proved artifact
+integrity, but it had no semantic admission rule proving that publication was
+necessary.
+
+Policy immutability and platform enforcement are separate facts. The current
+workflow is create-only and binds a Release to an exact product SHA and image
+digest; Product owners must not overwrite, reuse, or delete that published
+identity. This decision does not claim that GitHub prevents those mutations.
+GitHub's current immutable-release setting, Release API state, tag protection,
+and any residual enforcement gap remain current evidence in `docs/status.md`
+and open acceptance in `docs/roadmap.md`.
 
 Candidate verification and Product Release remain distinct. CI output and an
 exact-SHA candidate may be rebuilt or rejected while a release unit is still
@@ -26,7 +35,7 @@ open. A formal Release is published once for a ready unit and is then reused by
 Instance deployment, configuration, retry, rollback, and qualification work.
 An Instance, environment, Secret, provider, deployment, account, or runtime-data
 failure does not authorize another Product Release. A new patch Release is
-admitted only when owner evidence proves that the immutable product artifact or
+admitted only when owner evidence proves that the published product artifact or
 its consumer contract must change; the Product lane then reopens and qualifies
 a new candidate before publication.
 
