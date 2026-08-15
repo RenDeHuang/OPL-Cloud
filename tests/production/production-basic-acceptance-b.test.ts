@@ -16,6 +16,7 @@ import {
   prepareProductionBasicAcceptanceBAccount,
   productionBasicAcceptanceBStageBudgets,
   productionBasicAcceptanceBApprovalDigest,
+  runProductionBasicAcceptanceB,
   readProductionBasicAcceptanceBLaunchUntilTerminal,
   submitProductionBasicAcceptanceBLaunch,
   validateProductionBasicAcceptanceBArtifact,
@@ -571,6 +572,28 @@ test("Acceptance B launch reads the deterministic identity before its single POS
     assert.equal(calls.filter((call) => call.method === "POST").length, 1);
     assert.equal(calls.filter((call) => call.method === "GET").length, responseLost ? 2 : 1);
   }
+});
+
+test("Acceptance B runtime configuration requires distinct Fabric and Control Plane credentials", async () => {
+  const approval = approvalFixture();
+  const baseOptions = {
+    origin: "https://cloud.medopl.cn",
+    fabricOrigin: "http://127.0.0.1:18082",
+    fabricServiceToken: "fabric-transport-token",
+    internalServiceToken: "control-plane-capability-token",
+    customerPassword: "customer-password",
+    approvalJson: JSON.stringify(approval),
+    approvalId: APPROVAL_ID,
+    mergedSha: MERGED_MAIN_SHA,
+    kubeconfigPath: "/tmp/acceptance-kubeconfig",
+    fetchImpl: async () => { throw new Error("unexpected_network"); }
+  };
+  await assert.rejects(() => runProductionBasicAcceptanceB(baseOptions), /production_basic_acceptance_b_admin_login_failed|unexpected_network/);
+  await assert.rejects(() => runProductionBasicAcceptanceB({
+    ...baseOptions,
+    fabricServiceToken: "same-token",
+    internalServiceToken: "same-token"
+  }), /production_basic_acceptance_b_config_invalid/);
 });
 
 test("Acceptance B launch continues an existing deterministic operation without a second POST", async () => {
