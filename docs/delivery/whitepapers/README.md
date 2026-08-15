@@ -10,8 +10,8 @@ OPL Framework 的统一 renderer 会在 ignored
 Profile、renderer、样式、工具版本、HTML、PDF 和渲染页面字节，但只证明
 artifact 已渲染，不证明已经发布，也不证明 OPL Cloud 或任何服务 ready。
 
-显式发布工作流消费同一份已审核 bundle，更新保留提交历史的 `gh-pages`，
-再从公开 HTML/PDF URL 回读 exact bytes。只有
+Framework 的五篇白皮书统一发布工作流消费各仓已审核正文，形成同一份品牌
+bundle，更新 One Person Lab 的 `gh-pages`，再从公开 HTML/PDF URL 回读 exact bytes。只有
 `opl_whitepaper_publication_receipt.v1` 状态为
 `publication_readback_verified`，才能声明该 bundle 已发布。Receipt 作为
 GitHub Actions artifact 保存，不在 `main` 复制一份会漂移的运行记录。
