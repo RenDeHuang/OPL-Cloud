@@ -262,10 +262,16 @@ async function readBaseline(requestOptions, customerAuth) {
   const keys = await readFullKeys(requestOptions, customerAuth);
   const receipts = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=100" }), "ledger", true).data;
   if (!Array.isArray(workspaces?.items) || !Number.isSafeInteger(workspaces.total) || workspaces.total < 0 ||
-    !Array.isArray(launchesRaw) || !Array.isArray(receipts?.receipts) || receipts.hasMore !== false) {
+    !Array.isArray(launchesRaw) || keys.some((key) => !["general", "workspace"].includes(key?.kind)) ||
+    !Array.isArray(receipts?.receipts) || receipts.hasMore !== false) {
     throw new Error("acceptance_b_account_reconcile_baseline_unavailable");
   }
-  return { workspaceCount: workspaces.total, launchCount: launchesRaw.length, keyCount: keys.length, receiptCount: receipts.receipts.length };
+  return {
+    workspaceCount: workspaces.total,
+    launchCount: launchesRaw.length,
+    keyCount: keys.filter((key) => key?.kind === "workspace").length,
+    receiptCount: receipts.receipts.length
+  };
 }
 
 export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {

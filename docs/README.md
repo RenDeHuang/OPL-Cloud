@@ -26,6 +26,15 @@ cannot yet follow is an explicit roadmap gap, not a competing SSOT.
 
 ## Authority Rules
 
+- OPL family topology is fixed outside this repository: Framework is the single
+  Cordis Host; `one-person-lab-app` owns App product/GUI/release truth;
+  `opl-aion-shell` and `opl-studio` are replaceable Shell carriers; Package
+  owners independently publish installable capabilities. Cloud owns online
+  product/service authority and must not redefine those roles.
+- Framework `Console` means an in-process read-model contribution. OPL Cloud
+  Console means the account/governance product owned here. Lower-level docs must
+  not merge these meanings.
+
 - Target intent comes from the latest user decision and its canonical product
   or architecture owner. Current code does not silently redefine the target.
 - Current implementation claims require source, schema, tests or runtime

@@ -34,6 +34,11 @@ OPL Cloud 定义如何让这些需求留在同一条 OPL 工作链中：
 - 让批准、用量、来源、审阅和继续入口始终连接到原工作；
 - 把专业判断留给对应领域 Agent 和人类负责人。
 
+OPL Cloud 是 OPL 稳定生态中的可选第四个产品层：`OPL Base` 提供 Framework Host，
+`OPL App` 提供本地工作台，`OPL Packages` 提供可安装能力，Cloud 再增加在线 Workspace、
+账号治理、托管资源、协作和 Agent 服务。Cloud 只消费这些 owner 的引用，不替代 Base、
+发布 Packages，也不创建第二个 Cordis Host。
+
 ## 产品模型
 
 | 用户需要 | 目标产品面 | 责任边界 |

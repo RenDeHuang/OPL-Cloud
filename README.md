@@ -40,6 +40,13 @@ OPL Cloud keeps those needs in one OPL work chain:
   original work;
 - leave professional judgment with the responsible domain Agent and human owner.
 
+OPL Cloud is the optional fourth product layer in the stable OPL ecology:
+`OPL Base` supplies the Framework Host, `OPL App` supplies the local workbench,
+`OPL Packages` supply installable capabilities, and Cloud adds online Workspace,
+governance, hosted resources, collaboration, and Agent services. Cloud consumes
+their owner references; it does not replace Base, publish Packages, or create a
+second Cordis Host.
+
 ## Product Model
 
 | User need | Product surface | Responsibility |

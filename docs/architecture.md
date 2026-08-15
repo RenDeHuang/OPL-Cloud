@@ -13,6 +13,71 @@ workspaces, account-managed resources and remote execution. This document
 defines responsibility boundaries; it does not claim that every service is
 currently deployed.
 
+## OPL Family Position
+
+The stable external product model is `OPL Base + OPL App + OPL Packages`, with
+`OPL Cloud` as the optional online product layer. Internally these are separate
+authorities:
+
+```text
+OPL Base           Framework runtime product; implemented by the single Cordis Host
+OPL Packages       independently published installable capabilities and owner revisions
+OPL Framework      Host-side discovery/projection and runtime/state/action producer
+one-person-lab-app App product, Client profile, GUI ABI and release authority
+opl-aion-shell     current Stable AionUI Shell carrier
+opl-studio         DSH-derived candidate Shell carrier
+OPL Cloud          Console, Control Plane, Fabric, Ledger and Workspace product
+```
+
+Cloud is not a second Framework Host and does not own the desktop App or either
+Shell. A desktop or browser Shell may render Cloud projections through the same
+App-owned contribution and state/action ABI, while Cloud services retain their
+process, database, API, release and provider authorities. Changing the selected
+App Shell therefore does not migrate Cloud authority or make Cloud a GUI plugin.
+
+The name `Console` appears in two layers but does not identify one authority:
+the Framework Console contribution is an in-process read-model/inspection
+projection; OPL Console in this repository is the account and administrator
+product for policy, quota, approval, Workspace and billing views.
+
+## Family Capability Domains And Cloud Surfaces
+
+Names such as Console, Workspace, Fabric, Ledger, Connect, Runway, and Packages
+are OPL family capability domains: stable product and responsibility language
+that may span Framework, App, Cloud, and domain products. They are not a fixed
+count of Framework source modules, repositories, published packages, or Cordis
+plugins. A domain keeps one conceptual name while each repository owns only its
+explicit authority surface.
+
+The composition model is:
+
+```text
+OPL family capability domain
+  -> repository/product-specific authority surface
+       -> versioned Package, service image, contract, or other artifact
+            -> host-specific contribution where a host exists
+                 -> curated product/profile composition
+```
+
+These boundaries are intentionally independent. A capability domain may have no
+resident plugin, one artifact may contribute multiple plugins, and a Cloud
+service may expose a typed API without becoming a Package or Cordis plugin.
+Versioning and replacement follow the artifact with a real release cadence, not
+the family domain name or a mechanically preserved module count.
+
+For Cloud, the authority surfaces are concrete products and services:
+
+| Family capability domain | Cloud authority surface | Boundary outside Cloud |
+| --- | --- | --- |
+| Console | Cloud Console and Control Plane own the account/control-plane product, Workspace policy, approval, quota and billing projection | Framework may expose operator/readiness/action projections; App owns local product interaction, neither owns Cloud policy or service state |
+| Workspace | Control Plane owns Cloud Workspace entitlement and Launch coordination; Fabric owns runtime/resource binding and readback | App/Workspace runtime owns project and workbench behavior; Framework owns only shared runtime composition |
+| Fabric | Fabric owns provider-neutral remote resource facts, mutation ports and provider adapters | Framework and App consume typed adapters and cannot acquire provider or deployment authority |
+| Ledger | Cloud Ledger owns Cloud receipts, evidence, review, reconciliation and continuation refs | Framework observers and product projections do not become the persistent Cloud Ledger |
+| Gateway / Wallet | Control Plane projects Gateway account data and coordinates settlement | Sub2API remains the external identity, spendable-wallet, Key, routing and usage authority |
+| Packages / Connect / Runway | Cloud consumes exact owner refs, connector capabilities and execution results where required | Package owners, native carriers and Framework retain discovery, carrier currentness, connector access and invocation lifecycle |
+
+This rebaseline keeps the family vocabulary useful without making a Cloud
+directory, service, API, package, or plugin the owner of the whole brand.
 ```text
 OPL Cloud
 ├─ OPL Gateway       user-visible AI access, routing and usage
@@ -26,7 +91,7 @@ Package owners       identity, capabilities, entrypoints and publication revisio
 Native carriers      install, update, remove and installed/callable readback
 
 OPL Framework
-├─ OPL Packages      discovery, carrier delegation and state aggregation
+├─ Package projection discovery, carrier delegation and state aggregation
 └─ OPL Runway       invocation, session and execution-provider lifecycle
 
 Domain agents        domain strategy, quality verdict and delivery authority
@@ -144,28 +209,44 @@ flowchart TB
 | OPL Runway | Invocation/session lifecycle and execution-provider routing | Service identity, package lifecycle and domain verdicts |
 | Domain agent | Domain strategy, evidence judgment, quality verdict and delivery authority | Cloud infrastructure truth |
 
-## Framework Composition And Cloud Authority Boundary
+## Host, Client, And Cloud Authority Boundary
 
-OPL Framework may use Cordis to compose in-process Runway, Connect, client,
-observer, and executor contributions. That Framework decision does not turn OPL
-Cloud services into Cordis plugins or move Cloud authority into a Framework
-composition. The integration boundary remains a typed public Cloud API with
-explicit capability, identity, idempotency, and owner-authoritative readback.
+OPL Framework is the Host composition authority. Its Host Cordis context selects
+a curated product profile, mounts Framework-side contributions, and projects an
+allowlisted client graph. An OPL App renderer may create a Host-derived Client
+Cordis context from that projection and compose typed views, slots, actions,
+RPCs, and events. The Client context is not a second Host: it cannot discover or
+install plugins independently, own Package currentness, redefine the App product
+profile, or acquire Cloud service authority.
 
 ```text
-OPL Framework process
-  -> curated Cordis composition
-       -> Framework-owned Cloud client or adapter plugin
-            -> typed public HTTP and capability contracts
-                 -> OPL Cloud Control Plane / Fabric / Ledger authorities
+OPL App product profile
+  -> Framework Host Cordis composition
+       |-- Framework-owned Cloud client/adapter contribution
+       |      -> typed public HTTP and capability contracts
+       |           -> OPL Cloud Control Plane / Fabric / Ledger authorities
+       |
+       +-- projected allowlisted client graph
+              -> Host-derived App Client Cordis composition
+                   -> typed slots, views and actions
+                        -> AionUI mainline renderer
+                        -> DSH-GUI-derived candidate renderer
 ```
 
-The Framework-owned plugin may select or observe client behavior inside its own
-process. It does not own a Cloud service identity, database, Workspace Launch
-cursor, provider resource, spendable balance, receipt, release, or deployment.
-Cloud provider selection and mutation remain behind the Fabric provider port and
-the owning Instance profile; a Framework composition profile cannot bypass or
-replace those decisions.
+AionUI and the DSH-GUI-derived candidate are alternative renderer/package
+carriers for one App product contract. They consume the same Host projection,
+client contribution descriptors, slot/action ABI, and product profile; renderer
+selection cannot create separate Cloud APIs, Package registries, currentness,
+action truth, or product policy.
+
+This Host/Client composition decision does not turn OPL Cloud services into
+Cordis plugins or move Cloud authority into either context. The integration
+boundary remains a typed public Cloud API with explicit capability, identity,
+idempotency, and owner-authoritative readback. A Framework adapter may select or
+observe client behavior inside the Framework process, but it does not own a
+Cloud service identity, database, Workspace Launch cursor, provider resource,
+spendable balance, receipt, release, or deployment. Cloud provider selection and
+mutation remain behind the Fabric provider port and the owning Instance profile.
 
 The OPL Cloud target therefore does not include a Cordis runtime dependency,
 Cordis sidecar, parallel plugin registry, installed lock, durable event log, or

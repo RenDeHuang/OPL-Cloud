@@ -616,9 +616,9 @@ export async function readProductionBasicAcceptanceBLaunchUntilTerminal({
 }
 
 function deterministicLaunchRejection(error) {
-  const match = String(error?.message || "").match(/^request_failed:POST:\/api\/workspace-launches:(4[0-9]{2}):[a-z0-9_]+$/);
+  const match = String(error?.message || "").match(/^request_failed:POST:\/api\/workspace-launches:(4[0-9]{2}):([a-z0-9_]+)$/);
   if (!match) return null;
-  return new Error(`production_basic_acceptance_b_launch_rejected_http_${match[1]}`);
+  return new Error(`production_basic_acceptance_b_launch_rejected_http_${match[1]}_${match[2]}`);
 }
 
 export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken }) {
@@ -793,10 +793,13 @@ async function readPrepareBaseline(requestOptions, customerAuth) {
   if (keyPages.some((page, index) => page.total !== keyTotal || page.page !== index + 1)) throw new Error("production_basic_acceptance_b_baseline_not_fresh");
   const keys = { items: keyPages.flatMap((page) => page.items), total: keyTotal };
   const receipts = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=50" }), "ledger", true);
+  if (keys.items.some((key) => !["general", "workspace"].includes(key?.kind))) {
+    throw new Error("production_basic_acceptance_b_baseline_not_fresh");
+  }
   const workspaceKeys = (keys?.items || []).filter((key) => key?.kind === "workspace");
   const workspaceReceipts = (receipts?.receipts || []).filter((receipt) => receipt?.type === "billing.workspace_purchased.v1" || receipt?.workspaceId);
   if (!Array.isArray(workspacePage?.items) || workspacePage.total !== 0 || workspacePage.items.length !== 0 || launches.length !== 0 ||
-    keys.total !== 0 || keys.items.length !== 0 || workspaceKeys.length !== 0 ||
+    workspaceKeys.length !== 0 ||
     !Array.isArray(receipts?.receipts) || workspaceReceipts.length !== 0 || receipts.hasMore !== false) {
     throw new Error("production_basic_acceptance_b_baseline_not_fresh");
   }
@@ -973,6 +976,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   const {
     origin,
     fabricOrigin,
+    fabricServiceToken,
     internalServiceToken,
     adminEmail,
     adminPassword,
@@ -993,14 +997,15 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   } = options;
   const approval = parseProductionBasicAcceptanceBApproval(approvalJson, { approvalId, now });
   if ((!readbackOnly && mergedSha !== approval.release.mergedMainSha) || !/^[a-f0-9]{40}$/.test(String(mergedSha || "")) || !String(customerPassword || "") ||
-    !String(internalServiceToken || "") || !String(kubeconfigPath || "").startsWith("/") ||
+    !String(fabricServiceToken || "") || !String(internalServiceToken || "") || fabricServiceToken === internalServiceToken ||
+    !String(kubeconfigPath || "").startsWith("/") ||
     !/^https:\/\/workspace\.medopl\.cn\/w\//.test(canonicalWorkspaceUrl(approval.launch.workspaceId))) {
     throw new Error("production_basic_acceptance_b_config_invalid");
   }
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
   if (!String(fabricOrigin || "").startsWith("http://127.0.0.1:")) throw new Error("production_basic_acceptance_b_fabric_origin_invalid");
   const requestOptions = { fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs };
-  const fabricOptions = { fetchImpl, origin: String(fabricOrigin), timeoutMs: requestTimeoutMs, headers: { authorization: `Bearer ${internalServiceToken}` } };
+  const fabricOptions = { fetchImpl, origin: String(fabricOrigin), timeoutMs: requestTimeoutMs, headers: { authorization: `Bearer ${fabricServiceToken}` } };
 
   const adminAuth = await login({ ...requestOptions, email: adminEmail, password: adminPassword });
   if (adminAuth.user?.accountId !== "acct-admin" || adminAuth.user?.role !== "admin") throw new Error("production_basic_acceptance_b_admin_login_failed");
@@ -1262,6 +1267,7 @@ export async function runProductionBasicAcceptanceBCli({
     const result = await runProductionBasicAcceptanceB({
       origin: env.OPL_CONSOLE_ORIGIN,
       fabricOrigin: env.OPL_FABRIC_INTERNAL_ORIGIN,
+      fabricServiceToken: env.OPL_FABRIC_SERVICE_TOKEN,
       internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN,
       adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
       adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,

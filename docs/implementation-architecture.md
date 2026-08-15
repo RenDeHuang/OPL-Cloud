@@ -1,5 +1,11 @@
 # OPL Cloud Implementation Architecture
 
+This repository implements the optional OPL Cloud product layer. It does not
+implement the OPL Framework Cordis Host, the `one-person-lab-app` product
+authority, OPL Package publication/lifecycle, or either GUI Shell. Browser Console calls Cloud Control Plane APIs;
+App Shells may consume Cloud-facing projections through App/Framework contracts,
+but neither path moves Cloud service or database authority into a GUI plugin.
+
 ## Request Path
 
 ```text
@@ -14,6 +20,45 @@ Sub2API is external and remains the only spendable-balance, API-key, routing,
 and request-usage owner. The repository reads those records on demand and does
 not mirror them. Its code, image, database, configuration, and deployment remain
 outside this repository's mutation boundary.
+
+## Family Domains And Host/Client Integration
+
+Cloud implements authority surfaces for family capability domains; it does not
+turn those names into a second module registry. The current physical owners are
+the Console UI, Control Plane, Fabric, and Ledger service modules described
+below. A family name may span those modules and the Framework/App repositories,
+while a versioned Cloud image and typed service contracts remain the Cloud
+release artifacts.
+
+```text
+Cloud service/image + typed API contracts
+  <- Framework Host Cordis Cloud adapter contribution
+       <- Host-selected product profile
+            -> allowlisted Client Cordis graph
+                 -> App renderer/package carrier
+```
+
+The Framework Host is the only composition authority for this path. It may
+project an allowlisted client graph to an App renderer, but Cloud services stay
+behind typed HTTP/capability contracts. A Host-derived Client Cordis context can
+compose views, slots, actions, RPCs, and events; it cannot discover or install
+Packages, own Package currentness, create a second registry, or replace Cloud
+service, persistence, provider, wallet, Workspace, or Ledger authority.
+
+The AionUI mainline and the DSH-GUI-derived candidate are App renderer/package
+carriers, not Cloud products. Both must consume the same Host projection, client
+contribution descriptor, slot/action ABI, and App product profile. Cloud does not
+branch its API, image, database, policy, or currentness by renderer. The current
+Workspace image candidate still pins exact App, active-shell, and Framework
+revisions; that deployment carrier choice is an App/Workspace release concern,
+not a Cloud Cordis runtime dependency.
+
+Package and service versioning remain independent where an owner has a real
+release cadence. Cloud consumes exact Package publication and carrier refs when
+needed, but does not publish a Cloud-owned Package registry, lock, resolver,
+currentness projection, or Cordis plugin for a Cloud service. Fabric provider
+adapters, Control Plane state machines, Ledger persistence, and native carriers
+remain in their owning implementation boundaries.
 
 ## MVP Current Breakpoint
 
