@@ -743,7 +743,7 @@ func fabricMutationScopeForRequest(ctx context.Context, resolver fabricMutationS
 			return strings.TrimSpace(result)
 		}
 		scope.AccountID, scope.WorkspaceID = bindingValue("accountId"), bindingValue("workspaceId")
-		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_launch_stage", bindingValue("expectedResourceBinding"), bindingValue("action")
+		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_launch_stage", bindingValue("fabricOperationId"), bindingValue("action")
 		scope.OperationID = bindingValue("idempotencyKey")
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "compute-allocations" && parts[2] != "":
 		scope.ResourceKind, scope.ResourceID = "compute_allocation", parts[2]

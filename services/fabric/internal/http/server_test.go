@@ -757,6 +757,63 @@ func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *te
 	}
 }
 
+func TestWorkspaceLaunchEnsureCapabilityUsesFabricOperationOwnerIdentity(t *testing.T) {
+	store := fabric.NewMemoryOperationStore()
+	service := fabric.NewServiceWithOperationStore(workspaceLaunchHTTPProvider{}, store)
+	imageDigest := "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	launchRequestHash := strings.Repeat("b", 64)
+	preflight, err := service.PreflightWorkspaceLaunch(context.Background(), fabric.WorkspaceLaunchPreflightInput{
+		SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest, RequestHash: launchRequestHash,
+	})
+	if err != nil || !preflight.Available {
+		t.Fatalf("preflight=%#v err=%v", preflight, err)
+	}
+	input := fabric.WorkspaceLaunchStageInput{
+		Binding: fabric.WorkspaceLaunchStageBinding{
+			SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+			Stage: "ensure_compute_allocation", Action: "ensure_compute_allocation", FabricOperationID: "launch-alpha:ensure_compute_allocation",
+			IdempotencyKey: "launch-alpha:ensure_compute_allocation",
+			RequestHash:    "ddb1c0c5195c4e04c1d23230a493da582a2ca56af528a7abcf67d781f81c3fe1",
+		},
+		ProviderProfileRef: "tencent-tke", PreflightBindingRef: preflight.BindingRef,
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest,
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServerWithAuth(service, ServerAuthConfig{
+		ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey,
+	})
+	claims := fabricCapabilityClaimsForTest{
+		Version: 1, Caller: "control-plane", AccountID: input.Binding.AccountID, WorkspaceID: input.Binding.WorkspaceID,
+		ResourceKind: "workspace_launch_stage", ResourceID: input.Binding.FabricOperationID, Action: input.Binding.Action,
+		OperationID: input.Binding.IdempotencyKey, ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	request := testRequest(http.MethodPost, "/fabric/workspace-launches/stages/ensure", bytes.NewReader(body))
+	request.Header.Set("Idempotency-Key", input.Binding.IdempotencyKey)
+	request.Header.Set("X-OPL-Fabric-Capability", fabricCapabilityForTest(t, claims, body))
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		operations, listErr := store.List(context.Background())
+		t.Fatalf("ensure status=%d body=%s ownerRecords=%d listErr=%v", response.Code, response.Body.String(), len(operations), listErr)
+	}
+	operations, err := store.List(context.Background())
+	var stageOperations []fabric.FabricOperation
+	for _, operation := range operations {
+		if operation.ID == input.Binding.FabricOperationID {
+			stageOperations = append(stageOperations, operation)
+		}
+	}
+	if err != nil || len(stageOperations) != 1 || stageOperations[0].ResourceID != input.Binding.FabricOperationID {
+		t.Fatalf("owner records=%#v err=%v", operations, err)
+	}
+}
+
 type workspaceLaunchHTTPProvider struct {
 	testProvider
 }

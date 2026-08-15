@@ -111,7 +111,7 @@ func (c *fabricHTTPClient) EnsureWorkspaceLaunchStage(ctx context.Context, input
 	var result WorkspaceLaunchStageResult
 	err := c.postMutation(ctx, "/fabric/workspace-launches/stages/ensure", input, input.Binding.IdempotencyKey, fabricMutationScope{
 		AccountID: input.Binding.AccountID, WorkspaceID: input.Binding.WorkspaceID,
-		ResourceKind: "workspace_launch_stage", ResourceID: input.Binding.ExpectedResourceBinding, Action: input.Binding.Action,
+		ResourceKind: "workspace_launch_stage", ResourceID: input.Binding.FabricOperationID, Action: input.Binding.Action,
 	}, &result)
 	return result, err
 }
