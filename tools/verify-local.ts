@@ -1,11 +1,25 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { mkdir, rename, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parse as parseYAML } from "yaml";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+function composePostgresImage() {
+  const compose = parseYAML(readFileSync(join(root, "compose.yaml"), "utf8"));
+  const image = String(compose?.services?.postgres?.image || "").trim();
+  if (!/^postgres:[^\s@]+@sha256:[0-9a-f]{64}$/.test(image)) {
+    throw new Error("compose.yaml services.postgres.image must be an exact postgres tag@sha256 reference");
+  }
+  return image;
+}
+
+export const postgresImage = composePostgresImage();
 
 export const goModules = Object.freeze([
   "services/control-plane",
@@ -47,12 +61,75 @@ export const postgresVerificationSpecs = Object.freeze([
   { cwd: "services/fabric" }
 ]);
 
+export const productMatrixStages = Object.freeze([
+  "key", "debit", "ensure_compute_allocation", "storage", "attachment", "secret", "runtime", "activation", "receipt"
+]);
+
+export const productMatrixRequiredPackages = Object.freeze([
+  "opl-cloud/services/control-plane/internal/server",
+  "opl-cloud/services/control-plane/internal/clients",
+  "opl-cloud/services/fabric/internal/fabric"
+]);
+
+const controlPlaneServerPackage = productMatrixRequiredPackages[0];
+const controlPlaneClientsPackage = productMatrixRequiredPackages[1];
+const fabricPackage = productMatrixRequiredPackages[2];
+export const productMatrixRequiredTests = Object.freeze([
+  "TestWorkspaceLaunchReservedStageReplayMatrix",
+  "TestWorkspaceLaunchReservedStageReplayRefusesUncertainAuthority",
+  "TestWorkspaceLaunchReservedStageReplayRefusesStateAndAuthorizationDrift",
+  "TestWorkspaceLaunchReservedStageReplayCASAllowsOneWriter",
+  "TestWorkspaceLaunchReservedStageReplaySurvivesCrashBeforeTransportSend",
+  "TestWorkspaceLaunchReservedStageReplayPostReadMatrix",
+  "TestWorkspaceLaunchPendingReadbackIsBoundedAndCanConvergeReadOnly",
+  "TestWorkspaceLaunchRecoveryAtEveryStageContinuesOriginalOperationToSucceeded",
+  "TestWorkspaceLaunchReceiptOnlyReplayReachesTerminalWithoutRepeatingPriorStages",
+  "TestPostgresWorkspaceLaunchReplayClaimSurvivesReconcilerRestartWithoutSkip",
+  "TestPostgresWorkspaceLaunchConcurrentReplayResumeAllowsOneWriter",
+  "TestWorkspaceLaunchResumeRouteWaitsForOriginalCallerCredential"
+].map((name) => Object.freeze({ package: controlPlaneServerPackage, name })).concat([
+  Object.freeze({ package: controlPlaneClientsPackage, name: "TestSub2APIFinancialBalanceHistoryByCodesReadsAuthoritativeFinalPageAfterTarget" }),
+  Object.freeze({ package: controlPlaneClientsPackage, name: "TestSub2APIFinancialBalanceHistoryByCodesRejectsDuplicateOnLaterPage" }),
+  Object.freeze({ package: fabricPackage, name: "TestWorkspaceLaunchStageReadContextRejectsProviderMutation" }),
+  Object.freeze({ package: fabricPackage, name: "TestTencentWorkspaceLaunchComputeReadIsGETOnlyBeforeSameOperationOwnershipRecovery" }),
+  Object.freeze({ package: fabricPackage, name: "TestTencentWorkspaceLaunchComputeReadMissingOwnershipFailsClosedOnAuthoritativeConflictOrError" }),
+  Object.freeze({ package: fabricPackage, name: "TestQualificationWorkspaceDockerfileUsesExactImageReferences" }),
+  Object.freeze({ package: fabricPackage, name: "TestLocalDockerWorkspaceCorePath" }),
+  Object.freeze({ package: fabricPackage, name: "TestLocalDockerDestroyWorkspaceRuntimeDeletesExactSecretAndPreservesSibling" }),
+  Object.freeze({ package: fabricPackage, name: "TestLocalDockerWorkspaceRuntimeStatusReturnsTypedAbsence" }),
+  Object.freeze({ package: fabricPackage, name: "TestLocalDockerRuntimeStatusFailsClosedOnSecretIdentityOrMountDrift" })
+]));
+
 export function parseVerifyLocalArgs(args = process.argv.slice(2)) {
-  const unknown = args.filter((arg) => arg !== "--with-postgres");
-  if (unknown.length > 0) {
-    throw new Error(`unknown verify-local argument: ${unknown.join(", ")}`);
+  let withPostgres = false;
+  let productMatrixReceipt = "";
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--with-postgres") {
+      if (withPostgres) throw new Error("verify-local argument --with-postgres may be provided once");
+      withPostgres = true;
+      continue;
+    }
+    if (token === "--product-matrix-receipt") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--") || productMatrixReceipt) {
+        throw new Error("verify-local argument --product-matrix-receipt requires one value");
+      }
+      if (!isAbsolute(value)) throw new Error("Product matrix receipt must use an absolute path");
+      const withinRoot = relative(root, resolve(value));
+      if (withinRoot === "" || (!withinRoot.startsWith("..") && !isAbsolute(withinRoot))) {
+        throw new Error("Product matrix receipt must be written outside the source repository");
+      }
+      productMatrixReceipt = resolve(value);
+      index += 1;
+      continue;
+    }
+    throw new Error(`unknown verify-local argument: ${token}`);
   }
-  return { withPostgres: args.includes("--with-postgres") };
+  if (productMatrixReceipt && !withPostgres) {
+    throw new Error("Product matrix receipt requires --with-postgres");
+  }
+  return { withPostgres, productMatrixReceipt };
 }
 
 function stepCwd(step) {
@@ -158,7 +235,7 @@ async function withTemporaryPostgres(callback) {
       "--health-timeout", "5s",
       "--health-retries", "60",
       "--publish", "127.0.0.1::5432",
-      "postgres:16"
+      postgresImage
     ]);
     started = true;
     await waitForHealthyPostgres(containerName);
@@ -188,16 +265,22 @@ function runGoJSONWithoutSkips(args, { cwd, env }) {
     let pending = "";
     let failed = 0;
     let skipped = 0;
-    let passedPackages = 0;
     let outputLog = "";
     let parseError;
+    const passedPackages = new Set();
+    const passedTests = new Map();
     const consume = (line) => {
       if (!line.trim()) return;
       try {
         const event = JSON.parse(line);
         if (event.Action === "fail") failed += 1;
         if (event.Action === "skip") skipped += 1;
-        if (event.Action === "pass" && !event.Test) passedPackages += 1;
+        if (event.Action === "pass" && !event.Test && event.Package) {
+          passedPackages.add(event.Package);
+        }
+        if (event.Action === "pass" && event.Test && event.Package) {
+          passedTests.set(`${event.Package}\0${event.Test}`, { package: event.Package, name: event.Test });
+        }
         if (event.Output && outputLog.length < 2_000_000) outputLog += event.Output;
       } catch (error) {
         parseError ||= error;
@@ -219,14 +302,21 @@ function runGoJSONWithoutSkips(args, { cwd, env }) {
         if (outputLog) process.stderr.write(outputLog.slice(-2_000_000));
         reject(new Error(`Go FAIL ${failed} SKIP ${skipped}; process=${signal || code}`));
       } else {
-        process.stdout.write(`Go packages passed: ${passedPackages}; skipped: 0\n`);
-        resolvePromise();
+        process.stdout.write(`Go packages passed: ${passedPackages.size}; skipped: 0\n`);
+        resolvePromise({
+          failed,
+          skipped,
+          passedPackages: [...passedPackages].sort(),
+          passedTests: [...passedTests.values()].sort((left, right) =>
+            left.package.localeCompare(right.package) || left.name.localeCompare(right.name))
+        });
       }
     });
   });
 }
 
 async function runPostgresVerification(env) {
+  const results = [];
   for (const spec of postgresVerificationSpecs) {
     const cwd = join(root, spec.cwd);
     printStep(`${spec.cwd} PostgreSQL compile`);
@@ -243,26 +333,116 @@ async function runPostgresVerification(env) {
     if (spec.timeout) args.push(`-timeout=${spec.timeout}`);
     args.push("-count=1", "-json", ...packages);
     printStep(`${spec.cwd} PostgreSQL tests (zero skips)`);
-    await runGoJSONWithoutSkips(args, { cwd, env });
+    const result = await runGoJSONWithoutSkips(args, { cwd, env });
+    results.push({ cwd: spec.cwd, ...result });
   }
+  return results;
+}
+
+function exactSourceIdentity(value) {
+  return value && /^[0-9a-f]{40}$/.test(value.sha) && /^[0-9a-f]{40}$/.test(value.tree) && value.clean === true;
+}
+
+export function buildProductMatrixReceipt(before, after, results, completedAt = new Date().toISOString()) {
+  if (!exactSourceIdentity(before) || !exactSourceIdentity(after)) {
+    throw new Error("Product matrix receipt requires a clean exact source identity");
+  }
+  if (before.sha !== after.sha || before.tree !== after.tree) {
+    throw new Error("Product matrix source changed while the full gate was running");
+  }
+  if (!Array.isArray(results) || results.length !== postgresVerificationSpecs.length ||
+    results.some((result) => result.failed !== 0 || result.skipped !== 0)) {
+    throw new Error("Product matrix receipt requires every PostgreSQL package with zero skip");
+  }
+  const passedPackages = new Set(results.flatMap((result) => result.passedPackages || []));
+  for (const packageName of productMatrixRequiredPackages) {
+    if (!passedPackages.has(packageName)) throw new Error(`Product matrix required package did not pass: ${packageName}`);
+  }
+  const passedTests = new Set(results.flatMap((result) =>
+    (result.passedTests || []).map((entry) => `${entry.package}\0${entry.name}`)));
+  for (const entry of productMatrixRequiredTests) {
+    if (!passedTests.has(`${entry.package}\0${entry.name}`)) {
+      throw new Error(`Product matrix required test did not pass: ${entry.package} ${entry.name}`);
+    }
+  }
+  const stageEvidenceTests = [
+    "TestWorkspaceLaunchReservedStageReplayMatrix",
+    "TestWorkspaceLaunchReservedStageReplayPostReadMatrix",
+    "TestWorkspaceLaunchRecoveryAtEveryStageContinuesOriginalOperationToSucceeded",
+    "TestPostgresWorkspaceLaunchReplayClaimSurvivesReconcilerRestartWithoutSkip"
+  ];
+  return {
+    schemaVersion: 1,
+    status: "READY",
+    completedAt,
+    source: { sha: before.sha, tree: before.tree },
+    zeroSkip: true,
+    packages: [...passedPackages].sort().map((name) => ({ name, passed: true, skipped: 0 })),
+    tests: productMatrixRequiredTests.map((entry) => ({ ...entry, passed: true, skipped: 0 })),
+    stages: productMatrixStages.map((name) => ({ name, passed: true, skipped: 0, evidenceTests: [...stageEvidenceTests] })),
+    cas: {
+      winnerCount: 1,
+      loserMutationCount: 0,
+      evidenceTests: [
+        "TestWorkspaceLaunchReservedStageReplayCASAllowsOneWriter",
+        "TestPostgresWorkspaceLaunchConcurrentReplayResumeAllowsOneWriter"
+      ]
+    },
+    unknown: {
+      authorityWriteDeltas: { controlPlane: 0, sub2api: 0, fabric: 0, ledger: 0 },
+      evidenceTests: ["TestWorkspaceLaunchReservedStageReplayRefusesUncertainAuthority"]
+    }
+  };
+}
+
+async function readSourceIdentity() {
+  const [sha, tree, status] = await Promise.all([
+    runProcess("git", ["rev-parse", "HEAD"], { capture: true }),
+    runProcess("git", ["rev-parse", "HEAD^{tree}"], { capture: true }),
+    runProcess("git", ["status", "--porcelain", "--untracked-files=all"], { capture: true })
+  ]);
+  return { sha: sha.stdout.trim(), tree: tree.stdout.trim(), clean: status.stdout.trim() === "" };
+}
+
+async function writeProductMatrixReceipt(path, receipt) {
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true });
+  const temporary = join(directory, `.${Date.now()}-${process.pid}-${randomUUID()}.tmp`);
+  await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporary, path);
 }
 
 const defaultDependencies = Object.freeze({
   runStep,
   withTemporaryPostgres,
-  runPostgresVerification
+  runPostgresVerification,
+  readSourceIdentity,
+  writeProductMatrixReceipt
 });
 
 export async function runVerification({ withPostgres = false } = {}, dependencies = defaultDependencies) {
   for (const step of localVerificationSteps) await dependencies.runStep(step);
+  let postgresResults = [];
   if (withPostgres) {
-    await dependencies.withTemporaryPostgres((env) => dependencies.runPostgresVerification(env));
+    postgresResults = await dependencies.withTemporaryPostgres((env) => dependencies.runPostgresVerification(env));
   }
+  return { postgresResults };
+}
+
+async function runVerificationWithReceipt(options, dependencies = defaultDependencies) {
+  const before = options.productMatrixReceipt ? await dependencies.readSourceIdentity() : null;
+  if (before && !exactSourceIdentity(before)) throw new Error("Product matrix receipt requires a clean exact source identity");
+  const result = await runVerification(options, dependencies);
+  if (!options.productMatrixReceipt) return result;
+  const after = await dependencies.readSourceIdentity();
+  const receipt = buildProductMatrixReceipt(before, after, result.postgresResults);
+  await dependencies.writeProductMatrixReceipt(options.productMatrixReceipt, receipt);
+  return { ...result, productMatrixReceipt: receipt };
 }
 
 async function main() {
   const options = parseVerifyLocalArgs();
-  await runVerification(options);
+  await runVerificationWithReceipt(options);
   process.stdout.write(`\nLocal verification passed${options.withPostgres ? " with PostgreSQL and Docker integration" : ""}.\n`);
 }
 

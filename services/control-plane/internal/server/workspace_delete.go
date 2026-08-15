@@ -15,45 +15,60 @@ import (
 
 const workspaceDeleteAction = "workspace.delete.v1"
 
+const workspaceDeleteReplayLease = 30 * time.Second
+
 var (
 	errWorkspaceDeleteCASConflict = errors.New("workspace_delete_cas_conflict")
 	errWorkspaceDeleteUnconfirmed = errors.New("workspace_delete_unconfirmed")
 )
 
 type workspaceDeleteOperation struct {
-	OperationID        string               `json:"operationId"`
-	RequestHash        string               `json:"requestHash"`
-	AccountID          string               `json:"accountId"`
-	OwnerUserID        string               `json:"ownerUserId"`
-	Sub2APIUserID      int64                `json:"sub2apiUserId"`
-	WorkspaceID        string               `json:"workspaceId"`
-	LaunchOperationID  string               `json:"launchOperationId"`
-	RuntimeID          string               `json:"runtimeId"`
-	ComputeID          string               `json:"computeId"`
-	StorageID          string               `json:"storageId"`
-	AttachmentID       string               `json:"attachmentId"`
-	WorkspaceAPIKeyID  int64                `json:"workspaceApiKeyId"`
-	GatewaySecretRef   string               `json:"gatewaySecretRef"`
-	GatewayFingerprint string               `json:"gatewayFingerprint"`
-	DebitCode          string               `json:"debitCode"`
-	PurchaseReceiptID  string               `json:"purchaseReceiptId"`
-	PurchaseReceipt    clients.ReceiptInput `json:"purchaseReceipt"`
-	RefundCode         string               `json:"refundCode"`
-	RefundReceiptID    string               `json:"refundReceiptId,omitempty"`
-	TotalUSDMicros     int64                `json:"totalUsdMicros"`
-	Phase              string               `json:"phase"`
-	Status             string               `json:"status"`
-	RuntimeStatus      string               `json:"runtimeStatus,omitempty"`
-	SecretStatus       string               `json:"secretStatus,omitempty"`
-	AttachmentStatus   string               `json:"attachmentStatus,omitempty"`
-	StorageStatus      string               `json:"storageStatus,omitempty"`
-	ComputeStatus      string               `json:"computeStatus,omitempty"`
-	KeyStatus          string               `json:"keyStatus,omitempty"`
-	KeyDeleteAttempted bool                 `json:"keyDeleteAttempted,omitempty"`
-	RefundAttempted    bool                 `json:"refundAttempted,omitempty"`
-	RefundConfirmation map[string]any       `json:"refundConfirmation,omitempty"`
-	LastErrorCode      string               `json:"lastErrorCode,omitempty"`
-	CreatedAt          string               `json:"createdAt"`
+	OperationID        string                             `json:"operationId"`
+	RequestHash        string                             `json:"requestHash"`
+	AccountID          string                             `json:"accountId"`
+	OwnerUserID        string                             `json:"ownerUserId"`
+	Sub2APIUserID      int64                              `json:"sub2apiUserId"`
+	WorkspaceID        string                             `json:"workspaceId"`
+	LaunchOperationID  string                             `json:"launchOperationId"`
+	RuntimeID          string                             `json:"runtimeId"`
+	ComputeID          string                             `json:"computeId"`
+	StorageID          string                             `json:"storageId"`
+	AttachmentID       string                             `json:"attachmentId"`
+	WorkspaceAPIKeyID  int64                              `json:"workspaceApiKeyId"`
+	GatewaySecretRef   string                             `json:"gatewaySecretRef"`
+	GatewayFingerprint string                             `json:"gatewayFingerprint"`
+	DebitCode          string                             `json:"debitCode"`
+	PurchaseReceiptID  string                             `json:"purchaseReceiptId"`
+	PurchaseReceipt    clients.ReceiptInput               `json:"purchaseReceipt"`
+	RefundCode         string                             `json:"refundCode"`
+	RefundReceiptID    string                             `json:"refundReceiptId,omitempty"`
+	TotalUSDMicros     int64                              `json:"totalUsdMicros"`
+	Phase              string                             `json:"phase"`
+	Status             string                             `json:"status"`
+	RuntimeStatus      string                             `json:"runtimeStatus,omitempty"`
+	SecretStatus       string                             `json:"secretStatus,omitempty"`
+	AttachmentStatus   string                             `json:"attachmentStatus,omitempty"`
+	StorageStatus      string                             `json:"storageStatus,omitempty"`
+	ComputeStatus      string                             `json:"computeStatus,omitempty"`
+	KeyStatus          string                             `json:"keyStatus,omitempty"`
+	KeyDeleteAttempted bool                               `json:"keyDeleteAttempted,omitempty"`
+	RefundAttempted    bool                               `json:"refundAttempted,omitempty"`
+	KeyDeleteReplay    workspaceDeleteReplayAuthorization `json:"keyDeleteReplay,omitempty"`
+	RefundReplay       workspaceDeleteReplayAuthorization `json:"refundReplay,omitempty"`
+	RefundConfirmation map[string]any                     `json:"refundConfirmation,omitempty"`
+	LastErrorCode      string                             `json:"lastErrorCode,omitempty"`
+	CreatedAt          string                             `json:"createdAt"`
+}
+
+type workspaceDeleteReplayAuthorization struct {
+	SchemaVersion     int    `json:"schemaVersion,omitempty"`
+	AuthorizationID   string `json:"authorizationId,omitempty"`
+	IdempotencyKey    string `json:"idempotencyKey,omitempty"`
+	State             string `json:"state,omitempty"`
+	LeaseGeneration   int    `json:"leaseGeneration,omitempty"`
+	LeaseExpiresAt    string `json:"leaseExpiresAt,omitempty"`
+	DispatchStartedAt string `json:"dispatchStartedAt,omitempty"`
+	ConsumedAt        string `json:"consumedAt,omitempty"`
 }
 
 type workspaceDeleteStoreMutation struct {
@@ -65,7 +80,7 @@ type workspaceDeleteStoreMutation struct {
 }
 
 func (app *controlPlaneServer) deleteWorkspace(w http.ResponseWriter, r *http.Request, service *controlplane.Service) {
-	_, ok := requiredMutationKey(w, r)
+	authorizationID, ok := requiredMutationKey(w, r)
 	if !ok {
 		return
 	}
@@ -140,7 +155,7 @@ func (app *controlPlaneServer) deleteWorkspace(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
 		return
 	}
-	operation, err = app.runWorkspaceDelete(r.Context(), service, credential, operation)
+	operation, err = app.runWorkspaceDelete(r.Context(), service, credential, authorizationID, operation)
 	if err != nil {
 		if errors.Is(err, errWorkspaceDeleteUnconfirmed) {
 			writeJSON(w, http.StatusBadGateway, workspaceDeleteResponse(operation, "workspace_delete_unconfirmed"))
@@ -215,6 +230,34 @@ func workspaceDeleteStageKey(operation workspaceDeleteOperation, stage string) s
 	return operation.OperationID + ":" + stage
 }
 
+func validWorkspaceDeleteReplayAuthorization(authorization workspaceDeleteReplayAuthorization, idempotencyKey string) bool {
+	if authorization == (workspaceDeleteReplayAuthorization{}) {
+		return true
+	}
+	if authorization.SchemaVersion != 1 || !validBillingReviewOpaqueID(authorization.AuthorizationID) ||
+		authorization.IdempotencyKey != idempotencyKey || authorization.LeaseGeneration <= 0 {
+		return false
+	}
+	leaseExpiresAt, leaseErr := time.Parse(time.RFC3339Nano, authorization.LeaseExpiresAt)
+	switch authorization.State {
+	case "claimed":
+		return leaseErr == nil && !leaseExpiresAt.IsZero() && authorization.DispatchStartedAt == "" && authorization.ConsumedAt == ""
+	case "dispatched":
+		_, dispatchErr := time.Parse(time.RFC3339Nano, authorization.DispatchStartedAt)
+		return leaseErr == nil && !leaseExpiresAt.IsZero() && dispatchErr == nil && authorization.ConsumedAt == ""
+	case "consumed":
+		_, consumedErr := time.Parse(time.RFC3339Nano, authorization.ConsumedAt)
+		dispatchValid := authorization.DispatchStartedAt == ""
+		if !dispatchValid {
+			_, dispatchErr := time.Parse(time.RFC3339Nano, authorization.DispatchStartedAt)
+			dispatchValid = dispatchErr == nil
+		}
+		return leaseErr == nil && !leaseExpiresAt.IsZero() && dispatchValid && consumedErr == nil
+	default:
+		return false
+	}
+}
+
 func workspaceDeleteDebitHistoryMatches(userID int64, code string, amount int64, history map[string]clients.Sub2APIBalanceHistoryEntry) bool {
 	entry, found := history[code]
 	return len(history) == 1 && found && entry.Code == code && entry.Type == "balance" && entry.Status == "used" && entry.UsedBy != nil && *entry.UsedBy == userID &&
@@ -240,7 +283,9 @@ func validWorkspaceDeleteIdentity(operation workspaceDeleteOperation) bool {
 		operation.DebitCode == "" || operation.PurchaseReceiptID == "" || operation.RefundCode == "" || operation.RefundCode == operation.DebitCode || operation.TotalUSDMicros <= 0 ||
 		operation.PurchaseReceipt.Type != "billing.workspace_purchased.v1" || operation.PurchaseReceipt.Status != "completed" ||
 		operation.PurchaseReceipt.AccountID != operation.AccountID || operation.PurchaseReceipt.WorkspaceID != operation.WorkspaceID ||
-		operation.PurchaseReceipt.RequestID != operation.LaunchOperationID || operation.CreatedAt == "" {
+		operation.PurchaseReceipt.RequestID != operation.LaunchOperationID || operation.CreatedAt == "" ||
+		!validWorkspaceDeleteReplayAuthorization(operation.KeyDeleteReplay, workspaceDeleteStageKey(operation, "key")) ||
+		!validWorkspaceDeleteReplayAuthorization(operation.RefundReplay, operation.RefundCode) {
 		return false
 	}
 	cost := operation.PurchaseReceipt.Cost
@@ -288,7 +333,7 @@ func validWorkspaceDeleteStoreMutation(mutation workspaceDeleteStoreMutation) (w
 	return desired, true
 }
 
-func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, operation workspaceDeleteOperation) (workspaceDeleteOperation, error) {
+func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, authorizationID string, operation workspaceDeleteOperation) (workspaceDeleteOperation, error) {
 	for {
 		if !validWorkspaceDeleteIdentity(operation) {
 			return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "workspace_delete_identity_mismatch")
@@ -366,10 +411,9 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 		case "compute_destroyed":
 			key, err := service.GatewayUserKey(ctx, credential, operation.Sub2APIUserID, operation.WorkspaceAPIKeyID)
 			if errors.Is(err, clients.ErrSub2APIKeyNotFound) {
-				next := operation
-				next.Phase, next.Status, next.KeyStatus, next.LastErrorCode = "key_deleted", "running", "absent", ""
-				if err := app.persistWorkspaceDelete(ctx, operation, next, false, false); err != nil {
-					return operation, err
+				next, advanceErr := app.confirmWorkspaceDeleteKeyAbsent(ctx, operation)
+				if advanceErr != nil {
+					return operation, advanceErr
 				}
 				operation = next
 				continue
@@ -378,15 +422,42 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 				return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "sub2api_key_readback_unconfirmed")
 			}
 			if operation.KeyDeleteAttempted {
-				return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "sub2api_key_delete_unconfirmed")
+				claimed, won, claimErr := app.claimWorkspaceDeleteReplay(ctx, operation, "key", authorizationID)
+				if claimErr != nil {
+					return operation, claimErr
+				}
+				if !won {
+					return claimed, errWorkspaceDeleteUnconfirmed
+				}
+				operation = claimed
+			} else {
+				attempted := operation
+				attempted.Status, attempted.KeyDeleteAttempted, attempted.LastErrorCode = "running", true, ""
+				if err := app.persistWorkspaceDelete(ctx, operation, attempted, false, false); err != nil {
+					return operation, err
+				}
+				operation = attempted
 			}
-			attempted := operation
-			attempted.Status, attempted.KeyDeleteAttempted, attempted.LastErrorCode = "running", true, ""
-			if err := app.persistWorkspaceDelete(ctx, operation, attempted, false, false); err != nil {
-				return operation, err
+			key, err = service.GatewayUserKey(ctx, credential, operation.Sub2APIUserID, operation.WorkspaceAPIKeyID)
+			if errors.Is(err, clients.ErrSub2APIKeyNotFound) {
+				next, advanceErr := app.confirmWorkspaceDeleteKeyAbsent(ctx, operation)
+				if advanceErr != nil {
+					return operation, advanceErr
+				}
+				operation = next
+				continue
 			}
-			operation = attempted
-			deleteErr := service.DeleteGatewayUserKey(ctx, credential, operation.Sub2APIUserID, operation.WorkspaceAPIKeyID)
+			if err != nil || !workspaceDeleteKeyMatches(operation, key) {
+				return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "sub2api_key_readback_unconfirmed")
+			}
+			if operation.KeyDeleteReplay.AuthorizationID != "" {
+				dispatched, dispatchErr := app.markWorkspaceDeleteReplayDispatch(ctx, operation, "key")
+				if dispatchErr != nil {
+					return operation, dispatchErr
+				}
+				operation = dispatched
+			}
+			deleteErr := service.DeleteGatewayUserKeyIdempotent(ctx, credential, operation.Sub2APIUserID, operation.WorkspaceAPIKeyID, workspaceDeleteStageKey(operation, "key"))
 			_, err = service.GatewayUserKey(ctx, credential, operation.Sub2APIUserID, operation.WorkspaceAPIKeyID)
 			if !errors.Is(err, clients.ErrSub2APIKeyNotFound) {
 				if deleteErr != nil {
@@ -394,14 +465,13 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 				}
 				return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "sub2api_key_absence_unconfirmed")
 			}
-			next := operation
-			next.Phase, next.Status, next.KeyStatus, next.LastErrorCode = "key_deleted", "running", "absent", ""
-			if err := app.persistWorkspaceDelete(ctx, operation, next, false, false); err != nil {
-				return operation, err
+			next, advanceErr := app.confirmWorkspaceDeleteKeyAbsent(ctx, operation)
+			if advanceErr != nil {
+				return operation, advanceErr
 			}
 			operation = next
 		case "key_deleted":
-			next, err := app.refundWorkspaceDelete(ctx, service, credential, operation)
+			next, err := app.refundWorkspaceDelete(ctx, service, credential, authorizationID, operation)
 			if err != nil {
 				return next, err
 			}
@@ -447,6 +517,106 @@ func (app *controlPlaneServer) persistWorkspaceDelete(ctx context.Context, curre
 		DeleteWorkspace: deleteWorkspace, RequireWorkspaceAbsent: requireAbsent,
 		ExpectedResult: stringValue(workspaceDeleteOperationRow(current)["result"]), DesiredOperation: workspaceDeleteOperationRow(next),
 	})
+}
+
+func workspaceDeleteReplayForStage(operation workspaceDeleteOperation, stage string) workspaceDeleteReplayAuthorization {
+	if stage == "key" {
+		return operation.KeyDeleteReplay
+	}
+	return operation.RefundReplay
+}
+
+func setWorkspaceDeleteReplayForStage(operation *workspaceDeleteOperation, stage string, authorization workspaceDeleteReplayAuthorization) {
+	if stage == "key" {
+		operation.KeyDeleteReplay = authorization
+		return
+	}
+	operation.RefundReplay = authorization
+}
+
+func workspaceDeleteReplayIdempotencyKey(operation workspaceDeleteOperation, stage string) string {
+	if stage == "key" {
+		return workspaceDeleteStageKey(operation, "key")
+	}
+	return operation.RefundCode
+}
+
+func (app *controlPlaneServer) claimWorkspaceDeleteReplay(ctx context.Context, operation workspaceDeleteOperation, stage, authorizationID string) (workspaceDeleteOperation, bool, error) {
+	if stage != "key" && stage != "refund" || !validBillingReviewOpaqueID(authorizationID) {
+		return operation, false, errWorkspaceDeleteCASConflict
+	}
+	if operation.Status != "running" || stage == "key" && (operation.Phase != "compute_destroyed" || !operation.KeyDeleteAttempted) ||
+		stage == "refund" && (operation.Phase != "key_deleted" || !operation.RefundAttempted) {
+		return operation, false, errWorkspaceDeleteUnconfirmed
+	}
+	now := time.Now().UTC()
+	replay := workspaceDeleteReplayForStage(operation, stage)
+	if replay.AuthorizationID != "" {
+		if replay.AuthorizationID != authorizationID || replay.IdempotencyKey != workspaceDeleteReplayIdempotencyKey(operation, stage) || replay.State != "claimed" {
+			return operation, false, errWorkspaceDeleteUnconfirmed
+		}
+		leaseExpiresAt, err := time.Parse(time.RFC3339Nano, replay.LeaseExpiresAt)
+		if err != nil {
+			return operation, false, errWorkspaceDeleteCASConflict
+		}
+		if leaseExpiresAt.After(now) {
+			return operation, false, nil
+		}
+		replay.LeaseGeneration++
+	} else {
+		replay = workspaceDeleteReplayAuthorization{
+			SchemaVersion: 1, AuthorizationID: authorizationID,
+			IdempotencyKey: workspaceDeleteReplayIdempotencyKey(operation, stage), State: "claimed", LeaseGeneration: 1,
+		}
+	}
+	replay.LeaseExpiresAt = now.Add(workspaceDeleteReplayLease).Format(time.RFC3339Nano)
+	next := operation
+	setWorkspaceDeleteReplayForStage(&next, stage, replay)
+	if err := app.persistWorkspaceDelete(ctx, operation, next, false, false); err != nil {
+		return operation, false, err
+	}
+	return next, true, nil
+}
+
+func (app *controlPlaneServer) markWorkspaceDeleteReplayDispatch(ctx context.Context, operation workspaceDeleteOperation, stage string) (workspaceDeleteOperation, error) {
+	replay := workspaceDeleteReplayForStage(operation, stage)
+	if replay.State != "claimed" || replay.DispatchStartedAt != "" || replay.ConsumedAt != "" {
+		return operation, errWorkspaceDeleteCASConflict
+	}
+	replay.State = "dispatched"
+	replay.DispatchStartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	next := operation
+	setWorkspaceDeleteReplayForStage(&next, stage, replay)
+	if err := app.persistWorkspaceDelete(ctx, operation, next, false, false); err != nil {
+		return operation, err
+	}
+	return next, nil
+}
+
+func consumeWorkspaceDeleteReplay(operation *workspaceDeleteOperation, stage string, now time.Time) error {
+	replay := workspaceDeleteReplayForStage(*operation, stage)
+	if replay.AuthorizationID == "" {
+		return nil
+	}
+	if replay.State != "claimed" && replay.State != "dispatched" || replay.ConsumedAt != "" {
+		return errWorkspaceDeleteCASConflict
+	}
+	replay.State = "consumed"
+	replay.ConsumedAt = now.UTC().Format(time.RFC3339Nano)
+	setWorkspaceDeleteReplayForStage(operation, stage, replay)
+	return nil
+}
+
+func (app *controlPlaneServer) confirmWorkspaceDeleteKeyAbsent(ctx context.Context, operation workspaceDeleteOperation) (workspaceDeleteOperation, error) {
+	next := operation
+	if err := consumeWorkspaceDeleteReplay(&next, "key", time.Now()); err != nil {
+		return operation, err
+	}
+	next.Phase, next.Status, next.KeyStatus, next.LastErrorCode = "key_deleted", "running", "absent", ""
+	if err := app.persistWorkspaceDelete(ctx, operation, next, false, false); err != nil {
+		return operation, err
+	}
+	return next, nil
 }
 
 func (app *controlPlaneServer) markWorkspaceDeleteUnconfirmed(ctx context.Context, operation workspaceDeleteOperation, code string) (workspaceDeleteOperation, error) {
@@ -505,7 +675,7 @@ func workspaceDeleteRefundConfirmationMatches(operation workspaceDeleteOperation
 		stringValue(operation.RefundConfirmation["status"]) == "used"
 }
 
-func (app *controlPlaneServer) refundWorkspaceDelete(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, operation workspaceDeleteOperation) (workspaceDeleteOperation, error) {
+func (app *controlPlaneServer) refundWorkspaceDelete(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, authorizationID string, operation workspaceDeleteOperation) (workspaceDeleteOperation, error) {
 	unlockWallet := app.lockResource("sub2api-wallet", operation.AccountID)
 	defer unlockWallet()
 	runtime, secret, err := observeWorkspaceDeleteRuntimeAndSecret(ctx, service, operation)
@@ -525,14 +695,25 @@ func (app *controlPlaneServer) refundWorkspaceDelete(ctx context.Context, servic
 		return app.confirmWorkspaceDeleteRefund(ctx, operation)
 	}
 	if operation.RefundAttempted {
-		return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "sub2api_refund_unconfirmed")
+		if operation.Status != "running" {
+			return operation, errWorkspaceDeleteUnconfirmed
+		}
+		claimed, won, claimErr := app.claimWorkspaceDeleteReplay(ctx, operation, "refund", authorizationID)
+		if claimErr != nil {
+			return operation, claimErr
+		}
+		if !won {
+			return claimed, errWorkspaceDeleteUnconfirmed
+		}
+		operation = claimed
+	} else {
+		attempted := operation
+		attempted.Status, attempted.RefundAttempted, attempted.LastErrorCode = "running", true, ""
+		if err := app.persistWorkspaceDelete(ctx, operation, attempted, false, false); err != nil {
+			return operation, err
+		}
+		operation = attempted
 	}
-	attempted := operation
-	attempted.Status, attempted.RefundAttempted, attempted.LastErrorCode = "running", true, ""
-	if err := app.persistWorkspaceDelete(ctx, operation, attempted, false, false); err != nil {
-		return operation, err
-	}
-	operation = attempted
 	history, err = service.FinancialBalanceHistoryByCodes(ctx, operation.Sub2APIUserID, []string{operation.RefundCode})
 	if err != nil {
 		return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "sub2api_refund_history_unavailable")
@@ -541,6 +722,13 @@ func (app *controlPlaneServer) refundWorkspaceDelete(ctx context.Context, servic
 		return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "sub2api_refund_identity_conflict")
 	} else if found {
 		return app.confirmWorkspaceDeleteRefund(ctx, operation)
+	}
+	if operation.RefundReplay.AuthorizationID != "" {
+		dispatched, dispatchErr := app.markWorkspaceDeleteReplayDispatch(ctx, operation, "refund")
+		if dispatchErr != nil {
+			return operation, dispatchErr
+		}
+		operation = dispatched
 	}
 	refund, refundErr := service.RefundSub2API(ctx, clients.Sub2APIRefundInput{
 		UserID: operation.Sub2APIUserID, Code: operation.RefundCode, RefundUSDMicros: operation.TotalUSDMicros,
@@ -560,6 +748,9 @@ func (app *controlPlaneServer) refundWorkspaceDelete(ctx context.Context, servic
 
 func (app *controlPlaneServer) confirmWorkspaceDeleteRefund(ctx context.Context, operation workspaceDeleteOperation) (workspaceDeleteOperation, error) {
 	next := operation
+	if err := consumeWorkspaceDeleteReplay(&next, "refund", time.Now()); err != nil {
+		return operation, err
+	}
 	next.Phase, next.Status, next.LastErrorCode = "refund_confirmed", "running", ""
 	next.RefundConfirmation = map[string]any{
 		"code": operation.RefundCode, "userId": operation.Sub2APIUserID, "refundUsdMicros": operation.TotalUSDMicros, "status": "used",
@@ -670,6 +861,22 @@ func workspaceDeleteResponse(operation workspaceDeleteOperation, errorCode strin
 	response := map[string]any{"workspaceId": operation.WorkspaceID, "operationId": operation.OperationID, "status": status}
 	if errorCode != "" {
 		response["error"] = errorCode
+		return response
 	}
+	response["accountId"] = operation.AccountID
+	response["sub2apiUserId"] = operation.Sub2APIUserID
+	response["launchOperationId"] = operation.LaunchOperationID
+	response["refundOperationId"] = operation.OperationID
+	response["runtimeId"] = operation.RuntimeID
+	response["workspaceApiKeyId"] = operation.WorkspaceAPIKeyID
+	response["debitCode"] = operation.DebitCode
+	response["purchaseReceiptId"] = operation.PurchaseReceiptID
+	response["refundCode"] = operation.RefundCode
+	response["refundReceiptId"] = operation.RefundReceiptID
+	response["totalUsdMicros"] = operation.TotalUSDMicros
+	response["runtimeStatus"] = operation.RuntimeStatus
+	response["secretStatus"] = operation.SecretStatus
+	response["keyStatus"] = operation.KeyStatus
+	response["refundStatus"] = stringValue(operation.RefundConfirmation["status"])
 	return response
 }

@@ -134,7 +134,9 @@ func TestWorkspaceBillingReceiptProjectionUsesAuthoritativeMoney(t *testing.T) {
 		t.Run(tc.typeName, func(t *testing.T) {
 			receipt := workspaceBillingReceipt(tc.typeName)
 			if tc.refund {
+				receipt.RequestID = "workspace-delete-alpha"
 				receipt.Cost["refundUsdMicros"] = int64(52_580_000)
+				receipt.Cost["sub2apiRefundCode"] = "opl:workspace-refund"
 			}
 			projected, ok := projectCustomerBillingReceipt(receipt)
 			if !ok || projected["totalUsdMicros"] != int64(52_580_000) || projected["chargeUsdMicros"] != nil {
@@ -146,7 +148,8 @@ func TestWorkspaceBillingReceiptProjectionUsesAuthoritativeMoney(t *testing.T) {
 				hasChargeReference != tc.chargeReference || tc.chargeReference && chargeReference != "opl:workspace-charge" {
 				t.Fatalf("Workspace fulfillment=%#v chargeReference=%#v", fulfillment, chargeReference)
 			}
-			if tc.refund && projected["refundUsdMicros"] != int64(52_580_000) {
+			if tc.refund && (projected["refundUsdMicros"] != int64(52_580_000) || projected["accountId"] != "acct-alpha" ||
+				projected["operationId"] != "workspace-delete-alpha" || projected["refundCode"] != "opl:workspace-refund") {
 				t.Fatalf("refund projection = %#v", projected)
 			}
 		})
@@ -192,7 +195,9 @@ func TestWorkspacePurchasedReceiptProjectionIncludesFulfillment(t *testing.T) {
 
 func TestWorkspaceRefundedReceiptProjectionDoesNotClaimFulfillment(t *testing.T) {
 	receipt := workspaceBillingReceipt("billing.workspace_refunded.v1")
+	receipt.RequestID = "workspace-delete-alpha"
 	receipt.Cost["refundUsdMicros"] = int64(52_580_000)
+	receipt.Cost["sub2apiRefundCode"] = "opl:workspace-refund"
 	projected, ok := projectCustomerBillingReceipt(receipt)
 	if !ok || mapField(projected, "components")["compute"] == nil {
 		t.Fatalf("Workspace refund projection=%#v ok=%v", projected, ok)

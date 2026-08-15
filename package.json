@@ -20,6 +20,7 @@
     "validate:product-boundary": "node tools/validate-product-boundary.mjs",
     "verify:local": "node tools/verify-local.ts",
     "verify:local:full": "node tools/verify-local.ts --with-postgres",
+    "qualify:local:workspace": "node tools/local-workspace-qualification.ts",
     "verify:production": "node tools/production-verifier.ts",
     "validate:production-manifest": "node tools/validate-production-manifest.ts"
   },

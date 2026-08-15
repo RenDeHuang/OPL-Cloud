@@ -50,6 +50,7 @@ type workspaceLaunchRecordingProvider struct {
 	ensureErr    error
 	readErr      error
 	ensureResult *WorkspaceLaunchProviderResult
+	mutateOnRead bool
 }
 
 func (p *workspaceLaunchRecordingProvider) EnsureWorkspaceLaunchStage(_ context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
@@ -63,8 +64,12 @@ func (p *workspaceLaunchRecordingProvider) EnsureWorkspaceLaunchStage(_ context.
 	return WorkspaceLaunchProviderResult{Resources: request.Input.Resources}, nil
 }
 
-func (p *workspaceLaunchRecordingProvider) ReadWorkspaceLaunchStage(_ context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
+func (p *workspaceLaunchRecordingProvider) ReadWorkspaceLaunchStage(ctx context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
 	p.readCalls++
+	if p.mutateOnRead {
+		_, err := beginProviderMutation(ctx, "read_must_not_mutate", "workspace_launch_stage", request.Input.Binding.FabricOperationID, "")
+		return WorkspaceLaunchProviderResult{}, err
+	}
 	if p.readErr != nil {
 		return WorkspaceLaunchProviderResult{}, p.readErr
 	}
@@ -72,6 +77,30 @@ func (p *workspaceLaunchRecordingProvider) ReadWorkspaceLaunchStage(_ context.Co
 		return *p.ensureResult, nil
 	}
 	return WorkspaceLaunchProviderResult{Resources: request.Input.Resources}, nil
+}
+
+func TestWorkspaceLaunchStageReadContextRejectsProviderMutation(t *testing.T) {
+	service, store, provider, preflight, image, launchHash := workspaceLaunchStageFixture(t)
+	input := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{})
+	operation, _, err := newWorkspaceLaunchStageOperation(input, "tencent-tke", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.mutateOnRead = true
+	if _, err := service.ReadWorkspaceLaunchStage(context.Background(), input); err == nil || err.Error() != "provider_mutation_forbidden_in_read" {
+		t.Fatalf("provider read mutation error=%v", err)
+	}
+	after, err := store.List(context.Background())
+	if err != nil || len(after) != len(before) {
+		t.Fatalf("provider read changed operations before=%d after=%d err=%v", len(before), len(after), err)
+	}
 }
 
 func workspaceLaunchStageFixture(t *testing.T) (*Service, *MemoryOperationStore, *workspaceLaunchRecordingProvider, WorkspaceLaunchPreflight, string, string) {

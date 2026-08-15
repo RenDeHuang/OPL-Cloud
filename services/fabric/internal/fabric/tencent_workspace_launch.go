@@ -190,11 +190,16 @@ func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request 
 			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchPending
 		}
 		if state.Ownership == nil {
-			ownership, ownershipErr := p.ensureWorkspaceLaunchComputeOwnership(ctx, readback, *state.ComputePlan)
+			expected, ownershipErr := workspaceLaunchComputeOwnership(readback)
 			if ownershipErr != nil {
 				return WorkspaceLaunchProviderResult{}, ownershipErr
 			}
-			state.Ownership = &ownership
+			proof, ownershipErr := p.ProveComputeClaimRecovery(ctx, readback, *state.ComputePlan, expected)
+			if ownershipErr != nil || (proof.CVMOwnershipState != "recoverable" && proof.CVMOwnershipState != "target_owned") ||
+				(proof.NodeOwnershipState != "unallocated" && proof.NodeOwnershipState != "target_owned") {
+				return WorkspaceLaunchProviderResult{}, firstNonNil(ownershipErr, ErrLaunchStageBindingConflict)
+			}
+			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchResourceAbsent
 		}
 		if p.readComputeMachineOwnership(ctx, readback, *state.ComputePlan, *state.Ownership, true) != nil {
 			return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
@@ -297,17 +302,14 @@ func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request 
 
 func (p *TencentProvider) ensureWorkspaceLaunchComputeOwnership(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation) (MachineOwnership, error) {
 	journal := providerMutationJournalFromContext(ctx)
-	if journal == nil || allocation.ID == "" || allocation.AccountID == "" || allocation.WorkspaceID == "" || allocation.MachineName == "" ||
-		allocation.NodeName == "" || firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) == "" {
+	if journal == nil {
 		return MachineOwnership{}, ErrLaunchStageBindingConflict
 	}
-	instanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
-	requested := MachineOwnership{
-		ID: "owner_" + stableSuffix(allocation.ID, allocation.MachineName)[:16], ResourceID: allocation.ID, AccountID: allocation.AccountID,
-		WorkspaceID: allocation.WorkspaceID, PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID,
-		MachineID: allocation.MachineName, InstanceID: instanceID, NodeName: allocation.NodeName, Status: "claimed",
-		ProviderRequestID: allocation.ProviderRequestID, ClaimedAt: journal.now(),
+	requested, err := workspaceLaunchComputeOwnership(allocation)
+	if err != nil {
+		return MachineOwnership{}, err
 	}
+	requested.ClaimedAt = journal.now()
 	ownership, _, err := journal.operations.ClaimMachine(ctx, requested)
 	if err != nil {
 		return MachineOwnership{}, err
@@ -323,6 +325,20 @@ func (p *TencentProvider) ensureWorkspaceLaunchComputeOwnership(ctx context.Cont
 		return ownership, err
 	}
 	return ownership, nil
+}
+
+func workspaceLaunchComputeOwnership(allocation ComputeAllocation) (MachineOwnership, error) {
+	instanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
+	if allocation.ID == "" || allocation.AccountID == "" || allocation.WorkspaceID == "" || allocation.PackageID == "" || allocation.NodePoolID == "" ||
+		allocation.MachineName == "" || allocation.NodeName == "" || instanceID == "" {
+		return MachineOwnership{}, ErrLaunchStageBindingConflict
+	}
+	return MachineOwnership{
+		ID: "owner_" + stableSuffix(allocation.ID, allocation.MachineName)[:16], ResourceID: allocation.ID, AccountID: allocation.AccountID,
+		WorkspaceID: allocation.WorkspaceID, PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID,
+		MachineID: allocation.MachineName, InstanceID: instanceID, NodeName: allocation.NodeName, Status: "claimed",
+		ProviderRequestID: allocation.ProviderRequestID,
+	}, nil
 }
 
 func (p *TencentProvider) tencentWorkspaceLaunchComputeStateFromMutation(ctx context.Context, binding WorkspaceLaunchStageBinding, packageID string) (tencentWorkspaceLaunchState, error) {
@@ -365,7 +381,7 @@ func (p *TencentProvider) tencentWorkspaceLaunchComputeStateFromMutation(ctx con
 		return tencentWorkspaceLaunchState{Compute: &allocation, ComputePlan: &mutationState.Plan}, nil
 	}
 	if ownershipErr != nil {
-		return tencentWorkspaceLaunchState{}, ErrLaunchStageBindingConflict
+		return tencentWorkspaceLaunchState{Compute: &allocation, ComputePlan: &mutationState.Plan}, nil
 	}
 	if allocation.ID != computeID || allocation.AccountID != binding.AccountID || allocation.WorkspaceID != binding.WorkspaceID ||
 		allocation.PackageID != packageID || allocation.PoolID != mutationState.Plan.PoolID || allocation.NodePoolID != nodePoolID ||

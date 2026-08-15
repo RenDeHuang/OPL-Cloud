@@ -148,16 +148,17 @@ type workspaceLaunchStageObservation struct {
 }
 
 type workspaceLaunchResumeAuthorization struct {
-	AuthorizationID          string `json:"authorizationId"`
-	LaunchVersion            int    `json:"launchVersion"`
-	AuthorizedStage          string `json:"authorizedStage"`
-	AuthorizedBy             string `json:"authorizedBy"`
-	AuthorizedAt             string `json:"authorizedAt"`
-	Reason                   string `json:"reason"`
-	MutationBudget           int    `json:"mutationBudget"`
-	IdempotentReplayBudget   int    `json:"idempotentReplayBudget,omitempty"`
-	AuthoritativeReadBudget  int    `json:"authoritativeReadBudget,omitempty"`
-	ReadbacksAtAuthorization int    `json:"readbacksAtAuthorization,omitempty"`
+	AuthorizationID           string                                           `json:"authorizationId"`
+	LaunchVersion             int                                              `json:"launchVersion"`
+	AuthorizedStage           string                                           `json:"authorizedStage"`
+	AuthorizedBy              string                                           `json:"authorizedBy"`
+	AuthorizedAt              string                                           `json:"authorizedAt"`
+	Reason                    string                                           `json:"reason"`
+	MutationBudget            int                                              `json:"mutationBudget"`
+	IdempotentReplayBudget    int                                              `json:"idempotentReplayBudget,omitempty"`
+	AuthoritativeReadBudget   int                                              `json:"authoritativeReadBudget,omitempty"`
+	ReadbacksAtAuthorization  int                                              `json:"readbacksAtAuthorization,omitempty"`
+	AcceptanceBResumeExisting *workspaceLaunchAcceptanceBResumeExistingBinding `json:"acceptanceBResumeExisting,omitempty"`
 }
 
 type workspaceLaunchConsumedResumeAuthorization struct {
@@ -1064,7 +1065,18 @@ func validWorkspaceLaunchResumeAuthorization(authorization workspaceLaunchResume
 		return false
 	}
 	authorizedAt, err := time.Parse(time.RFC3339, authorization.AuthorizedAt)
-	return err == nil && !authorizedAt.IsZero()
+	return err == nil && !authorizedAt.IsZero() && validWorkspaceLaunchAcceptanceBResumeExistingBinding(authorization.AcceptanceBResumeExisting)
+}
+
+func validWorkspaceLaunchAcceptanceBResumeExistingBinding(binding *workspaceLaunchAcceptanceBResumeExistingBinding) bool {
+	if binding == nil {
+		return true
+	}
+	return binding.SchemaVersion == 1 && productionAcceptanceBApprovalIDPattern.MatchString(binding.ApprovalID) &&
+		workspaceImageDigestPattern.MatchString(binding.ApprovalSHA256) && productionAcceptanceBReleaseSHAPattern.MatchString(binding.CanonicalCloudSHA) &&
+		productionAcceptanceBReleaseSHAPattern.MatchString(binding.CanonicalCloudTree) && workspaceImageDigestPattern.MatchString(binding.DeployedCloudImageDigest) &&
+		(binding.AuthoritativeState == workspaceLaunchStageReady || binding.AuthoritativeState == workspaceLaunchStageAbsent || binding.AuthoritativeState == workspaceLaunchStagePending) &&
+		validWorkspaceLaunchAcceptanceBIdentityDigests(binding.IdentityDigests)
 }
 
 func validWorkspaceLaunchResumeAuthorizationConsumedAt(value string) bool {

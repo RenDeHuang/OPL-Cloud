@@ -599,7 +599,7 @@ func (s *Service) readWorkspaceLaunchStage(ctx context.Context, input WorkspaceL
 	if err != nil {
 		return WorkspaceLaunchStageResult{}, err
 	}
-	providerResult, err := stageProvider.ReadWorkspaceLaunchStage(s.providerMutationContext(ctx, operation), request)
+	providerResult, err := stageProvider.ReadWorkspaceLaunchStage(s.providerReadContext(ctx, operation), request)
 	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
 		if operation.Status == "started" {
 			return observedWorkspaceLaunchStageResult(input, "absent", "started_no_resource"), nil

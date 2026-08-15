@@ -150,7 +150,9 @@ func workspaceLaunchReconcileResponse(operation workspaceLaunchReconcileOperatio
 		response["failureStage"] = operation.Stage
 	}
 	if operation.ResumeAuthorization != nil {
-		response["resumeAuthorization"] = operation.ResumeAuthorization
+		authorization := *operation.ResumeAuthorization
+		authorization.AcceptanceBResumeExisting = nil
+		response["resumeAuthorization"] = authorization
 		response["resumeAuthorizationConsumedAt"] = operation.ResumeAuthorizationConsumedAt
 	}
 	if row != nil {
@@ -159,6 +161,42 @@ func workspaceLaunchReconcileResponse(operation workspaceLaunchReconcileOperatio
 		response["createdAt"] = operation.CreatedAt
 	}
 	return response, nil
+}
+
+func workspaceLaunchResumeAuthorizationReadback(operation workspaceLaunchReconcileOperation, authorizationID string) (map[string]any, bool) {
+	authorization, consumed, found := operation.resumeAuthorizationByID(authorizationID)
+	if !found {
+		return nil, false
+	}
+	consumedAt := ""
+	if operation.ResumeAuthorization != nil && operation.ResumeAuthorization.AuthorizationID == authorizationID {
+		consumedAt = operation.ResumeAuthorizationConsumedAt
+	} else {
+		for _, historical := range operation.ConsumedResumeAuthorizations {
+			if historical.Authorization.AuthorizationID == authorizationID {
+				consumedAt = historical.ConsumedAt
+				break
+			}
+		}
+	}
+	status := "active"
+	if consumed {
+		status = "consumed"
+	}
+	attempt := operation.Attempts[authorization.AuthorizedStage]
+	return map[string]any{
+		"schemaVersion": 1, "operationId": operation.ID, "operationVersion": operation.Version,
+		"authorizationId": authorization.AuthorizationID, "authorizationVersion": authorization.LaunchVersion,
+		"authorizedStage": authorization.AuthorizedStage, "authorizedBy": authorization.AuthorizedBy,
+		"status": status, "consumedAt": consumedAt, "singleUse": true,
+		"attempt": map[string]any{
+			"attempted": attempt.Attempted, "confirmed": attempt.Confirmed, "unknown": attempt.Unknown, "max": attempt.Max,
+			"status": attempt.Status, "idempotencyKey": attempt.IdempotencyKey,
+			"pendingReadbacks": attempt.PendingReadbacks, "maxPendingReadbacks": attempt.MaxPendingReadbacks,
+		},
+		"convergence":               map[string]any{"operationStatus": operation.Status, "stage": operation.Stage, "version": operation.Version},
+		"acceptanceBResumeExisting": authorization.AcceptanceBResumeExisting,
+	}, true
 }
 
 func workspaceLaunchReconcileRequestMatches(operation workspaceLaunchReconcileOperation, accountID, ownerUserID, name, packageID string, storageGB int, autoRenew bool) bool {

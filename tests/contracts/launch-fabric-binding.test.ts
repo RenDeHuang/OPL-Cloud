@@ -11,6 +11,7 @@ test("Control Plane owns the launch identity and recovery authorization", async 
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
   assert.equal(contract.owner, "services/control-plane");
+  assert.equal(contract.schemaVersion, 3);
   assert.equal(contract.launchOperation.action, "workspace.launch.v2");
   assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
@@ -43,8 +44,8 @@ test("Control Plane owns the launch identity and recovery authorization", async 
       "services/control-plane/internal/server/workspace_launch_fabric_stages.go",
       "services/control-plane/internal/server/workspace_launch_activation.go"
     ],
-    goFields: ["Attempted", "Confirmed", "Unknown", "Max", "IdempotencyKey", "PendingReadbacks", "MaxPendingReadbacks"],
-    jsonFields: ["attempted", "confirmed", "unknown", "max", "idempotencyKey", "pendingReadbacks", "maxPendingReadbacks"],
+    goFields: ["Attempted", "Confirmed", "Unknown", "Max", "Status", "IdempotencyKey", "PendingReadbacks", "MaxPendingReadbacks"],
+    jsonFields: ["attempted", "confirmed", "unknown", "max", "status", "idempotencyKey", "pendingReadbacks", "maxPendingReadbacks"],
     maxPerStage: 1,
     idempotentReplayEffectOnAttempt: "does_not_increment_attempted_or_max_and_reuses_the_exact_persisted_idempotency_key",
     reservationOrder: [
@@ -59,9 +60,10 @@ test("Control Plane owns the launch identity and recovery authorization", async 
     requestFields: ["launchVersion", "authorizedStage", "reason", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"],
     authorizationFields: [
       "authorizationId", "launchVersion", "authorizedStage", "authorizedBy", "authorizedAt", "reason", "mutationBudget",
-      "idempotentReplayBudget", "authoritativeReadBudget", "readbacksAtAuthorization"
+      "idempotentReplayBudget", "authoritativeReadBudget", "readbacksAtAuthorization", "acceptanceBResumeExisting"
     ],
     authorizationId: "Idempotency-Key request header",
+    authorizationIdFormat: "single_Idempotency-Key_matching_the_shared_compact_non_secret_opaque_id_predicate",
     authorizedBy: "control_plane_operator_session_user_id",
     authorizedAt: "control_plane_server_time_or_exact_authorization_replay",
     admission: "manual_review_with_exact_launch_version_current_stage_and_independent_mutation_replay_and_read_budgets",
@@ -74,7 +76,43 @@ test("Control Plane owns the launch identity and recovery authorization", async 
     budgetExhaustion: "unknown_manual_review_never_absent_and_never_automatic_replay",
     legacyV3MissingReplayAndReadFields: "explicit_zero_budget_compatibility_that_creates_no_external_fact_read_or_mutation",
     replayCAS: "persist_authorization_then_single_winner_claim_for_the_same_stage_and_exact_original_idempotency_key",
-    secondLaunch: "forbidden"
+    secondLaunch: "forbidden",
+    authorizationReadback: {
+      route: "GET /api/operator/workspace-launches/{operationId}/resume-authorizations/{authorizationId}",
+      lookup: "exact_current_or_consumed_authorization_id",
+      fields: ["schemaVersion", "operationId", "operationVersion", "authorizationId", "authorizationVersion", "authorizedStage", "authorizedBy", "status", "consumedAt", "singleUse", "attempt", "convergence", "acceptanceBResumeExisting"],
+      statuses: ["active", "consumed"],
+      attemptFields: ["attempted", "confirmed", "unknown", "max", "status", "idempotencyKey", "pendingReadbacks", "maxPendingReadbacks"],
+      convergenceFields: ["operationStatus", "stage", "version"],
+      singleUse: true
+    },
+    acceptanceBResumeExisting: {
+      operationMode: "acceptance_b_resume_existing",
+      approvalSecretEnv: "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_RESUME_EXISTING_APPROVAL_JSON",
+      capabilityHeader: "x-opl-acceptance-b-capability",
+      approvalIdHeader: "x-opl-acceptance-b-approval-id",
+      requestContract: "same_exact_six_field_recovery_request",
+      approvalSchema: {
+        schemaVersion: 1,
+        exactTopLevelFields: ["schemaVersion", "operationMode", "approvalId", "expiresAt", "release", "authorization", "reconciliation", "identityDigests"],
+        releaseFields: ["canonicalCloudSha", "canonicalCloudTree", "deployedCloudImageDigest"],
+        authorizationFields: ["authorizationId", "operationId", "launchVersion", "authorizedStage", "reasonSha256", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"],
+        reconciliationFields: ["operationStatus", "authoritativeStageState", "attempt"],
+        attemptFields: ["attempted", "confirmed", "unknown", "max", "status", "idempotencyKeySha256"],
+        identityDigestFields: ["accountIdentitySha256", "operationIdentitySha256", "workspaceIdentitySha256", "keyIdentitySha256", "debitIdentitySha256", "quoteIdentitySha256", "providerIdentitySha256"]
+      },
+      releaseAuthority: {
+        canonicalCloudSha: "control_plane_OPL_RELEASE_SHA_exact_match",
+        canonicalCloudTree: "instance_approval_binding_not_control_plane_runtime_fact",
+        deployedCloudImageDigest: "control_plane_OPL_CLOUD_IMAGE_exact_digest_match"
+      },
+      requestIntent: "either_dedicated_header_requires_exactly_one_approval_id_and_one_capability_header_server_secret_configuration_alone_never_selects_dedicated_mode",
+      reasonBinding: "reasonSha256_equals_control_plane_canonical_null_delimited_sha256_of_the_exact_request_reason",
+      admissionOrder: ["parse_exact_approval", "load_exact_persisted_operation", "bind_server_owned_operator_identity", "fresh_owner_stage_read", "validate_attempt_and_identity_digests", "persist_authorization_CAS"],
+      persistedBindingFields: ["schemaVersion", "approvalId", "approvalSha256", "canonicalCloudSha", "canonicalCloudTree", "deployedCloudImageDigest", "authoritativeState", "identityDigests"],
+      unknown: "fail_closed_before_authorization_persistence",
+      exactReplay: "same_authorizationId_and_approval_digest_returns_persisted_single_use_readback_without_new_authority_budget"
+    }
   });
 });
 

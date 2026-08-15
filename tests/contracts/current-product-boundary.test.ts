@@ -40,6 +40,7 @@ test("current launch and settlement facts have four focused owners", async () =>
 test("Control Plane durable launch chain keeps preflight outside mutation stages", async () => {
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
+  assert.equal(contract.schemaVersion, 3);
   assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
     "launchOperationId", "accountId", "ownerUserId", "workspaceId", "requestHash"
@@ -72,7 +73,7 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
     cas: "exact_prior_result_and_launch_identity_single_winner"
   });
   assert.deepEqual(contract.stageDecision.attemptPersistence.goFields, [
-    "Attempted", "Confirmed", "Unknown", "Max", "IdempotencyKey", "PendingReadbacks", "MaxPendingReadbacks"
+    "Attempted", "Confirmed", "Unknown", "Max", "Status", "IdempotencyKey", "PendingReadbacks", "MaxPendingReadbacks"
   ]);
   assert.equal(contract.stageDecision.attemptPersistence.maxPerStage, 1);
   assert.deepEqual(contract.stageDecision.attemptPersistence.forbiddenLegacyFields, ["ChargeAttempted"]);
@@ -82,6 +83,8 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
     "launchVersion", "authorizedStage", "reason", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"
   ]);
   assert.equal(contract.recovery.authorizationId, "Idempotency-Key request header");
+  assert.equal(contract.recovery.authorizationIdFormat,
+    "single_Idempotency-Key_matching_the_shared_compact_non_secret_opaque_id_predicate");
   assert.equal(contract.recovery.authorizedBy, "control_plane_operator_session_user_id");
   assert.equal(contract.recovery.authorizedAt, "control_plane_server_time_or_exact_authorization_replay");
   assert.equal(contract.recovery.idempotentReplayBudget, 1);
@@ -89,6 +92,17 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
   assert.match(contract.recovery.readBudgetSemantics, /operator_authorization/);
   assert.equal(contract.recovery.budgetExhaustion, "unknown_manual_review_never_absent_and_never_automatic_replay");
   assert.match(contract.recovery.legacyV3MissingReplayAndReadFields, /zero_budget/);
+  assert.equal(contract.recovery.authorizationReadback.route,
+    "GET /api/operator/workspace-launches/{operationId}/resume-authorizations/{authorizationId}");
+  assert.deepEqual(contract.recovery.authorizationReadback.statuses, ["active", "consumed"]);
+  assert.deepEqual(contract.recovery.authorizationReadback.attemptFields,
+    ["attempted", "confirmed", "unknown", "max", "status", "idempotencyKey", "pendingReadbacks", "maxPendingReadbacks"]);
+  assert.equal(contract.recovery.acceptanceBResumeExisting.operationMode, "acceptance_b_resume_existing");
+  assert.deepEqual(contract.recovery.acceptanceBResumeExisting.approvalSchema.identityDigestFields, [
+    "accountIdentitySha256", "operationIdentitySha256", "workspaceIdentitySha256", "keyIdentitySha256",
+    "debitIdentitySha256", "quoteIdentitySha256", "providerIdentitySha256"
+  ]);
+  assert.equal(contract.recovery.acceptanceBResumeExisting.releaseAuthority.canonicalCloudTree, "instance_approval_binding_not_control_plane_runtime_fact");
 });
 
 test("Fabric uses explicit immutable launch-stage binding and typed routes", async () => {

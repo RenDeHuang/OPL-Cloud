@@ -23,6 +23,7 @@ type providerMutationJournal struct {
 	parentOperation FabricOperation
 	provider        string
 	now             func() time.Time
+	readOnly        bool
 }
 
 type providerMutationBinding struct {
@@ -76,12 +77,20 @@ func providerMutationJournalFromContext(ctx context.Context) *providerMutationJo
 }
 
 func (s *Service) providerMutationContext(ctx context.Context, operation FabricOperation) context.Context {
+	return s.providerOperationContext(ctx, operation, false)
+}
+
+func (s *Service) providerReadContext(ctx context.Context, operation FabricOperation) context.Context {
+	return s.providerOperationContext(ctx, operation, true)
+}
+
+func (s *Service) providerOperationContext(ctx context.Context, operation FabricOperation, readOnly bool) context.Context {
 	binding, ok := decodeLaunchStageBinding(operation)
 	if !ok {
 		return ctx
 	}
 	return context.WithValue(ctx, providerMutationJournalContextKey{}, &providerMutationJournal{
-		operations: s.operations, parent: binding, parentOperation: operation, provider: s.provider.Descriptor().Name, now: s.now,
+		operations: s.operations, parent: binding, parentOperation: operation, provider: s.provider.Descriptor().Name, now: s.now, readOnly: readOnly,
 	})
 }
 
@@ -97,6 +106,9 @@ func beginProviderMutationWithState(ctx context.Context, action, resourceKind, r
 	journal := providerMutationJournalFromContext(ctx)
 	if journal == nil {
 		return nil, nil
+	}
+	if journal.readOnly {
+		return nil, fmt.Errorf("provider_mutation_forbidden_in_read")
 	}
 	if action == "" || resourceKind == "" || resourceID == "" {
 		return nil, fmt.Errorf("provider_mutation_binding_invalid")
@@ -267,6 +279,11 @@ func decodeProviderMutationState(operation FabricOperation, target any) bool {
 func (a *providerMutationAttempt) complete(ctx context.Context, providerRequestID string, resource any, mutationErr error) error {
 	if a == nil || (!a.Fresh && a.operation.Status == "succeeded") {
 		return nil
+	}
+	if !a.Replay && mutationErr == nil {
+		if epoch, ok := decodeProviderMutationReplayEpoch(a.operation); ok && epoch.State != "succeeded" {
+			a.Replay = true
+		}
 	}
 	next := a.operation
 	next.ProviderRequestID = providerRequestID

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
@@ -108,6 +109,45 @@ func (app *controlPlaneServer) resumeWorkspaceLaunch(ctx context.Context, servic
 		authorization.AuthorizedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	return app.workspaceLaunchReconciler(service, clients.SessionDelegatedCredential{}, 0).Resume(ctx, operationID, authorization)
+}
+
+func (app *controlPlaneServer) bindProductionAcceptanceBResumeExisting(
+	ctx context.Context,
+	service *controlplane.Service,
+	header http.Header,
+	operationID string,
+	approval productionAcceptanceBResumeExistingApproval,
+	authorization workspaceLaunchResumeAuthorization,
+) (workspaceLaunchResumeAuthorization, error) {
+	row, found, err := app.tables.GetRuntimeOperation(ctx, operationID)
+	if err != nil {
+		return workspaceLaunchResumeAuthorization{}, err
+	}
+	if !found {
+		return workspaceLaunchResumeAuthorization{}, errBillingReviewNotFound
+	}
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		return workspaceLaunchResumeAuthorization{}, err
+	}
+	if existing, consumed, found := operation.resumeAuthorizationByID(authorization.AuthorizationID); found {
+		if !productionAcceptanceBResumeExistingReplayApproved(header, approval, authorization, operationID, existing, consumed) {
+			return workspaceLaunchResumeAuthorization{}, errWorkspaceLaunchGrantConflict
+		}
+		authorization.AcceptanceBResumeExisting = existing.AcceptanceBResumeExisting
+		return authorization, nil
+	}
+	reconciler := app.workspaceLaunchReconciler(service, clients.SessionDelegatedCredential{}, 0)
+	observation, readErr := reconciler.adapter.ReadStage(ctx, operation)
+	if readErr != nil {
+		observation = workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}
+	}
+	binding, approved := productionAcceptanceBResumeExistingApproved(header, approval, authorization, operation, observation, time.Now())
+	if !approved {
+		return workspaceLaunchResumeAuthorization{}, errWorkspaceLaunchGrantConflict
+	}
+	authorization.AcceptanceBResumeExisting = &binding
+	return authorization, nil
 }
 
 func (app *controlPlaneServer) runWorkspaceLaunchesOnce(ctx context.Context, service *controlplane.Service) error {

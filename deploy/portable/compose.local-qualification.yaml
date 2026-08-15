@@ -1,0 +1,45 @@
+services:
+  sub2api-authority:
+    image: ${OPL_CLOUD_IMAGE:?Set OPL_CLOUD_IMAGE to an immutable image digest}
+    command: ["node", "--experimental-strip-types", "/qualification/local-sub2api-authority-fixture.ts"]
+    user: root
+    restart: unless-stopped
+    environment:
+      OPL_QUALIFICATION_PORT: "8080"
+      OPL_QUALIFICATION_AUTHORITY_TOKEN: ${OPL_QUALIFICATION_AUTHORITY_TOKEN:?Set OPL_QUALIFICATION_AUTHORITY_TOKEN}
+      OPL_QUALIFICATION_USER_EMAIL: ${OPL_QUALIFICATION_USER_EMAIL:?Set OPL_QUALIFICATION_USER_EMAIL}
+      OPL_QUALIFICATION_USER_PASSWORD: ${OPL_QUALIFICATION_USER_PASSWORD:?Set OPL_QUALIFICATION_USER_PASSWORD}
+      OPL_QUALIFICATION_USER_TOKEN: ${OPL_QUALIFICATION_USER_TOKEN:?Set OPL_QUALIFICATION_USER_TOKEN}
+      OPL_QUALIFICATION_INITIAL_USD_MICROS: ${OPL_QUALIFICATION_INITIAL_USD_MICROS:-1000000000}
+      OPL_QUALIFICATION_STATE_PATH: /qualification-state/state.json
+    volumes:
+      - type: bind
+        source: ./tools/local-sub2api-authority-fixture.ts
+        target: /qualification/local-sub2api-authority-fixture.ts
+        read_only: true
+      - opl-qualification-sub2api:/qualification-state
+    ports:
+      - "127.0.0.1:${OPL_QUALIFICATION_AUTHORITY_HOST_PORT:?Set OPL_QUALIFICATION_AUTHORITY_HOST_PORT}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks: [opl-cloud]
+
+  control-plane:
+    environment:
+      OPL_RELEASE_SHA: ${OPL_QUALIFICATION_SOURCE_SHA:?Set OPL_QUALIFICATION_SOURCE_SHA}
+      OPL_CLOUD_IMAGE: ${OPL_CLOUD_IMAGE:?Set OPL_CLOUD_IMAGE to an immutable image digest}
+      OPL_SUB2API_BASE_URL: http://sub2api-authority:8080
+      OPL_SUB2API_ADMIN_EMAIL: ${OPL_QUALIFICATION_USER_EMAIL:?Set OPL_QUALIFICATION_USER_EMAIL}
+      OPL_SUB2API_ADMIN_PASSWORD: ${OPL_QUALIFICATION_USER_PASSWORD:?Set OPL_QUALIFICATION_USER_PASSWORD}
+      OPL_CONTROLLED_BASIC_PILOT_ENABLED: "1"
+      OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS: acct-admin
+      OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT: "1"
+    depends_on:
+      sub2api-authority:
+        condition: service_healthy
+
+volumes:
+  opl-qualification-sub2api:

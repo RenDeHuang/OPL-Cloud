@@ -514,7 +514,7 @@ func TestTencentWorkspaceLaunchCompletesTypedFiveStageChainWithGETOnlyReplay(t *
 	}
 	stages = append(stages, stageCall{input: runtimeInput, result: result})
 
-	wantMutations := map[string]int{"scale": 1, "tag": 1, "node_patch": 1, "cbs": 1, "static_apply": 1, "gateway_apply": 1, "runtime_apply": 1}
+	wantMutations := map[string]int{"scale": 1, "node_patch": 1, "cbs": 1, "static_apply": 1, "gateway_apply": 1, "runtime_apply": 1}
 	if !maps.Equal(providerMutations, wantMutations) {
 		t.Fatalf("mutations=%#v want=%#v", providerMutations, wantMutations)
 	}

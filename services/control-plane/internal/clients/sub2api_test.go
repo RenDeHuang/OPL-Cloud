@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -615,6 +616,19 @@ func TestUserKeyDelete(t *testing.T) {
 	}, time.Second)
 	if err := client.DeleteUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, 17); err != nil {
 		t.Fatalf("delete key: %v", err)
+	}
+}
+
+func TestIdempotentUserKeyDeletePreservesExactOperationHeader(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v1/keys/17" ||
+			r.Header.Get("Authorization") != "Bearer delegated-user-token" || r.Header.Get("Idempotency-Key") != "workspace-delete-alpha:key" {
+			t.Fatalf("unexpected idempotent delegated delete: %s %s auth=%q key=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Idempotency-Key"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}, time.Second)
+	if err := client.DeleteUserKeyIdempotent(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, 17, "workspace-delete-alpha:key"); err != nil {
+		t.Fatalf("idempotent delete key: %v", err)
 	}
 }
 
@@ -1857,7 +1871,7 @@ func TestSub2APIUsageStatsRejectsInvalidFacts(t *testing.T) {
 	}
 }
 
-func TestSub2APIFinancialBalanceHistoryByCodesStopsAfterTargetPage(t *testing.T) {
+func TestSub2APIFinancialBalanceHistoryByCodesReadsAuthoritativeFinalPageAfterTarget(t *testing.T) {
 	requestedPages := []string{}
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1891,7 +1905,7 @@ func TestSub2APIFinancialBalanceHistoryByCodesStopsAfterTargetPage(t *testing.T)
 	}, time.Second)
 
 	matches, err := client.FinancialBalanceHistoryByCodes(context.Background(), 41, []string{"opl:target"})
-	if err != nil || !slices.Equal(requestedPages, []string{"1", "2"}) || len(matches) != 1 {
+	if err != nil || !slices.Equal(requestedPages, []string{"1", "2", "3"}) || len(matches) != 1 {
 		t.Fatalf("financial history matches=%#v pages=%#v err=%v", matches, requestedPages, err)
 	}
 	entry := matches["opl:target"]
@@ -1901,6 +1915,49 @@ func TestSub2APIFinancialBalanceHistoryByCodesStopsAfterTargetPage(t *testing.T)
 	encoded, _ := json.Marshal(matches)
 	if strings.Contains(string(encoded), "must-not-leak") || strings.Contains(string(encoded), "notes") {
 		t.Fatalf("financial history leaked upstream fields: %s", encoded)
+	}
+}
+
+func TestSub2APIFinancialBalanceHistoryByCodesRejectsDuplicateOnLaterPage(t *testing.T) {
+	requestedPages := []string{}
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/users/41/balance-history":
+			query := r.URL.Query()
+			if query.Get("page_size") != "100" || query.Get("type") != "balance" {
+				t.Fatalf("history query = %s", r.URL.RawQuery)
+			}
+			requestedPages = append(requestedPages, query.Get("page"))
+			page, err := strconv.Atoi(query.Get("page"))
+			if err != nil || page < 1 || page > 3 {
+				t.Fatalf("history page = %q", query.Get("page"))
+			}
+			count := 100
+			if page == 3 {
+				count = 1
+			}
+			items := make([]any, 0, count)
+			for index := 0; index < count; index++ {
+				code := fmt.Sprintf("opl:filler:%d", (page-1)*100+index)
+				if page == 2 && index == 42 || page == 3 {
+					code = "opl:target"
+				}
+				items = append(items, map[string]any{
+					"code": code, "type": "balance", "value": -52.58, "status": "used", "used_by": 41,
+					"used_at": "2026-07-16T00:01:00Z", "created_at": "2026-07-16T00:00:00Z",
+				})
+			}
+			writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 201, "page": page, "page_size": 100, "pages": 3})
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+
+	_, err := client.FinancialBalanceHistoryByCodes(context.Background(), 41, []string{"opl:target"})
+	if !errors.Is(err, ErrSub2APIChargeConflict) || !slices.Equal(requestedPages, []string{"1", "2", "3"}) {
+		t.Fatalf("duplicate financial history pages=%#v err=%v", requestedPages, err)
 	}
 }
 
@@ -1983,20 +2040,20 @@ func TestSub2APIFinancialBalanceHistoryByCodesRejectsUntrustedIdentityAndPaginat
 }
 
 func TestSub2APIFinancialBalanceHistoryByCodesUsesOneAbsoluteDeadline(t *testing.T) {
-	requests := 0
+	var requests atomic.Int64
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/auth/login" {
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
 			return
 		}
-		requests++
+		requests.Add(1)
 		<-r.Context().Done()
 	}, 25*time.Millisecond)
 	if _, err := client.FinancialBalanceHistoryByCodes(context.Background(), 41, []string{"opl:target"}); err == nil {
 		t.Fatal("financial history deadline was ignored")
 	}
-	if requests != 1 {
-		t.Fatalf("financial history requests = %d", requests)
+	if requests.Load() != 1 {
+		t.Fatalf("financial history requests = %d", requests.Load())
 	}
 }
 

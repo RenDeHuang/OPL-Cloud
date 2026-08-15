@@ -119,11 +119,20 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   assert.deepEqual(Object.keys(localWorkspaceCompose.services).sort(), ["control-plane", "fabric"]);
   assert.equal(localWorkspaceCompose.services.fabric.user, "root");
   assert.equal(localWorkspaceCompose.services.fabric.environment.OPL_FABRIC_PROVIDER, "local-docker");
+  assert.equal(
+    localWorkspaceCompose.services.fabric.environment.OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT,
+    "${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}"
+  );
   assert.deepEqual(localWorkspaceCompose.services.fabric.volumes, [
     {
       type: "bind",
       source: "${OPL_DOCKER_SOCKET_PATH:-/var/run/docker.sock}",
       target: "/var/run/docker.sock"
+    },
+    {
+      type: "bind",
+      source: "${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}",
+      target: "${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}"
     }
   ]);
   assert.equal(
