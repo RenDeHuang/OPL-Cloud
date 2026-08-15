@@ -76,13 +76,12 @@ func workspaceLaunchProjectionMatches(operation workspaceLaunchReconcileOperatio
 	return firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) == operation.stringFact("accountId") &&
 		stringValue(workspace["ownerUserId"]) == operation.stringFact("ownerUserId") && stringValue(workspace["id"]) == operation.stringFact("workspaceId") &&
 		stringValue(workspace["name"]) == operation.stringFact("name") && stringValue(workspace["packageId"]) == operation.stringFact("packageId") &&
-		stringValue(workspace["provider"]) == "fabric" && stringValue(workspace["url"]) == operation.stringFact("url") &&
+		stringValue(workspace["url"]) == operation.stringFact("url") &&
 		firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])) == operation.stringFact("computeAllocationId") &&
 		stringValue(workspace["storageId"]) == operation.stringFact("storageId") &&
 		firstNonEmpty(stringValue(workspace["currentAttachmentId"]), stringValue(workspace["attachmentId"])) == operation.stringFact("attachmentId") &&
 		stringValue(workspace["runtimeId"]) == operation.stringFact("runtimeId") &&
 		stringValue(nested(workspace, "runtime", "serviceName")) == operation.stringFact("runtimeServiceName") &&
-		stringValue(nested(workspace, "runtime", "status")) == "running" && nested(workspace, "runtime", "ready") == true &&
 		int64(numberField(workspace, "workspaceApiKeyId", 0)) == operation.int64Fact("workspaceApiKeyId") &&
 		stringValue(nested(workspace, "access", "username")) == operation.stringFact("runtimeUsername") &&
 		stringValue(nested(workspace, "access", "credentialStatus")) == operation.stringFact("credentialStatus") &&

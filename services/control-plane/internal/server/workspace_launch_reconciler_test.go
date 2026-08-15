@@ -334,6 +334,74 @@ func TestWorkspaceLaunchReservedStageReplayRefusesStateAndAuthorizationDrift(t *
 	}
 }
 
+func TestWorkspaceLaunchReadOnlyContinuationRequiresReservedTypedPending(t *testing.T) {
+	cases := []struct {
+		name        string
+		observation string
+		mutate      func(*workspaceLaunchStageAttempt)
+	}{
+		{name: "absent observation", observation: workspaceLaunchStageAbsent},
+		{name: "unknown observation", observation: workspaceLaunchStageUnknown},
+		{name: "unknown attempt", observation: workspaceLaunchStagePending, mutate: func(attempt *workspaceLaunchStageAttempt) {
+			attempt.Unknown, attempt.Status = 1, "unknown"
+		}},
+		{name: "confirmed attempt", observation: workspaceLaunchStagePending, mutate: func(attempt *workspaceLaunchStageAttempt) {
+			attempt.Confirmed, attempt.Status = 1, "confirmed"
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			row := workspaceLaunchReservedStageManualReviewRow(t, "debit")
+			operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation.Observations[operation.Stage] = workspaceLaunchStageObservation{State: tc.observation}
+			attempt := operation.Attempts[operation.Stage]
+			if tc.mutate != nil {
+				tc.mutate(&attempt)
+				operation.Attempts[operation.Stage] = attempt
+			}
+			row, err = workspaceLaunchReconcileOperationRow(operation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			authorization := workspaceLaunchReservedStageAuthorization(t, row, "resume-read-only-"+strings.ReplaceAll(tc.name, " ", "-"))
+			authorization.IdempotentReplayBudget = 0
+			store, adapter := &workspaceLaunchUnitStore{row: row}, &workspaceLaunchUnitAdapter{readyStages: map[string]bool{"debit": true}}
+			persistedBefore := stringValue(row["result"])
+
+			_, err = NewWorkspaceLaunchReconciler(store, adapter).Resume(context.Background(), operation.ID, authorization)
+			if !errors.Is(err, errWorkspaceLaunchGrantConflict) || adapter.reads != 0 || adapter.mutations != 0 || stringValue(store.row["result"]) != persistedBefore {
+				t.Fatalf("invalid read-only continuation changed operation: reads=%d mutations=%d err=%v", adapter.reads, adapter.mutations, err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchReadOnlyContinuationExtendsPersistedTypedPending(t *testing.T) {
+	row := workspaceLaunchReservedStageManualReviewRow(t, "debit")
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Observations[operation.Stage] = workspaceLaunchStageObservation{State: workspaceLaunchStagePending}
+	row, err = workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization := workspaceLaunchReservedStageAuthorization(t, row, "resume-read-only-pending")
+	authorization.IdempotentReplayBudget = 0
+	pending := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStagePending}}
+	adapter := &workspaceLaunchUnitAdapter{readResultsByStage: map[string][]workspaceLaunchUnitReadResult{"debit": {pending, pending}}}
+
+	got, err := NewWorkspaceLaunchReconciler(&workspaceLaunchUnitStore{row: row}, adapter).Resume(context.Background(), operation.ID, authorization)
+	if err != nil || got.Status != "pending" || got.Stage != "debit" || got.Attempts["debit"].Attempted != 1 || got.Attempts["debit"].Max != 1 ||
+		got.Attempts["debit"].PendingReadbacks != 1 || got.Attempts["debit"].MaxPendingReadbacks != workspaceLaunchAuthoritativeReadBudget || adapter.reads != 2 || adapter.mutations != 0 {
+		t.Fatalf("typed pending continuation mismatch: operation=%s reads=%d mutations=%d err=%v", workspaceLaunchReconcileResultSummary(got), adapter.reads, adapter.mutations, err)
+	}
+}
+
 func TestWorkspaceLaunchReservedStageReplayCannotBeAuthorizedTwice(t *testing.T) {
 	row := workspaceLaunchReservedStageManualReviewRow(t, "debit")
 	store, adapter := &workspaceLaunchUnitStore{row: row}, &workspaceLaunchUnitAdapter{replayableStages: map[string]bool{"debit": true}}
@@ -1108,9 +1176,9 @@ func TestWorkspaceLaunchProjectionMatchesCanonicalCurrentResourceFields(t *testi
 	operation.raw["billingAnchorDay"], _ = json.Marshal(15)
 	workspace := map[string]any{
 		"id": operation.stringFact("workspaceId"), "accountId": operation.stringFact("accountId"), "ownerUserId": operation.stringFact("ownerUserId"),
-		"name": operation.stringFact("name"), "packageId": operation.stringFact("packageId"), "provider": "fabric", "url": "https://workspace.example",
+		"name": operation.stringFact("name"), "packageId": operation.stringFact("packageId"), "url": "https://workspace.example",
 		"currentComputeAllocationId": "compute-fabric", "storageId": "storage-fabric", "currentAttachmentId": "attachment-fabric",
-		"runtimeId": "runtime-fabric", "runtime": map[string]any{"serviceName": "runtime-service", "status": "running", "ready": true}, "state": "running",
+		"runtimeId": "runtime-fabric", "runtime": map[string]any{"serviceName": "runtime-service"}, "state": "running",
 		"workspaceApiKeyId": int64(9), "access": map[string]any{"username": "opl", "credentialStatus": "configured", "credentialVersion": "v1", "secretRef": "secret-ref"},
 		"priceVersion": operation.stringFact("priceVersion"), "totalUsdMicros": operation.int64Fact("totalChargeUsdMicros"), "storageGb": operation.intFact("sizeGb"),
 		"periodStart": "2026-08-15T00:00:00Z", "paidThrough": "2026-09-15T00:00:00Z", "billingAnchorDay": 15,
@@ -1125,6 +1193,7 @@ func TestWorkspaceLaunchProjectionMatchesCanonicalCurrentResourceFields(t *testi
 		{name: "attachment", apply: func(row map[string]any) { row["currentAttachmentId"] = "attachment-other" }},
 		{name: "url", apply: func(row map[string]any) { row["url"] = "https://other.example" }},
 		{name: "runtime", apply: func(row map[string]any) { row["runtime"].(map[string]any)["serviceName"] = "runtime-other" }},
+		{name: "state", apply: func(row map[string]any) { row["state"] = "provisioning" }},
 		{name: "key", apply: func(row map[string]any) { row["workspaceApiKeyId"] = int64(10) }},
 		{name: "credential", apply: func(row map[string]any) { row["access"].(map[string]any)["secretRef"] = "secret-other" }},
 		{name: "amount", apply: func(row map[string]any) { row["totalUsdMicros"] = operation.int64Fact("totalChargeUsdMicros") + 1 }},

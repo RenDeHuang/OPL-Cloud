@@ -137,7 +137,7 @@ func TestPostgresWorkspaceLaunchReplayClaimSurvivesReconcilerRestartWithoutSkip(
 	}
 
 	adapter := &workspaceLaunchUnitAdapter{
-		replayableStages: map[string]bool{"debit": true},
+		replayableStages:     map[string]bool{"debit": true},
 		panicBeforeMutations: map[string]int{"debit": 1},
 	}
 	startedAt := time.Date(2026, 8, 15, 3, 0, 0, 0, time.UTC)
@@ -168,5 +168,70 @@ func TestPostgresWorkspaceLaunchReplayClaimSurvivesReconcilerRestartWithoutSkip(
 		recovered.Attempts["debit"].Confirmed != 1 || recovered.IdempotentReplayClaims["debit"].Status != "succeeded" || adapter.mutationsByStage["debit"] != 1 ||
 		adapter.mutationIdempotencyKey != attempt.IdempotencyKey {
 		t.Fatalf("PostgreSQL restart skipped or duplicated replay: operation=%s attempt=%#v claim=%#v mutations=%#v err=%v", workspaceLaunchReconcileResultSummary(recovered), recovered.Attempts["debit"], recovered.IdempotentReplayClaims["debit"], adapter.mutationsByStage, err)
+	}
+}
+
+func TestPostgresWorkspaceLaunchConcurrentReplayResumeAllowsOneWriter(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+	account, owner, organization, membership := provisionedAccountRowsFor("acct-launch-replay-cas-pg", "usr-launch-replay-cas-pg", "org-launch-replay-cas-pg", "launch-replay-cas-pg@example.com", 43)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+
+	command := workspaceLaunchUnitCommand()
+	command.OperationID = "workspace-launch-replay-cas-pg"
+	command.AccountID = "acct-launch-replay-cas-pg"
+	command.OwnerUserID = "usr-launch-replay-cas-pg"
+	command.Sub2APIUserID = 43
+	command.WorkspaceID = "ws-launch-replay-cas-pg"
+	operation, err := newWorkspaceLaunchReconcileOperation(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Version, operation.Stage, operation.Status = 5, "debit", "manual_review"
+	attempt := operation.Attempts[operation.Stage]
+	attempt.Attempted, attempt.Status = 1, "reserved"
+	attempt.IdempotencyKey = workspaceLaunchStageIdempotencyKey(operation, 1)
+	operation.Attempts[operation.Stage] = attempt
+	row, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileClaim{AccountID: command.AccountID, DesiredOperation: row}); err != nil {
+		t.Fatal(err)
+	}
+
+	authorization := workspaceLaunchReservedStageAuthorization(t, row, "resume-postgres-concurrent")
+	adapter := &workspaceLaunchUnitAdapter{barrier: make(chan struct{}), replayableStages: map[string]bool{"debit": true}}
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			_, resumeErr := reconciler.Resume(ctx, operation.ID, authorization)
+			results <- resumeErr
+		}()
+	}
+	close(start)
+	var successes, conflicts int
+	for range 2 {
+		switch resumeErr := <-results; {
+		case resumeErr == nil:
+			successes++
+		case errors.Is(resumeErr, errWorkspaceLaunchCASConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected concurrent PostgreSQL replay error: %v", resumeErr)
+		}
+	}
+	durableRow, found, err := store.GetRuntimeOperation(ctx, operation.ID)
+	if err != nil || !found {
+		t.Fatalf("read durable concurrent replay found=%v err=%v", found, err)
+	}
+	durable, err := decodeWorkspaceLaunchReconcileOperation(durableRow)
+	if err != nil || successes != 1 || conflicts != 1 || durable.Stage != "ensure_compute_allocation" || durable.Attempts["debit"].Attempted != 1 || durable.Attempts["debit"].Max != 1 ||
+		durable.Attempts["debit"].Confirmed != 1 || durable.IdempotentReplayClaims["debit"].Status != "succeeded" || durable.ResumeAuthorizationConsumedAt == "" ||
+		adapter.mutationsByStage["debit"] != 1 || adapter.mutationIdempotencyKey != attempt.IdempotencyKey {
+		t.Fatalf("PostgreSQL replay CAS mismatch: operation=%s successes=%d conflicts=%d mutations=%#v err=%v", workspaceLaunchReconcileResultSummary(durable), successes, conflicts, adapter.mutationsByStage, err)
 	}
 }

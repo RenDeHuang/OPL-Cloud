@@ -634,9 +634,16 @@ func workspaceLaunchReservedStageReplayEligible(operation workspaceLaunchReconci
 		attempt.IdempotencyKey == workspaceLaunchStageIdempotencyKey(operation, 1) && !operation.idempotentReplayAuthorizationUsed(operation.Stage)
 }
 
+func workspaceLaunchReservedStageReadEligible(operation workspaceLaunchReconcileOperation, attempt workspaceLaunchStageAttempt, authorization workspaceLaunchResumeAuthorization) bool {
+	return authorization.AuthorizedStage == operation.Stage && authorization.MutationBudget == 0 && authorization.IdempotentReplayBudget == 0 &&
+		authorization.AuthoritativeReadBudget > 0 && operation.Observations[operation.Stage].State == workspaceLaunchStagePending &&
+		attempt.Max == 1 && attempt.Attempted == attempt.Max && attempt.Confirmed == 0 && attempt.Unknown == 0 && attempt.Status == "reserved" &&
+		attempt.IdempotencyKey == workspaceLaunchStageIdempotencyKey(operation, 1)
+}
+
 func (r *WorkspaceLaunchReconciler) authorizeExhaustedStage(ctx context.Context, operation workspaceLaunchReconcileOperation, attempt workspaceLaunchStageAttempt, authorization workspaceLaunchResumeAuthorization) (workspaceLaunchReconcileOperation, error) {
-	if authorization.MutationBudget != 0 || authorization.AuthoritativeReadBudget <= 0 ||
-		authorization.IdempotentReplayBudget == 1 && !workspaceLaunchReservedStageReplayEligible(operation, attempt, authorization) {
+	if !workspaceLaunchReservedStageReplayEligible(operation, attempt, authorization) &&
+		!workspaceLaunchReservedStageReadEligible(operation, attempt, authorization) {
 		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchGrantConflict
 	}
 	observation, readErr := r.adapter.ReadStage(ctx, operation)
