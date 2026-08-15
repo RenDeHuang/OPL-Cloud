@@ -80,15 +80,15 @@ operation and never authorizes a new identity.
 
 ### Immediate Write Gate
 
-The fresh-order tool will invoke the same approval-bound GET reconciliation
-immediately before the Workspace POST. It will then read the current server
-quote and live Sub2API wallet. General usage may change the wallet between
-reads; the only money precondition is that the current wallet is strictly above
-the current quote. The Sub2API debit remains the authoritative atomic money
-write.
+The fresh-order tool first invokes the approval-bound GET reconciliation, then
+reads the current server quote and live Sub2API wallet. General usage may change
+the wallet between reads; the only money precondition is that the current wallet
+is strictly above the current quote. The Sub2API debit remains the authoritative
+atomic money write.
 
 The tool then calls the existing submission function, which first GETs the
-approved deterministic operation and sends at most one
+approved deterministic operation, repeats the complete approval-bound
+reconciliation as the final write gate, and sends at most one
 `POST /api/workspace-launches` with the approved idempotency key. An unknown
 response is followed only by GET of the same operation. No second order is
 allowed in the Acceptance run.

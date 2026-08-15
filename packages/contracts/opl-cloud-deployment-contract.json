@@ -864,6 +864,7 @@
     "readback": {
       "baseline": "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
       "workspaceDebitAuthority": "exact_approval_bound_sub2api_history_code",
+      "terminalDebitReceiptBinding": "same_account_operation_workspace_code_and_quote_amount",
       "generalUsage": "allowed_and_non_blocking",
       "walletDelta": "not_debit_identity",
       "launchPostUnknown": "authoritative_get_before_one_post_then_authoritative_get_same_operation_id_without_retry",

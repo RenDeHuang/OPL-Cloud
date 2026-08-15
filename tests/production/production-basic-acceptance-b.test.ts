@@ -17,6 +17,7 @@ import {
   prepareProductionBasicAcceptanceBAccount,
   productionBasicAcceptanceBStageBudgets,
   productionBasicAcceptanceBApprovalDigest,
+  productionBasicAcceptanceBApprovalIdentityDigest,
   runProductionBasicAcceptanceB,
   readProductionBasicAcceptanceBLaunchUntilTerminal,
   submitProductionBasicAcceptanceBLaunch,
@@ -122,6 +123,8 @@ function exactStageBudgets(overrides = {}) {
 function readbackFixture(approval, overrides = {}) {
   const url = `https://workspace.medopl.cn/w/${approval.launch.workspaceId}/`;
   const totalChargeUsdMicros = 52_580_000;
+  const redeemCode = `opl:${stableId("sub2api-monthly-charge-v1", "production", approval.launch.operationId).slice(0, 28)}`;
+  const debitIdentitySha256 = digestParts(approval.customer.accountId, "41", approval.launch.operationId, approval.launch.workspaceId, redeemCode);
   const value = {
     schemaVersion: 1,
     operationMode: PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION.operationMode,
@@ -131,7 +134,7 @@ function readbackFixture(approval, overrides = {}) {
     release: { ...approval.release },
     baseline: { workspaceCount: 0, workspaceLaunchCount: 0, workspaceKeyCount: 0, workspaceReceiptCount: 0 },
     quote: { packageId: "basic", sizeGb: 10, priceVersion: "pilot-usd-2026-07-v1", currency: "USD", totalChargeUsdMicros },
-    debit: { operationId: `${approval.launch.operationId}:charge`, count: 1, amountUsdMicros: totalChargeUsdMicros, identitySha256: "d".repeat(64) },
+    debit: { operationId: `${approval.launch.operationId}:charge`, count: 1, amountUsdMicros: totalChargeUsdMicros, identitySha256: debitIdentitySha256 },
     launch: {
       operationId: approval.launch.operationId,
       accountId: approval.customer.accountId,
@@ -187,7 +190,7 @@ function readbackFixture(approval, overrides = {}) {
       storageId: "vol_acceptance_b_01",
       runtimeId: "runtime_acceptance_b_01",
       totalChargeUsdMicros,
-      chargeReferenceSha256: createHash("sha256").update(`opl:${stableId("sub2api-monthly-charge-v1", "production", approval.launch.operationId).slice(0, 28)}`).digest("hex")
+      chargeReferenceSha256: createHash("sha256").update(redeemCode).digest("hex")
     },
     workspaceUrl: { url, statusCode: 200 },
     stageBudgets: exactStageBudgets(),
@@ -231,7 +234,7 @@ function reconcileRouteData(approval, overrides = {}) {
     customerIdentitySha256: "1".repeat(64),
     accountProvisionIdentitySha256: "2".repeat(64),
     walletAdjustmentIdentitySha256: "3".repeat(64),
-    approvalIdentitySha256: "4".repeat(64),
+    approvalIdentitySha256: productionBasicAcceptanceBApprovalIdentityDigest(approval),
     workspaceDebitIdentitySha256: digestParts(approval.customer.accountId, "41", approval.launch.operationId, approval.launch.workspaceId, redeemCode),
     localGraph: "complete",
     remoteIdentity: "active",
@@ -255,6 +258,7 @@ function reconcileRouteData(approval, overrides = {}) {
 
 function acceptanceBFreshAdmissionFixture(approval, routeOverrides = {}) {
   const requests = [];
+  let reconcileCount = 0;
   const launch = {
     operationId: approval.launch.operationId,
     workspaceId: approval.launch.workspaceId,
@@ -266,7 +270,11 @@ function acceptanceBFreshAdmissionFixture(approval, routeOverrides = {}) {
     const url = new URL(String(input));
     const method = String(init.method || "GET").toUpperCase();
     requests.push({ method, path: url.pathname, search: url.search });
-    if (url.pathname === "/api/operator/account-reconciliation") return response(sourcePayload("control-plane+sub2api+ledger", reconcileRouteData(approval, routeOverrides)));
+    if (url.pathname === "/api/operator/account-reconciliation") {
+      reconcileCount += 1;
+      const overrides = typeof routeOverrides === "function" ? routeOverrides(reconcileCount) : routeOverrides;
+      return response(sourcePayload("control-plane+sub2api+ledger", reconcileRouteData(approval, overrides)));
+    }
     if (url.pathname === "/api/auth/me") return response(sourcePayload("sub2api", { email: approval.customer.email, role: "owner", status: "active" }));
     if (url.pathname === "/api/workspaces") return response(sourcePayload("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }, "empty"));
     if (url.pathname === "/api/workspace-launches" && method === "GET") return response([]);
@@ -628,7 +636,7 @@ test("Acceptance B write accounting accepts only the frozen one-order cardinalit
   }
 });
 
-test("Acceptance B fresh admission orders reconcile, quote, wallet, exact operation GET, and one launch POST", async () => {
+test("Acceptance B fresh admission repeats the exact approval-bound reconcile immediately before one launch POST", async () => {
   const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
     approvalId: APPROVAL_ID,
     now: new Date("2026-08-02T00:00:00Z")
@@ -646,15 +654,41 @@ test("Acceptance B fresh admission orders reconcile, quote, wallet, exact operat
   });
   assert.deepEqual(result.launch, fixture.launch);
   const index = (method, path) => fixture.requests.findIndex((request) => request.method === method && request.path === path);
+  const reconcileIndexes = fixture.requests.flatMap((request, requestIndex) =>
+    request.method === "GET" && request.path === "/api/operator/account-reconciliation" ? [requestIndex] : []);
   const ordered = [
-    index("GET", "/api/operator/account-reconciliation"),
+    reconcileIndexes[0],
     index("POST", "/api/pricing/preview"),
     index("GET", "/api/gateway/wallet"),
     index("GET", `/api/workspace-launches/${approval.launch.operationId}`),
+    reconcileIndexes[1],
     index("POST", "/api/workspace-launches")
   ];
+  assert.equal(reconcileIndexes.length, 2);
   assert.equal(ordered.every((value, position) => value >= 0 && (position === 0 || value > ordered[position - 1])), true);
   assert.equal(fixture.requests.filter((request) => request.method === "POST" && request.path === "/api/workspace-launches").length, 1);
+});
+
+test("Acceptance B final write gate rejects approval drift after the first reconcile and before launch POST", async () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const fixture = acceptanceBFreshAdmissionFixture(approval, (reconcileCount) =>
+    reconcileCount === 1 ? {} : { approvalIdentitySha256: "f".repeat(64) });
+  await assert.rejects(() => admitProductionBasicAcceptanceBFreshLaunch({
+    requestOptions: { fetchImpl: fixture.fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
+    adminAuth: { cookie: "admin=test", csrfToken: "csrf", user: { accountId: "acct-admin", role: "admin" } },
+    customerAuth: { cookie: "customer=test", csrfToken: "csrf", user: { accountId: approval.customer.accountId, role: "owner" } },
+    identity: { sub2apiUserId: "41" },
+    approval,
+    internalServiceToken: "acceptance-b-capability",
+    mergedSha: approval.release.mergedMainSha,
+    now: new Date("2026-08-02T00:00:00Z")
+  }), /production_basic_acceptance_b_preflight_approval_identity_invalid/);
+  assert.equal(fixture.requests.filter((request) => request.path === "/api/operator/account-reconciliation").length, 2);
+  assert.equal(fixture.requests.some((request) => request.path === `/api/workspace-launches/${approval.launch.operationId}`), true);
+  assert.equal(fixture.requests.some((request) => request.method === "POST" && request.path === "/api/workspace-launches"), false);
 });
 
 test("Acceptance B fresh admission blocks every non-absent approved footprint before launch POST", async () => {
@@ -714,7 +748,8 @@ test("Acceptance B launch reads the deterministic identity before its single POS
       requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
       customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
       approval,
-      internalServiceToken: "acceptance-b-capability"
+      internalServiceToken: "acceptance-b-capability",
+      prePostReadback: async () => {}
     }), launch);
     assert.equal(calls.filter((call) => call.method === "POST").length, 1);
     assert.equal(calls.filter((call) => call.method === "GET").length, responseLost ? 2 : 1);
@@ -761,7 +796,8 @@ test("Acceptance B launch continues an existing deterministic operation without 
     requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
     customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
     approval,
-    internalServiceToken: "acceptance-b-capability"
+    internalServiceToken: "acceptance-b-capability",
+    prePostReadback: async () => {}
   }), launch);
   assert.deepEqual(calls, [{ method: "GET", path: `/api/workspace-launches/${approval.launch.operationId}` }]);
 });
@@ -861,8 +897,9 @@ test("Acceptance B blocked artifact uses the shared validator and forbids identi
   const artifact = blockedProductionBasicAcceptanceBArtifact(error);
   assert.deepEqual(validateProductionBasicAcceptanceBArtifact(artifact, approval), artifact);
   assert.deepEqual(artifact.launchReadback, error.launchReadback);
+  const expectedDebitIdentitySha256 = readbackFixture(approval).debit.identitySha256;
   assert.deepEqual(
-    validateProductionBasicAcceptanceBArtifact(readbackFixture(approval), approval),
+    validateProductionBasicAcceptanceBArtifact(readbackFixture(approval), approval, { expectedDebitIdentitySha256 }),
     readbackFixture(approval)
   );
   const noResponse = blockedProductionBasicAcceptanceBArtifact("production_basic_acceptance_b_launch_readback_unknown");
@@ -899,7 +936,8 @@ test("Acceptance B launch stops after one POST when deterministic readback is ab
     requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
     customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
     approval,
-    internalServiceToken: "acceptance-b-capability"
+    internalServiceToken: "acceptance-b-capability",
+    prePostReadback: async () => {}
   }), /production_basic_acceptance_b_launch_outcome_unknown/);
   assert.equal(calls.filter((call) => call.method === "POST").length, 1);
   assert.equal(calls.filter((call) => call.method === "GET").length, 2);
@@ -927,7 +965,8 @@ test("Acceptance B launch classifies a deterministic HTTP rejection without trea
     requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
     customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
     approval,
-    internalServiceToken: "acceptance-b-capability"
+    internalServiceToken: "acceptance-b-capability",
+    prePostReadback: async () => {}
   }), /production_basic_acceptance_b_launch_rejected_http_409_workspace_launch_admission_disabled/);
   assert.equal(calls.filter((call) => call.method === "POST").length, 1);
   assert.equal(calls.filter((call) => call.method === "GET").length, 1);
@@ -971,7 +1010,13 @@ test("Acceptance B readback proves the exact fresh Basic resource chain and term
     now: new Date("2026-08-02T00:00:00Z")
   });
   const readback = readbackFixture(approval);
-  assert.deepEqual(validateProductionBasicAcceptanceBReadback(readback, approval), readback);
+  assert.throws(() => validateProductionBasicAcceptanceBReadback(readback, approval), /production_basic_acceptance_b_readback_invalid/);
+  assert.throws(() => validateProductionBasicAcceptanceBReadback(readback, approval, {
+    expectedDebitIdentitySha256: "f".repeat(64)
+  }), /production_basic_acceptance_b_readback_invalid/);
+  assert.deepEqual(validateProductionBasicAcceptanceBReadback(readback, approval, {
+    expectedDebitIdentitySha256: readback.debit.identitySha256
+  }), readback);
 });
 
 test("Acceptance B readback fails closed on non-fresh baseline, count, image, receipt, or URL drift", () => {
@@ -991,6 +1036,8 @@ test("Acceptance B readback fails closed on non-fresh baseline, count, image, re
     { ...base, workspaceUrl: { ...base.workspaceUrl, statusCode: 503 } }
   ];
   for (const value of cases) {
-    assert.throws(() => validateProductionBasicAcceptanceBReadback(value, approval), /production_basic_acceptance_b_readback_invalid/);
+    assert.throws(() => validateProductionBasicAcceptanceBReadback(value, approval, {
+      expectedDebitIdentitySha256: base.debit.identitySha256
+    }), /production_basic_acceptance_b_readback_invalid/);
   }
 });

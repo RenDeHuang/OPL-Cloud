@@ -203,6 +203,7 @@ func (app *controlPlaneServer) reconcileAcceptanceBAccount(ctx context.Context, 
 	}
 	data.ApprovalState = "bound"
 	data.ApprovalIdentitySHA256 = productionAcceptanceBApprovalIdentityDigest(approval)
+	redeemCode := monthlyRedeemCode(monthlyEnvironment(), approval.Launch.OperationID)
 
 	launch, launchFound, err := app.tables.GetRuntimeOperation(ctx, approval.Launch.OperationID)
 	if err != nil {
@@ -210,12 +211,22 @@ func (app *controlPlaneServer) reconcileAcceptanceBAccount(ctx context.Context, 
 		return data, errAcceptanceBAccountReconcileUnknown
 	}
 	data.WorkspaceLaunchState = "absent"
+	expectedDebitUSDMicros := int64(0)
 	if launchFound {
 		data.LaunchCount = 1
 		data.WorkspaceLaunchState = "present"
 		if stringValue(launch["id"]) != approval.Launch.OperationID || stringValue(launch["accountId"]) != accountID ||
-			stringValue(launch["workspaceId"]) != approval.Launch.WorkspaceID || !isWorkspaceLaunchAction(stringValue(launch["action"])) {
+			stringValue(launch["workspaceId"]) != approval.Launch.WorkspaceID || stringValue(launch["action"]) != workspaceLaunchAction {
 			data.WorkspaceLaunchState = "conflict"
+		} else if operation, decodeErr := decodeWorkspaceLaunchReconcileOperation(launch); decodeErr != nil ||
+			operation.ID != approval.Launch.OperationID || operation.stringFact("accountId") != accountID ||
+			operation.int64Fact("sub2apiUserId") != remote.ID || operation.stringFact("workspaceId") != approval.Launch.WorkspaceID ||
+			operation.stringFact("name") != approval.Launch.Name || operation.stringFact("packageId") != approval.Launch.PackageID ||
+			operation.intFact("sizeGb") != approval.Launch.SizeGB || operation.boolFact("autoRenew") != approval.Launch.AutoRenew ||
+			operation.stringFact("sub2apiRedeemCode") != redeemCode || operation.int64Fact("totalChargeUsdMicros") <= 0 {
+			data.WorkspaceLaunchState = "conflict"
+		} else {
+			expectedDebitUSDMicros = operation.int64Fact("totalChargeUsdMicros")
 		}
 	}
 
@@ -261,7 +272,6 @@ func (app *controlPlaneServer) reconcileAcceptanceBAccount(ctx context.Context, 
 		data.WorkspaceReceiptState = "present"
 	}
 
-	redeemCode := monthlyRedeemCode(monthlyEnvironment(), approval.Launch.OperationID)
 	data.WorkspaceDebitIdentitySHA256 = acceptanceBDigestParts(accountID, strconv.FormatInt(remote.ID, 10), approval.Launch.OperationID, approval.Launch.WorkspaceID, redeemCode)
 	history, err := service.FinancialBalanceHistoryByCodes(ctx, remote.ID, []string{redeemCode})
 	if err != nil {
@@ -271,7 +281,8 @@ func (app *controlPlaneServer) reconcileAcceptanceBAccount(ctx context.Context, 
 	data.WorkspaceDebitState = "absent"
 	if debit, found := history[redeemCode]; found {
 		data.WorkspaceDebitState = "confirmed"
-		if len(history) != 1 || debit.Code != redeemCode || debit.Type != "balance" || debit.Status != "used" || debit.UsedBy == nil || *debit.UsedBy != remote.ID || debit.UsedAt == nil || debit.ValueUSDMicros >= 0 {
+		if len(history) != 1 || debit.Code != redeemCode || debit.Type != "balance" || debit.Status != "used" || debit.UsedBy == nil || *debit.UsedBy != remote.ID || debit.UsedAt == nil ||
+			expectedDebitUSDMicros <= 0 || debit.ValueUSDMicros != -expectedDebitUSDMicros {
 			data.WorkspaceDebitState = "conflict"
 		}
 	} else if len(history) != 0 {

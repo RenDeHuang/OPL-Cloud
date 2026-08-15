@@ -238,7 +238,8 @@ baseline instead of the approval-bound reconcile helper.
 Call the shared reconciliation read helper with the already-authenticated admin
 and customer sessions. Require exactly `prepared`, then read the current quote
 and wallet. Keep the existing deterministic-operation GET and one-POST
-submission function.
+submission function, and repeat the exact approval-bound reconciliation after
+the operation GET as the final action before the POST.
 
 Do not add a second order path. Readback-only mode continues only the operation
 fixed by the approval and never consumes `safe_to_retry_absent`.

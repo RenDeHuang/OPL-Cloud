@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -259,6 +260,55 @@ func newAcceptanceBAccountReconcileFixture(t *testing.T) *acceptanceBAccountReco
 
 func (f *acceptanceBAccountReconcileFixture) reconcile() (acceptanceBAccountReconcileData, error) {
 	return f.app.reconcileAcceptanceBAccount(context.Background(), f.service, f.email)
+}
+
+func (f *acceptanceBAccountReconcileFixture) storeApprovedLaunch(totalChargeUSDMicros int64) {
+	f.t.Helper()
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchReconcileCreate{
+		OperationID: f.approval.Launch.OperationID, RequestHash: "acceptance-b-request-hash", AccountID: f.accountID,
+		OwnerUserID: f.userID, Sub2APIUserID: 41, WorkspaceKeyGroupID: 9, WorkspaceID: f.approval.Launch.WorkspaceID,
+		Name: f.approval.Launch.Name, PackageID: f.approval.Launch.PackageID, StorageGB: f.approval.Launch.SizeGB,
+		AutoRenew: f.approval.Launch.AutoRenew, PriceVersion: pilotPriceVersion, TotalChargeUSDMicros: totalChargeUSDMicros,
+		ProviderProfileRef: "provider-profile-acceptance-b", PreflightBindingRef: "binding-acceptance-b",
+		WorkspaceImageDigest: strings.TrimSpace(os.Getenv("OPL_WORKSPACE_IMAGE")), PreChargeBalanceMicros: 60_000_000,
+	})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	row, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	mustStore(f.t, f.store.SaveRuntimeOperation(context.Background(), row))
+}
+
+func TestAcceptanceBAccountReconcileRequiresExactApprovedDebitAmount(t *testing.T) {
+	const totalChargeUSDMicros int64 = 52_580_000
+	for _, testCase := range []struct {
+		name       string
+		debitValue int64
+		wantState  string
+	}{
+		{name: "exact amount", debitValue: -totalChargeUSDMicros, wantState: "confirmed"},
+		{name: "wrong amount", debitValue: -1, wantState: "conflict"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newAcceptanceBAccountReconcileFixture(t)
+			fixture.storeApprovedLaunch(totalChargeUSDMicros)
+			usedBy, usedAt := int64(41), time.Now().UTC()
+			fixture.sub2API.history[fixture.redeemCode] = clients.Sub2APIBalanceHistoryEntry{
+				Code: fixture.redeemCode, Type: "balance", ValueUSDMicros: testCase.debitValue,
+				Status: "used", UsedBy: &usedBy, UsedAt: &usedAt,
+			}
+			result, err := fixture.reconcile()
+			if err != nil {
+				t.Fatalf("reconcile: %v", err)
+			}
+			if result.WorkspaceDebitState != testCase.wantState {
+				t.Fatalf("debit state=%q, want %q", result.WorkspaceDebitState, testCase.wantState)
+			}
+		})
+	}
 }
 
 func TestAcceptanceBAccountReconcilePreparedUsesOnlyApprovedWorkspaceFootprint(t *testing.T) {

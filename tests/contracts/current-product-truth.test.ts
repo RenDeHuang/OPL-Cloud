@@ -173,12 +173,25 @@ test("deployment contract keeps Acceptance B approval-bound and prepared-only", 
 
   assert.equal(fresh.admission.prePostReadback, "approval_bound_reconcile_required_immediately_before_single_workspace_post");
   assert.equal(fresh.readback.workspaceDebitAuthority, "exact_approval_bound_sub2api_history_code");
+  assert.equal(fresh.readback.terminalDebitReceiptBinding, "same_account_operation_workspace_code_and_quote_amount");
   assert.equal(fresh.readback.generalUsage, "allowed_and_non_blocking");
   assert.equal(fresh.readback.walletDelta, "not_debit_identity");
   assert.equal(reconcile.readback.successStatus, "prepared_only");
   assert.equal(reconcile.readback.workspaceDebitAuthority, "exact_approval_bound_sub2api_history_code");
   assert.equal(reconcile.readback.generalUsage, "allowed_and_non_blocking");
   assert.equal(reconcile.readback.walletDelta, "not_debit_identity");
+  assert.deepEqual(reconcile.readback.redactedArtifactFields, [
+    "customerIdentitySha256", "accountProvisionIdentitySha256", "walletAdjustmentIdentitySha256",
+    "approvalIdentitySha256", "workspaceDebitIdentitySha256", "status", "localGraph", "remoteIdentity",
+    "customerLogin", "wallet", "walletUsdMicros", "walletAdjustment", "approvalState", "workspaceLaunchState",
+    "workspaceState", "workspaceKeyState", "workspaceReceiptState", "workspaceDebitState", "workspaceCount",
+    "launchCount", "keyCount", "receiptCount", "writeCounts", "runnerDirectMutationCounts", "failureStage",
+    "readbackError", "errorCode"
+  ]);
+  assert.deepEqual(reconcile.readback.forbiddenArtifactFields, [
+    "email", "password", "accountId", "consoleUserId", "sub2apiUserId", "operationId", "workspaceId",
+    "secret", "token", "cookie", "csrf"
+  ]);
   assert.deepEqual(fresh.productionParameterMatrix, {
     reconcile: {
       operation_mode: "acceptance_b_account_reconcile",

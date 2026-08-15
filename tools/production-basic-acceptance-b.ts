@@ -288,6 +288,35 @@ export function productionBasicAcceptanceBApprovalDigest(approval) {
   return createHash("sha256").update(canonicalJson(approval)).digest("hex");
 }
 
+export function productionBasicAcceptanceBApprovalIdentityDigest(approval) {
+  return prepareDigest(
+    "acceptance-b-approval-v1",
+    approval.schemaVersion,
+    approval.operationMode,
+    approval.approvalId,
+    approval.expiresAt,
+    approval.confirmation,
+    approval.release.mergedMainSha,
+    approval.release.cloudImageDigest,
+    approval.release.workspaceImageDigest,
+    approval.customer.email,
+    approval.customer.accountId,
+    approval.launch.idempotencyKey,
+    approval.launch.operationId,
+    approval.launch.workspaceId,
+    approval.launch.name,
+    approval.launch.packageId,
+    approval.launch.sizeGb,
+    approval.launch.autoRenew,
+    approval.expected.nodePoolId,
+    approval.expected.resolvedInstanceType,
+    "allowed-writes",
+    ...approval.allowedWrites,
+    "forbidden-writes",
+    ...approval.forbiddenWrites
+  );
+}
+
 export function parseProductionBasicAcceptanceBApproval(value, options = {}) {
   let approval;
   try {
@@ -406,7 +435,7 @@ function positiveSafeInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 
-export function validateProductionBasicAcceptanceBReadback(value, approval) {
+export function validateProductionBasicAcceptanceBReadback(value, approval, { expectedDebitIdentitySha256 = "" } = {}) {
   const fail = () => { throw new Error("production_basic_acceptance_b_readback_invalid"); };
   const topLevelKeys = [
     "schemaVersion", "operationMode", "status", "approvalId", "approvalDigest", "release", "baseline", "quote", "debit",
@@ -446,7 +475,7 @@ export function validateProductionBasicAcceptanceBReadback(value, approval) {
   if (value.quote.packageId !== "basic" || value.quote.sizeGb !== 10 || !String(value.quote.priceVersion || "") ||
     value.quote.currency !== "USD" || !positiveSafeInteger(total) ||
     value.debit.operationId !== `${approval.launch.operationId}:charge` || value.debit.count !== 1 || value.debit.amountUsdMicros !== total ||
-    !/^[0-9a-f]{64}$/.test(String(value.debit.identitySha256 || "")) ||
+    !/^[0-9a-f]{64}$/.test(String(expectedDebitIdentitySha256 || "")) || value.debit.identitySha256 !== expectedDebitIdentitySha256 ||
     value.launch.operationId !== approval.launch.operationId || value.launch.accountId !== approval.customer.accountId ||
     value.launch.workspaceId !== approval.launch.workspaceId || value.launch.name !== approval.launch.name || value.launch.packageId !== "basic" ||
     value.launch.sizeGb !== 10 || value.launch.autoRenew !== false || value.launch.priceVersion !== value.quote.priceVersion ||
@@ -522,9 +551,9 @@ export function validateProductionBasicAcceptanceBBlockedReadback(value) {
   return cloneJson(value);
 }
 
-export function validateProductionBasicAcceptanceBArtifact(value, approval) {
+export function validateProductionBasicAcceptanceBArtifact(value, approval, options = {}) {
   return value?.status === "succeeded"
-    ? validateProductionBasicAcceptanceBReadback(value, approval)
+    ? validateProductionBasicAcceptanceBReadback(value, approval, options)
     : validateProductionBasicAcceptanceBBlockedReadback(value);
 }
 
@@ -629,10 +658,11 @@ function deterministicLaunchRejection(error) {
   return new Error(`production_basic_acceptance_b_launch_rejected_http_${match[1]}_${match[2]}`);
 }
 
-export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken }) {
+export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken, prePostReadback }) {
   const existing = await readAcceptanceBLaunch(requestOptions, customerAuth, approval.launch.operationId);
   if (existing) return assertAcceptanceBLaunchIdentity(existing, approval);
-  if (!String(internalServiceToken || "")) throw new Error("production_basic_acceptance_b_config_invalid");
+  if (!String(internalServiceToken || "") || typeof prePostReadback !== "function") throw new Error("production_basic_acceptance_b_config_invalid");
+  await prePostReadback();
   try {
     const response = await requestJson({
       ...requestOptions,
@@ -667,21 +697,6 @@ export async function admitProductionBasicAcceptanceBFreshLaunch({
   mergedSha,
   now = new Date()
 }) {
-  const prepared = await readProductionBasicAcceptanceBReconcile({
-    origin: requestOptions.origin,
-    customerEmail: approval.customer.email,
-    mergedSha,
-    adminAuth,
-    customerAuth,
-    requestTimeoutMs: requestOptions.timeoutMs,
-    fetchImpl: requestOptions.fetchImpl,
-    now
-  });
-  if (!SUCCESS_STATUSES.has(prepared.status) || prepared.approvalState !== "bound" || prepared.workspaceDebitState !== "absent" ||
-    prepared.workspaceLaunchState !== "absent" || prepared.workspaceState !== "absent" || prepared.workspaceKeyState !== "absent" ||
-    prepared.workspaceReceiptState !== "absent" || [prepared.workspaceCount, prepared.launchCount, prepared.keyCount, prepared.receiptCount].some((count) => count !== 0)) {
-    throw new Error("production_basic_acceptance_b_preflight_reconcile_invalid");
-  }
   const redeemCode = acceptanceBWorkspaceRedeemCode(approval.launch.operationId);
   const debitIdentitySha256 = prepareDigest(
     approval.customer.accountId,
@@ -690,9 +705,32 @@ export async function admitProductionBasicAcceptanceBFreshLaunch({
     approval.launch.workspaceId,
     redeemCode
   );
-  if (prepared.workspaceDebitIdentitySha256 !== debitIdentitySha256) {
-    throw new Error("production_basic_acceptance_b_preflight_debit_identity_invalid");
-  }
+  const approvalIdentitySha256 = productionBasicAcceptanceBApprovalIdentityDigest(approval);
+  const readApprovedPreparedState = async () => {
+    const prepared = await readProductionBasicAcceptanceBReconcile({
+      origin: requestOptions.origin,
+      customerEmail: approval.customer.email,
+      mergedSha,
+      adminAuth,
+      customerAuth,
+      requestTimeoutMs: requestOptions.timeoutMs,
+      fetchImpl: requestOptions.fetchImpl,
+      now
+    });
+    if (!SUCCESS_STATUSES.has(prepared.status) || prepared.approvalState !== "bound" || prepared.workspaceDebitState !== "absent" ||
+      prepared.workspaceLaunchState !== "absent" || prepared.workspaceState !== "absent" || prepared.workspaceKeyState !== "absent" ||
+      prepared.workspaceReceiptState !== "absent" || [prepared.workspaceCount, prepared.launchCount, prepared.keyCount, prepared.receiptCount].some((count) => count !== 0)) {
+      throw new Error("production_basic_acceptance_b_preflight_reconcile_invalid");
+    }
+    if (prepared.approvalIdentitySha256 !== approvalIdentitySha256) {
+      throw new Error("production_basic_acceptance_b_preflight_approval_identity_invalid");
+    }
+    if (prepared.workspaceDebitIdentitySha256 !== debitIdentitySha256) {
+      throw new Error("production_basic_acceptance_b_preflight_debit_identity_invalid");
+    }
+    return prepared;
+  };
+  const prepared = await readApprovedPreparedState();
 
   const quoteRaw = (await requestJson({
     ...requestOptions,
@@ -715,7 +753,13 @@ export async function admitProductionBasicAcceptanceBFreshLaunch({
   };
   const wallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
   if (BigInt(wallet.usdMicros) <= BigInt(totalChargeUsdMicros)) throw new Error("production_basic_acceptance_b_wallet_insufficient");
-  const launch = await submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken });
+  const launch = await submitProductionBasicAcceptanceBLaunch({
+    requestOptions,
+    customerAuth,
+    approval,
+    internalServiceToken,
+    prePostReadback: readApprovedPreparedState
+  });
   return {
     prepared,
     baseline: {
@@ -1261,7 +1305,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
       replacements: 0
     }
   };
-  return validateProductionBasicAcceptanceBReadback(readback, approval);
+  return validateProductionBasicAcceptanceBReadback(readback, approval, { expectedDebitIdentitySha256: debitIdentitySha256 });
 }
 
 export function blockedProductionBasicAcceptanceBArtifact(error = "production_basic_acceptance_b_failed") {
