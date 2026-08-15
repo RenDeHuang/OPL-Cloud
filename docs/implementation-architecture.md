@@ -182,9 +182,10 @@ binary, service, namespace, environment-variable and runner identifier.
 `opl-instance-medopl` owns one concrete installation: domain names, provider
 profile, region and resource ids, enabled plans and prices, image pins, secret
 references, promotion policy, and deployment receipts. Instance repositories
-consume immutable `one-person-lab-cloud` releases whose internal artifacts may
-use the `opl-cloud` identifier, and never copy runtime code, product
-contracts, or spendable-balance state.
+consume exact `one-person-lab-cloud` candidates for pre-publication
+qualification and immutable Releases after publication. Their internal
+artifacts may use the `opl-cloud` identifier, but they never copy runtime code,
+product contracts, or spendable-balance state.
 
 ## Console Source Truth
 
@@ -434,29 +435,43 @@ security-model change is authorized by this document.
 
 ## Product Release And Instance Qualification
 
-Cloud publishes one multi-architecture GHCR image and GitHub Release containing
-Compose, an environment template, and a release manifest. Product release uses
-no instance production environment and performs no instance deployment. The
-current workflow builds and validates the OCI layout in a read-only job, passes
-one digest-checked Actions artifact to a separate publish job, and grants
+During the current pre-1.0 phase, Cloud must produce a replaceable candidate
+from one exact canonical product SHA before formal publication.
+`opl-instance-medopl` owns deployment and qualification of that exact SHA and
+image digest through its protected environment. Only after successful rollout
+and product-acceptance readback may the repository owner manually publish the
+same SHA and image bytes as a formal Release. Cloud does not dispatch or operate
+the Instance, and failed development or deployment attempts do not create a
+formal version.
+
+The current Release workflow cannot yet implement that complete path. It builds
+and validates the OCI layout in a read-only job, passes one digest-checked
+Actions artifact to a separate publish job, and grants
 `contents:write`, `packages:write`, `artifact-metadata:write`,
 `attestations:write`, and `id-token:write` only to that publish job under the
-protected `cloud-release` Environment. The
-build emits a SHA-256 manifest for every GitHub Release asset; the publish job
+protected `cloud-release` Environment. Both jobs run in one owner-only manual
+Release dispatch, so the repository still lacks a deployable non-Release
+candidate channel and exact-byte promotion from an already qualified candidate.
+Until those gaps close, no successor to `v0.1.7` is admitted.
+
+The build emits a SHA-256 manifest for every GitHub Release asset; the publish job
 checks those bytes, signs a GitHub OIDC-backed attestation that binds the
 workflow commit/ref, selected product SHA, release tag, image digest, and
 checksum-manifest digest, publishes the assets, downloads them again, and
-verifies both checksum and predicate identity. The image is identified by a version tag, exact product
-SHA, and immutable digest; mutable `latest` and `stable` tags are forbidden.
-Release `v0.1.0` predates the checksum/attestation addition and was published by
-hosted run `31685878938` from
-product SHA `98eac98b46fc872ed8c803363de7ed47edacd2ba`, with GHCR index digest
-`sha256:68771bb25c8131c931d03f32210ce0fcb119ace90c05dcfe65555f4800db0fe7` for
-`linux/amd64` and `linux/arm64`. Its four GitHub Release assets and manifest
-readback match that immutable release, but do not retroactively carry the newer
-asset attestation. This is portable publication evidence;
-clean-host installation, complete external Sub2API-backed Workspace flow, and
-Instance deployment/readback remain separate qualification gates.
+verifies both checksum and predicate identity. The image is identified by a
+version tag, exact product SHA, and immutable digest; mutable `latest` and
+`stable` tags are forbidden.
+
+Only `v0.1.7` remains on the current GitHub Release, Git tag, and GHCR public
+surfaces. Hosted run `31879240411` published its five assets from product SHA
+`a59bde68397528186a5220f73195fa1f3eda311b`; the multi-architecture GHCR index
+for `linux/amd64` and `linux/arm64` is
+`sha256:e64504731f8b61c0864cf59faa647a1150e8a2a5eada34b26faf3a5487d28e8f`.
+The owner removed historical `v0.1.0` through `v0.1.6` Releases, tags, and GHCR
+objects, so none is a current installation or rollback target. The `v0.1.7`
+readback proves portable publication; clean-host installation, the complete
+external Sub2API-backed Workspace flow, and Instance adoption remain separate
+evidence surfaces.
 
 Repository security automation currently uses GitHub-managed CodeQL default
 setup rather than a second workflow-owned CodeQL configuration. Pull requests
@@ -475,7 +490,8 @@ The private `opl-instance-medopl` repository owns the current medopl/TKE
 configuration, production environment, deployment workflow, rollback, canaries,
 and receipts. Historical rollout evidence predates this owner split and does
 not prove the migrated Instance path. Fresh production claims require Instance
-workflow readback for the exact Cloud release.
+workflow readback for the exact Cloud candidate SHA and image digest; formal
+publication must retain those same bytes.
 
 Control Plane remains one Pod. Existing load evidence covers request concurrency
 and replay, but its historical per-resource renewal scan is not proof of the
