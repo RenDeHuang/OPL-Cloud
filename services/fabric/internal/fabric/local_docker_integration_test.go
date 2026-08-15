@@ -119,11 +119,12 @@ func waitForLocalRuntime(ctx context.Context, url string) error {
 }
 
 type bindingCheckingDockerRunner struct {
-	base        dockerRunner
-	store       OperationStore
-	parents     map[string]WorkspaceLaunchStageBinding
-	mutationIDs map[string]string
-	t           *testing.T
+	base               dockerRunner
+	store              OperationStore
+	parents            map[string]WorkspaceLaunchStageBinding
+	mutationIDs        map[string]string
+	runtimeCreateCalls int
+	t                  *testing.T
 }
 
 type recordingDockerRunner struct {
@@ -452,7 +453,7 @@ func localDockerRemoveCalls(calls [][]string, resource string) []string {
 	return removed
 }
 
-func (r bindingCheckingDockerRunner) Run(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
+func (r *bindingCheckingDockerRunner) Run(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
 	stage, mutation := "", ""
 	if len(args) >= 2 && args[0] == "network" && args[1] == "create" {
 		stage, mutation = "ensure_compute_allocation", "local_docker_network_create"
@@ -467,6 +468,7 @@ func (r bindingCheckingDockerRunner) Run(ctx context.Context, stdin []byte, args
 		for _, value := range args {
 			if value == "-d" {
 				stage, mutation = "runtime", "local_docker_runtime_create"
+				r.runtimeCreateCalls++
 			}
 			if value == "tar" {
 				stage, mutation = "secret", "local_docker_secret_write"
@@ -816,7 +818,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
 	mutationIDs := map[string]string{}
 	store := NewMemoryOperationStore()
-	runner := bindingCheckingDockerRunner{base: execDockerRunner{binary: "docker"}, store: store, parents: bindings, mutationIDs: mutationIDs, t: t}
+	runner := &bindingCheckingDockerRunner{base: execDockerRunner{binary: "docker"}, store: store, parents: bindings, mutationIDs: mutationIDs, t: t}
 	provider := newLocalDockerProvider(LocalDockerProviderConfig{
 		GatewaySecretRoot: localDockerSecretTestRoot(t), RuntimeHost: "127.0.0.1", TrustedWorkspaceImageSources: []string{imageID},
 	}, runner)
@@ -877,21 +879,25 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if err != nil || secret.State != "ready" {
 		t.Fatalf("secret=%#v err=%v", secret, err)
 	}
-
-	runtimeInput := base
-	runtimeInput.Binding, runtimeInput.Resources = bindings["runtime"], secret.Resources
-	bindInput(&runtimeInput)
-	mutationIDs["local_docker_runtime_create"] = providerMutationOperationID(runtimeInput.Binding, "local_docker_runtime_create", "workspace_runtime", localRuntimeID(workspaceID), localRuntimeName(workspaceID))
-	runtime, err := service.EnsureWorkspaceLaunchStage(ctx, runtimeInput)
-	if err != nil || runtime.State != "ready" || runtime.Resources.RuntimeURL == "" {
-		t.Fatalf("runtime=%#v err=%v", runtime, err)
-	}
 	t.Cleanup(func() {
 		_, _ = provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
 		_ = provider.RemoveGatewaySecret(context.Background(), workspaceID)
 		_, _ = provider.DestroyStorageVolume(context.Background(), StorageVolume{ID: storage.Resources.StorageID})
 		_, _ = provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{ID: compute.Resources.ComputeAllocationID})
 	})
+
+	runtimeInput := base
+	runtimeInput.Binding, runtimeInput.Resources = bindings["runtime"], secret.Resources
+	bindInput(&runtimeInput)
+	mutationIDs["local_docker_runtime_create"] = providerMutationOperationID(runtimeInput.Binding, "local_docker_runtime_create", "workspace_runtime", localRuntimeID(workspaceID), localRuntimeName(workspaceID))
+	runtime, err := service.EnsureWorkspaceLaunchStage(ctx, runtimeInput)
+	if err != nil || runtime.State != "pending" || runtime.Reason != "operation_pending" || runtime.Binding != runtimeInput.Binding || runtime.Resources != runtimeInput.Resources {
+		t.Fatalf("initial runtime=%#v err=%v", runtime, err)
+	}
+	runtime, err = waitForWorkspaceStage(ctx, service, runtimeInput)
+	if err != nil || runtime.State != "ready" || runtime.Reason != "none" || runtime.Binding != runtimeInput.Binding || runtime.Resources.RuntimeURL == "" || runner.runtimeCreateCalls != 1 {
+		t.Fatalf("converged runtime=%#v err=%v createCalls=%d", runtime, err, runner.runtimeCreateCalls)
+	}
 	if err := waitForLocalRuntime(ctx, runtime.Resources.RuntimeURL); err != nil {
 		t.Fatal(err)
 	}
