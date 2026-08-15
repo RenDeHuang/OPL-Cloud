@@ -478,7 +478,8 @@ func sameProviderMutationReplayEpochIdentity(left, right providerMutationReplayE
 }
 
 func validProviderMutationReplayEpochTransition(expected, next FabricOperation) bool {
-	if !sameRuntimeReadbackIdentity(expected, next) || expected.Status != next.Status || expected.Status != "started" && expected.Status != "failed" {
+	if !sameRuntimeReadbackIdentity(expected, next) || expected.Status != next.Status || expected.Status != "started" && expected.Status != "failed" ||
+		!sameProviderMutationState(expected, next) {
 		return false
 	}
 	nextEpoch, nextOK := decodeProviderMutationReplayEpoch(next)
@@ -495,11 +496,14 @@ func validProviderMutationReplayEpochTransition(expected, next FabricOperation) 
 	}
 	switch {
 	case (expectedEpoch.State == "leased" || expectedEpoch.State == "awaiting_readback") && nextEpoch.State == "leased":
-		return nextEpoch.LeaseGeneration == expectedEpoch.LeaseGeneration+1 && nextEpoch.LeaseExpiresAt != expectedEpoch.LeaseExpiresAt
+		return nextEpoch.LeaseGeneration == expectedEpoch.LeaseGeneration+1 && nextEpoch.LeaseExpiresAt != expectedEpoch.LeaseExpiresAt &&
+			nextEpoch.DispatchStartedAt == expectedEpoch.DispatchStartedAt
 	case expectedEpoch.State == "leased" && nextEpoch.State == "awaiting_readback":
-		return nextEpoch.LeaseGeneration == expectedEpoch.LeaseGeneration && nextEpoch.LeaseExpiresAt == expectedEpoch.LeaseExpiresAt
+		return nextEpoch.LeaseGeneration == expectedEpoch.LeaseGeneration && nextEpoch.LeaseExpiresAt == expectedEpoch.LeaseExpiresAt &&
+			nextEpoch.DispatchStartedAt != "" && (expectedEpoch.DispatchStartedAt == "" || nextEpoch.DispatchStartedAt == expectedEpoch.DispatchStartedAt)
 	case expectedEpoch.State == "leased" && nextEpoch.State == "blocked":
-		return nextEpoch.LeaseGeneration == expectedEpoch.LeaseGeneration && nextEpoch.LeaseExpiresAt == expectedEpoch.LeaseExpiresAt
+		return expectedEpoch.DispatchStartedAt == "" && nextEpoch.LeaseGeneration == expectedEpoch.LeaseGeneration &&
+			nextEpoch.LeaseExpiresAt == expectedEpoch.LeaseExpiresAt
 	default:
 		return false
 	}
@@ -527,7 +531,7 @@ func validProviderMutationReplayConvergence(expected, next FabricOperation) bool
 	}
 	expectedBinding, expectedBindingOK := decodeProviderMutationBinding(expected)
 	nextBinding, nextBindingOK := decodeProviderMutationBinding(next)
-	return expectedBindingOK && nextBindingOK && expectedBinding == nextBinding
+	return expectedBindingOK && nextBindingOK && expectedBinding == nextBinding && sameProviderMutationState(expected, next)
 }
 
 func (s *MemoryOperationStore) SaveRuntime(_ context.Context, operation FabricOperation) error {

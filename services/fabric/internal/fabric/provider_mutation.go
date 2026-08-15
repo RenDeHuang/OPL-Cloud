@@ -202,8 +202,13 @@ func decodeProviderMutationReplayEpoch(operation FabricOperation) (providerMutat
 	}
 	switch epoch.State {
 	case "leased":
-		if epoch.DispatchStartedAt != "" || epoch.CompletedAt != "" {
+		if epoch.CompletedAt != "" {
 			return providerMutationReplayEpoch{}, false
+		}
+		if epoch.DispatchStartedAt != "" {
+			if _, err := time.Parse(time.RFC3339Nano, epoch.DispatchStartedAt); err != nil {
+				return providerMutationReplayEpoch{}, false
+			}
 		}
 	case "awaiting_readback":
 		if epoch.DispatchStartedAt == "" || epoch.CompletedAt != "" {
@@ -278,8 +283,12 @@ func (a *providerMutationAttempt) complete(ctx context.Context, providerRequestI
 		}
 		if mutationErr != nil {
 			if epoch.State == "leased" {
-				epoch.State = "blocked"
-				epoch.CompletedAt = a.journal.now().UTC().Format(time.RFC3339Nano)
+				if epoch.DispatchStartedAt == "" {
+					epoch.State = "blocked"
+					epoch.CompletedAt = a.journal.now().UTC().Format(time.RFC3339Nano)
+				} else {
+					epoch.State = "awaiting_readback"
+				}
 				next = a.operation
 				next.RedactedProviderPayload = maps.Clone(a.operation.RedactedProviderPayload)
 				next.RedactedProviderPayload[providerMutationReplayEpochPayloadKey] = epoch
@@ -326,6 +335,7 @@ func (a *providerMutationAttempt) claimReplay(ctx context.Context) (bool, error)
 		return false, ErrLaunchStageBindingConflict
 	}
 	generation := 1
+	dispatchStartedAt := ""
 	if _, exists := a.operation.RedactedProviderPayload[providerMutationReplayEpochPayloadKey]; exists {
 		epoch, valid := decodeProviderMutationReplayEpoch(a.operation)
 		if !valid || epoch.State == "succeeded" || epoch.State == "blocked" {
@@ -339,13 +349,14 @@ func (a *providerMutationAttempt) claimReplay(ctx context.Context) (bool, error)
 			return false, nil
 		}
 		generation = epoch.LeaseGeneration + 1
+		dispatchStartedAt = epoch.DispatchStartedAt
 	}
 	next := a.operation
 	next.RedactedProviderPayload = maps.Clone(a.operation.RedactedProviderPayload)
 	next.RedactedProviderPayload[providerMutationReplayEpochPayloadKey] = providerMutationReplayEpoch{
 		SchemaVersion: 1, ReplayID: providerMutationReplayID(next, binding), ParentFabricOperationID: binding.Parent.FabricOperationID,
 		ChildOperationID: next.ID, IdempotencyKey: next.IdempotencyKey, State: "leased", LeaseGeneration: generation,
-		LeaseExpiresAt: now.Add(providerMutationReplayLease).Format(time.RFC3339Nano),
+		LeaseExpiresAt: now.Add(providerMutationReplayLease).Format(time.RFC3339Nano), DispatchStartedAt: dispatchStartedAt,
 	}
 	if err := store.SaveProviderMutationReplayEpoch(ctx, a.operation, next); err != nil {
 		return false, err
@@ -355,8 +366,11 @@ func (a *providerMutationAttempt) claimReplay(ctx context.Context) (bool, error)
 }
 
 func (a *providerMutationAttempt) markReplayDispatch(ctx context.Context) error {
-	if a == nil || !a.Replay {
+	if a == nil || a.Fresh {
 		return nil
+	}
+	if !a.Replay {
+		return ErrRuntimeOperationNotCurrent
 	}
 	epoch, ok := decodeProviderMutationReplayEpoch(a.operation)
 	if !ok || epoch.State != "leased" {
@@ -369,7 +383,9 @@ func (a *providerMutationAttempt) markReplayDispatch(ctx context.Context) error 
 	next := a.operation
 	next.RedactedProviderPayload = maps.Clone(a.operation.RedactedProviderPayload)
 	epoch.State = "awaiting_readback"
-	epoch.DispatchStartedAt = a.journal.now().UTC().Format(time.RFC3339Nano)
+	if epoch.DispatchStartedAt == "" {
+		epoch.DispatchStartedAt = a.journal.now().UTC().Format(time.RFC3339Nano)
+	}
 	next.RedactedProviderPayload[providerMutationReplayEpochPayloadKey] = epoch
 	if err := store.SaveProviderMutationReplayEpoch(ctx, a.operation, next); err != nil {
 		return err

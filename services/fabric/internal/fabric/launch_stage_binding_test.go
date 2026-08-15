@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -239,6 +240,174 @@ func TestProviderMutationReplayEpochDistinguishesBlockedFromAwaitingReadback(t *
 				t.Fatalf("renewed=%v err=%v wantRenewable=%v", claimed, claimErr, testCase.wantRenewable)
 			}
 		})
+	}
+}
+
+func TestProviderMutationReplayRenewalPreservesPriorDispatchEvidence(t *testing.T) {
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(testProvider{}, store)
+	now := time.Date(2026, 8, 15, 7, 30, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	parent := testWorkspaceLaunchBinding("storage", "ensure_storage", "launch-alpha:storage")
+	operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, now)
+	operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+	if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+		t.Fatal(err)
+	}
+	ctx := service.providerMutationContext(context.Background(), operation)
+	fresh, err := beginProviderMutation(ctx, "provider_storage_create", "storage_volume", "vol-alpha", "volume/vol-alpha")
+	if err != nil || fresh == nil || !fresh.Fresh {
+		t.Fatalf("fresh=%#v err=%v", fresh, err)
+	}
+	first, err := beginProviderMutation(ctx, "provider_storage_create", "storage_volume", "vol-alpha", "volume/vol-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, claimErr := first.claimReplay(ctx); claimErr != nil || !claimed {
+		t.Fatalf("first claim=%v err=%v", claimed, claimErr)
+	}
+	if err := first.markReplayDispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.complete(ctx, "", StorageVolume{ID: "vol-alpha"}, errors.New("transport response lost")); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.Get(ctx, fresh.operation.ID)
+	firstEpoch, epochOK := decodeProviderMutationReplayEpoch(persisted)
+	if err != nil || !epochOK || firstEpoch.State != "awaiting_readback" || firstEpoch.DispatchStartedAt == "" {
+		t.Fatalf("first epoch=%#v/%v operation=%#v err=%v", firstEpoch, epochOK, persisted, err)
+	}
+
+	now = now.Add(providerMutationReplayLease + time.Second)
+	restarted, err := beginProviderMutation(ctx, "provider_storage_create", "storage_volume", "vol-alpha", "volume/vol-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, claimErr := restarted.claimReplay(ctx); claimErr != nil || !claimed {
+		t.Fatalf("renewed claim=%v err=%v", claimed, claimErr)
+	}
+	renewed, renewedOK := decodeProviderMutationReplayEpoch(restarted.operation)
+	if !renewedOK || renewed.State != "leased" || renewed.LeaseGeneration != firstEpoch.LeaseGeneration+1 ||
+		renewed.DispatchStartedAt != firstEpoch.DispatchStartedAt {
+		t.Fatalf("renewal discarded dispatch evidence: first=%#v renewed=%#v/%v", firstEpoch, renewed, renewedOK)
+	}
+	if err := restarted.complete(ctx, "", StorageVolume{ID: "vol-alpha"}, errors.New("owner read unavailable")); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err = store.Get(ctx, fresh.operation.ID)
+	finalEpoch, finalOK := decodeProviderMutationReplayEpoch(persisted)
+	if err != nil || !finalOK || finalEpoch.State != "awaiting_readback" || finalEpoch.DispatchStartedAt != firstEpoch.DispatchStartedAt || finalEpoch.CompletedAt != "" {
+		t.Fatalf("owner read error erased prior dispatch fact: epoch=%#v/%v operation=%#v err=%v", finalEpoch, finalOK, persisted, err)
+	}
+}
+
+func TestProviderMutationReplayEpochRejectsParentBindingAndProviderStateDrift(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		drift func(FabricOperation) FabricOperation
+	}{
+		{
+			name: "parent binding",
+			drift: func(next FabricOperation) FabricOperation {
+				binding, ok := decodeProviderMutationBinding(next)
+				if !ok {
+					t.Fatal("provider mutation binding missing")
+				}
+				binding.Parent.LaunchOperationID = "launch-drift"
+				next.RedactedProviderPayload[providerMutationBindingPayloadKey] = persistedProviderMutationBinding{Binding: binding, Digest: hashInput(binding)}
+				return next
+			},
+		},
+		{
+			name: "provider state",
+			drift: func(next FabricOperation) FabricOperation {
+				value := json.RawMessage(`{"allocation":"drift"}`)
+				next.RedactedProviderPayload[providerMutationStatePayloadKey] = persistedProviderMutationState{Value: value, Digest: hashInput(value)}
+				return next
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := NewMemoryOperationStore()
+			service := NewServiceWithOperationStore(testProvider{}, store)
+			now := time.Date(2026, 8, 15, 7, 45, 0, 0, time.UTC)
+			service.now = func() time.Time { return now }
+			parent := testWorkspaceLaunchBinding("storage", "ensure_storage", "launch-alpha:storage")
+			operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, now)
+			operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+			if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+				t.Fatal(err)
+			}
+			ctx := service.providerMutationContext(context.Background(), operation)
+			state := map[string]string{"allocation": "original"}
+			fresh, err := beginProviderMutationWithState(ctx, "provider_storage_create", "storage_volume", "vol-alpha", "volume/vol-alpha", state)
+			if err != nil || fresh == nil || !fresh.Fresh {
+				t.Fatalf("fresh=%#v err=%v", fresh, err)
+			}
+			replay, err := beginProviderMutationWithState(ctx, "provider_storage_create", "storage_volume", "vol-alpha", "volume/vol-alpha", state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if claimed, claimErr := replay.claimReplay(ctx); claimErr != nil || !claimed {
+				t.Fatalf("claim=%v err=%v", claimed, claimErr)
+			}
+			expected := replay.operation
+			next := expected
+			next.RedactedProviderPayload = maps.Clone(expected.RedactedProviderPayload)
+			epoch, ok := decodeProviderMutationReplayEpoch(expected)
+			if !ok {
+				t.Fatal("replay epoch missing")
+			}
+			epoch.LeaseGeneration++
+			epoch.LeaseExpiresAt = now.Add(2 * providerMutationReplayLease).Format(time.RFC3339Nano)
+			next.RedactedProviderPayload[providerMutationReplayEpochPayloadKey] = epoch
+			next = testCase.drift(next)
+			if err := store.SaveProviderMutationReplayEpoch(ctx, expected, next); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+				t.Fatalf("identity drift accepted: err=%v next=%#v", err, next)
+			}
+		})
+	}
+}
+
+func TestProviderMutationReplayDispatchRequiresCurrentClaim(t *testing.T) {
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(testProvider{}, store)
+	now := time.Date(2026, 8, 15, 7, 55, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	parent := testWorkspaceLaunchBinding("storage", "ensure_storage", "launch-alpha:storage")
+	operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, now)
+	operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+	if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+		t.Fatal(err)
+	}
+	ctx := service.providerMutationContext(context.Background(), operation)
+	fresh, err := beginProviderMutation(ctx, "provider_storage_create", "storage_volume", "vol-alpha", "volume/vol-alpha")
+	if err != nil || fresh == nil || !fresh.Fresh {
+		t.Fatalf("fresh=%#v err=%v", fresh, err)
+	}
+	if err := fresh.markReplayDispatch(ctx); err != nil {
+		t.Fatalf("fresh initial mutation was rejected: %v", err)
+	}
+
+	reserved, err := beginProviderMutation(ctx, "provider_storage_create", "storage_volume", "vol-alpha", "volume/vol-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reserved.markReplayDispatch(ctx); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+		t.Fatalf("nonfresh dispatch without replay claim err=%v", err)
+	}
+	persisted, err := store.Get(ctx, fresh.operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := persisted.RedactedProviderPayload[providerMutationReplayEpochPayloadKey]; exists {
+		t.Fatalf("unclaimed dispatch mutated replay epoch: %#v", persisted)
+	}
+	if claimed, claimErr := reserved.claimReplay(ctx); claimErr != nil || !claimed {
+		t.Fatalf("claim=%v err=%v", claimed, claimErr)
+	}
+	if err := reserved.markReplayDispatch(ctx); err != nil {
+		t.Fatalf("claimed replay dispatch failed: %v", err)
 	}
 }
 
