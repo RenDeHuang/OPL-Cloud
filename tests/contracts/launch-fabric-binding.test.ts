@@ -156,7 +156,8 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
     "owner_authoritative_read", "durable_same_operation_child_replay_cas", "second_owner_authoritative_read",
     "exact_original_idempotency_transport_replay_only_if_still_absent"
   ]);
-  assert.match(contract.readback.adapterReplayPolicy.childTransportLease, /one_logical_replay_authorization/);
+  assert.match(contract.readback.adapterReplayPolicy.childTransportLease, /fabric_local_replay_epoch/);
+  assert.match(contract.readback.adapterReplayPolicy.childTransportLease, /not_control_plane_authorization_or_a_business_attempt_budget/);
 
   const expectedStages = [
     ["ensure_compute_allocation", "ensure_compute_allocation"],

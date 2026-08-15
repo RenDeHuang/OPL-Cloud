@@ -316,6 +316,16 @@ receipt -> succeeded`. Preflight is the read-only admission gate before the
 first external write. Runtime supplies the authoritative Workspace URL as
 readback/projection; URL is not a separate mutation stage.
 
+Workspace deletion is another durable Control Plane operation, not an
+acceptance-runner cleanup. It first matches the exact purchase Receipt and
+Sub2API debit, then coordinates `runtime + Secret absence -> attachment ->
+storage -> compute -> Sub2API Key absence -> exact refund -> refund Receipt ->
+Workspace absence`. Every stage preserves the same account, operation,
+Workspace, Runtime, Key, debit-code, purchase-Receipt, and refund-Receipt
+identity. Fabric owns only resource/Secret observations and mutation; Sub2API
+alone owns Key and wallet mutation; Ledger records the Receipt. Any typed
+pending, conflict, or error that cannot authoritatively converge fails closed.
+
 Control Plane owns only the Launch cursor, attempt and lease state, CAS,
 account/settlement coordination, and customer projection. Fabric owns compute,
 storage, attachment, Secret binding, Runtime, its operation store, provider and

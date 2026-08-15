@@ -76,8 +76,12 @@ schemas, workflows, and focused tests.
 - Runtime passwords and owned API Keys are masked by default, revealed only to
   the authorized owner, returned with `private, no-store`, and kept only for the
   bounded interaction that requested them.
-- Kubernetes Secret is the only authorized persistence point for a Workspace
-  Gateway Key. Runtime receives only the scoped Secret reference.
+- Fabric's selected secret owner is the only authorized persistence point for a
+  Workspace Gateway Key: Tencent/TKE uses the Workspace-scoped Kubernetes
+  Secret, while `local-docker` uses its protected host-owned immutable-version
+  store and a read-only Runtime bind. Runtime receives only the scoped Secret
+  reference/version; Control Plane, Ledger, and the browser never persist the
+  raw Key.
 - `OPL_SUB2API_BASE_URL` and Sub2API management credentials remain server-only.
   The browser never calls, embeds, redirects to, or scrapes the management
   surface. The public `/v1` model endpoint may be presented according to the
@@ -107,6 +111,28 @@ schemas, workflows, and focused tests.
 - Wallet writes remain serialized by the Control Plane's owning boundary. A
   second lock service or multi-replica wallet writer requires an explicit
   architecture and contract change.
+
+## Workspace Delete
+
+- Workspace deletion is one durable Control Plane operation. It preserves the
+  exact account, operation, Workspace, Runtime, Key, debit code, purchase
+  Receipt, and refund Receipt identities through every owner transition.
+- Before the first cleanup mutation, Control Plane reads and matches the exact
+  Ledger purchase Receipt and exact negative Sub2API debit history entry. The
+  ordered completion chain is `runtime + Secret absence -> attachment ->
+  storage -> compute -> Key absence -> refund -> refund Receipt -> Workspace
+  absence`.
+- Fabric reports Runtime and Gateway Secret owner observations as typed
+  `ready/absent/pending/conflict/error` facts. Both must be authoritatively
+  absent before later cleanup stages continue. Unknown, conflict, or error is
+  `manual_review`, never inferred absence.
+- Sub2API alone deletes the exact Workspace Key and records the exact business
+  refund. A lost response is reconciled only through the same Key or refund-code
+  GET; an acceptance runner, Fabric adapter, or Local Docker provider cannot
+  substitute an operator wallet adjustment or private Key cleanup.
+- The refund Receipt supersedes the exact purchase Receipt and is idempotent on
+  the delete operation. Receipt failure retries only that Receipt and never
+  repeats Key deletion, Fabric cleanup, or refund.
 
 ## Launch And Recovery
 

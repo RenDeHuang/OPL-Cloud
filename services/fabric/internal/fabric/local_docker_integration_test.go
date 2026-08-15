@@ -531,6 +531,12 @@ func TestLocalDockerDestroyWorkspaceRuntimeDeletesExactSecretAndPreservesSibling
 	if got := localDockerRemoveCalls(runner.calls, "volume"); len(got) != 0 {
 		t.Fatalf("secret destroy reached Docker volume: %#v", got)
 	}
+	if _, err := provider.WorkspaceRuntimeStatus(context.Background(), workspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("destroyed runtime readback err=%v", err)
+	}
+	if _, err := provider.WorkspaceRuntimeGatewaySecret(context.Background(), workspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("destroyed Secret readback err=%v", err)
+	}
 }
 
 func TestLocalDockerDestroyWorkspaceRuntimeSecretOnlyRemnantIsIdempotent(t *testing.T) {
@@ -546,6 +552,18 @@ func TestLocalDockerDestroyWorkspaceRuntimeSecretOnlyRemnantIsIdempotent(t *test
 	}
 	if got := localDockerRemoveCalls(runner.calls, "container"); len(got) != 0 {
 		t.Fatalf("container remove calls=%#v", got)
+	}
+}
+
+func TestLocalDockerWorkspaceRuntimeStatusReturnsTypedAbsence(t *testing.T) {
+	provider := newLocalDockerProvider(
+		LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t)},
+		&localDockerDestroyRunner{containers: map[string]dockerContainerInspect{}, volumes: map[string]dockerVolumeInspect{}},
+	)
+
+	runtime, err := provider.WorkspaceRuntimeStatus(context.Background(), "ws-absent")
+	if !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) || runtime.WorkspaceID != "ws-absent" || runtime.ID != "" || runtime.Status != "" {
+		t.Fatalf("runtime=%#v err=%v", runtime, err)
 	}
 }
 

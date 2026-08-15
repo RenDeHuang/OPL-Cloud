@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 13,
+  "schemaVersion": 14,
   "owner": "OPL Ledger",
   "purpose": "General execution, monthly billing, and current control-plane lifecycle evidence receipts.",
   "state": "current",
@@ -382,6 +382,16 @@
       "debit": "exact_sub2api_user_id_redeem_code_total_and_component_amounts",
       "retry": "receipt_only_without_repeating_key_debit_fabric_or_activation",
       "cardinality": "exactly_one_terminal_purchase_receipt_for_the_launch_operation"
+    },
+    "refundedTerminalIdentity": {
+      "requestId": "workspaceDeleteOperationId",
+      "recordIdempotencyKey": "<workspaceDeleteOperationId>:refund-receipt",
+      "workspaceId": "exact_deleted_workspace_id",
+      "supersedesReceiptId": "exact_purchaseReceiptId",
+      "cost": "exact_sub2api_user_debit_code_refund_code_total_and_refund_amount",
+      "execution": "exact_runtime_key_purchase_receipt_and_refund_confirmation_from_the_same_delete_operation",
+      "retry": "receipt_only_without_repeating_key_delete_fabric_cleanup_or_sub2api_refund",
+      "cardinality": "exactly_one_terminal_refund_receipt_for_the_workspace_delete_operation"
     },
     "customerProjectionForbiddenFields": [
       "computeReadback",

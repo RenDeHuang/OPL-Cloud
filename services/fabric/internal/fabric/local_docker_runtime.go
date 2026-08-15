@@ -335,7 +335,7 @@ func (p *LocalDockerProvider) WorkspaceRuntimeStatus(ctx context.Context, worksp
 		return WorkspaceRuntime{}, err
 	}
 	if !exists {
-		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "not_found"}, fmt.Errorf("local_docker_runtime_not_found")
+		return WorkspaceRuntime{WorkspaceID: workspaceID}, ErrWorkspaceLaunchResourceAbsent
 	}
 	secretRef := gatewaySecretName(workspaceID)
 	metadata, err := p.gatewayMetadata(ctx, secretRef)

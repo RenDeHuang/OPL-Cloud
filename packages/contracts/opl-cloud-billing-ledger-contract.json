@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 13,
+  "schemaVersion": 14,
   "owner": "OPL Control Plane",
   "purpose": "One-charge Workspace purchase and renewal, fulfillment, entitlement, receipt, wallet-adjustment reference, and reconciliation ownership contract.",
   "state": "current",
@@ -88,6 +88,29 @@
       "retry": "receipt_only_after_activation"
     },
     "manualReviewRecoveryContract": "opl-cloud-control-plane-launch-contract.json#recovery"
+  },
+  "workspaceDeleteRefund": {
+    "orchestrationOwner": "services/control-plane",
+    "walletAuthority": "sub2api",
+    "receiptAuthority": "services/ledger",
+    "preMutationAuthority": [
+      "exact_purchase_receipt",
+      "exact_negative_sub2api_debit_history_entry"
+    ],
+    "refundIdentity": ["accountId", "workspaceId", "sub2apiUserId", "sub2apiRedeemCode", "sub2apiRefundCode", "totalUsdMicros"],
+    "refundAmount": "refundUsdMicros_equals_original_purchase_totalUsdMicros",
+    "refundReservation": "persist_same_delete_operation_attempt_before_money_write_then_repeat_exact_refund_code_GET",
+    "responseLoss": "exact_refund_code_GET_only_without_second_refund",
+    "receipt": {
+      "type": "billing.workspace_refunded.v1",
+      "requestId": "workspaceDeleteOperationId",
+      "idempotencyKey": "<workspaceDeleteOperationId>:refund-receipt",
+      "supersedesReceiptId": "exact_purchaseReceiptId",
+      "identityFields": ["accountId", "operationId", "workspaceId", "runtimeId", "keyId", "debitCode", "purchaseReceiptId", "refundReceiptId"],
+      "failureRetry": "receipt_only_without_key_resource_or_refund_mutation"
+    },
+    "operatorWalletAdjustmentSubstitute": false,
+    "unknownConflictOrError": "manual_review_with_zero_later_mutation"
   },
   "walletAdjustmentEvidence": {
     "kinds": ["recharge", "debit", "business_refund"],
