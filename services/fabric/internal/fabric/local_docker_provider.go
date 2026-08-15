@@ -44,14 +44,15 @@ func firstArg(values []string) string {
 
 type LocalDockerProviderConfig struct {
 	DockerBinary                 string
-	HelperImage                  string
+	GatewaySecretRoot            string
 	RuntimeHost                  string
 	TrustedWorkspaceImageSources []string
 }
 
 type LocalDockerProvider struct {
 	runner                            dockerRunner
-	helperImage                       string
+	gatewaySecretRoot                 string
+	gatewaySecretRootErr              error
 	runtimeHost                       string
 	trustedWorkspaceImageRepositories map[string]struct{}
 	trustedWorkspaceImageReferences   map[string]struct{}
@@ -65,7 +66,7 @@ func NewLocalDockerProvider() *LocalDockerProvider {
 	}
 	return newLocalDockerProvider(LocalDockerProviderConfig{
 		DockerBinary:                 firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_DOCKER_BINARY")), "docker"),
-		HelperImage:                  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HELPER_IMAGE")), "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"),
+		GatewaySecretRoot:            strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT")),
 		RuntimeHost:                  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HOST")), "127.0.0.1"),
 		TrustedWorkspaceImageSources: trustedSources,
 	}, nil)
@@ -80,15 +81,10 @@ func newLocalDockerProvider(config LocalDockerProviderConfig, runner dockerRunne
 		trustedSources = []string{defaultLocalDockerWorkspaceImageRepository}
 	}
 	trustedRepositories, trustedReferences := localDockerWorkspaceImageTrust(trustedSources)
-	helperImage := firstNonEmpty(strings.TrimSpace(config.HelperImage), "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc")
-	if !strings.Contains(helperImage, "@sha256:") {
-		helperImage = "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
-	}
-	if _, _, ok := immutableLocalDockerImage(helperImage); !ok {
-		helperImage = "alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
-	}
+	secretRoot := strings.TrimSpace(config.GatewaySecretRoot)
+	secretRootErr := validateLocalDockerGatewaySecretRoot(secretRoot)
 	return &LocalDockerProvider{
-		runner: runner, helperImage: helperImage,
+		runner: runner, gatewaySecretRoot: secretRoot, gatewaySecretRootErr: secretRootErr,
 		runtimeHost:                       firstNonEmpty(strings.TrimSpace(config.RuntimeHost), "127.0.0.1"),
 		trustedWorkspaceImageRepositories: trustedRepositories, trustedWorkspaceImageReferences: trustedReferences,
 		now: func() time.Time { return time.Now().UTC() },
@@ -214,40 +210,74 @@ type dockerVolumeInspect struct {
 	Labels map[string]string `json:"Labels"`
 }
 
-func dockerMissing(err error) bool {
-	if err == nil {
-		return false
+type dockerObjectInventoryRow struct {
+	ID    string `json:"ID"`
+	Name  string `json:"Name"`
+	Names string `json:"Names"`
+}
+
+func decodeDockerObjectInventory(output []byte, objectName string) (dockerObjectInventoryRow, bool, error) {
+	rows := make([]dockerObjectInventoryRow, 0, 1)
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var row dockerObjectInventoryRow
+		if json.Unmarshal([]byte(line), &row) != nil {
+			return dockerObjectInventoryRow{}, false, fmt.Errorf("local_docker_inventory_readback_invalid")
+		}
+		if row.Name != "" && row.Names != "" && row.Name != row.Names {
+			return dockerObjectInventoryRow{}, false, fmt.Errorf("local_docker_inventory_identity_conflict")
+		}
+		if firstNonEmpty(row.Name, row.Names) != objectName {
+			return dockerObjectInventoryRow{}, false, fmt.Errorf("local_docker_inventory_identity_conflict")
+		}
+		rows = append(rows, row)
 	}
-	text := strings.ToLower(err.Error())
-	return strings.Contains(text, "no such network") || strings.Contains(text, "no such volume") || strings.Contains(text, "no such container") ||
-		strings.Contains(text, "no such object") || strings.Contains(text, "not found")
+	if len(rows) == 0 {
+		return dockerObjectInventoryRow{}, false, nil
+	}
+	if len(rows) != 1 || firstNonEmpty(rows[0].Name, rows[0].Names) != objectName {
+		return dockerObjectInventoryRow{}, false, fmt.Errorf("local_docker_inventory_identity_conflict")
+	}
+	return rows[0], true, nil
 }
 
 func (p *LocalDockerProvider) inspectNetwork(ctx context.Context, name string) (dockerNetworkInspect, bool, error) {
-	output, err := p.runner.Run(ctx, nil, "network", "inspect", name)
-	if dockerMissing(err) {
-		return dockerNetworkInspect{}, false, nil
+	inventory, err := p.runner.Run(ctx, nil, "network", "ls", "--no-trunc", "--filter", "name=^"+name+"$", "--format", "{{json .}}")
+	if err != nil {
+		return dockerNetworkInspect{}, false, err
 	}
+	row, exists, err := decodeDockerObjectInventory(inventory, name)
+	if err != nil || !exists {
+		return dockerNetworkInspect{}, false, err
+	}
+	output, err := p.runner.Run(ctx, nil, "network", "inspect", firstNonEmpty(row.ID, name))
 	if err != nil {
 		return dockerNetworkInspect{}, false, err
 	}
 	var values []dockerNetworkInspect
-	if json.Unmarshal(output, &values) != nil || len(values) != 1 || values[0].ID == "" {
+	if json.Unmarshal(output, &values) != nil || len(values) != 1 || values[0].ID == "" || values[0].Name != name || row.ID != "" && values[0].ID != row.ID {
 		return dockerNetworkInspect{}, false, fmt.Errorf("local_docker_network_readback_invalid")
 	}
 	return values[0], true, nil
 }
 
 func (p *LocalDockerProvider) inspectVolume(ctx context.Context, name string) (dockerVolumeInspect, bool, error) {
-	output, err := p.runner.Run(ctx, nil, "volume", "inspect", name)
-	if dockerMissing(err) {
-		return dockerVolumeInspect{}, false, nil
+	inventory, err := p.runner.Run(ctx, nil, "volume", "ls", "--filter", "name=^"+name+"$", "--format", "{{json .}}")
+	if err != nil {
+		return dockerVolumeInspect{}, false, err
 	}
+	_, exists, err := decodeDockerObjectInventory(inventory, name)
+	if err != nil || !exists {
+		return dockerVolumeInspect{}, false, err
+	}
+	output, err := p.runner.Run(ctx, nil, "volume", "inspect", name)
 	if err != nil {
 		return dockerVolumeInspect{}, false, err
 	}
 	var values []dockerVolumeInspect
-	if json.Unmarshal(output, &values) != nil || len(values) != 1 || values[0].Name == "" {
+	if json.Unmarshal(output, &values) != nil || len(values) != 1 || values[0].Name != name {
 		return dockerVolumeInspect{}, false, fmt.Errorf("local_docker_volume_readback_invalid")
 	}
 	return values[0], true, nil
@@ -305,17 +335,28 @@ func (p *LocalDockerProvider) CreateComputeAllocation(ctx context.Context, input
 	}
 	if !exists {
 		if attempt != nil && !attempt.Fresh {
-			err := fmt.Errorf("local_docker_compute_mutation_readback_pending")
-			_ = attempt.complete(ctx, "", allocation, err)
-			return ComputeAllocation{}, err
+			claimed, claimErr := attempt.claimReplay(ctx)
+			if claimErr != nil || !claimed {
+				return ComputeAllocation{}, firstNonNil(claimErr, ErrWorkspaceLaunchPending)
+			}
+			readback, exists, err = p.inspectNetwork(ctx, name)
+			if err != nil {
+				_ = attempt.complete(ctx, "", allocation, err)
+				return ComputeAllocation{}, err
+			}
 		}
-		args := append([]string{"network", "create", "--driver", "bridge"}, dockerLabelArgs(labels)...)
-		args = append(args, name)
-		if _, err := p.runner.Run(ctx, nil, args...); err != nil {
-			_ = attempt.complete(ctx, "", allocation, err)
-			return ComputeAllocation{}, err
+		if !exists {
+			if dispatchErr := attempt.markReplayDispatch(ctx); dispatchErr != nil {
+				return ComputeAllocation{}, dispatchErr
+			}
+			args := append([]string{"network", "create", "--driver", "bridge"}, dockerLabelArgs(labels)...)
+			args = append(args, name)
+			if _, err := p.runner.Run(ctx, nil, args...); err != nil {
+				_ = attempt.complete(ctx, "", allocation, err)
+				return ComputeAllocation{}, err
+			}
+			readback, exists, err = p.inspectNetwork(ctx, name)
 		}
-		readback, exists, err = p.inspectNetwork(ctx, name)
 	}
 	if err != nil || !exists || !exactDockerLabels(readback.Labels, labels) {
 		readErr := fmt.Errorf("local_docker_compute_readback_mismatch")
@@ -434,17 +475,28 @@ func (p *LocalDockerProvider) CreateStorageVolume(ctx context.Context, input Sto
 	}
 	if !exists {
 		if attempt != nil && !attempt.Fresh {
-			err := fmt.Errorf("local_docker_storage_mutation_readback_pending")
-			_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, err)
-			return StorageVolume{}, err
+			claimed, claimErr := attempt.claimReplay(ctx)
+			if claimErr != nil || !claimed {
+				return StorageVolume{}, firstNonNil(claimErr, ErrWorkspaceLaunchPending)
+			}
+			readback, exists, err = p.inspectVolume(ctx, name)
+			if err != nil {
+				_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, err)
+				return StorageVolume{}, err
+			}
 		}
-		args := append([]string{"volume", "create"}, dockerLabelArgs(labels)...)
-		args = append(args, name)
-		if _, err := p.runner.Run(ctx, nil, args...); err != nil {
-			_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, err)
-			return StorageVolume{}, err
+		if !exists {
+			if dispatchErr := attempt.markReplayDispatch(ctx); dispatchErr != nil {
+				return StorageVolume{}, dispatchErr
+			}
+			args := append([]string{"volume", "create"}, dockerLabelArgs(labels)...)
+			args = append(args, name)
+			if _, err := p.runner.Run(ctx, nil, args...); err != nil {
+				_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, err)
+				return StorageVolume{}, err
+			}
+			readback, exists, err = p.inspectVolume(ctx, name)
 		}
-		readback, exists, err = p.inspectVolume(ctx, name)
 	}
 	if err != nil || !exists || !exactDockerLabels(readback.Labels, labels) {
 		readErr := fmt.Errorf("local_docker_storage_readback_mismatch")
@@ -586,6 +638,9 @@ func (*LocalDockerProvider) DestroyStorageSnapshot(context.Context, StorageSnaps
 }
 
 func (p *LocalDockerProvider) Readiness(ctx context.Context) (map[string]any, error) {
+	if p.gatewaySecretRootErr != nil {
+		return nil, p.gatewaySecretRootErr
+	}
 	output, err := p.runner.Run(ctx, nil, "info", "--format", "{{.ServerVersion}}")
 	if err != nil {
 		return nil, err

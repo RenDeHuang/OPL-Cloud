@@ -332,7 +332,7 @@ func TestTencentWorkspaceLaunchComputeReplayReusesOwnershipCoreWithoutRepeatedMu
 	if _, err := service.EnsureWorkspaceLaunchStage(context.Background(), input); !errors.Is(err, ErrLaunchStageBindingConflict) {
 		t.Fatalf("NodePool configuration drift err=%v", err)
 	}
-	if prepareCalls != 1 || scaleCalls != 1 || tagCalls != 1 || patchCalls != 1 || truthCalls != 0 || readCalls != 1 {
+	if prepareCalls != 1 || scaleCalls != 1 || tagCalls != 1 || patchCalls != 1 || truthCalls != 0 || readCalls != 2 {
 		t.Fatalf("configuration drift repeated API call: prepareCalls=%d scaleCalls=%d tagCalls=%d patchCalls=%d truthCalls=%d readCalls=%d", prepareCalls, scaleCalls, tagCalls, patchCalls, truthCalls, readCalls)
 	}
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", prepared.NodePoolID)
@@ -344,7 +344,7 @@ func TestTencentWorkspaceLaunchComputeReplayReusesOwnershipCoreWithoutRepeatedMu
 	if err != nil || ownership.Status != "active" || ownership.InstanceID != allocation.InstanceID || ownership.NodeName != allocation.NodeName {
 		t.Fatalf("ownership=%#v err=%v", ownership, err)
 	}
-	if prepareCalls != 2 || scaleCalls != 1 || tagCalls != 1 || patchCalls != 1 || truthCalls != 2 || readCalls != 3 {
+	if prepareCalls != 1 || scaleCalls != 1 || tagCalls != 1 || patchCalls != 1 || truthCalls != 1 || readCalls != 3 {
 		t.Fatalf("prepareCalls=%d scaleCalls=%d tagCalls=%d patchCalls=%d truthCalls=%d readCalls=%d", prepareCalls, scaleCalls, tagCalls, patchCalls, truthCalls, readCalls)
 	}
 	assertTencentOwnershipChildOperations(t, store, input.Binding, allocation)

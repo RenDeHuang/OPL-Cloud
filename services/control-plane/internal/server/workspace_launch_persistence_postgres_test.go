@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/domain"
 )
@@ -103,5 +104,69 @@ func TestPostgresWorkspaceLaunchClaimPersistAndActivate(t *testing.T) {
 	}
 	if len(computes) != 0 || len(storages) != 0 || len(attachments) != 0 {
 		t.Fatalf("activation copied Fabric truth: computes=%#v storages=%#v attachments=%#v", computes, storages, attachments)
+	}
+}
+
+func TestPostgresWorkspaceLaunchReplayClaimSurvivesReconcilerRestartWithoutSkip(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+	account, owner, organization, membership := provisionedAccountRowsFor("acct-launch-replay-pg", "usr-launch-replay-pg", "org-launch-replay-pg", "launch-replay-pg@example.com", 42)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+
+	command := workspaceLaunchUnitCommand()
+	command.OperationID = "workspace-launch-replay-pg"
+	command.AccountID = "acct-launch-replay-pg"
+	command.OwnerUserID = "usr-launch-replay-pg"
+	command.Sub2APIUserID = 42
+	command.WorkspaceID = "ws-launch-replay-pg"
+	operation, err := newWorkspaceLaunchReconcileOperation(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Version, operation.Stage, operation.Status = 5, "debit", "manual_review"
+	attempt := operation.Attempts[operation.Stage]
+	attempt.Attempted, attempt.Status = 1, "reserved"
+	attempt.IdempotencyKey = workspaceLaunchStageIdempotencyKey(operation, 1)
+	operation.Attempts[operation.Stage] = attempt
+	row, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileClaim{AccountID: command.AccountID, DesiredOperation: row}); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := &workspaceLaunchUnitAdapter{
+		replayableStages: map[string]bool{"debit": true},
+		panicBeforeMutations: map[string]int{"debit": 1},
+	}
+	startedAt := time.Date(2026, 8, 15, 3, 0, 0, 0, time.UTC)
+	firstProcess := NewWorkspaceLaunchReconciler(store, adapter)
+	firstProcess.now = func() time.Time { return startedAt }
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected simulated process crash")
+			}
+		}()
+		_, _ = firstProcess.Resume(ctx, operation.ID, workspaceLaunchReservedStageAuthorization(t, row, "resume-postgres-crash"))
+	}()
+
+	durableRow, found, err := store.GetRuntimeOperation(ctx, operation.ID)
+	if err != nil || !found {
+		t.Fatalf("durable replay claim missing found=%v err=%v", found, err)
+	}
+	durable, err := decodeWorkspaceLaunchReconcileOperation(durableRow)
+	if err != nil || durable.IdempotentReplayClaims["debit"].Status != "claimed" || durable.ResumeAuthorizationConsumedAt != "" || adapter.mutations != 0 {
+		t.Fatalf("durable crash cut invalid: operation=%s claim=%#v mutations=%d err=%v", workspaceLaunchReconcileResultSummary(durable), durable.IdempotentReplayClaims["debit"], adapter.mutations, err)
+	}
+
+	restartedProcess := NewWorkspaceLaunchReconciler(store, adapter)
+	restartedProcess.now = func() time.Time { return startedAt.Add(workspaceLaunchIdempotentReplayLease + time.Second) }
+	recovered, err := restartedProcess.Reconcile(ctx, operation.ID)
+	if err != nil || recovered.Stage != "ensure_compute_allocation" || recovered.Attempts["debit"].Attempted != 1 || recovered.Attempts["debit"].Max != 1 ||
+		recovered.Attempts["debit"].Confirmed != 1 || recovered.IdempotentReplayClaims["debit"].Status != "succeeded" || adapter.mutationsByStage["debit"] != 1 ||
+		adapter.mutationIdempotencyKey != attempt.IdempotencyKey {
+		t.Fatalf("PostgreSQL restart skipped or duplicated replay: operation=%s attempt=%#v claim=%#v mutations=%#v err=%v", workspaceLaunchReconcileResultSummary(recovered), recovered.Attempts["debit"], recovered.IdempotentReplayClaims["debit"], adapter.mutationsByStage, err)
 	}
 }

@@ -298,6 +298,16 @@ suffixes or provider tags. Both owners consume the same focused golden vectors,
 and the normal Launch/Resume caller is integrated. This closes the typed boundary
 slice but not the full Console-to-local-Workspace P0 vertical.
 
+The current recovery row keeps `Max=1` and does not reset `Attempted`. An
+operator may CAS-persist one exact-idempotency replay budget plus a finite typed
+continuation-read budget; the server binds the starting readback count. Fabric
+reports only `ready/none`, `pending/provider_provisioning`, the three explicit
+absent reasons, or the two explicit unknown reasons. Adapters perform owner
+read, child replay CAS, owner read again, then reuse the exact original key only
+for still-absent resources. Budget exhaustion records `unknown/manual_review`.
+Schema-v3 rows missing the new fields decode with zero authorization and cannot
+read or mutate until explicitly reviewed.
+
 Control Plane uses its own Fabric transport identity for these mutations and
 signs a short-lived capability binding account, Workspace, resource kind/id,
 action, operation identity, expiry, and request-body digest. Fabric derives the
@@ -362,6 +372,13 @@ partial or unknown provider results enter manual review without refund or
 repurchase. Ledger receipt failure retries only the receipt. Source and focused
 tests implement this behavior; live Sub2API and Tencent evidence remains pending,
 and the repository remains `code-complete=false`.
+
+Activation readback is the Control Plane `GetWorkspace(workspaceId)` point-read
+projection matched to the original launch and Fabric bindings; the removed
+`POST /fabric/workspace-activation-truth` route is not authority. The terminal
+purchase receipt uses `RequestID=launchOperationId` and
+`Idempotency-Key=<launchOperationId>:purchase-receipt`, with exact Workspace,
+debit code, user, total, component, and downstream resource identities.
 
 Each Workspace operation owns renewal intent and one combined monthly debit.
 Compute and storage rows are provider/compatibility facts, not independent

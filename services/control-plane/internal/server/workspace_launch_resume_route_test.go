@@ -128,4 +128,43 @@ func TestWorkspaceLaunchResumeRouteWaitsForOriginalCallerCredential(t *testing.T
 	if exactResume.Code != http.StatusOK || exactLaunch.Code != http.StatusAccepted || client.createCalls != 1 || client.convergenceReads != readsBefore {
 		t.Fatalf("exact retries caused work: resume=%d launch=%d creates=%d reads=%d/%d", exactResume.Code, exactLaunch.Code, client.createCalls, client.convergenceReads, readsBefore)
 	}
+
+	replayCommand := command
+	replayCommand.OperationID += "-replay"
+	replayCommand.WorkspaceID += "-replay"
+	replayOperation, err := newWorkspaceLaunchReconcileOperation(replayCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayOperation.Status = "manual_review"
+	replayAttempt := replayOperation.Attempts["key"]
+	replayAttempt.Attempted, replayAttempt.Status = 1, "reserved"
+	replayAttempt.IdempotencyKey = workspaceLaunchStageIdempotencyKey(replayOperation, 1)
+	replayOperation.Attempts["key"] = replayAttempt
+	replayRow, err := workspaceLaunchReconcileOperationRow(replayOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), replayRow))
+	replayBody := `{"launchVersion":1,"authorizedStage":"key","reason":"owner read proved exact key absent","mutationBudget":0,"idempotentReplayBudget":1,"authoritativeReadBudget":3}`
+	replay := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/operator/workspace-launches/"+replayOperation.ID+"/resume", replayBody, "resume-route-replay-key")
+	if replay.Code != http.StatusOK {
+		t.Fatalf("operator replay status=%d body=%s", replay.Code, replay.Body.String())
+	}
+	persistedReplayRow, found, err := store.GetRuntimeOperation(context.Background(), replayOperation.ID)
+	if err != nil || !found {
+		t.Fatalf("read replay launch found=%v err=%v", found, err)
+	}
+	persistedReplay, err := decodeWorkspaceLaunchReconcileOperation(persistedReplayRow)
+	if err != nil || persistedReplay.ResumeAuthorization == nil || persistedReplay.ResumeAuthorization.IdempotentReplayBudget != 1 ||
+		persistedReplay.ResumeAuthorization.AuthoritativeReadBudget != workspaceLaunchAuthoritativeReadBudget || persistedReplay.ResumeAuthorizationConsumedAt != "" ||
+		persistedReplay.Attempts["key"].Attempted != 1 || client.createCalls != 1 {
+		t.Fatalf("operator replay authorization not durable: operation=%s creates=%d err=%v", workspaceLaunchReconcileResultSummary(persistedReplay), client.createCalls, err)
+	}
+
+	invalidReplayBody := `{"launchVersion":1,"authorizedStage":"key","reason":"missing read budget","mutationBudget":0,"idempotentReplayBudget":1}`
+	invalidReplay := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/operator/workspace-launches/"+replayOperation.ID+"/resume", invalidReplayBody, "resume-route-invalid-replay")
+	if invalidReplay.Code != http.StatusBadRequest {
+		t.Fatalf("incomplete replay authorization status=%d body=%s", invalidReplay.Code, invalidReplay.Body.String())
+	}
 }

@@ -16,6 +16,15 @@ import (
 	"time"
 )
 
+func localDockerSecretTestRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 func waitForLocalRuntime(ctx context.Context, url string) error {
 	client := &http.Client{Timeout: time.Second}
 	deadline := time.Now().Add(20 * time.Second)
@@ -74,11 +83,24 @@ func (r *localDockerDestroyRunner) Run(_ context.Context, _ []byte, args ...stri
 		return nil, fmt.Errorf("unexpected docker call: %q", args)
 	}
 	switch {
-	case len(args) == 3 && args[0] == "container" && args[1] == "inspect":
-		name := args[2]
+	case len(args) == 8 && args[0] == "container" && args[1] == "ls":
+		name := strings.TrimSuffix(strings.TrimPrefix(args[5], "name=^/"), "$")
 		container, ok := r.containers[name]
 		if !ok {
-			return nil, errors.New("no such container")
+			return nil, nil
+		}
+		return json.Marshal(dockerObjectInventoryRow{ID: container.ID, Names: name})
+	case len(args) == 3 && args[0] == "container" && args[1] == "inspect":
+		var container dockerContainerInspect
+		ok := false
+		for _, candidate := range r.containers {
+			if candidate.ID == args[2] {
+				container, ok = candidate, true
+				break
+			}
+		}
+		if !ok {
+			return nil, errors.New("container inventory drift")
 		}
 		return json.Marshal([]dockerContainerInspect{container})
 	case len(args) == 4 && args[0] == "container" && args[1] == "rm" && args[2] == "-f":
@@ -88,6 +110,12 @@ func (r *localDockerDestroyRunner) Run(_ context.Context, _ []byte, args ...stri
 		}
 		delete(r.containers, name)
 		return nil, nil
+	case len(args) == 6 && args[0] == "volume" && args[1] == "ls":
+		name := strings.TrimSuffix(strings.TrimPrefix(args[3], "name=^"), "$")
+		if _, ok := r.volumes[name]; !ok {
+			return nil, nil
+		}
+		return json.Marshal(dockerObjectInventoryRow{Name: name})
 	case len(args) == 3 && args[0] == "volume" && args[1] == "inspect":
 		name := args[2]
 		volume, ok := r.volumes[name]
@@ -205,7 +233,7 @@ func (r bindingCheckingDockerRunner) Run(ctx context.Context, stdin []byte, args
 		}
 	}
 	output, err := r.base.Run(ctx, stdin, args...)
-	if err != nil && !dockerMissing(err) && r.t != nil {
+	if err != nil && r.t != nil {
 		r.t.Logf("docker args=%q error=%v", args, err)
 	}
 	return output, err
@@ -237,7 +265,7 @@ func localDockerImageTrustPreflight(t *testing.T, image string) (WorkspaceLaunch
 	t.Helper()
 	runner := &recordingDockerRunner{}
 	store := NewMemoryOperationStore()
-	service := NewServiceWithOperationStore(newLocalDockerProvider(LocalDockerProviderConfig{}, runner), store)
+	service := NewServiceWithOperationStore(newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t)}, runner), store)
 	result, err := service.PreflightWorkspaceLaunch(context.Background(), WorkspaceLaunchPreflightInput{
 		SchemaVersion: 1, LaunchOperationID: "local-image-trust", AccountID: "acct-local", WorkspaceID: "ws-local",
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image, RequestHash: strings.Repeat("b", 64),
@@ -312,195 +340,88 @@ func TestLocalDockerAcceptsApprovedImmutableWorkspaceImage(t *testing.T) {
 	}
 }
 
-func TestLocalDockerDestroyWorkspaceRuntimeDeletesExactRuntimeAndGatewaySecret(t *testing.T) {
-	workspaceID := "ws-alpha"
-	otherWorkspaceID := "ws-beta"
-	runtimeName := localRuntimeName(workspaceID)
+func seedLocalDockerGatewaySecret(t *testing.T, provider *LocalDockerProvider, accountID, workspaceID string) string {
+	t.Helper()
+	key := []byte("key-" + workspaceID)
+	digest := fmt.Sprintf("%x", sha256.Sum256(key))
 	secretRef := gatewaySecretName(workspaceID)
-	runner := &localDockerDestroyRunner{
-		containers: map[string]dockerContainerInspect{
-			runtimeName:                        localDockerDestroyRuntimeContainer(workspaceID),
-			localRuntimeName(otherWorkspaceID): localDockerDestroyRuntimeContainer(otherWorkspaceID),
-		},
-		volumes: map[string]dockerVolumeInspect{
-			secretRef:                           localDockerDestroySecretVolume(workspaceID),
-			gatewaySecretName(otherWorkspaceID): localDockerDestroySecretVolume(otherWorkspaceID),
-		},
+	if err := provider.writeGatewaySecret(secretRef, key, localDockerGatewayMetadata{
+		AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: 1, SecretRef: secretRef,
+		Fingerprint: "sha256:" + digest, Version: digest[:16],
+	}); err != nil {
+		t.Fatal(err)
 	}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{}, runner)
+	return secretRef
+}
+
+func TestLocalDockerDestroyWorkspaceRuntimeDeletesExactSecretAndPreservesSibling(t *testing.T) {
+	workspaceID, otherWorkspaceID := "ws-alpha", "ws-beta"
+	runtimeName := localRuntimeName(workspaceID)
+	runner := &localDockerDestroyRunner{containers: map[string]dockerContainerInspect{
+		runtimeName: localDockerDestroyRuntimeContainer(workspaceID), localRuntimeName(otherWorkspaceID): localDockerDestroyRuntimeContainer(otherWorkspaceID),
+	}, volumes: map[string]dockerVolumeInspect{}}
+	root := localDockerSecretTestRoot(t)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, runner)
+	secretRef := seedLocalDockerGatewaySecret(t, provider, "acct-alpha", workspaceID)
+	otherSecretRef := seedLocalDockerGatewaySecret(t, provider, "acct-beta", otherWorkspaceID)
 
 	runtime, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
-	if err != nil {
-		t.Fatalf("destroy runtime err=%v", err)
+	if err != nil || runtime.Status != "destroyed" {
+		t.Fatalf("destroy runtime=%#v err=%v", runtime, err)
 	}
-	if runtime.Status != "destroyed" || runtime.WorkspaceID != workspaceID || runtime.ServiceName != runtimeName {
-		t.Fatalf("destroy runtime=%#v", runtime)
+	if _, err := os.Stat(filepath.Join(root, secretRef)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("owned secret path remains err=%v", err)
 	}
-	if _, exists := runner.containers[runtimeName]; exists {
-		t.Fatalf("runtime container still present: %q", runtimeName)
-	}
-	if _, exists := runner.volumes[secretRef]; exists {
-		t.Fatalf("gateway Secret volume still present: %q", secretRef)
-	}
-	if _, exists := runner.containers[localRuntimeName(otherWorkspaceID)]; !exists {
-		t.Fatalf("other runtime container was removed")
-	}
-	if _, exists := runner.volumes[gatewaySecretName(otherWorkspaceID)]; !exists {
-		t.Fatalf("other gateway Secret volume was removed")
+	if _, err := os.Stat(filepath.Join(root, otherSecretRef)); err != nil {
+		t.Fatalf("sibling secret removed: %v", err)
 	}
 	if got := localDockerRemoveCalls(runner.calls, "container"); len(got) != 1 || got[0] != runtimeName {
 		t.Fatalf("container remove calls=%#v", got)
 	}
-	if got := localDockerRemoveCalls(runner.calls, "volume"); len(got) != 1 || got[0] != secretRef {
-		t.Fatalf("volume remove calls=%#v", got)
+	if got := localDockerRemoveCalls(runner.calls, "volume"); len(got) != 0 {
+		t.Fatalf("secret destroy reached Docker volume: %#v", got)
 	}
 }
 
-func TestLocalDockerDestroyWorkspaceRuntimeDeletesSecretOnlyRemnant(t *testing.T) {
+func TestLocalDockerDestroyWorkspaceRuntimeSecretOnlyRemnantIsIdempotent(t *testing.T) {
 	workspaceID := "ws-alpha"
-	secretRef := gatewaySecretName(workspaceID)
-	runner := &localDockerDestroyRunner{
-		containers: map[string]dockerContainerInspect{},
-		volumes:    map[string]dockerVolumeInspect{secretRef: localDockerDestroySecretVolume(workspaceID)},
-	}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{}, runner)
-
-	runtime, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
-	if err != nil {
-		t.Fatalf("destroy runtime err=%v", err)
-	}
-	if runtime.Status != "destroyed" || runtime.WorkspaceID != workspaceID || runtime.ServiceName != localRuntimeName(workspaceID) {
-		t.Fatalf("destroy secret remnant runtime=%#v", runtime)
-	}
-	if _, exists := runner.volumes[secretRef]; exists {
-		t.Fatalf("gateway Secret volume still present: %q", secretRef)
+	runner := &localDockerDestroyRunner{containers: map[string]dockerContainerInspect{}, volumes: map[string]dockerVolumeInspect{}}
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t)}, runner)
+	seedLocalDockerGatewaySecret(t, provider, "acct-alpha", workspaceID)
+	for attempt := 0; attempt < 2; attempt++ {
+		runtime, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
+		if err != nil || runtime.Status != "destroyed" {
+			t.Fatalf("attempt=%d runtime=%#v err=%v", attempt, runtime, err)
+		}
 	}
 	if got := localDockerRemoveCalls(runner.calls, "container"); len(got) != 0 {
 		t.Fatalf("container remove calls=%#v", got)
 	}
-	if got := localDockerRemoveCalls(runner.calls, "volume"); len(got) != 1 || got[0] != secretRef {
-		t.Fatalf("volume remove calls=%#v", got)
-	}
 }
 
-func TestLocalDockerDestroyWorkspaceRuntimeFailsClosedWhenGatewaySecretDeleteFails(t *testing.T) {
+func TestLocalDockerDestroyWorkspaceRuntimeFailsClosedOnSecretIdentityDrift(t *testing.T) {
 	workspaceID := "ws-alpha"
-	runtimeName := localRuntimeName(workspaceID)
-	secretRef := gatewaySecretName(workspaceID)
-	runner := &localDockerDestroyRunner{
-		containers:     map[string]dockerContainerInspect{runtimeName: localDockerDestroyRuntimeContainer(workspaceID)},
-		volumes:        map[string]dockerVolumeInspect{secretRef: localDockerDestroySecretVolume(workspaceID)},
-		volumeRMErr:    map[string]error{secretRef: errors.New("volume busy")},
-		containerRMErr: map[string]error{},
+	runner := &localDockerDestroyRunner{containers: map[string]dockerContainerInspect{}, volumes: map[string]dockerVolumeInspect{}}
+	root := localDockerSecretTestRoot(t)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, runner)
+	secretRef := seedLocalDockerGatewaySecret(t, provider, "acct-alpha", workspaceID)
+	current, err := os.Readlink(filepath.Join(root, secretRef, "current"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{}, runner)
-
+	metaPath := filepath.Join(root, secretRef, current, localDockerGatewayMetaFile)
+	if err := os.Chmod(metaPath, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, []byte(`{"accountId":"acct-foreign"}`), 0400); err != nil {
+		t.Fatal(err)
+	}
 	runtime, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
-	if err == nil || !strings.Contains(err.Error(), "volume busy") {
+	if err == nil || runtime.Status == "destroyed" {
 		t.Fatalf("destroy runtime=%#v err=%v", runtime, err)
 	}
-	if runtime.Status == "destroyed" {
-		t.Fatalf("destroy returned destroyed on secret delete failure: %#v", runtime)
-	}
-	if _, exists := runner.containers[runtimeName]; exists {
-		t.Fatalf("runtime container still present after successful container delete: %q", runtimeName)
-	}
-	if _, exists := runner.volumes[secretRef]; !exists {
-		t.Fatalf("gateway Secret volume removed despite delete error: %q", secretRef)
-	}
-}
-
-func TestLocalDockerDestroyWorkspaceRuntimeIsIdempotent(t *testing.T) {
-	workspaceID := "ws-alpha"
-	runtimeName := localRuntimeName(workspaceID)
-	secretRef := gatewaySecretName(workspaceID)
-	runner := &localDockerDestroyRunner{
-		containers: map[string]dockerContainerInspect{runtimeName: localDockerDestroyRuntimeContainer(workspaceID)},
-		volumes:    map[string]dockerVolumeInspect{secretRef: localDockerDestroySecretVolume(workspaceID)},
-	}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{}, runner)
-
-	first, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
-	if err != nil {
-		t.Fatalf("first destroy runtime=%#v err=%v", first, err)
-	}
-	second, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
-	if err != nil {
-		t.Fatalf("second destroy runtime=%#v err=%v", second, err)
-	}
-	if first.Status != "destroyed" || second.Status != "destroyed" {
-		t.Fatalf("destroy results first=%#v second=%#v", first, second)
-	}
-	if got := localDockerRemoveCalls(runner.calls, "container"); len(got) != 1 || got[0] != runtimeName {
-		t.Fatalf("container remove calls=%#v", got)
-	}
-	if got := localDockerRemoveCalls(runner.calls, "volume"); len(got) != 1 || got[0] != secretRef {
-		t.Fatalf("volume remove calls=%#v", got)
-	}
-}
-
-func TestLocalDockerDestroyWorkspaceRuntimeFailsClosedWithoutGatewaySecretOwnershipReadback(t *testing.T) {
-	workspaceID := "ws-alpha"
-	runtimeName := localRuntimeName(workspaceID)
-	secretRef := gatewaySecretName(workspaceID)
-	for _, tc := range []struct {
-		name   string
-		volume dockerVolumeInspect
-	}{
-		{
-			name: "same-name foreign volume",
-			volume: localDockerDestroySecretVolumeWithLabels(workspaceID, func(labels map[string]string) {
-				labels["opl.workspace.id"] = "ws-foreign"
-				labels["opl.resource.id"] = gatewaySecretName("ws-foreign")
-			}),
-		},
-		{name: "missing labels", volume: dockerVolumeInspect{Name: secretRef}},
-		{
-			name: "wrong provider",
-			volume: localDockerDestroySecretVolumeWithLabels(workspaceID, func(labels map[string]string) {
-				labels["opl.fabric.provider"] = "tencent-tke"
-			}),
-		},
-		{
-			name: "wrong kind",
-			volume: localDockerDestroySecretVolumeWithLabels(workspaceID, func(labels map[string]string) {
-				labels["opl.fabric.kind"] = "runtime"
-			}),
-		},
-		{
-			name: "wrong workspace",
-			volume: localDockerDestroySecretVolumeWithLabels(workspaceID, func(labels map[string]string) {
-				labels["opl.workspace.id"] = "ws-other"
-			}),
-		},
-		{
-			name: "wrong resource",
-			volume: localDockerDestroySecretVolumeWithLabels(workspaceID, func(labels map[string]string) {
-				labels["opl.resource.id"] = "opl-gateway-ws-other"
-			}),
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			runner := &localDockerDestroyRunner{
-				containers: map[string]dockerContainerInspect{runtimeName: localDockerDestroyRuntimeContainer(workspaceID)},
-				volumes:    map[string]dockerVolumeInspect{secretRef: tc.volume},
-			}
-			provider := newLocalDockerProvider(LocalDockerProviderConfig{}, runner)
-
-			runtime, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
-			if err == nil || !strings.Contains(err.Error(), "local_docker_secret_destroy_ownership_mismatch") {
-				t.Fatalf("destroy runtime=%#v err=%v", runtime, err)
-			}
-			if runtime.Status == "destroyed" {
-				t.Fatalf("destroy reported success without ownership readback: %#v", runtime)
-			}
-			if got := localDockerRemoveCalls(runner.calls, "volume"); len(got) != 0 {
-				t.Fatalf("volume remove calls=%#v", got)
-			}
-			if _, exists := runner.volumes[secretRef]; !exists {
-				t.Fatalf("gateway Secret volume removed without ownership proof: %q", secretRef)
-			}
-		})
+	if _, statErr := os.Stat(filepath.Join(root, secretRef)); statErr != nil {
+		t.Fatalf("drifted secret was removed: %v", statErr)
 	}
 }
 
@@ -549,7 +470,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	store := NewMemoryOperationStore()
 	runner := bindingCheckingDockerRunner{base: execDockerRunner{binary: "docker"}, store: store, parents: bindings, mutationIDs: mutationIDs, t: t}
 	provider := newLocalDockerProvider(LocalDockerProviderConfig{
-		HelperImage: imageID, RuntimeHost: "127.0.0.1", TrustedWorkspaceImageSources: []string{imageID},
+		GatewaySecretRoot: localDockerSecretTestRoot(t), RuntimeHost: "127.0.0.1", TrustedWorkspaceImageSources: []string{imageID},
 	}, runner)
 	service := NewServiceWithOperationStore(provider, store)
 	launchRequestHash := stableSuffix("workspace-launch", launchID, accountID, workspaceID, imageID)
@@ -603,7 +524,6 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	secretInput.Resources.GatewaySecretFingerprint = "sha256:" + digest
 	secretInput.GatewayCredential = &WorkspaceLaunchGatewayCredential{KeyID: 1, Value: key}
 	bindInput(&secretInput)
-	mutationIDs["local_docker_secret_volume_create"] = providerMutationOperationID(secretInput.Binding, "local_docker_secret_volume_create", "gateway_secret", secretRef, secretRef)
 	mutationIDs["local_docker_secret_write"] = providerMutationOperationID(secretInput.Binding, "local_docker_secret_write", "gateway_secret", secretRef, digest[:16])
 	secret, err := service.EnsureWorkspaceLaunchStage(ctx, secretInput)
 	if err != nil || secret.State != "ready" {
@@ -636,25 +556,28 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	}
 }
 
-func TestLocalDockerHelperImageIsImmutableAndConstrained(t *testing.T) {
-	for _, configured := range []string{"alpine:3.20", "sha256:" + strings.Repeat("a", 64), "ALPINE@sha256:" + strings.Repeat("a", 64)} {
-		provider := newLocalDockerProvider(LocalDockerProviderConfig{HelperImage: configured}, &recordingDockerRunner{})
-		if !strings.Contains(provider.helperImage, "@sha256:") {
-			t.Fatalf("helper image %q was not pinned: %q", configured, provider.helperImage)
-		}
-	}
+func TestLocalDockerGatewaySecretOwnerReadDoesNotCallDocker(t *testing.T) {
 	runner := &recordingDockerRunner{}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{}, runner)
-	if err := provider.writeGatewaySecret(context.Background(), "opl-gateway-ws-test", []byte("key"), localDockerGatewayMetadata{WorkspaceID: "ws-test", WorkspaceAPIKeyID: 1, SecretRef: "opl-gateway-ws-test"}); err != nil && !strings.Contains(err.Error(), "unexpected docker call") {
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t)}, runner)
+	key := []byte("key")
+	digest := fmt.Sprintf("%x", sha256.Sum256(key))
+	if err := provider.writeGatewaySecret("opl-gateway-ws-test", key, localDockerGatewayMetadata{
+		AccountID: "acct-test", WorkspaceID: "ws-test", WorkspaceAPIKeyID: 1, SecretRef: "opl-gateway-ws-test",
+		Fingerprint: "sha256:" + digest, Version: digest[:16],
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.calls) == 0 {
-		t.Fatal("helper did not invoke docker")
+	if _, err := provider.ReadGatewaySecretByDigest(context.Background(), GatewaySecretReadbackInput{
+		AccountID: "acct-test", WorkspaceID: "ws-test", WorkspaceAPIKeyID: 1, SecretRef: "opl-gateway-ws-test",
+		Fingerprint: "sha256:" + digest, KeyDigest: digest,
+	}); err != nil {
+		t.Fatal(err)
 	}
-	call := strings.Join(runner.calls[0], " ")
-	for _, required := range []string{"--network none", "--cap-drop ALL", "no-new-privileges"} {
-		if !strings.Contains(call, required) {
-			t.Fatalf("docker helper args=%q missing %q", call, required)
-		}
+	if len(runner.calls) != 0 {
+		t.Fatalf("secret owner read reached Docker: %#v", runner.calls)
+	}
+	misconfigured := newLocalDockerProvider(LocalDockerProviderConfig{}, runner)
+	if _, err := misconfigured.ReadGatewaySecretByDigest(context.Background(), GatewaySecretReadbackInput{SecretRef: "opl-gateway-ws-test"}); err == nil {
+		t.Fatal("missing gateway secret root did not fail closed")
 	}
 }

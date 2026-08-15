@@ -1787,7 +1787,7 @@ func TestTencentProviderWritesAccountGatewaySecretWithoutReturningRawKey(t *test
 		case slices.Equal(args, []string{"apply", "-f", "-"}):
 			applied = append([]byte(nil), stdin...)
 			return nil, nil
-		case len(args) == 4 && args[0] == "get" && strings.HasPrefix(args[1], "secret/") && args[2] == "-o" && args[3] == "json":
+		case len(args) == 5 && args[0] == "get" && strings.HasPrefix(args[1], "secret/") && args[2] == "--ignore-not-found" && args[3] == "-o" && args[4] == "json":
 			var manifest map[string]any
 			if err := json.Unmarshal(applied, &manifest); err != nil {
 				t.Fatal(err)
@@ -1949,8 +1949,8 @@ func TestTencentRuntimeCreationIsDeterministicAndUsesActualReadinessAfterApply(t
 			}
 			return nil, nil
 		}
-		if slices.Equal(args, []string{"get", "deployment,service,networkpolicy", "-l", "oplcloud.cn/workspace-id=ws-alpha", "-o", "json"}) {
-			return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service, networkPolicy}}), nil
+		if slices.Equal(args, []string{"get", "deployment,service,networkpolicy,secret", "-l", "oplcloud.cn/workspace-id=ws-alpha", "-o", "json"}) {
+			return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service, networkPolicy, secret}}), nil
 		}
 		if slices.Equal(args, []string{"get", "deployment/opl-compute-alpha", "pvc/opl-storage-alpha-data", "service/opl-compute-alpha", "ingress/opl-cloud", "endpoints/opl-compute-alpha", "secret/opl-compute-alpha-env", "--ignore-not-found", "-o", "json"}) {
 			return mustJSON(map[string]any{"kind": "List", "items": []any{
@@ -2162,8 +2162,10 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 	}
 	pods := []any{pod}
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
-		if len(args) == 6 && args[0] == "get" && args[1] == "deployment,service,networkpolicy" && args[2] == "-l" && args[3] == "oplcloud.cn/workspace-id=ws-alpha" {
-			return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service, networkPolicy}}), nil
+		if len(args) == 6 && args[0] == "get" && args[1] == "deployment,service,networkpolicy,secret" && args[2] == "-l" && args[3] == "oplcloud.cn/workspace-id=ws-alpha" {
+			return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service, networkPolicy,
+				map[string]any{"kind": "Secret", "metadata": map[string]any{"name": "opl-compute-alpha-env", "labels": map[string]any{"oplcloud.cn/workspace-id": "ws-alpha"}}},
+			}}), nil
 		}
 		if slices.Equal(args, []string{"get", "networkpolicy", "-o", "json"}) {
 			return mustJSON(map[string]any{"kind": "List", "items": networkPolicies}), nil
@@ -2364,7 +2366,7 @@ func TestWorkspaceRuntimeStatusFailsClosedOnAmbiguousOrUnreadableResources(t *te
 		t.Run(tc.name, func(t *testing.T) {
 			provider := NewTencentProvider()
 			provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
-				if len(args) >= 2 && args[0] == "get" && args[1] == "deployment,service,networkpolicy" {
+				if len(args) >= 2 && args[0] == "get" && args[1] == "deployment,service,networkpolicy,secret" {
 					return tc.discovery()
 				}
 				return mustJSON(map[string]any{"kind": "List", "items": []any{}}), nil
@@ -2695,6 +2697,104 @@ func TestTencentProviderCBSResponseLossDiscoversExactDiskWithoutPersistedProvide
 	}
 	if !slices.Equal(actions, []string{"discover_storage_volume", "sync_storage_volume"}) {
 		t.Fatalf("actions=%v", actions)
+	}
+}
+
+func TestTencentProviderAuthoritativeAbsentReadbacksAreTypedAndMutationFree(t *testing.T) {
+	t.Run("compute exact persisted baseline", func(t *testing.T) {
+		provider := NewTencentProvider()
+		calls := 0
+		present := false
+		provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+			calls++
+			if request.Action != "read_compute_allocation" {
+				t.Fatalf("action=%q", request.Action)
+			}
+			return provisionerResponse{
+				OK: true, Status: "absent", MachinePresent: &present, MutationCount: 0,
+				PoolID: request.Pool.ID, NodePoolID: request.Pool.NodePoolID,
+				CurrentReplicas: request.Pool.BaselineReplicas, TargetReplicas: request.Pool.TargetReplicas,
+			}, nil
+		}
+		plan := ComputeAllocationPreparation{
+			PoolID: "pool-basic-2c4g", PackageID: "basic", NodePoolID: "np-basic", InstanceType: "SA5.MEDIUM4",
+			MaxReplicas: 20, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"machine-before"},
+		}
+		allocation := ComputeAllocation{ID: "compute-absent", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: plan.NodePoolID}
+		if _, err := provider.DiscoverComputeAllocation(context.Background(), allocation, plan); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) || calls != 1 {
+			t.Fatalf("compute absent err=%v calls=%d", err, calls)
+		}
+	})
+
+	t.Run("CBS exact tags and logical name absent", func(t *testing.T) {
+		provider := NewTencentProvider()
+		calls := 0
+		provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+			calls++
+			if request.Action != "discover_storage_volume" {
+				t.Fatalf("action=%q", request.Action)
+			}
+			return provisionerResponse{OK: true, Status: "absent", StorageState: "storage_not_started", MutationCount: 0}, nil
+		}
+		input := StorageVolumeInput{
+			ID: "storage-absent", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Zone: "ap-guangzhou-3", SizeGB: 10,
+			IdempotencyKey: "launch-alpha:storage", OperationID: "launch-alpha:storage",
+		}
+		persisted := StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Zone: input.Zone}
+		if _, err := provider.ReadCBSVolume(context.Background(), input, persisted); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) || calls != 1 {
+			t.Fatalf("CBS absent err=%v calls=%d", err, calls)
+		}
+	})
+
+	t.Run("static PV and PVC both absent", func(t *testing.T) {
+		provider := NewTencentProvider()
+		provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+			if len(args) == 6 && args[0] == "get" && args[3] == "--ignore-not-found" {
+				return mustJSON(map[string]any{"kind": "List", "items": []any{}}), nil
+			}
+			return nil, fmt.Errorf("unexpected kubectl args=%#v", args)
+		}
+		volume := StorageVolume{
+			ID: "storage-absent", OperationID: "launch-alpha:storage", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+			ProviderResourceID: "disk-absent", SizeGB: 10, Zone: "ap-guangzhou-3",
+		}
+		if _, err := provider.ReadStaticStorageBinding(context.Background(), volume); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+			t.Fatalf("static binding absent err=%v", err)
+		}
+	})
+}
+
+func TestTencentGatewaySecretReadbackDistinguishesAbsentConflictAndOwnerError(t *testing.T) {
+	input := GatewaySecretReadbackInput{
+		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 7,
+		SecretRef: gatewaySecretName("ws-alpha"), Fingerprint: "sha256:" + strings.Repeat("a", 64), KeyDigest: strings.Repeat("a", 64),
+	}
+	for _, tc := range []struct {
+		name     string
+		readback []byte
+		readErr  error
+		want     error
+	}{
+		{name: "absent", readback: nil, want: ErrWorkspaceLaunchResourceAbsent},
+		{name: "identity drift", readback: mustJSON(map[string]any{"kind": "Secret", "metadata": map[string]any{"name": input.SecretRef}}), want: ErrLaunchStageBindingConflict},
+		{name: "owner error", readErr: errors.New("kubectl unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := NewTencentProvider()
+			provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				if !slices.Equal(args, []string{"get", "secret/" + input.SecretRef, "--ignore-not-found", "-o", "json"}) {
+					t.Fatalf("args=%#v", args)
+				}
+				return tc.readback, tc.readErr
+			}
+			_, err := provider.ReadGatewaySecretByDigest(context.Background(), input)
+			switch {
+			case tc.want != nil && !errors.Is(err, tc.want):
+				t.Fatalf("err=%v want=%v", err, tc.want)
+			case tc.want == nil && tc.readErr != nil && !errors.Is(err, tc.readErr):
+				t.Fatalf("err=%v want=%v", err, tc.readErr)
+			}
+		})
 	}
 }
 

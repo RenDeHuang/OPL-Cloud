@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -47,6 +48,21 @@ func (p *TencentProvider) createWorkspaceRuntime(ctx context.Context, input Work
 	}
 	if mutation != nil && !mutation.Fresh {
 		runtime, readErr := p.readWorkspaceRuntime(ctx, input, runtimeID, serviceName, tags, gateway)
+		if errors.Is(readErr, ErrWorkspaceLaunchResourceAbsent) {
+			claimed, claimErr := mutation.claimReplay(ctx)
+			if claimErr != nil || !claimed {
+				return WorkspaceRuntime{}, firstNonNil(claimErr, ErrWorkspaceLaunchPending)
+			}
+			runtime, readErr = p.readWorkspaceRuntime(ctx, input, runtimeID, serviceName, tags, gateway)
+			if errors.Is(readErr, ErrWorkspaceLaunchResourceAbsent) {
+				if dispatchErr := mutation.markReplayDispatch(ctx); dispatchErr != nil {
+					return WorkspaceRuntime{}, dispatchErr
+				}
+				if _, readErr = p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifestWithGatewayBinding(input, input.WorkspaceID, credentialSeed, runtimeID, serviceName, compute, volume, tags, gateway), runtimeTarget); readErr == nil {
+					runtime, readErr = p.readWorkspaceRuntime(ctx, input, runtimeID, serviceName, tags, gateway)
+				}
+			}
+		}
 		if readErr != nil {
 			_ = mutation.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, readErr)
 			return WorkspaceRuntime{}, readErr
@@ -140,12 +156,12 @@ func (p *TencentProvider) workspaceRuntimeResourceNameForDestroy(ctx context.Con
 }
 
 func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
-	serviceName, pvcName, err := p.workspaceRuntimeResourcesStrict(ctx, workspaceID, false)
+	serviceName, pvcName, err := p.workspaceRuntimeResourcesStrict(ctx, workspaceID, true)
 	if err != nil {
 		return WorkspaceRuntime{WorkspaceID: workspaceID}, err
 	}
 	if serviceName == "" || pvcName == "" {
-		return WorkspaceRuntime{WorkspaceID: workspaceID}, workspaceRuntimeStatusError("readback_mismatch")
+		return WorkspaceRuntime{WorkspaceID: workspaceID}, ErrWorkspaceLaunchResourceAbsent
 	}
 	secretRef := serviceName + "-env"
 	raw, err := p.callKubectl(ctx, []string{"get", "deployment/" + serviceName, "pvc/" + pvcName, "service/" + serviceName, "ingress/opl-cloud", "endpoints/" + serviceName, "secret/" + secretRef, "--ignore-not-found", "-o", "json"}, nil, protectedresource.Target{})

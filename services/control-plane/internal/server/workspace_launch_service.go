@@ -45,6 +45,20 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) CanMutateStage(operation works
 	return operation.Stage != "key" || a.workspaceLaunchKeyMutationCredentialValid(operation)
 }
 
+func (a *controlPlaneWorkspaceLaunchStageAdapter) CanReplayStage(operation workspaceLaunchReconcileOperation) bool {
+	if a == nil || a.app == nil || a.service == nil {
+		return false
+	}
+	switch operation.Stage {
+	case "key":
+		return a.workspaceLaunchKeyMutationCredentialValid(operation)
+	case "debit", "ensure_compute_allocation", "storage", "attachment", "secret", "runtime", "activation", "receipt":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *controlPlaneWorkspaceLaunchStageAdapter) MutateStage(ctx context.Context, operation workspaceLaunchReconcileOperation, idempotencyKey string) error {
 	if a == nil || a.app == nil || a.service == nil || idempotencyKey == "" {
 		return errWorkspaceLaunchStageAdapterUnavailable
@@ -88,6 +102,7 @@ func (app *controlPlaneServer) resumeWorkspaceLaunch(ctx context.Context, servic
 	}
 	if existing, _, found := operation.resumeAuthorizationByID(authorization.AuthorizationID); found && authorization.AuthorizedAt == "" {
 		authorization.AuthorizedAt = existing.AuthorizedAt
+		authorization.ReadbacksAtAuthorization = existing.ReadbacksAtAuthorization
 	}
 	if authorization.AuthorizedAt == "" {
 		authorization.AuthorizedAt = time.Now().UTC().Format(time.RFC3339)

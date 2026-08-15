@@ -35,15 +35,21 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		launchVersion, validVersion := positiveIntegerField(input, "launchVersion")
 		authorizedStage, reason := stringValue(input["authorizedStage"]), stringValue(input["reason"])
 		mutationBudget, validBudget := input["mutationBudget"].(float64)
-		if operationID == "" || !exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "authorizedStage", "reason", "mutationBudget"}) ||
+		idempotentReplayBudget, replayProvided := input["idempotentReplayBudget"].(float64)
+		authoritativeReadBudget, readBudgetProvided := input["authoritativeReadBudget"].(float64)
+		exactFields := exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "authorizedStage", "reason", "mutationBudget"}) ||
+			exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "authorizedStage", "reason", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"})
+		if operationID == "" || !exactFields ||
 			!validVersion || launchVersion > int64(^uint(0)>>1) || authorizedStage == "" || authorizedStage != strings.TrimSpace(authorizedStage) ||
-			reason == "" || reason != strings.TrimSpace(reason) || !validBudget || mutationBudget != 0 && mutationBudget != 1 {
+			reason == "" || reason != strings.TrimSpace(reason) || !validBudget || mutationBudget != 0 && mutationBudget != 1 ||
+			replayProvided != readBudgetProvided || replayProvided && (idempotentReplayBudget != 0 && idempotentReplayBudget != 1 || authoritativeReadBudget != workspaceLaunchAuthoritativeReadBudget) {
 			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
 			return
 		}
 		operation, err := app.resumeWorkspaceLaunch(r.Context(), service, operationID, workspaceLaunchResumeAuthorization{
 			AuthorizationID: key, LaunchVersion: int(launchVersion), AuthorizedStage: authorizedStage,
 			AuthorizedBy: app.sessionUserID(r), Reason: reason, MutationBudget: int(mutationBudget),
+			IdempotentReplayBudget: int(idempotentReplayBudget), AuthoritativeReadBudget: int(authoritativeReadBudget),
 		})
 		if err != nil {
 			if errors.Is(err, errBillingReviewNotFound) {

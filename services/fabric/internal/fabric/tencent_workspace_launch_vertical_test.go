@@ -213,8 +213,10 @@ func (fixture *tencentRuntimeReadbackFixture) kubectl(_ context.Context, args []
 	}
 	fixture.getCalls++
 	resources := fixture.resources()
-	deployment, service, policy := resources["Deployment"], resources["Service"], resources["NetworkPolicy"]
+	deployment, service, policy, secret := resources["Deployment"], resources["Service"], resources["NetworkPolicy"], resources["Secret"]
 	switch {
+	case len(args) >= 2 && args[0] == "get" && args[1] == "deployment,service,networkpolicy,secret":
+		return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service, policy, secret}}), nil
 	case len(args) >= 2 && args[0] == "get" && args[1] == "deployment,service,networkpolicy":
 		return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service, policy}}), nil
 	case slices.Equal(args, []string{"get", "networkpolicy", "-o", "json"}):
@@ -449,7 +451,7 @@ func TestTencentWorkspaceLaunchCompletesTypedFiveStageChainWithGETOnlyReplay(t *
 			}
 		case len(args) > 2 && args[0] == "get" && strings.HasPrefix(args[1], "pv/") && strings.HasPrefix(args[2], "pvc/"):
 			return tencentStorageBindingReadback(t, staticManifest, false), nil
-		case len(args) == 4 && args[0] == "get" && args[1] == "secret/"+gatewaySecretName(allocation.WorkspaceID):
+		case len(args) == 5 && args[0] == "get" && args[1] == "secret/"+gatewaySecretName(allocation.WorkspaceID) && args[2] == "--ignore-not-found":
 			var manifest map[string]any
 			if err := json.Unmarshal(gatewayManifest, &manifest); err != nil {
 				t.Fatal(err)

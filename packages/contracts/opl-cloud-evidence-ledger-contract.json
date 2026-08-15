@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "owner": "OPL Ledger",
   "purpose": "General execution, monthly billing, and current control-plane lifecycle evidence receipts.",
   "state": "current",
@@ -373,6 +373,16 @@
       "workspaceApiKeyId",
       "runtimeId"
     ],
+    "purchasedTerminalIdentity": {
+      "requestId": "launchOperationId",
+      "recordIdempotencyKey": "<launchOperationId>:purchase-receipt",
+      "workspaceId": "exact_launch_workspace_id",
+      "costResourceId": "exact_launch_workspace_id",
+      "executionResourceIds": "exact_compute_storage_attachment_secret_runtime_ids_from_the_same_launch",
+      "debit": "exact_sub2api_user_id_redeem_code_total_and_component_amounts",
+      "retry": "receipt_only_without_repeating_key_debit_fabric_or_activation",
+      "cardinality": "exactly_one_terminal_purchase_receipt_for_the_launch_operation"
+    },
     "customerProjectionForbiddenFields": [
       "computeReadback",
       "storageReadback",

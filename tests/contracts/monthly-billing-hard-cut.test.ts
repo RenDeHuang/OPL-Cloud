@@ -202,6 +202,19 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.ok(evidence.workspaceMonthlyBillingReceiptV1.rules.includes("expired receipts contain providerAction=none_expire_by_provider and describe no Fabric or Tencent mutation"));
 	assert.equal(billing.ledgerEvidencePolicy.workspaceCostRules.outerWorkspaceIdentity, "cost.resourceId_equals_receipt.workspaceId");
 	assert.ok(evidence.workspaceMonthlyBillingReceiptV1.rules.includes("cost.resourceId equals receipt workspaceId"));
+	assert.equal(billing.workspaceLaunchFulfillment.activationReadback.api, "Control Plane GetWorkspace(workspaceId) point read");
+	assert.match(billing.workspaceLaunchFulfillment.activationReadback.deletedFabricRoute, /returns 404/);
+	assert.equal(billing.workspaceLaunchFulfillment.ledgerFailureAfterActivation, "retry_receipt_only");
+	assert.deepEqual(billing.workspaceLaunchFulfillment.purchaseReceiptIdentity, {
+		requestId: "launchOperationId",
+		idempotencyKey: "<launchOperationId>:purchase-receipt",
+		workspaceId: "exact_launch_workspace_id",
+		debit: "exact_sub2api_user_redeem_code_and_total_usd_micros",
+		retry: "receipt_only_after_activation"
+	});
+	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.requestId, "launchOperationId");
+	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.recordIdempotencyKey, "<launchOperationId>:purchase-receipt");
+	assert.match(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.retry, /receipt_only/);
 	assert.deepEqual(billing.reconciliationPolicy.exceptions.resourceTypes, ["compute", "storage", "workspace"]);
 	assert.deepEqual(billing.reconciliationPolicy.workspaceRenewalAuthority, {
 		customerOperationCardinality: 1,

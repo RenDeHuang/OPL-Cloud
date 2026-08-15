@@ -155,7 +155,13 @@ func (p *LocalDockerProvider) ReadWorkspaceLaunchStage(ctx context.Context, requ
 			allocation = *state.Compute
 		}
 		readback, err := p.ReadComputeAllocation(ctx, allocation)
-		if err != nil || !isReadyResourceStatus(readback.Status) {
+		if err != nil && readback.Status == "external_deleted" {
+			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchResourceAbsent
+		}
+		if err != nil {
+			return WorkspaceLaunchProviderResult{}, err
+		}
+		if !isReadyResourceStatus(readback.Status) {
 			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchPending)
 		}
 		state.Compute = &readback
@@ -166,7 +172,13 @@ func (p *LocalDockerProvider) ReadWorkspaceLaunchStage(ctx context.Context, requ
 			volume = *state.Storage
 		}
 		readback, err := p.ReadStorageVolume(ctx, volume)
-		if err != nil || !isReadyResourceStatus(readback.Status) {
+		if err != nil && readback.Status == "external_deleted" {
+			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchResourceAbsent
+		}
+		if err != nil {
+			return WorkspaceLaunchProviderResult{}, err
+		}
+		if !isReadyResourceStatus(readback.Status) {
 			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchPending)
 		}
 		state.Storage = &readback
@@ -189,20 +201,30 @@ func (p *LocalDockerProvider) ReadWorkspaceLaunchStage(ctx context.Context, requ
 		resources.AttachmentID, resources.AttachmentBindingRef = readback.ID, binding.FabricOperationID
 	case "secret":
 		fingerprint := resources.GatewaySecretFingerprint
+		secretRef := gatewaySecretName(binding.WorkspaceID)
 		readback, err := p.ReadGatewaySecretByDigest(ctx, GatewaySecretReadbackInput{
 			AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, WorkspaceAPIKeyID: request.Current.GatewayKeyID,
-			SecretRef: gatewaySecretName(binding.WorkspaceID), Fingerprint: fingerprint, KeyDigest: strings.TrimPrefix(fingerprint, "sha256:"),
+			SecretRef: secretRef, Fingerprint: fingerprint, KeyDigest: strings.TrimPrefix(fingerprint, "sha256:"),
 		})
 		if err != nil {
-			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchPending
+			return WorkspaceLaunchProviderResult{}, err
 		}
 		state.Secret = &readback
 		resources.GatewaySecretRef, resources.GatewaySecretVersion = readback.SecretRef, readback.Version
 		resources.GatewaySecretFingerprint, resources.SecretBindingRef = readback.Fingerprint, binding.FabricOperationID
 	case "runtime":
 		readback, err := p.WorkspaceRuntimeStatus(ctx, binding.WorkspaceID)
-		if err != nil || !readback.Ready || readback.ID != localRuntimeID(binding.WorkspaceID) || readback.OperationID != binding.FabricOperationID || readback.ImageID != input.WorkspaceImageDigest {
-			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchPending)
+		if err != nil && readback.Status == "not_found" {
+			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchResourceAbsent
+		}
+		if err != nil {
+			return WorkspaceLaunchProviderResult{}, err
+		}
+		if readback.ID != localRuntimeID(binding.WorkspaceID) || readback.OperationID != binding.FabricOperationID || readback.ImageID != input.WorkspaceImageDigest {
+			return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
+		}
+		if !readback.Ready {
+			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchPending
 		}
 		secretState, secretErr := decodeLocalDockerWorkspaceLaunchState(request.Prior["secret"])
 		if secretErr != nil || secretState.Secret == nil {

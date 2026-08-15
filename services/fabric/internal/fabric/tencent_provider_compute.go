@@ -75,14 +75,33 @@ func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input Com
 			allocation = persisted.Allocation
 			_ = mutation.resource(&allocation)
 			readback, readErr := p.DiscoverComputeAllocation(ctx, allocation, prepared)
-			if readErr != nil {
+			if errors.Is(readErr, ErrWorkspaceLaunchResourceAbsent) {
+				claimed, claimErr := mutation.claimReplay(ctx)
+				if claimErr != nil || !claimed {
+					return allocation, firstNonNil(claimErr, ErrWorkspaceLaunchPending)
+				}
+				readback, readErr = p.DiscoverComputeAllocation(ctx, allocation, prepared)
+				if readErr == nil {
+					if completeErr := mutation.complete(ctx, readback.ProviderRequestID, readback, nil); completeErr != nil {
+						return readback, completeErr
+					}
+					return readback, nil
+				}
+				if !errors.Is(readErr, ErrWorkspaceLaunchResourceAbsent) {
+					_ = mutation.complete(ctx, readback.ProviderRequestID, readback, readErr)
+					return readback, readErr
+				}
+				if dispatchErr := mutation.markReplayDispatch(ctx); dispatchErr != nil {
+					return allocation, dispatchErr
+				}
+			} else if readErr != nil {
 				_ = mutation.complete(ctx, readback.ProviderRequestID, readback, readErr)
 				return readback, readErr
-			}
-			if completeErr := mutation.complete(ctx, readback.ProviderRequestID, readback, nil); completeErr != nil {
+			} else if completeErr := mutation.complete(ctx, readback.ProviderRequestID, readback, nil); completeErr != nil {
 				return readback, completeErr
+			} else {
+				return readback, nil
 			}
-			return readback, nil
 		}
 	}
 	response, err := p.provision(ctx, provisionerRequest{
@@ -145,6 +164,12 @@ func (p *TencentProvider) DiscoverComputeAllocation(ctx context.Context, allocat
 	})
 	if err != nil {
 		return allocation, err
+	}
+	if response.OK && response.Status == "absent" && response.MachinePresent != nil && !*response.MachinePresent &&
+		response.MutationCount == 0 && response.PoolID == prepared.PoolID && response.NodePoolID == prepared.NodePoolID &&
+		response.CurrentReplicas == prepared.BaselineReplicas && response.TargetReplicas == prepared.TargetReplicas &&
+		response.InstanceID == "" && response.NodeName == "" && response.PrivateIP == "" {
+		return allocation, ErrWorkspaceLaunchResourceAbsent
 	}
 	allocation.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, allocation.ProviderRequestID)
 	allocation.PoolID = prepared.PoolID

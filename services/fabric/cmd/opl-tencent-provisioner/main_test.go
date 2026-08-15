@@ -2759,6 +2759,28 @@ func TestReadComputeAllocationUsesPersistedPlanWithoutScaling(t *testing.T) {
 	}
 }
 
+func TestReadComputeAllocationReturnsAbsentOnlyForExactPersistedBaselineInventory(t *testing.T) {
+	baseline := int64(1)
+	tkeAPI := &fakeNativeTkeAPI{
+		nodePoolId: "np-basic", replicas: 1, machineReplicas: &baseline, maxReplicas: 20,
+		labelInstanceType: "SA5.MEDIUM4", instanceTypes: []string{"SA5.MEDIUM4"}, machineInstanceType: "SA5.MEDIUM4",
+	}
+	client := newFakeTencentSDKClient(tkeAPI)
+	response := client.ReadComputeAllocation(Request{
+		AccountId: "acct-alpha", PackageId: "basic",
+		Pool: ComputePoolInput{
+			Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", CPU: 2, MemoryGB: 4, NodePoolId: "np-basic", MaxReplicas: 20,
+			BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"node-basic-1"},
+		},
+		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+	}, nil)
+
+	if !response.Ok || response.Status != "absent" || response.MachinePresent == nil || *response.MachinePresent ||
+		response.CurrentReplicas != 1 || response.TargetReplicas != 2 || response.MutationCount != 0 || len(tkeAPI.scaleNodePoolRequests) != 0 {
+		t.Fatalf("exact baseline response=%#v scales=%#v", response, tkeAPI.scaleNodePoolRequests)
+	}
+}
+
 func TestReadComputeAllocationFailsClosedWithoutScaling(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -2766,12 +2788,13 @@ func TestReadComputeAllocationFailsClosedWithoutScaling(t *testing.T) {
 		wantCode  string
 	}{
 		{
-			name: "zero new candidate",
+			name: "baseline inventory drift",
 			configure: func(api *fakeNativeTkeAPI) {
-				machineReplicas := int64(1)
+				api.replicas = 1
+				machineReplicas := int64(0)
 				api.machineReplicas = &machineReplicas
 			},
-			wantCode: "compute_allocation_pending",
+			wantCode: "compute_allocation_baseline_inventory_conflict",
 		},
 		{
 			name: "multiple new candidates",

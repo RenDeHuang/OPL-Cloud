@@ -333,11 +333,16 @@ Control Plane cannot infer resource ownership from idempotency suffixes,
 unscoped operation listings, provider tags, or Machine/CVM/Node/CBS fields.
 
 Recovery only persists and consumes an immutable authorization for the original
-Launch version, stage, and remaining mutation budget. It cannot own a business
-stage, rewrite a resource identity, reset a budget, create a successor Launch,
-or call a provider. The exact public binding shape is admitted only with a real
-caller, source implementation in both owners, and focused tests; this
-architecture does not freeze a speculative universal JSON contract.
+Launch version and stage. Mutation, exact-idempotency replay, and typed
+continuation-read budgets are independent: replay never increments the stage's
+`Attempted` or `Max=1`, and read-budget exhaustion becomes
+`unknown/manual_review` without proving owner absence. Fabric adapters opt in
+only after exact owner readback and a durable same-operation child CAS claim,
+then repeat the owner read immediately before reusing the original key. Recovery
+cannot own a business stage, rewrite a resource identity, create a successor
+Launch, or call a provider directly. The exact public binding shape is admitted
+only with a real caller, source implementation in both owners, and focused
+tests; this architecture does not freeze a speculative universal JSON contract.
 
 ## Modularity And Simplification Boundary
 

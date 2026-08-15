@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "owner": "services/fabric",
   "purpose": "Bind one Control Plane Workspace launch stage to one explicit Fabric operation and its expected provider-neutral resource binding.",
   "state": "current",
@@ -278,6 +278,26 @@
       "expectedResourceBinding"
     ],
     "resultBinding": "exact_persisted_binding",
+    "typedStateReasonMatrix": {
+      "ready": ["none"],
+      "pending": ["provider_provisioning"],
+      "absent": ["no_stage_record", "started_no_resource", "failed_no_resource"],
+      "unknown": ["failed_no_resource_unproven", "resource_absence_status_conflict"]
+    },
+    "adapterReplayPolicy": {
+      "order": [
+        "owner_authoritative_read",
+        "durable_same_operation_child_replay_cas",
+        "second_owner_authoritative_read",
+        "exact_original_idempotency_transport_replay_only_if_still_absent"
+      ],
+      "ready": "converge_without_provider_mutation",
+      "pending": "typed_continuation_read_only",
+      "absent": "adapter_opt_in_requires_exact_resource_identity_and_idempotency_contract",
+      "unknownOrConflictOrError": "fail_closed_without_provider_mutation",
+      "attachment": "no_independent_provider_mutation_and_converges_from_exact_compute_and_storage_identity",
+      "childTransportLease": "one_logical_replay_authorization_bound_to_the_parent_fabric_operation_and_exact_child_idempotency_key; lease_renewal_serializes_crash_recovery_without_creating_a_new_budget"
+    },
     "forbiddenInference": [
       "idempotency_suffix",
       "unscoped_operation_list",
@@ -290,7 +310,7 @@
     "provider_profile_configuration_or_instance_selection",
     "package_size_or_image_choice",
     "gateway_credential_value",
-    "recovery_authorization_or_mutation_budget",
+    "control_plane_operator_recovery_authorization_or_mutation_or_read_budget",
     "customer_balance_or_settlement",
     "ledger_receipt_or_evidence_truth"
   ]

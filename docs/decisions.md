@@ -102,10 +102,15 @@ Runtime-authoritative readback/projection rather than a mutation stage.
 
 Recovery is not a second state machine or resource writer. It may persist one
 immutable Resume authorization for the original launch, bound to the launch ID,
-current version, current stage, remaining mutation budget, reviewer, time, and
-reason. Control Plane must persist it with compare-and-swap before the original
-Reconciler can continue. Recovery cannot supply or rewrite resource IDs, reset a
-budget, create a successor launch, or perform a Fabric/provider mutation.
+current version, current stage, independent mutation/idempotent-replay/read
+budgets, a server-bound readback baseline, reviewer, time, and reason. The
+read budget is finite operator authorization for typed owner continuation
+evidence, not an elapsed-time or polling inference; exhaustion is
+`unknown/manual_review`, never absence. Control Plane must persist it with
+compare-and-swap before the original Reconciler can continue. Legacy schema-v3
+rows missing these fields default to zero. Recovery cannot supply or rewrite
+resource IDs, reset `Attempted`, raise `Max`, create a successor launch, or
+perform a Fabric/provider mutation directly.
 
 The single Reconciler does not create a monolith. `services/control-plane` owns
 only the business cursor, attempt/lease/CAS state, account and settlement

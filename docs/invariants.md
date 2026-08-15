@@ -126,13 +126,21 @@ schemas, workflows, and focused tests.
   creates a second launch, debit, Key, resource, Runtime, or receipt.
 - External writes are reserved before execution. A reserved or unknown result
   is reconciled through authoritative readback and is never blindly reissued.
-- Each continuation stage has a bounded write budget. Exhausted or unknown
-  outcomes enter manual review and cannot reset their budget after restart.
+- Each stage keeps `Max=1`; recovery never resets `Attempted` or raises `Max`.
+  A separately persisted idempotent replay authorization may reuse only the
+  original stage key after fresh owner-authoritative `absent` evidence. A
+  separately persisted continuation-read budget may consume only typed owner
+  `pending` evidence. It is operator authorization, not a polling heuristic.
+  Exhaustion becomes `unknown/manual_review`; it never proves absence or permits
+  another mutation.
 - Recovery is an authorization path for the original Launch, not a second
   business state machine. It may only save and consume an immutable Resume
   authorization. The authorization binds the launch ID, current CAS version,
-  current stage, remaining mutation budget, reviewer, timestamp, and reason; it
-  is persisted by Control Plane CAS before the same Reconciler can continue.
+  current stage, independent mutation/replay/read budgets, the server-bound
+  readback baseline, reviewer, timestamp, and reason; it is persisted by Control
+  Plane CAS before the same Reconciler can continue. Legacy schema-v3 rows that
+  lack replay/read fields receive an explicit zero budget and no invented owner
+  fact.
 - Recovery owns no business stage, reducer, provider/resource identity, or
   Fabric/provider mutation. Console, workflow, review, and Ledger input cannot
   provide or rewrite a resource ID, reset a budget, create a successor Launch,
@@ -170,13 +178,14 @@ schemas, workflows, and focused tests.
   no Machine, CVM, Node, CBS, provider SDK, Kubernetes, providerData, or cost-tag
   implementation knowledge and cannot infer ownership from `:compute` suffixes,
   unscoped operation listings, or provider tags.
-- Owner-authoritative readback proving that the original provider
-  mutation ledger is absent or observed with complete confirmed-zero evidence may
-  authorize Fabric to create a replacement or successor resource only inside
-  the original Launch stage, immutable
-  operation binding, idempotency identity, and remaining mutation budget. It
-  creates no new Launch, debit, or budget. Missing, incomplete, positive, or
-  unknown evidence is never zero and cannot authorize another resource write.
+- Owner-authoritative readback proving that the exact original stage resource is
+  absent may authorize one logical transport replay only when that adapter owns
+  a deterministic identity and idempotency contract. Fabric first persists a
+  same-operation child CAS claim, reads the owner again, and only if the second
+  read is still `absent` reuses the original idempotency key. `ready` converges
+  without provider mutation; typed `pending` consumes only the authorized read
+  budget; conflict, error, and unknown fail closed. Recovery never creates a
+  replacement or successor resource and never increases a business attempt.
 - System resources designated by the deployed instance are protected from
   customer allocation, provider mutation, Kubernetes mutation, and cleanup.
   Their identifiers belong to deployment/instance authority, not this document.

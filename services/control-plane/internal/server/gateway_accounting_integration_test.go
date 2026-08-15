@@ -509,7 +509,9 @@ func (f *gatewayAccountingFabric) ReadWorkspaceLaunchStage(_ context.Context, in
 	defer f.mu.Unlock()
 	result, ok := f.stages[input.Binding.Stage]
 	if !ok {
-		return clients.WorkspaceLaunchStageResult{}, &clients.FabricHTTPError{StatusCode: http.StatusNotFound, Body: "absent"}
+		return clients.WorkspaceLaunchStageResult{
+			SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, State: "absent", Reason: "no_stage_record", Binding: input.Binding, Resources: input.Resources,
+		}, nil
 	}
 	return result, nil
 }

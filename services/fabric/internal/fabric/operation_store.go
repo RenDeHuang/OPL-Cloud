@@ -471,6 +471,65 @@ func validRuntimeReadbackConvergence(expected, next FabricOperation) bool {
 		next.StartedAt.Equal(expected.StartedAt)
 }
 
+func sameProviderMutationReplayEpochIdentity(left, right providerMutationReplayEpoch) bool {
+	return left.SchemaVersion == right.SchemaVersion && left.ReplayID == right.ReplayID &&
+		left.ParentFabricOperationID == right.ParentFabricOperationID && left.ChildOperationID == right.ChildOperationID &&
+		left.IdempotencyKey == right.IdempotencyKey
+}
+
+func validProviderMutationReplayEpochTransition(expected, next FabricOperation) bool {
+	if !sameRuntimeReadbackIdentity(expected, next) || expected.Status != next.Status || expected.Status != "started" && expected.Status != "failed" {
+		return false
+	}
+	nextEpoch, nextOK := decodeProviderMutationReplayEpoch(next)
+	if !nextOK {
+		return false
+	}
+	_, expectedHasEpoch := expected.RedactedProviderPayload[providerMutationReplayEpochPayloadKey]
+	if !expectedHasEpoch {
+		return nextEpoch.State == "leased" && nextEpoch.LeaseGeneration == 1
+	}
+	expectedEpoch, expectedOK := decodeProviderMutationReplayEpoch(expected)
+	if !expectedOK || !sameProviderMutationReplayEpochIdentity(expectedEpoch, nextEpoch) {
+		return false
+	}
+	switch {
+	case (expectedEpoch.State == "leased" || expectedEpoch.State == "awaiting_readback") && nextEpoch.State == "leased":
+		return nextEpoch.LeaseGeneration == expectedEpoch.LeaseGeneration+1 && nextEpoch.LeaseExpiresAt != expectedEpoch.LeaseExpiresAt
+	case expectedEpoch.State == "leased" && nextEpoch.State == "awaiting_readback":
+		return nextEpoch.LeaseGeneration == expectedEpoch.LeaseGeneration && nextEpoch.LeaseExpiresAt == expectedEpoch.LeaseExpiresAt
+	case expectedEpoch.State == "leased" && nextEpoch.State == "blocked":
+		return nextEpoch.LeaseGeneration == expectedEpoch.LeaseGeneration && nextEpoch.LeaseExpiresAt == expectedEpoch.LeaseExpiresAt
+	default:
+		return false
+	}
+}
+
+func sameProviderMutationTerminalIdentity(expected, next FabricOperation) bool {
+	return next.ID == expected.ID && next.OperationID == expected.OperationID && next.CallerService == expected.CallerService &&
+		next.Action == expected.Action && next.ResourceKind == expected.ResourceKind && next.ResourceID == expected.ResourceID &&
+		next.AccountID == expected.AccountID && next.WorkspaceID == expected.WorkspaceID && next.Provider == expected.Provider &&
+		next.IdempotencyKey == expected.IdempotencyKey && next.RequestHash == expected.RequestHash && next.StartedAt.Equal(expected.StartedAt)
+}
+
+func validProviderMutationReplayConvergence(expected, next FabricOperation) bool {
+	if expected.ID == "" || expected.Status != "started" && expected.Status != "failed" || next.Status != "succeeded" || next.FinishedAt.IsZero() ||
+		!sameProviderMutationTerminalIdentity(expected, next) {
+		return false
+	}
+	expectedEpoch, expectedOK := decodeProviderMutationReplayEpoch(expected)
+	nextEpoch, nextOK := decodeProviderMutationReplayEpoch(next)
+	if !expectedOK || !nextOK || !sameProviderMutationReplayEpochIdentity(expectedEpoch, nextEpoch) ||
+		expectedEpoch.State != "leased" && expectedEpoch.State != "awaiting_readback" || nextEpoch.State != "succeeded" ||
+		nextEpoch.LeaseGeneration != expectedEpoch.LeaseGeneration || nextEpoch.LeaseExpiresAt != expectedEpoch.LeaseExpiresAt ||
+		nextEpoch.DispatchStartedAt != expectedEpoch.DispatchStartedAt {
+		return false
+	}
+	expectedBinding, expectedBindingOK := decodeProviderMutationBinding(expected)
+	nextBinding, nextBindingOK := decodeProviderMutationBinding(next)
+	return expectedBindingOK && nextBindingOK && expectedBinding == nextBinding
+}
+
 func (s *MemoryOperationStore) SaveRuntime(_ context.Context, operation FabricOperation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -508,6 +567,52 @@ func (s *MemoryOperationStore) ConvergeRuntimeReadback(_ context.Context, expect
 			return payloadErr
 		}
 		if current.ID == expected.ID && sameRuntimeReadbackIdentity(current, expected) && currentPayload == expectedPayload {
+			s.operation[index] = next
+			return nil
+		}
+	}
+	return ErrRuntimeOperationNotCurrent
+}
+
+func (s *MemoryOperationStore) SaveProviderMutationReplayEpoch(_ context.Context, expected, next FabricOperation) error {
+	if !validProviderMutationReplayEpochTransition(expected, next) {
+		return ErrRuntimeOperationNotCurrent
+	}
+	expectedPayload, err := operationPayloadJSON(expected)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.operation {
+		currentPayload, payloadErr := operationPayloadJSON(s.operation[index])
+		if payloadErr != nil {
+			return payloadErr
+		}
+		if sameRuntimeReadbackIdentity(s.operation[index], expected) && currentPayload == expectedPayload {
+			s.operation[index] = next
+			return nil
+		}
+	}
+	return ErrRuntimeOperationNotCurrent
+}
+
+func (s *MemoryOperationStore) ConvergeProviderMutationReplay(_ context.Context, expected, next FabricOperation) error {
+	if !validProviderMutationReplayConvergence(expected, next) {
+		return ErrRuntimeOperationNotCurrent
+	}
+	expectedPayload, err := operationPayloadJSON(expected)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.operation {
+		currentPayload, payloadErr := operationPayloadJSON(s.operation[index])
+		if payloadErr != nil {
+			return payloadErr
+		}
+		if sameRuntimeReadbackIdentity(s.operation[index], expected) && currentPayload == expectedPayload {
 			s.operation[index] = next
 			return nil
 		}
@@ -1473,6 +1578,78 @@ func (s *PostgresOperationStore) ConvergeRuntimeReadback(ctx context.Context, ex
 		expected.Action, expected.ResourceKind, expected.ResourceID, expected.AccountID, expected.WorkspaceID,
 		expected.Provider, expected.ProviderRequestID, expected.IdempotencyKey, expected.RequestHash, expected.Status,
 		expected.StartedAt, expectedPayload)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return ErrRuntimeOperationNotCurrent
+	}
+	return nil
+}
+
+func (s *PostgresOperationStore) SaveProviderMutationReplayEpoch(ctx context.Context, expected, next FabricOperation) error {
+	if !validProviderMutationReplayEpochTransition(expected, next) {
+		return ErrRuntimeOperationNotCurrent
+	}
+	expectedPayload, err := operationPayloadJSON(expected)
+	if err != nil {
+		return err
+	}
+	nextPayload, err := operationPayloadJSON(next)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE fabric_operations SET redacted_provider_payload = $1::jsonb
+		WHERE id = $2 AND operation_id = $3 AND caller_service = $4 AND action = $5 AND
+			resource_kind = $6 AND resource_id = $7 AND account_id = $8 AND workspace_id = $9 AND
+			provider = $10 AND provider_request_id = $11 AND idempotency_key = $12 AND request_hash = $13 AND
+			status = $14 AND started_at = $15 AND redacted_provider_payload::jsonb = $16::jsonb`,
+		nextPayload, expected.ID, expected.OperationID, expected.CallerService, expected.Action,
+		expected.ResourceKind, expected.ResourceID, expected.AccountID, expected.WorkspaceID,
+		expected.Provider, expected.ProviderRequestID, expected.IdempotencyKey, expected.RequestHash,
+		expected.Status, expected.StartedAt, expectedPayload)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return ErrRuntimeOperationNotCurrent
+	}
+	return nil
+}
+
+func (s *PostgresOperationStore) ConvergeProviderMutationReplay(ctx context.Context, expected, next FabricOperation) error {
+	if !validProviderMutationReplayConvergence(expected, next) {
+		return ErrRuntimeOperationNotCurrent
+	}
+	expectedPayload, err := operationPayloadJSON(expected)
+	if err != nil {
+		return err
+	}
+	nextPayload, err := operationPayloadJSON(next)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE fabric_operations
+		SET provider_request_id = $1, redacted_provider_payload = $2::jsonb, status = $3,
+			error_code = $4, retryable = false, finished_at = $5
+		WHERE id = $6 AND operation_id = $7 AND caller_service = $8 AND action = $9 AND
+			resource_kind = $10 AND resource_id = $11 AND account_id = $12 AND workspace_id = $13 AND
+			provider = $14 AND provider_request_id = $15 AND idempotency_key = $16 AND request_hash = $17 AND
+			status = $18 AND started_at = $19 AND redacted_provider_payload::jsonb = $20::jsonb`,
+		next.ProviderRequestID, nextPayload, next.Status, next.ErrorCode, next.FinishedAt,
+		expected.ID, expected.OperationID, expected.CallerService, expected.Action, expected.ResourceKind,
+		expected.ResourceID, expected.AccountID, expected.WorkspaceID, expected.Provider, expected.ProviderRequestID,
+		expected.IdempotencyKey, expected.RequestHash, expected.Status, expected.StartedAt, expectedPayload)
 	if err != nil {
 		return err
 	}

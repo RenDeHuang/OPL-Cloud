@@ -66,20 +66,29 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
     statusField: "status",
     durableResultControlFields: [
       "schemaVersion", "version", "stage", "attempts", "observations", "consumedResumeAuthorizations",
-      "resumeAuthorization", "resumeAuthorizationConsumedAt"
+      "resumeAuthorization", "resumeAuthorizationConsumedAt", "idempotentReplayClaims"
     ],
     forbiddenResultFields: ["phase", "currentDecision"],
     cas: "exact_prior_result_and_launch_identity_single_winner"
   });
-  assert.deepEqual(contract.stageDecision.attemptPersistence.goFields, ["Attempted", "Max", "IdempotencyKey"]);
+  assert.deepEqual(contract.stageDecision.attemptPersistence.goFields, [
+    "Attempted", "Confirmed", "Unknown", "Max", "IdempotencyKey", "PendingReadbacks", "MaxPendingReadbacks"
+  ]);
   assert.equal(contract.stageDecision.attemptPersistence.maxPerStage, 1);
   assert.deepEqual(contract.stageDecision.attemptPersistence.forbiddenLegacyFields, ["ChargeAttempted"]);
   assert.equal(contract.stageDecision.fabricOperationBinding, "opl-cloud-fabric-launch-binding-contract.json");
   assert.equal(contract.recovery.route, "POST /api/operator/workspace-launches/{operationId}/resume");
-  assert.deepEqual(contract.recovery.requestFields, ["launchVersion", "authorizedStage", "reason", "mutationBudget"]);
+  assert.deepEqual(contract.recovery.requestFields, [
+    "launchVersion", "authorizedStage", "reason", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"
+  ]);
   assert.equal(contract.recovery.authorizationId, "Idempotency-Key request header");
   assert.equal(contract.recovery.authorizedBy, "control_plane_operator_session_user_id");
   assert.equal(contract.recovery.authorizedAt, "control_plane_server_time_or_exact_authorization_replay");
+  assert.equal(contract.recovery.idempotentReplayBudget, 1);
+  assert.equal(contract.recovery.authoritativeReadBudget, 3);
+  assert.match(contract.recovery.readBudgetSemantics, /operator_authorization/);
+  assert.equal(contract.recovery.budgetExhaustion, "unknown_manual_review_never_absent_and_never_automatic_replay");
+  assert.match(contract.recovery.legacyV3MissingReplayAndReadFields, /zero_budget/);
 });
 
 test("Fabric uses explicit immutable launch-stage binding and typed routes", async () => {

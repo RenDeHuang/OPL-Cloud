@@ -31,7 +31,7 @@ test("Control Plane owns the launch identity and recovery authorization", async 
     statusField: "status",
     durableResultControlFields: [
       "schemaVersion", "version", "stage", "attempts", "observations", "consumedResumeAuthorizations",
-      "resumeAuthorization", "resumeAuthorizationConsumedAt"
+      "resumeAuthorization", "resumeAuthorizationConsumedAt", "idempotentReplayClaims"
     ],
     forbiddenResultFields: ["phase", "currentDecision"],
     cas: "exact_prior_result_and_launch_identity_single_winner"
@@ -43,9 +43,10 @@ test("Control Plane owns the launch identity and recovery authorization", async 
       "services/control-plane/internal/server/workspace_launch_fabric_stages.go",
       "services/control-plane/internal/server/workspace_launch_activation.go"
     ],
-    goFields: ["Attempted", "Max", "IdempotencyKey"],
-    jsonFields: ["attempted", "max", "idempotencyKey"],
+    goFields: ["Attempted", "Confirmed", "Unknown", "Max", "IdempotencyKey", "PendingReadbacks", "MaxPendingReadbacks"],
+    jsonFields: ["attempted", "confirmed", "unknown", "max", "idempotencyKey", "pendingReadbacks", "maxPendingReadbacks"],
     maxPerStage: 1,
+    idempotentReplayEffectOnAttempt: "does_not_increment_attempted_or_max_and_reuses_the_exact_persisted_idempotency_key",
     reservationOrder: [
       "increment_attempted_and_set_idempotency_key", "persist_exact_result_cas", "invoke_stage_mutation"
     ],
@@ -55,15 +56,24 @@ test("Control Plane owns the launch identity and recovery authorization", async 
     authority: "services/control-plane",
     operation: "resume_original_workspace_launch_stage",
     route: "POST /api/operator/workspace-launches/{operationId}/resume",
-    requestFields: ["launchVersion", "authorizedStage", "reason", "mutationBudget"],
+    requestFields: ["launchVersion", "authorizedStage", "reason", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"],
     authorizationFields: [
-      "authorizationId", "launchVersion", "authorizedStage", "authorizedBy", "authorizedAt", "reason", "mutationBudget"
+      "authorizationId", "launchVersion", "authorizedStage", "authorizedBy", "authorizedAt", "reason", "mutationBudget",
+      "idempotentReplayBudget", "authoritativeReadBudget", "readbacksAtAuthorization"
     ],
     authorizationId: "Idempotency-Key request header",
     authorizedBy: "control_plane_operator_session_user_id",
     authorizedAt: "control_plane_server_time_or_exact_authorization_replay",
-    admission: "manual_review_with_exact_launch_version_current_stage_and_remaining_mutation_budget",
+    admission: "manual_review_with_exact_launch_version_current_stage_and_independent_mutation_replay_and_read_budgets",
     immutability: "same_authorizationId_requires_exact_authorization",
+    idempotentReplayBudget: 1,
+    authoritativeReadBudget: 3,
+    readBudgetSemantics: "persisted_operator_authorization_for_owner_typed_continuation_reads_not_a_background_poll_or_provider_failure_heuristic",
+    readbacksAtAuthorization: "server_bound_persisted_baseline_never_supplied_by_the_operator",
+    pendingContinuation: "only_owner_typed_pending_evidence_may_consume_the_authorized_read_budget",
+    budgetExhaustion: "unknown_manual_review_never_absent_and_never_automatic_replay",
+    legacyV3MissingReplayAndReadFields: "explicit_zero_budget_compatibility_that_creates_no_external_fact_read_or_mutation",
+    replayCAS: "persist_authorization_then_single_winner_claim_for_the_same_stage_and_exact_original_idempotency_key",
     secondLaunch: "forbidden"
   });
 });
@@ -136,6 +146,17 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
   assert.deepEqual(contract.readback.forbiddenInference, [
     "idempotency_suffix", "unscoped_operation_list", "provider_tag", "provider_resource_name"
   ]);
+  assert.deepEqual(contract.readback.typedStateReasonMatrix, {
+    ready: ["none"],
+    pending: ["provider_provisioning"],
+    absent: ["no_stage_record", "started_no_resource", "failed_no_resource"],
+    unknown: ["failed_no_resource_unproven", "resource_absence_status_conflict"]
+  });
+  assert.deepEqual(contract.readback.adapterReplayPolicy.order, [
+    "owner_authoritative_read", "durable_same_operation_child_replay_cas", "second_owner_authoritative_read",
+    "exact_original_idempotency_transport_replay_only_if_still_absent"
+  ]);
+  assert.match(contract.readback.adapterReplayPolicy.childTransportLease, /one_logical_replay_authorization/);
 
   const expectedStages = [
     ["ensure_compute_allocation", "ensure_compute_allocation"],

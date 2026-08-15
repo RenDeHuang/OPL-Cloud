@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "owner": "services/control-plane",
   "purpose": "Own the Workspace launch business operation, persisted stage decision, and recovery authorization without owning provider resources, spendable balance, or evidence receipts.",
   "state": "current",
@@ -53,7 +53,8 @@
         "observations",
         "consumedResumeAuthorizations",
         "resumeAuthorization",
-        "resumeAuthorizationConsumedAt"
+        "resumeAuthorizationConsumedAt",
+        "idempotentReplayClaims"
       ],
       "forbiddenResultFields": [
         "phase",
@@ -70,15 +71,24 @@
       ],
       "goFields": [
         "Attempted",
+        "Confirmed",
+        "Unknown",
         "Max",
-        "IdempotencyKey"
+        "IdempotencyKey",
+        "PendingReadbacks",
+        "MaxPendingReadbacks"
       ],
       "jsonFields": [
         "attempted",
+        "confirmed",
+        "unknown",
         "max",
-        "idempotencyKey"
+        "idempotencyKey",
+        "pendingReadbacks",
+        "maxPendingReadbacks"
       ],
       "maxPerStage": 1,
+      "idempotentReplayEffectOnAttempt": "does_not_increment_attempted_or_max_and_reuses_the_exact_persisted_idempotency_key",
       "reservationOrder": [
         "increment_attempted_and_set_idempotency_key",
         "persist_exact_result_cas",
@@ -98,7 +108,9 @@
       "launchVersion",
       "authorizedStage",
       "reason",
-      "mutationBudget"
+      "mutationBudget",
+      "idempotentReplayBudget",
+      "authoritativeReadBudget"
     ],
     "authorizationFields": [
       "authorizationId",
@@ -107,13 +119,24 @@
       "authorizedBy",
       "authorizedAt",
       "reason",
-      "mutationBudget"
+      "mutationBudget",
+      "idempotentReplayBudget",
+      "authoritativeReadBudget",
+      "readbacksAtAuthorization"
     ],
     "authorizationId": "Idempotency-Key request header",
     "authorizedBy": "control_plane_operator_session_user_id",
     "authorizedAt": "control_plane_server_time_or_exact_authorization_replay",
-    "admission": "manual_review_with_exact_launch_version_current_stage_and_remaining_mutation_budget",
+    "admission": "manual_review_with_exact_launch_version_current_stage_and_independent_mutation_replay_and_read_budgets",
     "immutability": "same_authorizationId_requires_exact_authorization",
+    "idempotentReplayBudget": 1,
+    "authoritativeReadBudget": 3,
+    "readBudgetSemantics": "persisted_operator_authorization_for_owner_typed_continuation_reads_not_a_background_poll_or_provider_failure_heuristic",
+    "readbacksAtAuthorization": "server_bound_persisted_baseline_never_supplied_by_the_operator",
+    "pendingContinuation": "only_owner_typed_pending_evidence_may_consume_the_authorized_read_budget",
+    "budgetExhaustion": "unknown_manual_review_never_absent_and_never_automatic_replay",
+    "legacyV3MissingReplayAndReadFields": "explicit_zero_budget_compatibility_that_creates_no_external_fact_read_or_mutation",
+    "replayCAS": "persist_authorization_then_single_winner_claim_for_the_same_stage_and_exact_original_idempotency_key",
     "secondLaunch": "forbidden"
   },
   "notOwned": [

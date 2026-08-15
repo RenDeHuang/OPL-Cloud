@@ -117,6 +117,8 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 	launchBinding := operation.RedactedProviderPayload[launchStageBindingPayloadKey]
 	providerBinding := operation.RedactedProviderPayload[providerMutationBindingPayloadKey]
 	providerState := operation.RedactedProviderPayload[providerMutationStatePayloadKey]
+	providerReplayEpoch := operation.RedactedProviderPayload[providerMutationReplayEpochPayloadKey]
+	providerChildResourceID := operation.ResourceID
 	switch value := resource.(type) {
 	case ComputeAllocation:
 		operation.ResourceID = firstNonEmpty(value.ID, operation.ResourceID)
@@ -172,10 +174,14 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 		operation.RedactedProviderPayload[launchStageBindingPayloadKey] = launchBinding
 	}
 	if providerBinding != nil {
+		operation.ResourceID = providerChildResourceID
 		operation.RedactedProviderPayload[providerMutationBindingPayloadKey] = providerBinding
 	}
 	if providerState != nil {
 		operation.RedactedProviderPayload[providerMutationStatePayloadKey] = providerState
+	}
+	if providerReplayEpoch != nil {
+		operation.RedactedProviderPayload[providerMutationReplayEpochPayloadKey] = providerReplayEpoch
 	}
 }
 
