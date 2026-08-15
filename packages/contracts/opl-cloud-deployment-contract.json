@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 49,
+  "schemaVersion": 48,
   "owner": "OPL Fabric",
   "purpose": "Migration guard for existing medopl-oriented TKE workflows, immutable images, diagnostics, and production safety.",
   "state": "migration",
@@ -795,28 +795,6 @@
     "operationMode": "acceptance_b_fresh_order",
     "execution": "github_actions_production_environment_authoritative_readback_workflow",
     "productionNetwork": "github_actions_production_environment_authorized_runner_only",
-    "productionParameterMatrix": {
-      "reconcile": {
-        "operation_mode": "acceptance_b_account_reconcile",
-        "approval_id": "",
-        "resume_run_id": "",
-        "confirm_account_provision": false,
-        "confirm_wallet_recharge": false,
-        "confirm_workspace_purchase": false,
-        "confirm_single_model_request": false,
-        "confirm_recovery_plan_execute": false
-      },
-      "freshOrder": {
-        "operation_mode": "acceptance_b_fresh_order",
-        "approval_id": "exact_installed_approval_id",
-        "resume_run_id": "",
-        "confirm_account_provision": false,
-        "confirm_wallet_recharge": false,
-        "confirm_workspace_purchase": true,
-        "confirm_single_model_request": false,
-        "confirm_recovery_plan_execute": false
-      }
-    },
     "workflowIntegration": {
       "file": ".github/workflows/production-basic-customer-operation.yml",
       "job": "acceptance-b-fresh-order",
@@ -842,7 +820,7 @@
       "approvalIdHeader": "x-opl-acceptance-b-approval-id",
       "capabilitySource": "current_opl-cloud-internal-service_secret_runner_memory_only",
       "approvalSource": "dedicated_opl-cloud-acceptance-b_secret_control_plane_only",
-      "prePostReadback": "approval_bound_reconcile_required_immediately_before_single_workspace_post",
+      "prePostReadback": "get_exact_operation_before_single_post",
       "unknownPost": "get_exact_operation_only_without_second_post",
       "mismatch": "fail_closed_before_preflight_debit_or_provider_mutation"
     },
@@ -863,10 +841,6 @@
     },
     "readback": {
       "baseline": "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
-      "workspaceDebitAuthority": "exact_approval_bound_sub2api_history_code",
-      "terminalDebitReceiptBinding": "same_account_operation_workspace_code_and_quote_amount",
-      "generalUsage": "allowed_and_non_blocking",
-      "walletDelta": "not_debit_identity",
       "launchPostUnknown": "authoritative_get_before_one_post_then_authoritative_get_same_operation_id_without_retry",
       "timeoutContinuation": {
         "operationMode": "acceptance_b_fresh_readback",
@@ -966,13 +940,9 @@
     },
     "readback": {
       "accountIdentity": "authoritative_console_graph_and_full_page_exact_sub2api_email_match",
-      "baseline": "approved_workspace_operation_workspace_key_receipt_and_debit_footprint_only",
-      "successStatus": "prepared_only",
-      "workspaceDebitAuthority": "exact_approval_bound_sub2api_history_code",
-      "generalUsage": "allowed_and_non_blocking",
-      "walletDelta": "not_debit_identity",
+      "baseline": "zero_workspace_launch_workspace_key_and_workspace_receipt",
       "unknownPost": "authority_unknown_is_preserved_without_retry_or_mutation",
-      "redactedArtifactFields": ["customerIdentitySha256", "accountProvisionIdentitySha256", "walletAdjustmentIdentitySha256", "approvalIdentitySha256", "workspaceDebitIdentitySha256", "status", "localGraph", "remoteIdentity", "customerLogin", "wallet", "walletUsdMicros", "walletAdjustment", "approvalState", "workspaceLaunchState", "workspaceState", "workspaceKeyState", "workspaceReceiptState", "workspaceDebitState", "workspaceCount", "launchCount", "keyCount", "receiptCount", "writeCounts", "runnerDirectMutationCounts", "failureStage", "readbackError", "errorCode"],
+      "redactedArtifactFields": ["customerIdentitySha256", "accountProvisionIdentitySha256", "walletAdjustmentIdentitySha256", "status", "localGraph", "remoteIdentity", "customerLogin", "wallet", "walletUsdMicros", "walletAdjustment", "workspaceCount", "launchCount", "keyCount", "receiptCount", "writeCounts", "runnerDirectMutationCounts", "failureStage", "readbackError", "errorCode"],
       "forbiddenArtifactFields": ["email", "password", "accountId", "consoleUserId", "sub2apiUserId", "operationId", "workspaceId", "secret", "token", "cookie", "csrf"]
     }
   },
