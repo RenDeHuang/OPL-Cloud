@@ -83,6 +83,8 @@ jobs:
             --label "org.opencontainers.image.source=https://github.com/$PRODUCT_REPOSITORY" \
             --label "org.opencontainers.image.revision=$PRODUCT_SHA" \
             --label "org.opencontainers.image.version=$RELEASE_TAG" \
+            --cache-from "type=gha,scope=opl-cloud-release" \
+            --cache-to "type=gha,mode=max,scope=opl-cloud-release" \
             --output "type=oci,dest=artifacts/image,tar=false,name=$IMAGE_REPOSITORY:$RELEASE_TAG" \
             .
           manifest="$(docker buildx imagetools inspect "oci-layout://$PWD/artifacts/image:$RELEASE_TAG" --format '{{json .Manifest}}')"

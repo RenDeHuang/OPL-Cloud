@@ -253,6 +253,20 @@ along with clean-host installation, the complete live Console
 create/readback/open/delete path, and real external Sub2API
 authentication/balance/usage evidence.
 
+The seven successful `v0.1.1` through `v0.1.7` workflow runs spent 1,361 to
+1,963 seconds in the multi-architecture image build while their publish jobs
+took 44 to 103 seconds. The current source removes target-architecture
+emulation from the compute-heavy Node and Go build stages, cross-compiles the
+four Go binaries for the selected image platform, reuses one Fabric dependency
+build for both Fabric executables, and persists reusable BuildKit layers in the
+GitHub Actions cache. The immutable OCI artifact, protected publish job,
+checksums, attestations, and public readback remain unchanged. An uncached local
+`docker-container` Buildx run on an Arm host completed the full `linux/amd64` +
+`linux/arm64` OCI layout in 66 seconds and emitted both target manifests plus
+their attestations. This proves the optimized build path locally, not GitHub
+runner performance; no successor Release is admitted merely to benchmark it,
+so a hosted post-change Release duration is not yet available.
+
 GitHub security controls were read back on 2026-08-13 for the post-release
 canonical baseline before this documentation merge. Private vulnerability
 reporting, Dependabot alerts and security updates, secret scanning and push
