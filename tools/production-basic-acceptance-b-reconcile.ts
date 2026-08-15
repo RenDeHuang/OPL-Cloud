@@ -30,7 +30,7 @@ const FAILURE_STAGES = Object.freeze([
   "artifact_schema"
 ]);
 const FAILURE_STAGE_SET = new Set(FAILURE_STAGES);
-export const SUCCESS_STATUSES = new Set(["prepared", "safe_to_retry_absent"]);
+export const SUCCESS_STATUSES = new Set(["prepared"]);
 const SAFE_READBACK_ERROR = /^(?:none|[a-z0-9_]{1,80})$/;
 const SAFE_ERROR_CODE = /^(?:none|acceptance_b_account_reconcile_[a-z0-9_]{1,80})$/;
 const ZERO_WRITE_COUNTS = Object.freeze({
@@ -87,7 +87,9 @@ function inferFailureStage(readbackError) {
     workspace_authority_unavailable: "baseline",
     launch_authority_unavailable: "baseline",
     key_authority_unavailable: "baseline",
-    ledger_authority_unavailable: "baseline"
+    ledger_authority_unavailable: "baseline",
+    approval_authority_invalid: "artifact_schema",
+    workspace_debit_authority_unavailable: "baseline"
   };
   return stageByError[String(readbackError || "")] || "artifact_schema";
 }
@@ -123,7 +125,7 @@ function reconcileFailure(message, failureStage, { readbackError = "none", respo
 
 function redactedRouteData(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("acceptance_b_account_reconcile_readback_invalid");
-  const forbidden = /(?:email|accountid|userid|operationid|workspaceid|resourceid|password|secret|token|cookie|csrf|providerrequestid)/i;
+  const forbidden = /(?:email|accountid|userid|operationid|workspaceid|resourceid|redeemcode|chargereference|idempotencykey|password|secret|token|cookie|csrf|providerrequestid)/i;
   const walk = (nested) => {
     if (!nested || typeof nested !== "object") return;
     for (const [key, child] of Object.entries(nested)) {
@@ -138,8 +140,10 @@ function redactedRouteData(value) {
 export function validateProductionBasicAcceptanceBReconcileReadback(value, { mergedSha } = {}) {
   const keys = [
     "schemaVersion", "operationMode", "status", "mergedMainSha", "customerIdentitySha256",
-    "accountProvisionIdentitySha256", "walletAdjustmentIdentitySha256", "localGraph", "remoteIdentity",
-    "customerLogin", "wallet", "walletUsdMicros", "walletAdjustment", "workspaceCount", "launchCount", "keyCount",
+    "accountProvisionIdentitySha256", "walletAdjustmentIdentitySha256", "approvalIdentitySha256",
+    "workspaceDebitIdentitySha256", "localGraph", "remoteIdentity", "customerLogin", "wallet", "walletUsdMicros",
+    "walletAdjustment", "approvalState", "workspaceLaunchState", "workspaceState", "workspaceKeyState",
+    "workspaceReceiptState", "workspaceDebitState", "workspaceCount", "launchCount", "keyCount",
     "receiptCount", "writeCounts", "runnerDirectMutationCounts", "failureStage", "readbackError", "errorCode"
   ];
   redactedRouteData(value);
@@ -148,12 +152,19 @@ export function validateProductionBasicAcceptanceBReconcileReadback(value, { mer
     value.schemaVersion !== 1 || value.operationMode !== PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_MODE ||
     !validStatus(value.status) || value.mergedMainSha !== mergedSha || !/^[0-9a-f]{40}$/.test(value.mergedMainSha) ||
     !validDigest(value.customerIdentitySha256) || !validDigest(value.accountProvisionIdentitySha256) ||
-    !validDigest(value.walletAdjustmentIdentitySha256) ||
+    !validDigest(value.walletAdjustmentIdentitySha256) || !validDigest(value.approvalIdentitySha256) ||
+    !validDigest(value.workspaceDebitIdentitySha256) ||
     !["absent", "partial", "complete", "unknown"].includes(value.localGraph) ||
     !["absent", "active", "disabled", "ambiguous", "unknown"].includes(value.remoteIdentity) ||
     !["not_attempted", "active", "failed", "unknown"].includes(value.customerLogin) ||
     !["available", "absent", "unknown"].includes(value.wallet) ||
     !["succeeded", "absent", "manual_review", "unknown"].includes(value.walletAdjustment) ||
+    !["bound", "unknown"].includes(value.approvalState) ||
+    !["absent", "present", "conflict", "unknown"].includes(value.workspaceLaunchState) ||
+    !["absent", "present", "conflict", "unknown"].includes(value.workspaceState) ||
+    !["absent", "present", "conflict", "unknown"].includes(value.workspaceKeyState) ||
+    !["absent", "present", "conflict", "unknown"].includes(value.workspaceReceiptState) ||
+    !["absent", "confirmed", "conflict", "unknown"].includes(value.workspaceDebitState) ||
     !validFailureStage(value.failureStage) || !validReadbackError(value.readbackError) || !validErrorCode(value.errorCode) ||
     !Number.isSafeInteger(value.workspaceCount) || value.workspaceCount < 0 ||
     !Number.isSafeInteger(value.launchCount) || value.launchCount < 0 ||
@@ -173,6 +184,13 @@ export function validateProductionBasicAcceptanceBReconcileReadback(value, { mer
     throw new Error("acceptance_b_account_reconcile_readback_invalid");
   }
   if (!SUCCESS_STATUSES.has(value.status) && value.failureStage === "none") {
+    throw new Error("acceptance_b_account_reconcile_readback_invalid");
+  }
+  if (value.status === "prepared" && (value.localGraph !== "complete" || value.remoteIdentity !== "active" ||
+    value.customerLogin !== "active" || value.wallet !== "available" || value.approvalState !== "bound" ||
+    value.workspaceLaunchState !== "absent" || value.workspaceState !== "absent" || value.workspaceKeyState !== "absent" ||
+    value.workspaceReceiptState !== "absent" || value.workspaceDebitState !== "absent" ||
+    [value.workspaceCount, value.launchCount, value.keyCount, value.receiptCount].some((count) => count !== 0))) {
     throw new Error("acceptance_b_account_reconcile_readback_invalid");
   }
   return cloneJson(value);
@@ -217,12 +235,20 @@ function blockedProductionBasicAcceptanceBReconcileArtifact({
     customerIdentitySha256: digest("customerIdentitySha256"),
     accountProvisionIdentitySha256: digest("accountProvisionIdentitySha256"),
     walletAdjustmentIdentitySha256: digest("walletAdjustmentIdentitySha256"),
+    approvalIdentitySha256: digest("approvalIdentitySha256"),
+    workspaceDebitIdentitySha256: digest("workspaceDebitIdentitySha256"),
     localGraph,
     remoteIdentity,
     customerLogin,
     wallet,
     walletUsdMicros,
     walletAdjustment,
+    approvalState: ["bound", "unknown"].includes(source.approvalState) ? source.approvalState : "unknown",
+    workspaceLaunchState: ["absent", "present", "conflict", "unknown"].includes(source.workspaceLaunchState) ? source.workspaceLaunchState : "unknown",
+    workspaceState: ["absent", "present", "conflict", "unknown"].includes(source.workspaceState) ? source.workspaceState : "unknown",
+    workspaceKeyState: ["absent", "present", "conflict", "unknown"].includes(source.workspaceKeyState) ? source.workspaceKeyState : "unknown",
+    workspaceReceiptState: ["absent", "present", "conflict", "unknown"].includes(source.workspaceReceiptState) ? source.workspaceReceiptState : "unknown",
+    workspaceDebitState: ["absent", "confirmed", "conflict", "unknown"].includes(source.workspaceDebitState) ? source.workspaceDebitState : "unknown",
     workspaceCount: count("workspaceCount"),
     launchCount: count("launchCount"),
     keyCount: count("keyCount"),
@@ -274,21 +300,22 @@ async function readBaseline(requestOptions, customerAuth) {
   };
 }
 
-export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
+export async function readProductionBasicAcceptanceBReconcile(options = {}) {
   const {
     origin,
-    adminEmail,
-    adminPassword,
     customerEmail,
     customerPassword,
     mergedSha,
+    adminAuth,
+    customerAuth: existingCustomerAuth,
     requestTimeoutMs = 30_000,
     fetchImpl = globalThis.fetch,
     now = new Date()
   } = options;
   const normalizedEmail = String(customerEmail || "").trim().toLowerCase();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail) || !String(customerPassword || "") ||
-    !String(adminEmail || "") || !String(adminPassword || "") || !/^[0-9a-f]{40}$/.test(String(mergedSha || "")) || !(now instanceof Date) || Number.isNaN(now.getTime())) {
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail) || (!existingCustomerAuth && !String(customerPassword || "")) ||
+    !adminAuth || adminAuth.user?.accountId !== "acct-admin" || adminAuth.user?.role !== "admin" ||
+    !/^[0-9a-f]{40}$/.test(String(mergedSha || "")) || !(now instanceof Date) || Number.isNaN(now.getTime())) {
     throw reconcileFailure("acceptance_b_account_reconcile_config_invalid", "config");
   }
   let normalizedOrigin;
@@ -298,17 +325,6 @@ export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
     throw reconcileFailure("acceptance_b_account_reconcile_config_invalid", "config");
   }
   const requestOptions = { fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs };
-  let adminAuth;
-  try {
-    adminAuth = await login({ ...requestOptions, email: adminEmail, password: adminPassword });
-    if (adminAuth.user?.accountId !== "acct-admin" || adminAuth.user?.role !== "admin") {
-      throw new Error("acceptance_b_account_reconcile_admin_login_failed");
-    }
-  } catch (error) {
-    if (error?.failureStage) throw error;
-    throw reconcileFailure("acceptance_b_account_reconcile_admin_login_failed", "admin_login");
-  }
-
   let routeResponseReceived = false;
   let routeResponseDigest = "";
   let routeResponsePayload = null;
@@ -377,9 +393,9 @@ export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
   let readbackError = serverReadbackError;
   let baselineReadbackUnknown = false;
   if (data.status !== "unknown" && data.remoteIdentity === "active") {
-    let customerAuth;
+    let customerAuth = existingCustomerAuth;
     try {
-      customerAuth = await login({ ...requestOptions, email: normalizedEmail, password: String(customerPassword) });
+      if (!customerAuth) customerAuth = await login({ ...requestOptions, email: normalizedEmail, password: String(customerPassword) });
       const identity = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/auth/me" }), "sub2api").data;
       if (identity?.email !== normalizedEmail || identity?.role !== "owner" || identity?.status !== "active") throw new Error("acceptance_b_account_reconcile_customer_identity_invalid");
       customerLogin = "active";
@@ -409,13 +425,15 @@ export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
     failureStage = "baseline";
     readbackError = "baseline_not_zero";
   }
-  if (status === "manual_review" && data.localGraph === "complete" && data.remoteIdentity === "active" &&
-    customerLogin === "active" && data.wallet === "available" && data.walletAdjustment === "absent" &&
-    Object.values(baseline).every((count) => count === 0) && readbackError === "none") {
-    status = "safe_to_retry_absent";
-  }
   if (status === "prepared" && (customerLogin !== "active" || Object.values(baseline).some((count) => count !== 0))) {
     status = "unknown";
+  }
+  if (status === "prepared" && (data.approvalState !== "bound" || data.workspaceLaunchState !== "absent" ||
+    data.workspaceState !== "absent" || data.workspaceKeyState !== "absent" || data.workspaceReceiptState !== "absent" ||
+    data.workspaceDebitState !== "absent" || !validDigest(data.approvalIdentitySha256) || !validDigest(data.workspaceDebitIdentitySha256))) {
+    status = "unknown";
+    failureStage = "artifact_schema";
+    readbackError = "approval_footprint_invalid";
   }
   if (SUCCESS_STATUSES.has(status)) {
     failureStage = "none";
@@ -429,12 +447,20 @@ export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
     customerIdentitySha256: String(data.customerIdentitySha256 || ""),
     accountProvisionIdentitySha256: String(data.accountProvisionIdentitySha256 || ""),
     walletAdjustmentIdentitySha256: String(data.walletAdjustmentIdentitySha256 || ""),
+    approvalIdentitySha256: String(data.approvalIdentitySha256 || routeResponseDigest || ZERO_DIGEST),
+    workspaceDebitIdentitySha256: String(data.workspaceDebitIdentitySha256 || routeResponseDigest || ZERO_DIGEST),
     localGraph: String(data.localGraph || "unknown"),
     remoteIdentity: String(data.remoteIdentity || "unknown"),
     customerLogin,
     wallet: String(data.wallet || "unknown"),
     walletUsdMicros: String(data.walletUsdMicros || ""),
     walletAdjustment: String(data.walletAdjustment || "unknown"),
+    approvalState: String(data.approvalState || "unknown"),
+    workspaceLaunchState: String(data.workspaceLaunchState || "unknown"),
+    workspaceState: String(data.workspaceState || "unknown"),
+    workspaceKeyState: String(data.workspaceKeyState || "unknown"),
+    workspaceReceiptState: String(data.workspaceReceiptState || "unknown"),
+    workspaceDebitState: String(data.workspaceDebitState || "unknown"),
     workspaceCount: baseline.workspaceCount,
     launchCount: baseline.launchCount,
     keyCount: baseline.keyCount,
@@ -466,6 +492,28 @@ export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
     throw error;
   }
   return result;
+}
+
+export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
+  const { origin, adminEmail, adminPassword, fetchImpl = globalThis.fetch, requestTimeoutMs = 30_000 } = options;
+  if (!String(adminEmail || "") || !String(adminPassword || "")) {
+    throw reconcileFailure("acceptance_b_account_reconcile_config_invalid", "config");
+  }
+  let normalizedOrigin;
+  try {
+    normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  } catch {
+    throw reconcileFailure("acceptance_b_account_reconcile_config_invalid", "config");
+  }
+  let adminAuth;
+  try {
+    adminAuth = await login({ fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs, email: adminEmail, password: adminPassword });
+    if (adminAuth.user?.accountId !== "acct-admin" || adminAuth.user?.role !== "admin") throw new Error("acceptance_b_account_reconcile_admin_login_failed");
+  } catch (error) {
+    if (error?.failureStage) throw error;
+    throw reconcileFailure("acceptance_b_account_reconcile_admin_login_failed", "admin_login");
+  }
+  return readProductionBasicAcceptanceBReconcile({ ...options, origin: normalizedOrigin, adminAuth });
 }
 
 export async function runProductionBasicAcceptanceBReconcileCli({
