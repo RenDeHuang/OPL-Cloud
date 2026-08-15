@@ -1,52 +1,46 @@
 # Decisions
 
-## 2026-08-15: Release Units Gate Product Publication
+## 2026-08-15: Pre-1.0 Instance Qualification Gates Product Publication
 
-An OPL Cloud Release is treated as an immutable product handoff by Product
-policy after publication; it is not a development checkpoint or a production
-debugging mechanism. Before publication, one named release unit must identify
-the product problem being closed, its primary owner, the product-artifact
-impact, the exact source and verification evidence, the consumer ready to adopt
-it, and why the preceding Release cannot satisfy that consumer. The Product
-owner declares the unit ready only after its scoped acceptance criteria pass
-and no known product-side blocker for that unit remains.
+During the current immature pre-1.0 phase, a formal OPL Cloud Release is the
+result of successful candidate adoption, not an input used to discover whether
+the product can deploy. Cloud must first produce a replaceable candidate bound
+to one exact canonical product SHA and image digest. `opl-instance-medopl` then
+deploys and qualifies that candidate through its protected workflow. Only after
+the required deployment and product acceptance readback succeeds may the
+repository owner explicitly publish the same SHA and image bytes as a formal
+Release.
 
-This decision responds to observed version churn rather than a hypothetical
-process preference. Eight Releases, `v0.1.0` through `v0.1.7`, were published in
-roughly 49 hours. Every Release from `v0.1.2` through `v0.1.7` included another
-increment toward the same Acceptance B path, so durable Git tags, GitHub
-Releases, multi-architecture manifests, checksums, attestations, and downstream
-identity bindings were repeatedly used where a replaceable candidate and one
-qualified handoff were needed. The release workflow correctly proved artifact
-integrity, but it had no semantic admission rule proving that publication was
-necessary.
+This decision responds to observed version churn. Eight Releases, `v0.1.0`
+through `v0.1.7`, were published in roughly 49 hours while successive changes
+were still closing the same Acceptance B path. They were historical debugging
+checkpoints, not eight independently qualified product handoffs. The repository
+owner subsequently removed `v0.1.0` through `v0.1.6`; only `v0.1.7` remains on
+the current GitHub Release, tag, and GHCR public surfaces.
 
-Policy immutability and platform enforcement are separate facts. The current
-workflow is create-only and binds a Release to an exact product SHA and image
-digest; Product owners must not overwrite, reuse, or delete that published
-identity. This decision does not claim that GitHub prevents those mutations.
-GitHub's current immutable-release setting, Release API state, tag protection,
-and any residual enforcement gap remain current evidence in `docs/status.md`
-and open acceptance in `docs/roadmap.md`.
+Candidate and Release identities are distinct. Candidate CI output, assets, and
+exact-SHA image tags may be replaced or discarded before qualification. A
+formal Release must promote the exact candidate SHA and digest that the Instance
+qualified; it must not rebuild different image bytes after the successful
+deployment. The current workflow still builds and publishes in one Release
+dispatch, so a deployable candidate channel plus exact-byte promotion is an
+explicit implementation gap. Until that gap is closed and the candidate has a
+successful Instance receipt, no successor to `v0.1.7` is admitted.
 
-Candidate verification and Product Release remain distinct. CI output and an
-exact-SHA candidate may be rebuilt or rejected while a release unit is still
-open. A formal Release is published once for a ready unit and is then reused by
-Instance deployment, configuration, retry, rollback, and qualification work.
-An Instance, environment, Secret, provider, deployment, account, or runtime-data
-failure does not authorize another Product Release. A new patch Release is
-admitted only when owner evidence proves that the published product artifact or
-its consumer contract must change; the Product lane then reopens and qualifies
-a new candidate before publication.
+The dependency is evidence-only and does not move authority between
+repositories. Cloud owns reusable product source, candidate/release mechanics,
+portable assets, and publication. `opl-instance-medopl` owns its environment,
+Secrets, provider state, deployment, rollback, acceptance, and receipts. Cloud
+does not dispatch or operate the Instance; the Product owner consumes its
+exact-SHA/digest receipt as the pre-1.0 publication gate.
 
-Product Release and Instance qualification remain separate owner conclusions.
-Cloud publication stays portable and provider-neutral and does not require a
-medopl or other production environment. An Instance may claim deployment or a
-business outcome only after its own protected workflow qualifies the exact
-released SHA and digest. Documentation-only, test-only, CI-performance, and
-Instance-only changes do not independently justify a Product Release. A
-security fix may form its own release unit when its scoped owner, evidence,
-artifact impact, and consumer urgency are explicit.
+Only the repository owner may explicitly dispatch a formal Release from
+`main`. PRs, merges, CI, schedules, collaborator actions, deployment retries,
+and failed qualification do not publish a version. The create-only workflow
+prevents accidental version reuse, but it does not remove the repository
+owner's authority to repair or delete public artifacts through a separate
+explicit cleanup decision. Documentation-only, test-only, CI-performance, and
+Instance-only changes do not independently justify a Product Release.
 
 ## 2026-08-15: Keep The Go/TypeScript Service Architecture And Adopt Frameworks By Evidence
 
@@ -182,6 +176,11 @@ immutable Resume authorization.
 
 ## 2026-08-11: Product Release And Instance Deployment Are Separate
 
+This decision separates repository authority; it no longer defines the
+pre-1.0 publication order. The 2026-08-15 candidate-qualification decision
+above requires the Instance to qualify an exact candidate before Cloud
+publishes that candidate as a formal Release.
+
 `one-person-lab-cloud` publishes the installable product: source, contracts,
 multi-architecture GHCR image, GitHub Release, Compose assets, and reusable
 provider adapters. Its release workflow uses no production environment and does
@@ -189,7 +188,7 @@ not deploy, diagnose, verify, or roll back a concrete installation.
 
 `opl-instance-medopl` is the only medopl.cn customization and deployment owner.
 Its `main` workflow and protected `production` environment select Tencent/TKE,
-hold Secrets, consume an immutable Cloud product SHA and image digest, and own
+hold Secrets, consume an exact Cloud product SHA and image digest, and own
 deployment, canary, rollback, and receipts. Product source is never copied into
 the Instance repository, and Instance state is never written back into Cloud.
 

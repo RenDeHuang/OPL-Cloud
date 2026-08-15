@@ -220,10 +220,13 @@ rollback, or production path. Existing Tencent/TKE evidence applies only to
 medopl instance provenance.
 
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
-workflow, and focused distribution checks exist at source level. Eight Product
-Releases, `v0.1.0` through `v0.1.7`, were published between
-2026-08-13T09:50:02Z and 2026-08-15T10:49:30Z. The current Release workflow run
-`31879240411` published `v0.1.7` from exact product SHA
+workflow, and focused distribution checks exist at source level. Historically,
+eight Product Releases, `v0.1.0` through `v0.1.7`, were published between
+2026-08-13T09:50:02Z and 2026-08-15T10:49:30Z while the same Acceptance B path
+was still under development. The repository owner removed `v0.1.0` through
+`v0.1.6` from the GitHub Release, tag, and GHCR public surfaces on 2026-08-15.
+Only `v0.1.7` remains. Release workflow run `31879240411` published it from
+exact product SHA
 `a59bde68397528186a5220f73195fa1f3eda311b`. Its GHCR multi-architecture index
 digest is `sha256:e64504731f8b61c0864cf59faa647a1150e8a2a5eada34b26faf3a5487d28e8f`,
 with `linux/amd64` and `linux/arm64` manifests. The GitHub Release contains
@@ -233,15 +236,22 @@ release tag, product SHA, image digest, platforms, and asset set. This proves
 publication of the portable product artifact, not installation, Instance
 qualification, or production readiness.
 
-Product policy and the create-only workflow treat the exact `v0.1.7` tag,
-Release, product SHA, and image digest as fixed; later canonical `main` commits
-must not silently substitute them. GitHub platform enforcement remains
-separate: the repository immutable-release setting is disabled, the `v0.1.7`
-Release API reports `immutable=false`, and no tag ruleset is present. A clean
-Docker-host installation using only one admitted Release, a complete live
-Console create/readback/open/delete path, real external Sub2API
-authentication/balance/usage evidence, and Instance adoption/deployment remain
-open evidence gaps.
+Current public readback shows only Git tag and GitHub Release `v0.1.7`, and only
+the `v0.1.7` GHCR tag. GHCR retains its top multi-architecture index plus four
+required child/attestation objects. The five downloaded Release assets match
+their API digests and `SHA256SUMS`. GitHub still reports `immutable=false` and
+no tag ruleset; those settings do not override the repository owner's explicit
+cleanup authority. Later canonical `main` commits must not be presented as the
+`v0.1.7` product SHA or digest.
+
+The current pre-1.0 admission decision now requires successful
+`opl-instance-medopl` deployment and product readback for an exact candidate
+SHA/digest before a formal successor Release. The existing workflow cannot yet
+prove that order because one dispatch builds and publishes the image. A
+deployable non-Release candidate channel and exact-byte promotion remain open,
+along with clean-host installation, the complete live Console
+create/readback/open/delete path, and real external Sub2API
+authentication/balance/usage evidence.
 
 GitHub security controls were read back on 2026-08-13 for the post-release
 canonical baseline before this documentation merge. Private vulnerability
@@ -284,13 +294,15 @@ Review job, and expanded monthly Dependabot coverage. PR `#261` merged as
 `dependency-review`, `validate`, and the three CodeQL language analyses before
 merge. GitHub now requires strict `validate` and `dependency-review` on `main`.
 The `cloud-release` Environment exists with protected branches as its only
-protection rule and has no Secrets or variables. The release workflow is
-create-only: it rejects an existing Git tag, GitHub Release, or GHCR release tag
-before publication. GitHub currently reports no tag ruleset and the `v0.1.7`
-Release API object has `immutable=false`, so workflow-level no-overwrite and
-digest/product-SHA binding are verified, while platform-enforced release/tag
-immutability remains an explicit gap. These controls and checks do not prove
-dependency risk is zero or Instance production state.
+protection rule and has no Secrets or variables. The Release workflow has only
+the manual `workflow_dispatch` trigger, and both build and publish require the
+original actor and current triggering actor to equal the repository owner. It
+is create-only during ordinary publication and rejects an existing Git tag,
+GitHub Release, or GHCR release tag. PR `#334` merged this owner gate as
+`4060590fde52e9224c45968857729650806c990a`; all ten hosted checks passed and no
+new Release run was triggered. These controls prevent collaborator or
+accidental CI publication, but they do not yet provide the pre-Release candidate
+deployment path.
 
 Security currentness now includes the absorbed S1, Gateway, S2, S3, and narrow
 login-CSRF implementation lanes. PR `#271`
@@ -330,7 +342,7 @@ set includes `SHA256SUMS`. This is exact `v0.1.7` publication evidence, not
 retroactive proof for earlier Releases.
 Clean-host installation and production deployment remain `PRODUCT-RELEASE-01`
 / Instance evidence gaps, not another S4 source lane. These controls are source,
-test, and policy-immutable publication evidence only. CodeQL triage is
+test, and exact `v0.1.7` publication evidence only. CodeQL triage is
 terminal at the classification layer only, with alert disposition explicitly
 unperformed as recorded above.
 
@@ -374,9 +386,10 @@ was performed.
 
 The current `opl-instance-medopl` workflow and manifest have not yet adopted the
 full Fabric capability credential set, so source absorption does not prove a
-usable production operator path or a deployment. GitHub tag/Release/GHCR
-immutability also remains an external-owner gap: current evidence still reports
-no tag ruleset and `v0.1.7` `immutable=false`.
+usable production operator path or a deployment. Its deploy workflow accepts
+an exact Cloud `product_sha` and digest-addressed TCR image, but Cloud has not
+yet supplied a deployable non-Release candidate whose exact bytes can later be
+promoted as a formal Release.
 
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production
@@ -385,7 +398,7 @@ Deployment, and the tracked profile remains `deployed_unverified` with no produc
 SHA, release tag, image digest, or receipt. Earlier medopl rollout and provider
 evidence is migration provenance only; current deployment, Runtime, billing,
 rollback, and receipt evidence must be read back from the Instance owner for one
-exact Cloud release.
+exact Cloud candidate before that candidate may become a formal Release.
 
 The Cloud GitHub repository still carries the legacy production authority. It
 has six non-release Environments in addition to `cloud-release`, and 2,086
