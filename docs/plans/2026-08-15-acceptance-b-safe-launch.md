@@ -16,7 +16,7 @@
 - `deployment_chain` owns read-only release/Instance diagnostics; it receives a write set only if a product contract cannot be consumed by the current Instance workflow.
 - `runtime_evidence` owns GET-only production evidence and does not edit source.
 - The root controller alone merges, publishes, deploys, rotates production approval, or submits the Workspace order.
-- Release cache, component-image splitting, runtime dependency slimming, and native multi-architecture matrix work are excluded from this P0.
+- Release optimization is owned by an independent parallel writer. It is not a dependency of this P0 checkpoint and must not overlap this product write set or alter Acceptance identity.
 
 ### Task 1: Add Approval-Bound Reconcile Tests
 
@@ -366,28 +366,29 @@ git push -u origin codex/acceptance-b-safe-launch
 
 Read back the remote SHA/tree. The task branch remains non-canonical.
 
-### Task 7: Integrate And Publish One Immutable Product Release
+### Task 7: Integrate And Publish One Immutable Cloud Product Release
 
 **Files:**
 - No release-performance workflow changes in this P0.
 
-**Acceptance gate:** The product SHA, Cloud image, Workspace image, release assets, and approval must form one immutable identity.
+**Acceptance gate:** The canonical product SHA, Cloud image digest, and release assets form one immutable product release identity. Workspace image ownership remains outside the product release.
 
 **Step 1: Integrate through the repository's protected-main process**
 
 Create/review the PR, merge only after CI, then read back canonical `main` SHA
 and tree. Do not release a task-branch SHA.
 
-**Step 2: Select one unused version and dispatch the standard release once**
+**Step 2: Select one unused version and dispatch the standard product release once**
 
-The root controller supplies the exact merged SHA. Do not rerun a failed release
-without first classifying whether the immutable tag or image target was used.
+The root controller supplies the exact merged SHA. The release publishes the
+Cloud image only. Do not rerun a failed release without first classifying
+whether the immutable tag or image target was used.
 
 **Step 3: Verify release readback**
 
-Require exact tag, product SHA, amd64+arm64 manifest, image digest, release
-assets, checksums, and attestations. BuildKit cache, image slimming, and
-architecture-matrix changes remain deferred.
+Require exact tag, product SHA, amd64+arm64 manifest, Cloud image digest,
+release assets, checksums, and attestations. Release performance/cache work may
+proceed in its independent writer lane but is not required by this checkpoint.
 
 ### Task 8: Deploy Through `opl-instance-medopl`
 
@@ -402,6 +403,10 @@ Bind the canonical product SHA, new Cloud digest, existing approved immutable
 Workspace digest, customer account, one new launch idempotency key, derived
 operation/Workspace IDs, Basic package, 10 GB, and provider target. Do not expose
 the envelope in logs or artifacts.
+
+The Workspace digest is supplied by the Instance/`one-person-lab-app` owner,
+not the product release. Require the same digest from TCR, TKE workload config,
+the installed Approval, and ready Workspace Pod image-ID readback.
 
 **Step 2: Copy the release to TCR once**
 
@@ -426,11 +431,37 @@ readiness. No account prepare, recharge, or Workspace POST occurs in this step.
 Require `prepared` bound to the exact deployed release and approval. Do not
 repeat full historical usage scans.
 
+Use this exact production input matrix:
+
+```text
+operation_mode=acceptance_b_account_reconcile
+approval_id=''
+resume_run_id=''
+confirm_account_provision=false
+confirm_wallet_recharge=false
+confirm_workspace_purchase=false
+confirm_single_model_request=false
+confirm_recovery_plan_execute=false
+```
+
 **Step 2: Enter the single-writer critical section**
 
 The root controller alone dispatches `acceptance_b_fresh_order` once with
 `confirm_workspace_purchase=true`. No other agent or workflow may perform a
 production mutation concurrently.
+
+Use this exact production input matrix:
+
+```text
+operation_mode=acceptance_b_fresh_order
+approval_id=<exact installed approval id>
+resume_run_id=''
+confirm_account_provision=false
+confirm_wallet_recharge=false
+confirm_workspace_purchase=true
+confirm_single_model_request=false
+confirm_recovery_plan_execute=false
+```
 
 **Step 3: Resolve only the approved operation**
 

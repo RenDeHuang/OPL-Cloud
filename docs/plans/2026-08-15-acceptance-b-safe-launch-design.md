@@ -93,6 +93,12 @@ approved deterministic operation and sends at most one
 response is followed only by GET of the same operation. No second order is
 allowed in the Acceptance run.
 
+The GET-only reconcile dispatch uses an empty `approval_id`, empty
+`resume_run_id`, and every confirmation set to `false`. The fresh-order
+dispatch uses the exact installed `approval_id`, empty `resume_run_id`, only
+`confirm_workspace_purchase=true`, and every other confirmation set to
+`false`. This parameter matrix is part of the machine deployment contract.
+
 ### Final Evidence
 
 Success requires all three groups:
@@ -113,7 +119,9 @@ Wallet delta and general usage are never substituted for the exact debit.
 | --- | --- | --- | --- |
 | Product reconcile | `product_chain` | `services/control-plane/internal/server/account_reconcile.go`, `services/control-plane/internal/server/workspace_launch_admission.go`, their focused Go tests, `tools/production-basic-acceptance-b-reconcile.ts`, reconcile tests, the deployment contract | A false `prepared`/retry decision cannot reach the writer |
 | Product writer | `product_chain` under serial integration | `tools/production-basic-acceptance-b.ts` and focused tests | The single Workspace POST cannot run on stale or unbound evidence |
-| Release/deployment | `deployment_chain` for diagnostics; root for mutation | No release-performance write set in P0. Instance changes are allowed only if the new product contract cannot be consumed by the current workflow | The deployed SHA/digests/approval must be one immutable identity |
+| Product release | root controller for mutation | Standard product release publishes the Cloud image for the canonical product SHA; it does not own the Workspace image | The deployed Cloud SHA/digest must match the product release |
+| Workspace image/deployment | `deployment_chain` and the Instance/`one-person-lab-app` owner; root for mutation | Select and verify the immutable Workspace image, approval, TCR copy, TKE rollout, and Pod image IDs | TCR, TKE, Approval, and Pod readback must agree on the Workspace digest |
+| Release optimization | independent parallel release writer | Workflow-only performance/reproducibility changes, integrated independently and never required by this Acceptance checkpoint | It must not change the Acceptance identity or delay the correctness release |
 | Runtime evidence | `runtime_evidence` | No repository writes and no production mutations | GET-only preflight and terminal evidence must be complete |
 | Production mutation | root controller only | GitHub release, TCR copy, TKE rollout, approval rotation, one Workspace order | No concurrent or duplicate production write |
 
@@ -125,9 +133,12 @@ controller.
 ## Release Decision
 
 This P0 changes Control Plane reconciliation behavior, so the standard product
-image rebuild is required. The release identity binds product SHA, Cloud image
-digest, Workspace image digest, and Acceptance approval; a tool-only bypass
-would weaken that contract.
+Cloud image rebuild is required. The product release binds the canonical
+product SHA to the immutable Cloud image digest only. The Workspace image is
+owned by the Instance/`one-person-lab-app` lane; the production approval binds
+that separately selected immutable digest, and deployment must prove it through
+TCR, TKE workload configuration, the installed Approval, and the ready Workspace
+Pod image ID. A tool-only bypass would weaken those contracts.
 
 The following are measured release costs but are not P0 blockers and are not in
 this write set:
@@ -136,9 +147,8 @@ this write set:
 | --- | --- |
 | runtime-stage `npm ci --omit=dev` | Do not change. Removal requires proving every in-pod Node diagnostic has moved or remains executable. |
 | repeated npm installs | Do not change. It costs time but does not block correctness. |
-| no persistent BuildKit layer cache | Defer as an independent P1 workflow-only optimization with cold/warm reproducibility evidence. |
-| amd64 and arm64 on one hosted runner | Do not split. Native matrix assembly changes artifact and attestation design. |
-| one image contains local-docker and Tencent tooling | Do not split. It changes portable release, Compose, TKE, rollback, and provider contracts. |
+| release workflow performance and cache | Owned by an independent parallel release writer. It is not a dependency of this Acceptance checkpoint and must preserve cold/warm reproducibility. |
+| architecture matrix and image composition | May be evaluated in that independent release lane only with unchanged artifact, attestation, portability, rollback, and provider contracts. |
 | Acceptance script change rebuilds the release | Keep for this P0 because the server changes and approval/release identity require one new immutable product release. |
 
 No `npm ci` is run merely to create the worktree or write plans. Focused Node
@@ -155,8 +165,8 @@ approved design
 -> focused Node and Go tests
 -> full local verification
 -> product PR and canonical main readback
--> one immutable product release
--> Instance TCR copy and TKE rollout
+-> one immutable Cloud product release
+-> Instance selects/verifies Workspace image and performs TCR copy/TKE rollout
 -> GET-only approval-bound reconcile
 -> exactly one Workspace POST
 -> exact operation GET readback
@@ -183,7 +193,8 @@ approved design
 - Focused Go tests prove approval/deployment binding and exact Sub2API debit-code
   lookup without exposing the code.
 - Product boundary and full local verification must pass before merge.
-- Release readback must prove the exact tag, product SHA, two image digests,
-  platforms, assets, and attestations.
-- Instance readback must prove the deployed image IDs and approval SHA.
+- Product release readback must prove the exact tag, product SHA, Cloud image
+  digest, platforms, assets, and attestations.
+- Instance readback must prove Cloud and Workspace TCR/TKE image IDs, the exact
+  Approval bindings, and the ready Pod image IDs.
 - Production success requires the final three evidence groups above.
