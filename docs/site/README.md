@@ -9,11 +9,10 @@ Source truth stays in `docs/whitepapers/` and
 `contracts/whitepaper_profile.json`. Artifact verification is generated beside
 the ignored HTML/PDF bundle; publication receipts are GitHub Actions artifacts.
 
-This repo publishes one current public whitepaper copy, not one copy per
-release. A normal push builds a reviewable immutable bundle. An explicit
-`workflow_dispatch` with `publish=true` enters the `whitepaper-production`
-Environment, deploys the same bundle without rebuilding, and verifies the live
-HTML/PDF bytes before writing a publication receipt.
+This repository builds the current Cloud whitepaper candidate. The Framework
+repository owns formal publication of the five-document OPL family collection,
+including the approved publication environment, the exact branded bundle, live
+HTML/PDF verification, and publication receipts.
 
 Generated output:
 
@@ -23,6 +22,6 @@ Generated output:
 
 Do not commit `docs/site/latest/` on `main`. Rebuild it with
 `node --experimental-strip-types scripts/build-opl-cloud-whitepaper.ts`.
-`bash scripts/publish-docs-latest.sh` no longer builds locally or force-pushes
-an orphan branch; it requests the approved remote workflow from clean, current
-`main`.
+`bash scripts/publish-docs-latest.sh` does not build locally or write a Cloud
+Pages branch. From clean, current Cloud `main`, it requests the Framework-owned
+family publication workflow.
