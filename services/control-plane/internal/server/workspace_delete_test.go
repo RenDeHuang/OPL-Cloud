@@ -641,6 +641,124 @@ func TestWorkspaceDeleteCompletesExactOwnerChain(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDeleteComputePendingKeepsSameOperationAndOneMutation(t *testing.T) {
+	fabric := &workspaceDeleteFabric{computeReads: []string{"destroying", "destroying", "destroying", "destroying", "destroying", "destroying", "destroying", "destroying"}}
+	fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixtureWith(t, newMemoryTableStore(), fabric)
+	const mutationKey = "delete-compute-pending"
+
+	first := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, mutationKey)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("pending delete status=%d body=%s", first.Code, first.Body.String())
+	}
+	var pending map[string]any
+	if json.Unmarshal(first.Body.Bytes(), &pending) != nil || pending["status"] != "pending" || pending["phase"] != "storage_destroyed" ||
+		pending["ownerStage"] != "compute" || int64(numberField(pending, "computeReadbacks", 0)) != 1 ||
+		int64(numberField(pending, "maxComputeReadbacks", 0)) != workspaceDeleteComputeReadbackBudget {
+		t.Fatalf("pending delete response=%#v", pending)
+	}
+	row, found, err := fixture.store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
+	operation, decodeErr := decodeWorkspaceDeleteOperation(row)
+	if err != nil || !found || decodeErr != nil || operation.Status != "running" || operation.Phase != "storage_destroyed" ||
+		operation.ComputeStatus != "destroying" || operation.ComputeReadbacks != 1 || operation.MaxComputeReadbacks != workspaceDeleteComputeReadbackBudget || operation.LastErrorCode != "" {
+		t.Fatalf("pending delete operation=%#v found=%v err=%v decode=%v", operation, found, err, decodeErr)
+	}
+	fabric.mu.Lock()
+	fabric.computeReads = []string{"destroyed"}
+	fabric.mu.Unlock()
+
+	second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, mutationKey)
+	if second.Code != http.StatusOK {
+		t.Fatalf("continued delete status=%d body=%s", second.Code, second.Body.String())
+	}
+	computeMutations, computeReads := 0, 0
+	for _, call := range fabric.recordedCalls() {
+		if strings.HasPrefix(call, "compute:") {
+			computeMutations++
+		}
+		if strings.HasPrefix(call, "compute-read:") {
+			computeReads++
+		}
+	}
+	if computeMutations != 1 || computeReads != 2 || sub2API.keyDeletes != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
+		t.Fatalf("continued delete mutations=%d reads=%d keyDeletes=%d refunds=%d receipts=%d calls=%#v", computeMutations, computeReads, sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts), fabric.recordedCalls())
+	}
+}
+
+func TestWorkspaceDeleteComputePendingBudgetAndFailureMatrix(t *testing.T) {
+	t.Run("permanent pending exhausts exact read budget", func(t *testing.T) {
+		reads := make([]string, workspaceDeleteComputeReadbackBudget)
+		for index := range reads {
+			reads[index] = "destroying"
+		}
+		fabric := &workspaceDeleteFabric{computeReads: reads}
+		fixture, _, _ := newWorkspaceDeleteCompletionFixtureWith(t, newMemoryTableStore(), fabric)
+		for readback := 1; readback <= workspaceDeleteComputeReadbackBudget; readback++ {
+			response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-compute-permanent-pending")
+			if readback < workspaceDeleteComputeReadbackBudget && response.Code != http.StatusAccepted {
+				t.Fatalf("pending readback %d status=%d body=%s", readback, response.Code, response.Body.String())
+			}
+			if readback == workspaceDeleteComputeReadbackBudget && response.Code != http.StatusBadGateway {
+				t.Fatalf("exhausted readback status=%d body=%s", response.Code, response.Body.String())
+			}
+		}
+		row, found, err := fixture.store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
+		operation, decodeErr := decodeWorkspaceDeleteOperation(row)
+		if err != nil || !found || decodeErr != nil || operation.Status != "manual_review" || operation.Phase != "storage_destroyed" ||
+			operation.LastErrorCode != "fabric_compute_absence_unconfirmed" || operation.ComputeReadbacks != workspaceDeleteComputeReadbackBudget {
+			t.Fatalf("exhausted operation=%#v found=%v err=%v decode=%v", operation, found, err, decodeErr)
+		}
+		computeMutations, computeReads := 0, 0
+		for _, call := range fabric.recordedCalls() {
+			if strings.HasPrefix(call, "compute:") {
+				computeMutations++
+			}
+			if strings.HasPrefix(call, "compute-read:") {
+				computeReads++
+			}
+		}
+		if computeMutations != 1 || computeReads != workspaceDeleteComputeReadbackBudget {
+			t.Fatalf("permanent pending mutations=%d reads=%d calls=%#v", computeMutations, computeReads, fabric.recordedCalls())
+		}
+	})
+
+	for _, test := range []struct {
+		name      string
+		configure func(*workspaceDeleteFabric)
+	}{
+		{name: "unknown", configure: func(fabric *workspaceDeleteFabric) { fabric.unknownStage = "compute-read" }},
+		{name: "identity conflict", configure: func(fabric *workspaceDeleteFabric) { fabric.mismatchStage = "compute-read" }},
+		{name: "owner error", configure: func(fabric *workspaceDeleteFabric) { fabric.failStage, fabric.failures = "compute-read", 1 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fabric := &workspaceDeleteFabric{computeReads: []string{"destroying"}}
+			fixture, _, _ := newWorkspaceDeleteCompletionFixtureWith(t, newMemoryTableStore(), fabric)
+			first := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-compute-fail-closed")
+			if first.Code != http.StatusAccepted {
+				t.Fatalf("initial pending status=%d body=%s", first.Code, first.Body.String())
+			}
+			test.configure(fabric)
+			second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-compute-fail-closed")
+			if second.Code != http.StatusBadGateway {
+				t.Fatalf("fail-closed status=%d body=%s", second.Code, second.Body.String())
+			}
+			row, found, err := fixture.store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
+			operation, decodeErr := decodeWorkspaceDeleteOperation(row)
+			if err != nil || !found || decodeErr != nil || operation.Status != "manual_review" || operation.LastErrorCode != "fabric_compute_absence_unconfirmed" {
+				t.Fatalf("fail-closed operation=%#v found=%v err=%v decode=%v", operation, found, err, decodeErr)
+			}
+			computeMutations := 0
+			for _, call := range fabric.recordedCalls() {
+				if strings.HasPrefix(call, "compute:") {
+					computeMutations++
+				}
+			}
+			if computeMutations != 1 {
+				t.Fatalf("fail-closed compute mutations=%d calls=%#v", computeMutations, fabric.recordedCalls())
+			}
+		})
+	}
+}
+
 func TestWorkspaceDeleteClaimAuthoritiesFailClosedBeforeFabric(t *testing.T) {
 	t.Run("purchase receipt conflict", func(t *testing.T) {
 		fixture, sub2API, ledger, events := newWorkspaceDeleteEventFixture(t)
@@ -1113,6 +1231,72 @@ func TestWorkspaceDeleteStoreLifecycleMemoryAndSQLite(t *testing.T) {
 
 func TestPostgresWorkspaceDeleteStoreLifecycle(t *testing.T) {
 	exerciseWorkspaceDeleteStoreLifecycle(t, newPostgresWorkspaceRenewalStore(t))
+}
+
+func TestPostgresWorkspaceDeleteComputePendingSurvivesRestart(t *testing.T) {
+	admin := openControlPlaneTestPostgres(t)
+	schema := "control_plane_workspace_delete_pending_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		_ = admin.Close()
+	})
+	databaseURL := controlPlaneTestPostgresURL(t, "postgres", schema)
+	firstState, err := newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := firstState.(*postgresEntStateStore)
+	fabric := &workspaceDeleteFabric{computeReads: []string{"destroying"}}
+	fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixtureWith(t, first, fabric)
+	const mutationKey = "delete-compute-postgres-restart"
+	response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, mutationKey)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("pending delete status=%d body=%s", response.Code, response.Body.String())
+	}
+	if err := first.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restartedState, err := newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := restartedState.(*postgresEntStateStore)
+	t.Cleanup(func() { _ = restarted.client.Close() })
+	row, found, err := restarted.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
+	operation, decodeErr := decodeWorkspaceDeleteOperation(row)
+	if err != nil || !found || decodeErr != nil || operation.Phase != "storage_destroyed" || operation.Status != "running" ||
+		operation.ComputeStatus != "destroying" || operation.ComputeReadbacks != 1 || operation.MaxComputeReadbacks != workspaceDeleteComputeReadbackBudget {
+		t.Fatalf("restarted pending operation=%#v found=%v err=%v decode=%v", operation, found, err, decodeErr)
+	}
+	fabric.mu.Lock()
+	fabric.computeReads = []string{"destroyed"}
+	fabric.mu.Unlock()
+	service := controlplane.NewService(ledger, fabric, sub2API)
+	restartedServer, err := NewPersistentServer(service, restarted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedSession := tenantOwnerSessionForTest(t, restartedServer)
+	terminal := requestWithMutationKeyForTest(t, restartedServer, restartedSession, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, mutationKey)
+	if terminal.Code != http.StatusOK {
+		t.Fatalf("restarted delete status=%d body=%s", terminal.Code, terminal.Body.String())
+	}
+	computeMutations, computeReads := 0, 0
+	for _, call := range fabric.recordedCalls() {
+		if strings.HasPrefix(call, "compute:") {
+			computeMutations++
+		}
+		if strings.HasPrefix(call, "compute-read:") {
+			computeReads++
+		}
+	}
+	if computeMutations != 1 || computeReads != 2 {
+		t.Fatalf("restarted compute mutations=%d reads=%d calls=%#v", computeMutations, computeReads, fabric.recordedCalls())
+	}
 }
 
 func exerciseWorkspaceDeleteStoreLifecycle(t *testing.T, store controlPlaneTableStore) {

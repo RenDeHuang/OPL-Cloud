@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  continueWorkspaceDelete,
   exactRepoDigestFromInspection,
   immutableImageDigest,
   liveAuthorityAdjustmentReadback,
@@ -26,6 +27,45 @@ const sha = "a".repeat(40);
 const cloudDigest = `sha256:${"b".repeat(64)}`;
 const workspaceDigest = `sha256:${"c".repeat(64)}`;
 const workspaceReference = `ghcr.io/example/workspace@${workspaceDigest}`;
+
+test("owner delete continues only from exact durable compute pending evidence", async () => {
+  const path = "/api/workspaces/ws-alpha";
+  const init = { method: "DELETE", headers: { "idempotency-key": "delete-alpha" }, body: {} };
+  const auth = { cookie: "session=test", csrf: "csrf-test" };
+  const operationId = "workspace-delete-alpha";
+  const responses = [
+    { response: { status: 202 }, payload: { status: "pending", phase: "storage_destroyed", ownerStage: "compute", computeStatus: "destroying", operationId, workspaceId: "ws-alpha", computeReadbacks: 1, maxComputeReadbacks: 8 } },
+    { response: { status: 202 }, payload: { status: "pending", phase: "storage_destroyed", ownerStage: "compute", computeStatus: "destroying", operationId, workspaceId: "ws-alpha", computeReadbacks: 2, maxComputeReadbacks: 8 } },
+    { response: { status: 200 }, payload: { status: "deleted", operationId, workspaceId: "ws-alpha" } }
+  ];
+  const calls = [];
+  const http = {
+    json: async (...args) => {
+      calls.push(args);
+      return responses.shift();
+    }
+  };
+
+  const deletion = await continueWorkspaceDelete(http, path, init, auth, { operationId, workspaceId: "ws-alpha" });
+  assert.equal(deletion.status, "deleted");
+  assert.equal(calls.length, 3);
+  for (const call of calls) assert.deepEqual(call, [path, init, auth, [200, 202]]);
+});
+
+test("owner delete rejects pending identity, ordinal, and budget drift", async () => {
+  const base = { status: "pending", phase: "storage_destroyed", ownerStage: "compute", computeStatus: "destroying", operationId: "workspace-delete-alpha", workspaceId: "ws-alpha", computeReadbacks: 1, maxComputeReadbacks: 8 };
+  for (const [name, pending] of Object.entries({
+    identity: { ...base, operationId: "workspace-delete-other" },
+    ordinal: { ...base, computeReadbacks: 2 },
+    budget: { ...base, maxComputeReadbacks: 9 },
+    exhausted: { ...base, computeReadbacks: 8 }
+  })) {
+    const http = { json: async () => ({ response: { status: 202 }, payload: pending }) };
+    await assert.rejects(() => continueWorkspaceDelete(http, "/api/workspaces/ws-alpha", { method: "DELETE" }, null, {
+      operationId: "workspace-delete-alpha", workspaceId: "ws-alpha"
+    }), /pending evidence/, name);
+  }
+});
 
 test("qualification compose uses the runner-owned exact environment", () => {
   const exactSecretRoot = "/tmp/opl-qualification/fabric-secrets";

@@ -455,6 +455,27 @@ function createHTTP(origin) {
   return { request, json };
 }
 
+export async function continueWorkspaceDelete(http, path, init, auth, expected) {
+  let previousReadback = 0;
+  let maxReadbacks = 0;
+  for (;;) {
+    const result = await http.json(path, init, auth, [200, 202]);
+    if (result.response.status === 200) return result.payload;
+
+    const pending = result.payload;
+    const readback = Number(pending?.computeReadbacks);
+    const maximum = Number(pending?.maxComputeReadbacks);
+    if (pending?.status !== "pending" || pending?.phase !== "storage_destroyed" || pending?.ownerStage !== "compute" ||
+      pending?.computeStatus !== "destroying" || pending?.operationId !== expected.operationId || pending?.workspaceId !== expected.workspaceId ||
+      !Number.isSafeInteger(readback) || !Number.isSafeInteger(maximum) || readback !== previousReadback + 1 ||
+      maximum !== 8 || maxReadbacks !== 0 && maximum !== maxReadbacks || readback >= maximum) {
+      throw new Error("owner Workspace DELETE pending evidence is invalid");
+    }
+    previousReadback = readback;
+    maxReadbacks = maximum;
+  }
+}
+
 async function login(http, email, password) {
   const result = await http.json("/api/auth/login", { method: "POST", body: { email, password } });
   const auth = { cookie: responseCookie(result.response.headers), csrf: result.response.headers.get("x-opl-csrf-token") || "" };
@@ -889,9 +910,9 @@ export async function runLocalWorkspaceQualification(options) {
 
     stage = "owner_delete";
     const expectedDeleteOperationId = `workspace-delete-${stableID("workspace.delete.v1", workspaceId).slice(0, 18)}`;
-    const deletion = (await http.json(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+    const deletion = await continueWorkspaceDelete(http, `/api/workspaces/${encodeURIComponent(workspaceId)}`, {
       method: "DELETE", headers: { "idempotency-key": `local-qualification-delete:${workspaceId}` }, body: {}
-    }, restartedAuth)).payload;
+    }, restartedAuth, { operationId: expectedDeleteOperationId, workspaceId });
     if (deletion?.status !== "deleted" || deletion?.accountId !== accountId || String(deletion?.sub2apiUserId) !== String(sub2apiUserId) ||
       deletion?.launchOperationId !== operationId || deletion?.operationId !== expectedDeleteOperationId || deletion?.refundOperationId !== expectedDeleteOperationId ||
       deletion?.workspaceId !== workspaceId || deletion?.runtimeId !== evidence.runtime.runtimeId || String(deletion?.workspaceApiKeyId) !== String(launch.workspaceApiKeyId) ||

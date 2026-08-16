@@ -17,47 +17,52 @@ const workspaceDeleteAction = "workspace.delete.v1"
 
 const workspaceDeleteReplayLease = 30 * time.Second
 
+const workspaceDeleteComputeReadbackBudget = 8
+
 var (
 	errWorkspaceDeleteCASConflict = errors.New("workspace_delete_cas_conflict")
 	errWorkspaceDeleteUnconfirmed = errors.New("workspace_delete_unconfirmed")
+	errWorkspaceDeletePending     = errors.New("workspace_delete_pending")
 )
 
 type workspaceDeleteOperation struct {
-	OperationID        string                             `json:"operationId"`
-	RequestHash        string                             `json:"requestHash"`
-	AccountID          string                             `json:"accountId"`
-	OwnerUserID        string                             `json:"ownerUserId"`
-	Sub2APIUserID      int64                              `json:"sub2apiUserId"`
-	WorkspaceID        string                             `json:"workspaceId"`
-	LaunchOperationID  string                             `json:"launchOperationId"`
-	RuntimeID          string                             `json:"runtimeId"`
-	ComputeID          string                             `json:"computeId"`
-	StorageID          string                             `json:"storageId"`
-	AttachmentID       string                             `json:"attachmentId"`
-	WorkspaceAPIKeyID  int64                              `json:"workspaceApiKeyId"`
-	GatewaySecretRef   string                             `json:"gatewaySecretRef"`
-	GatewayFingerprint string                             `json:"gatewayFingerprint"`
-	DebitCode          string                             `json:"debitCode"`
-	PurchaseReceiptID  string                             `json:"purchaseReceiptId"`
-	PurchaseReceipt    clients.ReceiptInput               `json:"purchaseReceipt"`
-	RefundCode         string                             `json:"refundCode"`
-	RefundReceiptID    string                             `json:"refundReceiptId,omitempty"`
-	TotalUSDMicros     int64                              `json:"totalUsdMicros"`
-	Phase              string                             `json:"phase"`
-	Status             string                             `json:"status"`
-	RuntimeStatus      string                             `json:"runtimeStatus,omitempty"`
-	SecretStatus       string                             `json:"secretStatus,omitempty"`
-	AttachmentStatus   string                             `json:"attachmentStatus,omitempty"`
-	StorageStatus      string                             `json:"storageStatus,omitempty"`
-	ComputeStatus      string                             `json:"computeStatus,omitempty"`
-	KeyStatus          string                             `json:"keyStatus,omitempty"`
-	KeyDeleteAttempted bool                               `json:"keyDeleteAttempted,omitempty"`
-	RefundAttempted    bool                               `json:"refundAttempted,omitempty"`
-	KeyDeleteReplay    workspaceDeleteReplayAuthorization `json:"keyDeleteReplay,omitempty"`
-	RefundReplay       workspaceDeleteReplayAuthorization `json:"refundReplay,omitempty"`
-	RefundConfirmation map[string]any                     `json:"refundConfirmation,omitempty"`
-	LastErrorCode      string                             `json:"lastErrorCode,omitempty"`
-	CreatedAt          string                             `json:"createdAt"`
+	OperationID         string                             `json:"operationId"`
+	RequestHash         string                             `json:"requestHash"`
+	AccountID           string                             `json:"accountId"`
+	OwnerUserID         string                             `json:"ownerUserId"`
+	Sub2APIUserID       int64                              `json:"sub2apiUserId"`
+	WorkspaceID         string                             `json:"workspaceId"`
+	LaunchOperationID   string                             `json:"launchOperationId"`
+	RuntimeID           string                             `json:"runtimeId"`
+	ComputeID           string                             `json:"computeId"`
+	StorageID           string                             `json:"storageId"`
+	AttachmentID        string                             `json:"attachmentId"`
+	WorkspaceAPIKeyID   int64                              `json:"workspaceApiKeyId"`
+	GatewaySecretRef    string                             `json:"gatewaySecretRef"`
+	GatewayFingerprint  string                             `json:"gatewayFingerprint"`
+	DebitCode           string                             `json:"debitCode"`
+	PurchaseReceiptID   string                             `json:"purchaseReceiptId"`
+	PurchaseReceipt     clients.ReceiptInput               `json:"purchaseReceipt"`
+	RefundCode          string                             `json:"refundCode"`
+	RefundReceiptID     string                             `json:"refundReceiptId,omitempty"`
+	TotalUSDMicros      int64                              `json:"totalUsdMicros"`
+	Phase               string                             `json:"phase"`
+	Status              string                             `json:"status"`
+	RuntimeStatus       string                             `json:"runtimeStatus,omitempty"`
+	SecretStatus        string                             `json:"secretStatus,omitempty"`
+	AttachmentStatus    string                             `json:"attachmentStatus,omitempty"`
+	StorageStatus       string                             `json:"storageStatus,omitempty"`
+	ComputeStatus       string                             `json:"computeStatus,omitempty"`
+	ComputeReadbacks    int                                `json:"computeReadbacks,omitempty"`
+	MaxComputeReadbacks int                                `json:"maxComputeReadbacks,omitempty"`
+	KeyStatus           string                             `json:"keyStatus,omitempty"`
+	KeyDeleteAttempted  bool                               `json:"keyDeleteAttempted,omitempty"`
+	RefundAttempted     bool                               `json:"refundAttempted,omitempty"`
+	KeyDeleteReplay     workspaceDeleteReplayAuthorization `json:"keyDeleteReplay,omitempty"`
+	RefundReplay        workspaceDeleteReplayAuthorization `json:"refundReplay,omitempty"`
+	RefundConfirmation  map[string]any                     `json:"refundConfirmation,omitempty"`
+	LastErrorCode       string                             `json:"lastErrorCode,omitempty"`
+	CreatedAt           string                             `json:"createdAt"`
 }
 
 type workspaceDeleteReplayAuthorization struct {
@@ -157,6 +162,10 @@ func (app *controlPlaneServer) deleteWorkspace(w http.ResponseWriter, r *http.Re
 	}
 	operation, err = app.runWorkspaceDelete(r.Context(), service, credential, authorizationID, operation)
 	if err != nil {
+		if errors.Is(err, errWorkspaceDeletePending) {
+			writeJSON(w, http.StatusAccepted, workspaceDeletePendingResponse(operation))
+			return
+		}
 		if errors.Is(err, errWorkspaceDeleteUnconfirmed) {
 			writeJSON(w, http.StatusBadGateway, workspaceDeleteResponse(operation, "workspace_delete_unconfirmed"))
 			return
@@ -285,7 +294,7 @@ func validWorkspaceDeleteIdentity(operation workspaceDeleteOperation) bool {
 		operation.PurchaseReceipt.AccountID != operation.AccountID || operation.PurchaseReceipt.WorkspaceID != operation.WorkspaceID ||
 		operation.PurchaseReceipt.RequestID != operation.LaunchOperationID || operation.CreatedAt == "" ||
 		!validWorkspaceDeleteReplayAuthorization(operation.KeyDeleteReplay, workspaceDeleteStageKey(operation, "key")) ||
-		!validWorkspaceDeleteReplayAuthorization(operation.RefundReplay, operation.RefundCode) {
+		!validWorkspaceDeleteReplayAuthorization(operation.RefundReplay, operation.RefundCode) || !validWorkspaceDeleteComputeReadbackState(operation) {
 		return false
 	}
 	cost := operation.PurchaseReceipt.Cost
@@ -295,6 +304,27 @@ func validWorkspaceDeleteIdentity(operation workspaceDeleteOperation) bool {
 		stringValue(execution["runtimeId"]) == operation.RuntimeID && stringValue(execution["computeAllocationId"]) == operation.ComputeID &&
 		stringValue(execution["storageId"]) == operation.StorageID && stringValue(execution["attachmentId"]) == operation.AttachmentID &&
 		int64(numberField(execution, "workspaceApiKeyId", 0)) == operation.WorkspaceAPIKeyID
+}
+
+func validWorkspaceDeleteComputeReadbackState(operation workspaceDeleteOperation) bool {
+	if operation.ComputeReadbacks == 0 && operation.MaxComputeReadbacks == 0 {
+		return true
+	}
+	if operation.MaxComputeReadbacks != workspaceDeleteComputeReadbackBudget || operation.ComputeReadbacks <= 0 || operation.ComputeReadbacks > operation.MaxComputeReadbacks || operation.ComputeStatus == "" {
+		return false
+	}
+	if operation.ComputeStatus == "destroying" {
+		return operation.Phase == "storage_destroyed"
+	}
+	if !workspaceDeleteComputeTerminal(operation.ComputeStatus) {
+		return false
+	}
+	switch operation.Phase {
+	case "compute_destroyed", "key_deleted", "refund_confirmed", "refund_receipt_recorded", "workspace_deleted", "complete":
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeWorkspaceDeleteOperation(row map[string]any) (workspaceDeleteOperation, error) {
@@ -394,12 +424,45 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 			}
 			operation = next
 		case "storage_destroyed":
-			compute, err := service.DestroyWorkspaceCompute(ctx, operation.AccountID, operation.WorkspaceID, operation.ComputeID, workspaceDeleteStageKey(operation, "compute"))
-			if err != nil || !workspaceDeleteComputeStartMatches(operation, compute) {
-				return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_compute_destroy_unconfirmed")
+			var compute clients.ComputeAllocation
+			var err error
+			if operation.ComputeStatus == "destroying" {
+				if operation.MaxComputeReadbacks != workspaceDeleteComputeReadbackBudget || operation.ComputeReadbacks >= operation.MaxComputeReadbacks {
+					return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_compute_absence_unconfirmed")
+				}
+				claimed := operation
+				claimed.ComputeReadbacks++
+				if err := app.persistWorkspaceDelete(ctx, operation, claimed, false, false); err != nil {
+					return operation, err
+				}
+				operation = claimed
+				compute, err = service.WorkspaceDeleteComputeStatus(ctx, operation.ComputeID)
+				if err != nil || !workspaceDeleteComputeIdentityMatches(operation, compute) {
+					return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_compute_absence_unconfirmed")
+				}
+			} else {
+				compute, err = service.DestroyWorkspaceCompute(ctx, operation.AccountID, operation.WorkspaceID, operation.ComputeID, workspaceDeleteStageKey(operation, "compute"))
+				if err != nil || !workspaceDeleteComputeStartMatches(operation, compute) {
+					return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_compute_destroy_unconfirmed")
+				}
+				claimed := operation
+				claimed.ComputeStatus, claimed.MaxComputeReadbacks, claimed.ComputeReadbacks = "destroying", workspaceDeleteComputeReadbackBudget, 1
+				if err := app.persistWorkspaceDelete(ctx, operation, claimed, false, false); err != nil {
+					return operation, err
+				}
+				operation = claimed
+				compute, err = service.WorkspaceDeleteComputeStatus(ctx, operation.ComputeID)
+				if err != nil || !workspaceDeleteComputeIdentityMatches(operation, compute) {
+					return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_compute_absence_unconfirmed")
+				}
 			}
-			compute, err = awaitWorkspaceDeleteComputeReadback(ctx, service, operation)
-			if err != nil {
+			if compute.Status == "destroying" {
+				if operation.ComputeReadbacks >= operation.MaxComputeReadbacks {
+					return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_compute_absence_unconfirmed")
+				}
+				return operation, errWorkspaceDeletePending
+			}
+			if !workspaceDeleteComputeTerminal(compute.Status) {
 				return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_compute_absence_unconfirmed")
 			}
 			next := operation
@@ -829,30 +892,6 @@ func workspaceDeleteComputeTerminal(status string) bool {
 	}
 }
 
-func awaitWorkspaceDeleteComputeReadback(ctx context.Context, service *controlplane.Service, operation workspaceDeleteOperation) (clients.ComputeAllocation, error) {
-	const attempts = 8
-	for attempt := 0; attempt < attempts; attempt++ {
-		compute, err := service.WorkspaceDeleteComputeStatus(ctx, operation.ComputeID)
-		if err != nil || !workspaceDeleteComputeIdentityMatches(operation, compute) {
-			return compute, errWorkspaceDeleteUnconfirmed
-		}
-		if workspaceDeleteComputeTerminal(compute.Status) {
-			return compute, nil
-		}
-		if compute.Status != "destroying" || attempt == attempts-1 {
-			return compute, errWorkspaceDeleteUnconfirmed
-		}
-		timer := time.NewTimer(25 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return clients.ComputeAllocation{}, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	return clients.ComputeAllocation{}, errWorkspaceDeleteUnconfirmed
-}
-
 func workspaceDeleteResponse(operation workspaceDeleteOperation, errorCode string) map[string]any {
 	status := "deleted"
 	if errorCode != "" {
@@ -879,4 +918,12 @@ func workspaceDeleteResponse(operation workspaceDeleteOperation, errorCode strin
 	response["keyStatus"] = operation.KeyStatus
 	response["refundStatus"] = stringValue(operation.RefundConfirmation["status"])
 	return response
+}
+
+func workspaceDeletePendingResponse(operation workspaceDeleteOperation) map[string]any {
+	return map[string]any{
+		"workspaceId": operation.WorkspaceID, "operationId": operation.OperationID, "status": "pending",
+		"phase": operation.Phase, "ownerStage": "compute", "computeStatus": operation.ComputeStatus,
+		"computeReadbacks": operation.ComputeReadbacks, "maxComputeReadbacks": operation.MaxComputeReadbacks,
+	}
 }
