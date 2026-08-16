@@ -271,11 +271,14 @@ test("package exposes one local Workspace qualification command", async () => {
   assert.match(compose, /source: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set a task-owned local Docker Secret root\}/);
   assert.match(compose, /target: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set a task-owned local Docker Secret root\}/);
   assert.match(compose, /OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set a task-owned local Docker Secret root\}/);
+	assert.match(compose, /OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER: \$\{OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER:\?Set the task-owned Control Plane gateway container\}/);
+	assert.match(compose, /opl\.fabric\.local-docker\.gateway: control-plane/);
   assert.match(compose, /OPL_TENCENT_ZONE: local/);
   const envExample = await readFile(new URL("../../deploy/portable/opl-cloud.env.example", import.meta.url), "utf8");
   assert.match(envExample, /^OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT=\/absolute\/path\/to\/opl-fabric-secrets$/m);
   const runner = await readFile(new URL("../../tools/local-workspace-qualification.ts", import.meta.url), "utf8");
   assert.match(runner, /\["OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT", fabricSecretRoot\]/);
+	assert.match(runner, /\["OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER", `\$\{project\}-control-plane-1`\]/);
   assert.match(runner, /env: composeEnvironment/);
   assert.match(runner, /exactRepoDigestFromInspection\(cloudRepository, await dockerImageInspection\(cloudTag\)\)/);
   assert.match(runner, /exactRepoDigestFromInspection\(workspaceRepository, await dockerImageInspection\(workspaceTag\)\)/);

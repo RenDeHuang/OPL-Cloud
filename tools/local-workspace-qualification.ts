@@ -785,6 +785,7 @@ export async function runLocalWorkspaceQualification(options) {
       ["OPL_QUALIFICATION_INITIAL_USD_MICROS", "1000000000"],
       ["OPL_DOCKER_SOCKET_PATH", dockerSocket],
       ["OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT", fabricSecretRoot],
+      ["OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER", `${project}-control-plane-1`],
       ["OPL_SUB2API_REQUEST_TIMEOUT_MS", "5000"],
       ["OPL_MONTHLY_BILLING_WORKER_ENABLED", "0"],
       ["OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "1"],

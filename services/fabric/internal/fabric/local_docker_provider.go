@@ -46,6 +46,7 @@ type LocalDockerProviderConfig struct {
 	DockerBinary                 string
 	GatewaySecretRoot            string
 	RuntimeHost                  string
+	RuntimeGatewayContainer      string
 	TrustedWorkspaceImageSources []string
 }
 
@@ -54,6 +55,7 @@ type LocalDockerProvider struct {
 	gatewaySecretRoot                 string
 	gatewaySecretRootErr              error
 	runtimeHost                       string
+	runtimeGatewayContainer           string
 	trustedWorkspaceImageRepositories map[string]struct{}
 	trustedWorkspaceImageReferences   map[string]struct{}
 	now                               func() time.Time
@@ -68,6 +70,7 @@ func NewLocalDockerProvider() *LocalDockerProvider {
 		DockerBinary:                 firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_DOCKER_BINARY")), "docker"),
 		GatewaySecretRoot:            strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT")),
 		RuntimeHost:                  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HOST")), "127.0.0.1"),
+		RuntimeGatewayContainer:      strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER")),
 		TrustedWorkspaceImageSources: trustedSources,
 	}, nil)
 }
@@ -86,6 +89,7 @@ func newLocalDockerProvider(config LocalDockerProviderConfig, runner dockerRunne
 	return &LocalDockerProvider{
 		runner: runner, gatewaySecretRoot: secretRoot, gatewaySecretRootErr: secretRootErr,
 		runtimeHost:                       firstNonEmpty(strings.TrimSpace(config.RuntimeHost), "127.0.0.1"),
+		runtimeGatewayContainer:           strings.TrimSpace(config.RuntimeGatewayContainer),
 		trustedWorkspaceImageRepositories: trustedRepositories, trustedWorkspaceImageReferences: trustedReferences,
 		now: func() time.Time { return time.Now().UTC() },
 	}
@@ -451,11 +455,39 @@ func (p *LocalDockerProvider) RenewComputeAllocation(ctx context.Context, alloca
 
 func (p *LocalDockerProvider) DestroyComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
 	name := localDockerName("opl-compute", allocation.ID)
-	if _, exists, err := p.inspectNetwork(ctx, name); err != nil {
+	network, exists, err := p.inspectNetwork(ctx, name)
+	if err != nil {
 		return allocation, err
-	} else if exists {
-		if _, err := p.runner.Run(ctx, nil, "network", "rm", name); err != nil {
-			return allocation, err
+	}
+	if exists {
+		expected := localDockerLabels(allocation.AccountID, allocation.WorkspaceID, allocation.ID, "", "compute")
+		if !exactDockerLabels(network.Labels, expected) {
+			return allocation, fmt.Errorf("local_docker_compute_ownership_mismatch")
+		}
+		if p.runtimeGatewayContainer != "" {
+			gateway, gatewayExists, inspectErr := p.inspectContainer(ctx, p.runtimeGatewayContainer)
+			if inspectErr != nil || !gatewayExists || gateway.Config.Labels["opl.fabric.local-docker.gateway"] != "control-plane" {
+				return allocation, firstNonNil(inspectErr, fmt.Errorf("local_docker_runtime_gateway_identity_mismatch"))
+			}
+			bound, bindingErr := exactContainerNetworkMembership(gateway, name, network.ID)
+			if bindingErr != nil {
+				return allocation, bindingErr
+			}
+			if bound {
+				_, disconnectErr := p.runner.Run(ctx, nil, "network", "disconnect", name, p.runtimeGatewayContainer)
+				gateway, gatewayExists, inspectErr = p.inspectContainer(ctx, p.runtimeGatewayContainer)
+				if inspectErr != nil || !gatewayExists {
+					return allocation, firstNonNil(inspectErr, fmt.Errorf("local_docker_runtime_gateway_identity_mismatch"))
+				}
+				bound, bindingErr = exactContainerNetworkMembership(gateway, name, network.ID)
+				if bindingErr != nil || bound {
+					return allocation, firstNonNil(bindingErr, disconnectErr, fmt.Errorf("local_docker_runtime_gateway_network_readback_mismatch"))
+				}
+			}
+		}
+		_, removeErr := p.runner.Run(ctx, nil, "network", "rm", name)
+		if _, stillExists, readErr := p.inspectNetwork(ctx, name); readErr != nil || stillExists {
+			return allocation, firstNonNil(readErr, removeErr, fmt.Errorf("local_docker_compute_destroy_readback_mismatch"))
 		}
 	}
 	allocation.Status, allocation.ProviderRequestID = "destroyed", providerRequestID("docker-compute-destroy", allocation.ID)

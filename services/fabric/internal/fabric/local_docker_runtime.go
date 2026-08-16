@@ -163,11 +163,124 @@ type dockerContainerInspect struct {
 			HostIP   string `json:"HostIp"`
 			HostPort string `json:"HostPort"`
 		} `json:"Ports"`
+		Networks map[string]dockerEndpointSettings `json:"Networks"`
 	} `json:"NetworkSettings"`
 	HostConfig struct {
 		Mounts []dockerHostMount `json:"Mounts"`
 	} `json:"HostConfig"`
 	Mounts []dockerRuntimeMount `json:"Mounts"`
+}
+
+type dockerEndpointSettings struct {
+	NetworkID string `json:"NetworkID"`
+}
+
+func exactContainerNetworkMembership(container dockerContainerInspect, networkName, networkID string) (bool, error) {
+	if networkName == "" || networkID == "" {
+		return false, fmt.Errorf("local_docker_runtime_network_binding_mismatch")
+	}
+	seenIDs := make(map[string]string, len(container.NetworkSettings.Networks))
+	for name, endpoint := range container.NetworkSettings.Networks {
+		if name == "" || endpoint.NetworkID == "" {
+			return false, fmt.Errorf("local_docker_runtime_network_binding_mismatch")
+		}
+		if previous, duplicate := seenIDs[endpoint.NetworkID]; duplicate && previous != name {
+			return false, fmt.Errorf("local_docker_runtime_network_binding_mismatch")
+		}
+		seenIDs[endpoint.NetworkID] = name
+		if name == networkName && endpoint.NetworkID != networkID || name != networkName && endpoint.NetworkID == networkID {
+			return false, fmt.Errorf("local_docker_runtime_network_binding_mismatch")
+		}
+	}
+	endpoint, exists := container.NetworkSettings.Networks[networkName]
+	return exists && endpoint.NetworkID == networkID, nil
+}
+
+func localDockerNetworkID(allocation ComputeAllocation) (string, error) {
+	if !strings.HasPrefix(allocation.ProviderResourceID, "network/") {
+		return "", fmt.Errorf("local_docker_runtime_network_binding_mismatch")
+	}
+	networkID := strings.TrimPrefix(allocation.ProviderResourceID, "network/")
+	if networkID == "" || strings.Contains(networkID, "/") {
+		return "", fmt.Errorf("local_docker_runtime_network_binding_mismatch")
+	}
+	return networkID, nil
+}
+
+func (p *LocalDockerProvider) runtimeGatewayNetworkStatus(ctx context.Context, runtime dockerContainerInspect, compute ComputeAllocation) (bool, error) {
+	if p.runtimeGatewayContainer == "" {
+		return true, nil
+	}
+	networkName := localDockerName("opl-compute", compute.ID)
+	networkID, err := localDockerNetworkID(compute)
+	if err != nil {
+		return false, err
+	}
+	runtimeBound, err := exactContainerNetworkMembership(runtime, networkName, networkID)
+	if err != nil || !runtimeBound {
+		return false, firstNonNil(err, fmt.Errorf("local_docker_runtime_network_binding_mismatch"))
+	}
+	gateway, exists, err := p.inspectContainer(ctx, p.runtimeGatewayContainer)
+	if err != nil || !exists || !gateway.State.Running || gateway.Config.Labels["opl.fabric.local-docker.gateway"] != "control-plane" {
+		return false, firstNonNil(err, fmt.Errorf("local_docker_runtime_gateway_identity_mismatch"))
+	}
+	return exactContainerNetworkMembership(gateway, networkName, networkID)
+}
+
+func (p *LocalDockerProvider) ensureRuntimeGatewayNetwork(ctx context.Context, runtime dockerContainerInspect, compute ComputeAllocation, attempt *providerMutationAttempt) error {
+	bound, err := p.runtimeGatewayNetworkStatus(ctx, runtime, compute)
+	if err != nil || bound || p.runtimeGatewayContainer == "" {
+		return err
+	}
+	if attempt == nil {
+		return fmt.Errorf("local_docker_runtime_gateway_mutation_binding_required")
+	}
+	if !attempt.Fresh && !attempt.Replay {
+		claimed, claimErr := attempt.claimReplay(ctx)
+		if claimErr != nil || !claimed {
+			return firstNonNil(claimErr, ErrWorkspaceLaunchPending)
+		}
+		bound, err = p.runtimeGatewayNetworkStatus(ctx, runtime, compute)
+		if err != nil || bound {
+			return err
+		}
+		if dispatchErr := attempt.markReplayDispatch(ctx); dispatchErr != nil {
+			return dispatchErr
+		}
+	}
+	networkName := localDockerName("opl-compute", compute.ID)
+	_, connectErr := p.runner.Run(ctx, nil, "network", "connect", networkName, p.runtimeGatewayContainer)
+	bound, readErr := p.runtimeGatewayNetworkStatus(ctx, runtime, compute)
+	if readErr != nil {
+		return readErr
+	}
+	if bound {
+		return nil
+	}
+	if connectErr != nil {
+		return ErrWorkspaceLaunchPending
+	}
+	return fmt.Errorf("local_docker_runtime_gateway_network_readback_mismatch")
+}
+
+func (p *LocalDockerProvider) verifyRuntimeGatewayNetwork(ctx context.Context, container dockerContainerInspect) error {
+	if p.runtimeGatewayContainer == "" {
+		return nil
+	}
+	labels := container.Config.Labels
+	compute := ComputeAllocation{ID: labels["opl.compute.id"], AccountID: labels["opl.account.id"], WorkspaceID: labels["opl.workspace.id"]}
+	if compute.ID == "" || compute.AccountID == "" || compute.WorkspaceID == "" {
+		return fmt.Errorf("local_docker_runtime_network_binding_mismatch")
+	}
+	readback, err := p.ReadComputeAllocation(ctx, compute)
+	if err != nil {
+		return err
+	}
+	bound, err := p.runtimeGatewayNetworkStatus(ctx, container, readback)
+	if err != nil || !bound {
+		return firstNonNil(err, fmt.Errorf("local_docker_runtime_gateway_network_readback_mismatch"))
+	}
+	return nil
 }
 
 type dockerHostMount struct {
@@ -464,6 +577,12 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 		_ = attempt.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, readErr)
 		return WorkspaceRuntime{}, readErr
 	}
+	if readErr := p.ensureRuntimeGatewayNetwork(ctx, container, computeReadback, attempt); readErr != nil {
+		if !errors.Is(readErr, ErrWorkspaceLaunchPending) {
+			_ = attempt.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, readErr)
+		}
+		return WorkspaceRuntime{}, readErr
+	}
 	resource, err := p.runtimeFromContainer(container)
 	if err != nil {
 		return WorkspaceRuntime{}, err
@@ -524,6 +643,9 @@ func (p *LocalDockerProvider) WorkspaceRuntimeStatus(ctx context.Context, worksp
 		return WorkspaceRuntime{}, ErrLaunchStageBindingConflict
 	}
 	if err := p.verifyRuntimeGatewaySecret(ctx, container, metadata); err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	if err := p.verifyRuntimeGatewayNetwork(ctx, container); err != nil {
 		return WorkspaceRuntime{}, err
 	}
 	return p.runtimeFromContainer(container)

@@ -119,12 +119,17 @@ func waitForLocalRuntime(ctx context.Context, url string) error {
 }
 
 type bindingCheckingDockerRunner struct {
-	base               dockerRunner
-	store              OperationStore
-	parents            map[string]WorkspaceLaunchStageBinding
-	mutationIDs        map[string]string
-	runtimeCreateCalls int
-	t                  *testing.T
+	base                       dockerRunner
+	store                      OperationStore
+	parents                    map[string]WorkspaceLaunchStageBinding
+	mutationIDs                map[string]string
+	runtimeCreateCalls         int
+	gatewayConnectCalls        int
+	gatewayDisconnectCalls     int
+	networkRemoveCalls         int
+	loseGatewayConnectResponse bool
+	loseGatewayCleanupResponse bool
+	t                          *testing.T
 }
 
 type recordingDockerRunner struct {
@@ -458,6 +463,16 @@ func (r *bindingCheckingDockerRunner) Run(ctx context.Context, stdin []byte, arg
 	if len(args) >= 2 && args[0] == "network" && args[1] == "create" {
 		stage, mutation = "ensure_compute_allocation", "local_docker_network_create"
 	}
+	if len(args) == 4 && args[0] == "network" && args[1] == "connect" {
+		stage, mutation = "runtime", "local_docker_runtime_create"
+		r.gatewayConnectCalls++
+	}
+	if len(args) == 4 && args[0] == "network" && args[1] == "disconnect" {
+		r.gatewayDisconnectCalls++
+	}
+	if len(args) == 3 && args[0] == "network" && args[1] == "rm" {
+		r.networkRemoveCalls++
+	}
 	if len(args) >= 2 && args[0] == "volume" && args[1] == "create" {
 		stage, mutation = "storage", "local_docker_volume_create"
 		if strings.Contains(args[len(args)-1], "gateway") {
@@ -491,6 +506,12 @@ func (r *bindingCheckingDockerRunner) Run(ctx context.Context, stdin []byte, arg
 		}
 	}
 	output, err := r.base.Run(ctx, stdin, args...)
+	if err == nil && r.loseGatewayConnectResponse && len(args) == 4 && args[0] == "network" && args[1] == "connect" {
+		return output, fmt.Errorf("local_docker_test_gateway_connect_response_lost")
+	}
+	if err == nil && r.loseGatewayCleanupResponse && len(args) >= 2 && args[0] == "network" && (args[1] == "disconnect" || args[1] == "rm") {
+		return output, fmt.Errorf("local_docker_test_gateway_cleanup_response_lost")
+	}
 	if err != nil && r.t != nil {
 		r.t.Logf("docker args=%q error=%v", args, err)
 	}
@@ -878,6 +899,12 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	imageID := strings.TrimSpace(string(imageOutput))
+	gatewayName := "opl-gateway-test-" + stableSuffix(t.Name(), time.Now().String())[:12]
+	if output, err := exec.CommandContext(ctx, "docker", "run", "-d", "--name", gatewayName,
+		"--label", "opl.fabric.local-docker.gateway=control-plane", imageID, "sleep", "300").CombinedOutput(); err != nil {
+		t.Fatalf("start local gateway container: %v: %s", err, output)
+	}
+	t.Cleanup(func() { _ = exec.Command("docker", "container", "rm", "-f", gatewayName).Run() })
 
 	launchID := "local-launch-" + stableSuffix(time.Now().String())[:12]
 	accountID, workspaceID := "acct-local", "ws-"+stableSuffix(launchID)[:10]
@@ -895,9 +922,13 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
 	mutationIDs := map[string]string{}
 	store := NewMemoryOperationStore()
-	runner := &bindingCheckingDockerRunner{base: execDockerRunner{binary: "docker"}, store: store, parents: bindings, mutationIDs: mutationIDs, t: t}
+	runner := &bindingCheckingDockerRunner{
+		base: execDockerRunner{binary: "docker"}, store: store, parents: bindings, mutationIDs: mutationIDs,
+		loseGatewayConnectResponse: true, loseGatewayCleanupResponse: true, t: t,
+	}
 	provider := newLocalDockerProvider(LocalDockerProviderConfig{
-		GatewaySecretRoot: localDockerSecretTestRoot(t), RuntimeHost: "127.0.0.1", TrustedWorkspaceImageSources: []string{imageID},
+		GatewaySecretRoot: localDockerSecretTestRoot(t), RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
+		TrustedWorkspaceImageSources: []string{imageID},
 	}, runner)
 	service := NewServiceWithOperationStore(provider, store)
 	t.Cleanup(func() {
@@ -971,35 +1002,80 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		t.Fatalf("initial runtime=%#v err=%v", runtime, err)
 	}
 	runtime, err = waitForWorkspaceStage(ctx, service, runtimeInput)
-	if err != nil || runtime.State != "ready" || runtime.Reason != "none" || runtime.Binding != runtimeInput.Binding || runtime.Resources.RuntimeURL == "" || runner.runtimeCreateCalls != 1 {
-		t.Fatalf("converged runtime=%#v err=%v createCalls=%d", runtime, err, runner.runtimeCreateCalls)
+	if err != nil || runtime.State != "ready" || runtime.Reason != "none" || runtime.Binding != runtimeInput.Binding || runtime.Resources.RuntimeURL == "" ||
+		runner.runtimeCreateCalls != 1 || runner.gatewayConnectCalls != 1 {
+		t.Fatalf("converged runtime=%#v err=%v createCalls=%d gatewayConnectCalls=%d", runtime, err, runner.runtimeCreateCalls, runner.gatewayConnectCalls)
 	}
 	if err := waitForLocalRuntime(ctx, runtime.Resources.RuntimeURL); err != nil {
 		t.Fatal(err)
 	}
-	status, err := service.WorkspaceRuntimeStatus(ctx, workspaceID)
+	opened, err := exec.CommandContext(ctx, "docker", "exec", gatewayName, "wget", "-qO-", "http://"+runtime.Resources.RuntimeServiceName+":3000/").CombinedOutput()
+	if err != nil || !strings.Contains(string(opened), "OPL Workspace READY") {
+		t.Fatalf("gateway runtime open: %v: %s", err, opened)
+	}
+	if output, err := exec.CommandContext(ctx, "docker", "restart", gatewayName).CombinedOutput(); err != nil {
+		t.Fatalf("restart gateway container: %v: %s", err, output)
+	}
+	opened, err = exec.CommandContext(ctx, "docker", "exec", gatewayName, "wget", "-qO-", "http://"+runtime.Resources.RuntimeServiceName+":3000/").CombinedOutput()
+	if err != nil || !strings.Contains(string(opened), "OPL Workspace READY") {
+		t.Fatalf("gateway runtime open after restart: %v: %s", err, opened)
+	}
+	restartedProvider := newLocalDockerProvider(LocalDockerProviderConfig{
+		GatewaySecretRoot: provider.gatewaySecretRoot, RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
+		TrustedWorkspaceImageSources: []string{imageID},
+	}, runner)
+	restartedService := NewServiceWithOperationStore(restartedProvider, store)
+	status, err := restartedService.WorkspaceRuntimeStatus(ctx, workspaceID)
 	if err != nil || status.ID != runtime.Resources.RuntimeID || status.OperationID != runtimeInput.Binding.FabricOperationID || !status.Ready {
 		t.Fatalf("canonical runtime status=%#v err=%v", status, err)
 	}
-	observation := service.ObserveWorkspaceRuntime(ctx, workspaceID)
+	observation := restartedService.ObserveWorkspaceRuntime(ctx, workspaceID)
 	if observation.State != WorkspaceOwnerObservationReady || observation.Runtime == nil || observation.Runtime.ID != status.ID {
 		t.Fatalf("canonical runtime observation=%#v", observation)
 	}
-	credentials, err := service.WorkspaceRuntimeCredentials(ctx, accountID, workspaceID)
+	credentials, err := restartedService.WorkspaceRuntimeCredentials(ctx, accountID, workspaceID)
 	if err != nil || credentials.ID != status.ID || credentials.OperationID != status.OperationID {
 		t.Fatalf("canonical runtime credentials=%#v err=%v", credentials, err)
 	}
-	if _, err := service.WorkspaceRuntimeCredentials(ctx, accountID+"-other", workspaceID); err == nil {
+	if _, err := restartedService.WorkspaceRuntimeCredentials(ctx, accountID+"-other", workspaceID); err == nil {
 		t.Fatal("cross-account canonical runtime credentials succeeded")
 	}
-	facts, err := service.ProviderFactsBatch(ctx, ProviderFactsBatchInput{Items: []ProviderFactInput{{
+	facts, err := restartedService.ProviderFactsBatch(ctx, ProviderFactsBatchInput{Items: []ProviderFactInput{{
 		AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "runtime", ResourceID: status.ID,
 	}}})
 	if err != nil || len(facts.Items) != 1 || !facts.Items[0].Available || facts.Items[0].ResourceID != status.ID {
 		t.Fatalf("canonical runtime provider facts=%#v err=%v", facts, err)
 	}
+	networkName := localDockerName("opl-compute", computeID)
+	if output, err := exec.CommandContext(ctx, "docker", "network", "disconnect", networkName, gatewayName).CombinedOutput(); err != nil {
+		t.Fatalf("create gateway membership drift: %v: %s", err, output)
+	}
+	if _, err := restartedService.WorkspaceRuntimeStatus(ctx, workspaceID); err == nil {
+		t.Fatal("runtime status accepted missing gateway network membership")
+	}
+	if observation := restartedService.ObserveWorkspaceRuntime(ctx, workspaceID); observation.State == WorkspaceOwnerObservationReady {
+		t.Fatalf("runtime observation accepted missing gateway network membership: %#v", observation)
+	}
+	if _, err := restartedService.WorkspaceRuntimeCredentials(ctx, accountID, workspaceID); err == nil {
+		t.Fatal("runtime credentials accepted missing gateway network membership")
+	}
+	driftedFacts, err := restartedService.ProviderFactsBatch(ctx, ProviderFactsBatchInput{Items: []ProviderFactInput{{
+		AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "runtime", ResourceID: status.ID,
+	}}})
+	if err != nil || len(driftedFacts.Items) != 1 || driftedFacts.Items[0].Available {
+		t.Fatalf("runtime facts accepted missing gateway network membership: %#v err=%v", driftedFacts, err)
+	}
+	if output, err := exec.CommandContext(ctx, "docker", "network", "connect", networkName, gatewayName).CombinedOutput(); err != nil {
+		t.Fatalf("restore gateway membership after drift check: %v: %s", err, output)
+	}
+	if status, err := restartedService.WorkspaceRuntimeStatus(ctx, workspaceID); err != nil || !status.Ready {
+		t.Fatalf("runtime status after exact membership restore=%#v err=%v", status, err)
+	}
 	if runner.runtimeCreateCalls != 1 {
 		t.Fatalf("canonical readback repeated Docker create: %d", runner.runtimeCreateCalls)
+	}
+	if runner.gatewayConnectCalls != 1 {
+		t.Fatalf("canonical readback repeated gateway network connect: %d", runner.gatewayConnectCalls)
 	}
 
 	for action, operationID := range mutationIDs {
@@ -1020,6 +1096,50 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	}
 	if observation := service.ObserveWorkspaceRuntime(ctx, workspaceID); observation.State != WorkspaceOwnerObservationAbsent {
 		t.Fatalf("destroyed runtime observation=%#v", observation)
+	}
+	network, exists, err := provider.inspectNetwork(ctx, networkName)
+	if err != nil || !exists {
+		t.Fatalf("compute network before destroy=%#v exists=%t err=%v", network, exists, err)
+	}
+	if _, err := provider.DestroyComputeAllocation(ctx, ComputeAllocation{ID: computeID, AccountID: accountID, WorkspaceID: workspaceID}); err != nil {
+		t.Fatalf("destroy compute allocation: %v", err)
+	}
+	gateway, exists, err := provider.inspectContainer(ctx, gatewayName)
+	if err != nil || !exists {
+		t.Fatalf("gateway after compute destroy=%#v exists=%t err=%v", gateway, exists, err)
+	}
+	if bound, bindingErr := exactContainerNetworkMembership(gateway, networkName, network.ID); bindingErr != nil || bound {
+		t.Fatalf("gateway membership after compute destroy bound=%t err=%v", bound, bindingErr)
+	}
+	if _, exists, err := provider.inspectNetwork(ctx, networkName); err != nil || exists {
+		t.Fatalf("compute network after destroy exists=%t err=%v", exists, err)
+	}
+	if runner.gatewayDisconnectCalls != 1 || runner.networkRemoveCalls != 1 {
+		t.Fatalf("gateway cleanup calls disconnect=%d networkRemove=%d", runner.gatewayDisconnectCalls, runner.networkRemoveCalls)
+	}
+}
+
+func TestExactContainerNetworkMembershipRejectsIdentityDrift(t *testing.T) {
+	container := dockerContainerInspect{}
+	container.NetworkSettings.Networks = map[string]dockerEndpointSettings{"opl-compute-test": {NetworkID: "network-test"}}
+	if bound, err := exactContainerNetworkMembership(container, "opl-compute-test", "network-test"); err != nil || !bound {
+		t.Fatalf("exact membership bound=%t err=%v", bound, err)
+	}
+	for name, networks := range map[string]map[string]dockerEndpointSettings{
+		"wrong network id":   {"opl-compute-test": {NetworkID: "network-other"}},
+		"same id wrong name": {"opl-compute-other": {NetworkID: "network-test"}},
+		"duplicate network id": {
+			"opl-compute-test": {NetworkID: "network-test"}, "opl-compute-other": {NetworkID: "network-test"},
+		},
+		"empty endpoint": {"opl-compute-test": {}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := dockerContainerInspect{}
+			candidate.NetworkSettings.Networks = networks
+			if _, err := exactContainerNetworkMembership(candidate, "opl-compute-test", "network-test"); err == nil {
+				t.Fatal("network identity drift did not fail closed")
+			}
+		})
 	}
 }
 
