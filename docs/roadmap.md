@@ -114,7 +114,7 @@ open phases are:
 
 | ID | State | Priority | Phase and scope | Safety retained | Acceptance |
 | --- | --- | --- | --- | --- | --- |
-| `CONTRACT-DEDUP-02` | `planned` | `P1` | Phase 2: assign one owner to repeated facts across current machine contracts | public APIs, security, integrity, permissions, irreversible side effects | Other contracts reference the owner or schema; no duplicated mutable implementation/status truth remains |
+| `CONTRACT-DEDUP-02` | `next` | `P1` | Phase 2 is underway: Billing now references `opl-cloud-evidence-ledger-contract.json#reconciliationReportV1` instead of copying the Ledger-owned report schema; other repeated fact families remain scoped one owner at a time | public APIs, security, integrity, permissions, irreversible side effects | Each remaining consumer references the owning contract or schema; no duplicated mutable implementation/status truth remains |
 | `DEPLOY-CONTRACT-03` | `planned` | `P1` | Phase 3: migrate deployment contract one workflow family at a time | production authorization, runner/identity binding, Secrets, immutable images, mutation bounds, readback, diagnostics, rollback | Focused workflow tests own executable shape; the aggregate deployment migration contract is deleted only after all families cut over |
 
 ## Simplification Backlog
@@ -136,9 +136,9 @@ resume the deletion.
 | `SIMPLIFY-CONSOLE-CSS-01` | `later` | `P3` | Public, login, authenticated, and legacy Console surfaces retain overlapping style layers | medium | Preserve current desktop/mobile behavior and Workspace interaction states while consolidating styles only when it pays for a real Console change |
 | `SIMPLIFY-LEDGER-VERTICAL-01` | `candidate` | `P2` | Artifact/review/policy/continuation surfaces beyond current receipt consumers | high | Resolve `EVIDENCE-CONTINUATION-01` and external callers before shrinking |
 | `SIMPLIFY-CP-IDENTITY-01` | `candidate` | `P2` | Organization/Membership compatibility storage | high | Decide the self-service identity model and migrate persisted identity explicitly |
-| `SIMPLIFY-ACTIONS-REUSE-01` | `planned` | `P2` | Repeated workflow checkout/setup/cleanup mechanics | medium | Consolidate only stable repetition without rebuilding a monolithic dispatcher |
+| `SIMPLIFY-ACTIONS-REUSE-01` | `next` | `P2` | Qualification now reuses stable checkout, Node setup, PostgreSQL service, and Go-test pipeline YAML while preserving the four job identities and zero-skip gates; other workflow repetition remains separately scoped | medium | Consolidate only stable repetition with a semantic workflow test; do not rebuild a monolithic dispatcher |
 | `SIMPLIFY-CP-FACADE-01` | `planned` | `P2` | The zero-caller `ReapplyWorkspaceRuntime` forwarding method, finite zero-caller `server/app_state` helpers, and the closed dead `PrepareWorkspace` orchestration chain are removed without changing historical rows or Fabric resources. `CreateWorkspaceInput` remains for its real Provider Acceptance caller. The real `Service` facade and capability boundaries remain; no broader caller-zero admission exists | medium | Remove only separately proven-zero forwarding or dead helpers, migrate real callers to owning capabilities, and preserve the real `Service` and capability boundaries without introducing an aggregate replacement facade |
-| `SIMPLIFY-CLI-ARGS-01` | `planned` | `P2` | Repeated handwritten CLI argument parsers | low | Preserve accepted flags and errors using the native parser in each owning tool |
+| `SIMPLIFY-CLI-ARGS-01` | `next` | `P2` | `validate-production-manifest`, `render-tke-manifest`, and `production-node-drift-diagnostic` use tool-local `node:util.parseArgs`; remaining handwritten parsers stay with their owning tools until focused compatibility evidence exists | low | Preserve accepted flags and errors while replacing each remaining parser with the native parser; do not add a shared CLI framework |
 | `SIMPLIFY-STATIC-ASSETS-01` | `later` | `P3` | Custom static lookup, SPA fallback, and request-time gzip | medium | Select one compression/edge owner and preserve cache, range, content type, and SPA behavior |
 ## Evidence Gaps
 
