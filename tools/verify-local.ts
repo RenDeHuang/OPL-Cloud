@@ -65,7 +65,7 @@ export const productMatrixLaneSpecs = Object.freeze([
   { order: 1, cwd: "services/ledger", command: "go", argsPrefix: ["test", "-count=1", "-json"] },
   { order: 2, cwd: "services/control-plane", command: "go", argsPrefix: ["test", "-timeout=15m", "-count=1", "-json"] },
   { order: 3, cwd: "services/fabric", command: "go", argsPrefix: ["test", "-count=1", "-json"] },
-  { order: 4, cwd: ".", command: "node", argsPrefix: ["--test", "--test-reporter=json", "tests/integration/local-workspace-vertical-readback.test.ts"] }
+  { order: 4, cwd: ".", command: "node", argsPrefix: ["--test", "--test-reporter=tap", "tests/integration/local-workspace-vertical-readback.test.ts"] }
 ]);
 
 export const productMatrixVerticalTests = Object.freeze([
@@ -339,6 +339,19 @@ function runGoJSONWithoutSkips(args, { cwd, env }) {
   });
 }
 
+export function parseNodeTAPOutput(output) {
+  const passed = [];
+  for (const line of String(output).split(/\r?\n/)) {
+    const match = line.match(/^ok \d+ - (.+?)(?:\s+#\s+(?:skip|todo)\b.*)?$/i);
+    if (match) passed.push(match[1]);
+  }
+  const readSummary = (name) => {
+    const matches = [...String(output).matchAll(new RegExp(`^# ${name} (\\d+)$`, "gm"))];
+    return matches.length === 1 ? Number(matches[0][1]) : undefined;
+  };
+  return { passed, failed: readSummary("fail"), skipped: readSummary("skipped") };
+}
+
 async function runVerticalVerification(env) {
   const spec = productMatrixLaneSpecs[4];
   printStep("local Workspace vertical readback E0-E3/E5-E7 (E4 BLOCKED_PRODUCT_DECISION, zero skips)");
@@ -348,17 +361,7 @@ async function runVerticalVerification(env) {
     capture: true,
     allowFailure: true
   });
-  const passed = [];
-  let failed = 0;
-  let skipped = 0;
-  for (const line of result.stdout.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    let event;
-    try { event = JSON.parse(line); } catch { continue; }
-    if (event.type === "test:pass" && event.data?.name) passed.push(String(event.data.name));
-    if (event.type === "test:fail") failed += 1;
-    if (event.type === "test:pass" && event.data?.skip) skipped += 1;
-  }
+  const { passed, failed, skipped } = parseNodeTAPOutput(result.stdout);
   const evidence = productMatrixVerticalTests.filter((name) => passed.includes(name));
   if (result.code !== 0 || failed !== 0 || skipped !== 0 || !sameStrings(evidence, productMatrixVerticalTests)) {
     const output = [result.stdout, result.stderr].filter(Boolean).join("\n").slice(-2_000_000);
