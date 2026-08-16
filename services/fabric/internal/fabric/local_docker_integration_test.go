@@ -612,6 +612,83 @@ func seedLocalDockerGatewaySecret(t *testing.T, provider *LocalDockerProvider, a
 	return secretRef
 }
 
+func TestLocalDockerGatewaySecretLifecycleMaterializesExactModesUnderRestrictiveUmask(t *testing.T) {
+	const childEnv = "OPL_TEST_LOCAL_DOCKER_SECRET_RESTRICTIVE_UMASK"
+	if os.Getenv(childEnv) != "1" {
+		command := exec.Command("sh", "-c", `umask 077; exec "$1" -test.run '^TestLocalDockerGatewaySecretLifecycleMaterializesExactModesUnderRestrictiveUmask$'`, "sh", os.Args[0])
+		command.Env = append(os.Environ(), childEnv+"=1")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("restrictive umask child failed: %v\n%s", err, output)
+		}
+		return
+	}
+
+	root := localDockerSecretTestRoot(t)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, &recordingDockerRunner{})
+	accountID, workspaceID := "acct-umask", "ws-umask"
+	secretRef := seedLocalDockerGatewaySecret(t, provider, accountID, workspaceID)
+	key := []byte("key-" + workspaceID)
+	digest := fmt.Sprintf("%x", sha256.Sum256(key))
+	metadata := localDockerGatewayMetadata{
+		AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: 1, SecretRef: secretRef,
+		Fingerprint: "sha256:" + digest, Version: digest[:16],
+	}
+	assertMode := func(path string, want os.FileMode) {
+		t.Helper()
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("stat path=%s: %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("path=%s mode=%v want=%v", path, got, want)
+		}
+	}
+	versionPath := filepath.Join(root, secretRef, localDockerGatewayVersionsDir, "sha256-"+digest)
+	assertMode(filepath.Join(root, secretRef), 0711)
+	assertMode(filepath.Join(root, secretRef, localDockerGatewayVersionsDir), 0711)
+	assertMode(versionPath, 0711)
+	assertMode(filepath.Join(versionPath, localDockerGatewayKeyFile), 0444)
+	assertMode(filepath.Join(versionPath, localDockerGatewayMetaFile), 0400)
+	if current, err := os.Readlink(filepath.Join(root, secretRef, "current")); err != nil || current != localDockerGatewayVersionsDir+"/sha256-"+digest {
+		t.Fatalf("current=%q err=%v", current, err)
+	}
+	if _, err := provider.ReadGatewaySecretByDigest(context.Background(), GatewaySecretReadbackInput{
+		AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: 1,
+		SecretRef: secretRef, Fingerprint: metadata.Fingerprint, KeyDigest: digest,
+	}); err != nil {
+		t.Fatalf("authoritative read: %v", err)
+	}
+	if err := provider.writeGatewaySecret(secretRef, key, metadata); err != nil {
+		t.Fatalf("same Secret replay: %v", err)
+	}
+
+	rotatedKey := []byte("rotated-" + workspaceID)
+	rotatedDigest := fmt.Sprintf("%x", sha256.Sum256(rotatedKey))
+	rotatedMetadata := localDockerGatewayMetadata{
+		AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: 2, SecretRef: secretRef,
+		Fingerprint: "sha256:" + rotatedDigest, Version: rotatedDigest[:16],
+	}
+	if err := provider.writeGatewaySecret(secretRef, rotatedKey, rotatedMetadata); err != nil {
+		t.Fatalf("rotate Secret: %v", err)
+	}
+	rotatedVersionPath := filepath.Join(root, secretRef, localDockerGatewayVersionsDir, "sha256-"+rotatedDigest)
+	assertMode(rotatedVersionPath, 0711)
+	assertMode(filepath.Join(rotatedVersionPath, localDockerGatewayKeyFile), 0444)
+	assertMode(filepath.Join(rotatedVersionPath, localDockerGatewayMetaFile), 0400)
+	if _, err := provider.ReadGatewaySecretByDigest(context.Background(), GatewaySecretReadbackInput{
+		AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: 2,
+		SecretRef: secretRef, Fingerprint: rotatedMetadata.Fingerprint, KeyDigest: rotatedDigest,
+	}); err != nil {
+		t.Fatalf("rotated authoritative read: %v", err)
+	}
+	if err := provider.RemoveGatewaySecret(context.Background(), workspaceID); err != nil {
+		t.Fatalf("remove Secret: %v", err)
+	}
+	if _, _, err := provider.readGatewaySecretFiles(secretRef); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("removed Secret readback err=%v", err)
+	}
+}
+
 func TestLocalDockerDestroyWorkspaceRuntimeDeletesExactSecretAndPreservesSibling(t *testing.T) {
 	workspaceID, otherWorkspaceID := "ws-alpha", "ws-beta"
 	runtimeName := localRuntimeName(workspaceID)
@@ -823,6 +900,12 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		GatewaySecretRoot: localDockerSecretTestRoot(t), RuntimeHost: "127.0.0.1", TrustedWorkspaceImageSources: []string{imageID},
 	}, runner)
 	service := NewServiceWithOperationStore(provider, store)
+	t.Cleanup(func() {
+		_, _ = provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
+		_ = provider.RemoveGatewaySecret(context.Background(), workspaceID)
+		_, _ = provider.DestroyStorageVolume(context.Background(), StorageVolume{ID: storageID})
+		_, _ = provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{ID: computeID})
+	})
 	launchRequestHash := stableSuffix("workspace-launch", launchID, accountID, workspaceID, imageID)
 	preflight, err := service.PreflightWorkspaceLaunch(ctx, WorkspaceLaunchPreflightInput{
 		SchemaVersion: 1, LaunchOperationID: launchID, AccountID: accountID, WorkspaceID: workspaceID,
@@ -879,13 +962,6 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if err != nil || secret.State != "ready" {
 		t.Fatalf("secret=%#v err=%v", secret, err)
 	}
-	t.Cleanup(func() {
-		_, _ = provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
-		_ = provider.RemoveGatewaySecret(context.Background(), workspaceID)
-		_, _ = provider.DestroyStorageVolume(context.Background(), StorageVolume{ID: storage.Resources.StorageID})
-		_, _ = provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{ID: compute.Resources.ComputeAllocationID})
-	})
-
 	runtimeInput := base
 	runtimeInput.Binding, runtimeInput.Resources = bindings["runtime"], secret.Resources
 	bindInput(&runtimeInput)
@@ -1058,22 +1134,99 @@ func TestLocalDockerGatewaySecretConfigurationAndModeDriftFailClosed(t *testing.
 			t.Fatal("insecure root mode accepted")
 		}
 	})
-	t.Run("version_file_mode", func(t *testing.T) {
-		root := localDockerSecretTestRoot(t)
-		provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, &recordingDockerRunner{})
-		secretRef := seedLocalDockerGatewaySecret(t, provider, "acct-mode", "ws-mode")
-		current, err := os.Readlink(filepath.Join(root, secretRef, "current"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(filepath.Join(root, secretRef, current, localDockerGatewayKeyFile), 0644); err != nil {
-			t.Fatal(err)
-		}
-		_, _, err = provider.readGatewaySecretFiles(secretRef)
-		if !errors.Is(err, ErrLaunchStageBindingConflict) {
-			t.Fatalf("key mode drift err=%v", err)
-		}
-	})
+	for _, testCase := range []struct {
+		name        string
+		prepare     func(t *testing.T, root, secretRef string)
+		driftedPath func(root, secretRef string) string
+	}{
+		{
+			name: "secret_directory_mode",
+			prepare: func(t *testing.T, root, secretRef string) {
+				t.Helper()
+				if err := os.Mkdir(filepath.Join(root, secretRef), 0700); err != nil {
+					t.Fatal(err)
+				}
+			},
+			driftedPath: func(root, secretRef string) string { return filepath.Join(root, secretRef) },
+		},
+		{
+			name: "versions_directory_mode",
+			prepare: func(t *testing.T, root, secretRef string) {
+				t.Helper()
+				if err := os.Mkdir(filepath.Join(root, secretRef), 0711); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(filepath.Join(root, secretRef), 0711); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(filepath.Join(root, secretRef, localDockerGatewayVersionsDir), 0700); err != nil {
+					t.Fatal(err)
+				}
+			},
+			driftedPath: func(root, secretRef string) string {
+				return filepath.Join(root, secretRef, localDockerGatewayVersionsDir)
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := localDockerSecretTestRoot(t)
+			secretRef := "opl-gateway-ws-mode"
+			testCase.prepare(t, root, secretRef)
+			provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, &recordingDockerRunner{})
+			key := []byte("mode-key")
+			digest := fmt.Sprintf("%x", sha256.Sum256(key))
+			err := provider.writeGatewaySecret(secretRef, key, localDockerGatewayMetadata{
+				AccountID: "acct-mode", WorkspaceID: "ws-mode", WorkspaceAPIKeyID: 1, SecretRef: secretRef,
+				Fingerprint: "sha256:" + digest, Version: digest[:16],
+			})
+			if !errors.Is(err, ErrLaunchStageBindingConflict) {
+				t.Fatalf("directory mode drift err=%v", err)
+			}
+			info, statErr := os.Lstat(testCase.driftedPath(root, secretRef))
+			if statErr != nil || info.Mode().Perm() != 0700 {
+				t.Fatalf("drifted directory was modified info=%#v err=%v", info, statErr)
+			}
+		})
+	}
+	for _, testCase := range []struct {
+		name string
+		file string
+		mode os.FileMode
+	}{
+		{name: "key_file_mode", file: localDockerGatewayKeyFile, mode: 0644},
+		{name: "metadata_file_mode", file: localDockerGatewayMetaFile, mode: 0600},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := localDockerSecretTestRoot(t)
+			provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, &recordingDockerRunner{})
+			secretRef := seedLocalDockerGatewaySecret(t, provider, "acct-mode", "ws-mode")
+			current, err := os.Readlink(filepath.Join(root, secretRef, "current"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			driftedPath := filepath.Join(root, secretRef, current, testCase.file)
+			if err := os.Chmod(driftedPath, testCase.mode); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = provider.readGatewaySecretFiles(secretRef)
+			if !errors.Is(err, ErrLaunchStageBindingConflict) {
+				t.Fatalf("file mode drift read err=%v", err)
+			}
+			key := []byte("key-ws-mode")
+			digest := fmt.Sprintf("%x", sha256.Sum256(key))
+			err = provider.writeGatewaySecret(secretRef, key, localDockerGatewayMetadata{
+				AccountID: "acct-mode", WorkspaceID: "ws-mode", WorkspaceAPIKeyID: 1, SecretRef: secretRef,
+				Fingerprint: "sha256:" + digest, Version: digest[:16],
+			})
+			if !errors.Is(err, ErrLaunchStageBindingConflict) {
+				t.Fatalf("file mode drift write err=%v", err)
+			}
+			info, statErr := os.Lstat(driftedPath)
+			if statErr != nil || info.Mode().Perm() != testCase.mode {
+				t.Fatalf("drifted file was modified info=%#v err=%v", info, statErr)
+			}
+		})
+	}
 }
 
 func TestLocalDockerGatewaySecretCrashCutRotationAndRestart(t *testing.T) {
@@ -1093,11 +1246,28 @@ func TestLocalDockerGatewaySecretCrashCutRotationAndRestart(t *testing.T) {
 	if err := os.MkdirAll(versionPath, 0711); err != nil {
 		t.Fatal(err)
 	}
+	for _, directory := range []string{
+		filepath.Join(root, secretRef),
+		filepath.Join(root, secretRef, localDockerGatewayVersionsDir),
+		versionPath,
+	} {
+		if err := os.Chmod(directory, 0711); err != nil {
+			t.Fatal(err)
+		}
+	}
 	body, _ := json.Marshal(metadata)
-	if err := os.WriteFile(filepath.Join(versionPath, localDockerGatewayKeyFile), key, 0444); err != nil {
+	keyPath := filepath.Join(versionPath, localDockerGatewayKeyFile)
+	if err := os.WriteFile(keyPath, key, 0444); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(versionPath, localDockerGatewayMetaFile), body, 0400); err != nil {
+	if err := os.Chmod(keyPath, 0444); err != nil {
+		t.Fatal(err)
+	}
+	metadataPath := filepath.Join(versionPath, localDockerGatewayMetaFile)
+	if err := os.WriteFile(metadataPath, body, 0400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(metadataPath, 0400); err != nil {
 		t.Fatal(err)
 	}
 	currentTarget, _ := localDockerGatewayCurrentTarget(digest)

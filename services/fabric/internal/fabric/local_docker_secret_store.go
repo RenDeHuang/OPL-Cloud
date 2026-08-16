@@ -115,6 +115,10 @@ func writeLocalDockerSecretFile(root *os.Root, name string, body []byte, mode os
 	if err != nil {
 		return err
 	}
+	if err = file.Chmod(mode); err != nil {
+		_ = file.Close()
+		return err
+	}
 	if _, err = file.Write(body); err == nil {
 		err = file.Sync()
 	}
@@ -123,6 +127,34 @@ func writeLocalDockerSecretFile(root *os.Root, name string, body []byte, mode os
 		return err
 	}
 	return closeErr
+}
+
+func ensureLocalDockerSecretDirectory(root *os.Root, name string, mode os.FileMode) error {
+	created := false
+	if err := root.Mkdir(name, mode); err == nil {
+		created = true
+	} else if !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	if created {
+		directory, err := root.Open(name)
+		if err != nil {
+			return err
+		}
+		chmodErr := directory.Chmod(mode)
+		closeErr := directory.Close()
+		if chmodErr != nil {
+			return chmodErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	info, err := root.Lstat(name)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != mode {
+		return ErrLaunchStageBindingConflict
+	}
+	return nil
 }
 
 func localDockerSecretStagingName() (string, error) {
@@ -151,13 +183,9 @@ func (p *LocalDockerProvider) writeGatewaySecret(secretRef string, key []byte, m
 		return err
 	}
 	defer root.Close()
-	if err := root.MkdirAll(secretRef+"/"+localDockerGatewayVersionsDir, 0711); err != nil {
-		return err
-	}
 	for _, directory := range []string{secretRef, secretRef + "/" + localDockerGatewayVersionsDir} {
-		info, statErr := root.Lstat(directory)
-		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0711 {
-			return ErrLaunchStageBindingConflict
+		if err := ensureLocalDockerSecretDirectory(root, directory, 0711); err != nil {
+			return err
 		}
 	}
 	versionPath := secretRef + "/" + localDockerGatewayVersionsDir + "/" + versionName
@@ -177,7 +205,7 @@ func (p *LocalDockerProvider) writeGatewaySecret(secretRef string, key []byte, m
 			return randomErr
 		}
 		stagingPath := secretRef + "/" + localDockerGatewayVersionsDir + "/" + stagingName
-		if err := root.Mkdir(stagingPath, 0711); err != nil {
+		if err := ensureLocalDockerSecretDirectory(root, stagingPath, 0711); err != nil {
 			return err
 		}
 		if err := writeLocalDockerSecretFile(root, stagingPath+"/"+localDockerGatewayKeyFile, key, 0444); err != nil {
