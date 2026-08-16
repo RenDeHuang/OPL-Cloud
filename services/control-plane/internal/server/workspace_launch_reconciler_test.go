@@ -1498,9 +1498,18 @@ func TestWorkspaceLaunchFabricReadyWithoutRequiredFactsBecomesUnknown(t *testing
 	}
 }
 
-func TestWorkspaceLaunchActivationWritesProjectionWithoutFabricRows(t *testing.T) {
-	store := newMemoryTableStore()
-	store.users["usr-unit"] = map[string]any{"id": "usr-unit", "accountId": "acct-unit", "role": "owner", "status": "active"}
+type workspaceLaunchActivationCountingStore struct {
+	*memoryTableStore
+	activationMutations int
+}
+
+func (s *workspaceLaunchActivationCountingStore) ActivateWorkspaceLaunchProjection(ctx context.Context, row map[string]any) (map[string]any, error) {
+	s.activationMutations++
+	return s.memoryTableStore.ActivateWorkspaceLaunchProjection(ctx, row)
+}
+
+func workspaceLaunchUnitActivationProjectionRow(t *testing.T, workspaceID, accountID, ownerID string) map[string]any {
+	t.Helper()
 	quote, err := workspacePricingPreview(defaultPricingCatalog(), map[string]any{"packageId": "basic", "sizeGb": 10})
 	if err != nil {
 		t.Fatal(err)
@@ -1509,7 +1518,7 @@ func TestWorkspaceLaunchActivationWritesProjectionWithoutFabricRows(t *testing.T
 	storagePrice, _ := requiredPositiveInteger(mapField(quote, "storage"), "chargeUsdMicros")
 	totalPrice, _ := requiredPositiveInteger(quote, "totalChargeUsdMicros")
 	row := workspaceProjectionBillingRow(domain.WorkspaceProjection{
-		ID: "ws-unit", AccountID: "acct-unit", OwnerID: "usr-unit", Name: "Unit", PackageID: "basic", Provider: "fabric",
+		ID: workspaceID, AccountID: accountID, OwnerID: ownerID, Name: "Unit", PackageID: "basic", Provider: "fabric",
 		Status: "running", ComputeID: "compute-fabric", VolumeID: "storage-fabric", AttachmentID: "attachment-fabric",
 		RuntimeID: "runtime-fabric", RuntimeServiceName: "runtime-service", RuntimeReady: true, URL: "https://workspace.example",
 	}, map[string]any{
@@ -1520,6 +1529,70 @@ func TestWorkspaceLaunchActivationWritesProjectionWithoutFabricRows(t *testing.T
 		"billingAnchorDay": 12, "renewalStatus": "active", "computeAllocationId": "compute-fabric", "storageId": "storage-fabric",
 	})
 	row["activatedAt"] = "2026-08-12T00:01:00Z"
+	return row
+}
+
+func workspaceLaunchCanonicalActivationOperation(t *testing.T) workspaceLaunchReconcileOperation {
+	t.Helper()
+	command := workspaceLaunchUnitCommand()
+	command.OperationID, command.AccountID, command.OwnerUserID = "workspace-launch-admin", "acct-admin", "usr-admin"
+	command.WorkspaceID, command.Sub2APIUserID = "ws-admin", 1
+	operation, err := newWorkspaceLaunchReconcileOperation(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-3] {
+		operation.Stage = stage
+		facts := workspaceLaunchReadyFacts(stage)
+		switch stage {
+		case "debit":
+			facts["periodStart"], facts["paidThrough"], facts["billingAnchorDay"] = "2026-08-12T00:00:00Z", "2026-09-12T00:00:00Z", 12
+		case "secret":
+			facts["credentialStatus"], facts["credentialVersion"], facts["credentialSecretRef"] = "configured", "v1", "secret-unit"
+		case "runtime":
+			facts["runtimeUsername"] = "opl"
+		}
+		observation, reduceErr := reduceWorkspaceLaunchStageObservation(&operation, workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: facts})
+		if reduceErr != nil {
+			t.Fatalf("seed %s: %v", stage, reduceErr)
+		}
+		attempt := operation.Attempts[stage]
+		attempt.Attempted, attempt.Confirmed, attempt.Status = 1, 1, "confirmed"
+		attempt.IdempotencyKey = workspaceLaunchStageIdempotencyKey(operation, 1)
+		operation.Attempts[stage] = attempt
+		operation.Observations[stage] = observation
+	}
+	operation.Version, operation.Stage, operation.Status = 8, "activation", "pending"
+	return operation
+}
+
+func TestWorkspaceLaunchActivationCanonicalOperatorAdvancesToReceipt(t *testing.T) {
+	store := &workspaceLaunchActivationCountingStore{memoryTableStore: newMemoryTableStore()}
+	operation := workspaceLaunchCanonicalActivationOperation(t)
+	row, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.runtimeOps = []map[string]any{row}
+	service := newTestService(fakeLedgerClient{}, &fakeFabricClient{})
+	adapter := &controlPlaneWorkspaceLaunchStageAdapter{app: &controlPlaneServer{tables: store}, service: service}
+	got, err := NewWorkspaceLaunchReconciler(store, adapter).Reconcile(context.Background(), operation.ID)
+	attempt := got.Attempts["activation"]
+	if err != nil || got.Status != "pending" || got.Stage != "receipt" || attempt.Attempted != 1 || attempt.Confirmed != 1 || attempt.Unknown != 0 || attempt.Status != "confirmed" ||
+		store.activationMutations != 1 || len(got.FreshContinuationAuthorizations) != 0 {
+		t.Fatalf("canonical activation did not converge: operation=%s attempt=%#v mutations=%d authorizations=%#v err=%v",
+			workspaceLaunchReconcileResultSummary(got), attempt, store.activationMutations, got.FreshContinuationAuthorizations, err)
+	}
+	workspace, found, readErr := store.GetWorkspace(context.Background(), operation.stringFact("workspaceId"))
+	if readErr != nil || !found || !workspaceLaunchProjectionMatches(got, workspace) {
+		t.Fatalf("canonical activation readback found=%v workspace=%#v err=%v", found, workspace, readErr)
+	}
+}
+
+func TestWorkspaceLaunchActivationWritesProjectionWithoutFabricRows(t *testing.T) {
+	store := newMemoryTableStore()
+	store.users["usr-unit"] = map[string]any{"id": "usr-unit", "accountId": "acct-unit", "role": "owner", "status": "active"}
+	row := workspaceLaunchUnitActivationProjectionRow(t, "ws-unit", "acct-unit", "usr-unit")
 	activated, err := store.ActivateWorkspaceLaunchProjection(context.Background(), row)
 	if err != nil {
 		t.Fatal(err)
@@ -1531,6 +1604,32 @@ func TestWorkspaceLaunchActivationWritesProjectionWithoutFabricRows(t *testing.T
 	drifted["ownerAccountId"] = "acct-other"
 	if _, err := store.ActivateWorkspaceLaunchProjection(context.Background(), drifted); !errors.Is(err, errWorkspaceActivationConflict) {
 		t.Fatalf("owner drift error=%v", err)
+	}
+}
+
+func TestWorkspaceLaunchActivationRejectsNonOwnerIdentities(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		accountID string
+		ownerID   string
+		owner     map[string]any
+	}{
+		{name: "generic admin", accountID: "acct-generic", ownerID: "usr-generic", owner: map[string]any{"id": "usr-generic", "email": "generic@example.com", "accountId": "acct-generic", "role": "admin", "status": "active"}},
+		{name: "wrong id", accountID: "acct-admin", ownerID: "usr-admin", owner: map[string]any{"id": "usr-other", "email": "admin@opl.local", "accountId": "acct-admin", "role": "admin", "status": "active"}},
+		{name: "cross account", accountID: "acct-admin", ownerID: "usr-admin", owner: map[string]any{"id": "usr-admin", "email": "admin@opl.local", "accountId": "acct-other", "role": "admin", "status": "active"}},
+		{name: "inactive", accountID: "acct-admin", ownerID: "usr-admin", owner: map[string]any{"id": "usr-admin", "email": "admin@opl.local", "accountId": "acct-admin", "role": "admin", "status": "inactive"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newMemoryTableStore()
+			store.users[tc.ownerID] = cloneMap(tc.owner)
+			row := workspaceLaunchUnitActivationProjectionRow(t, "ws-rejected", tc.accountID, tc.ownerID)
+			if _, err := store.ActivateWorkspaceLaunchProjection(context.Background(), row); !errors.Is(err, errWorkspaceActivationConflict) {
+				t.Fatalf("activation error=%v", err)
+			}
+			if _, found, err := store.GetWorkspace(context.Background(), "ws-rejected"); err != nil || found {
+				t.Fatalf("rejected activation persisted workspace found=%v err=%v", found, err)
+			}
+		})
 	}
 }
 

@@ -168,6 +168,27 @@ func TestPostgresWorkspaceLaunchClaimPersistAndActivate(t *testing.T) {
 	}
 }
 
+func TestPostgresWorkspaceLaunchCanonicalOperatorActivationPersistsAuthoritativeReadback(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+	account := map[string]any{"id": "acct-admin", "ownerUserId": "usr-admin", "status": "active", "sub2apiUserId": int64(1)}
+	owner := map[string]any{"id": "usr-admin", "email": "admin@opl.local", "accountId": "acct-admin", "role": "admin", "status": "active"}
+	organization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
+	membership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+
+	row := workspaceLaunchUnitActivationProjectionRow(t, "ws-admin-pg", "acct-admin", "usr-admin")
+	activated, err := store.ActivateWorkspaceLaunchProjection(ctx, row)
+	if err != nil {
+		t.Fatalf("activate canonical operator projection: %v", err)
+	}
+	readback, found, err := store.GetWorkspace(ctx, "ws-admin-pg")
+	if err != nil || !found || stringValue(activated["accountId"]) != "acct-admin" || stringValue(activated["ownerUserId"]) != "usr-admin" || activated["customerProduct"] != true ||
+		stringValue(readback["accountId"]) != "acct-admin" || stringValue(readback["ownerUserId"]) != "usr-admin" || readback["customerProduct"] != true {
+		t.Fatalf("canonical activation readback found=%v activated=%#v readback=%#v err=%v", found, activated, readback, err)
+	}
+}
+
 func TestPostgresWorkspaceLaunchReplayClaimSurvivesReconcilerRestartWithoutSkip(t *testing.T) {
 	for stageIndex, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-1] {
 		t.Run(stage, func(t *testing.T) {
