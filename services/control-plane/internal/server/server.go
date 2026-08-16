@@ -41,10 +41,19 @@ func (h *controlPlaneHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 }
 
 func NewPersistentServer(service *controlplane.Service, store StateStore) (http.Handler, error) {
+	return newPersistentServerWithRemoteProvider(service, store, nil)
+}
+
+func newPersistentServerWithRemoteProvider(service *controlplane.Service, store StateStore, provider remoteCompanionProvider) (http.Handler, error) {
 	app, err := newControlPlaneAppWithStore(store)
 	if err != nil {
 		return nil, err
 	}
+	remoteCompanion, err := newRemoteCompanionBroker(store, provider)
+	if err != nil {
+		return nil, err
+	}
+	app.remoteCompanion = remoteCompanion
 	if err := app.ensureBootstrapAdmin(context.Background(), service); err != nil {
 		return nil, err
 	}
@@ -72,6 +81,7 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	registerSupportRoutes(mux, app)
 	registerAdminRoutes(mux, app, service)
 	registerProviderAcceptanceRoutes(mux, app, service)
+	registerRemoteCompanionRoutes(mux, app)
 	return &controlPlaneHTTPHandler{app: app, next: mux, service: service}, nil
 }
 

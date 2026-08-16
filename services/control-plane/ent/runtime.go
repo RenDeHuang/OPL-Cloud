@@ -15,6 +15,10 @@ import (
 	"opl-cloud/services/control-plane/ent/organization"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/projecttasksynchead"
+	"opl-cloud/services/control-plane/ent/remotedevicecredential"
+	"opl-cloud/services/control-plane/ent/remoteinvitation"
+	"opl-cloud/services/control-plane/ent/remotepairing"
+	"opl-cloud/services/control-plane/ent/remoteseatcapacity"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/schema"
 	"opl-cloud/services/control-plane/ent/session"
@@ -625,6 +629,274 @@ func init() {
 	projecttasksyncheadDescID := projecttasksyncheadFields[0].Descriptor()
 	// projecttasksynchead.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	projecttasksynchead.IDValidator = projecttasksyncheadDescID.Validators[0].(func(string) error)
+	remotedevicecredentialFields := schema.RemoteDeviceCredential{}.Fields()
+	_ = remotedevicecredentialFields
+	// remotedevicecredentialDescCreatedAt is the schema descriptor for created_at field.
+	remotedevicecredentialDescCreatedAt := remotedevicecredentialFields[1].Descriptor()
+	// remotedevicecredential.DefaultCreatedAt holds the default value on creation for the created_at field.
+	remotedevicecredential.DefaultCreatedAt = remotedevicecredentialDescCreatedAt.Default.(func() time.Time)
+	// remotedevicecredentialDescUpdatedAt is the schema descriptor for updated_at field.
+	remotedevicecredentialDescUpdatedAt := remotedevicecredentialFields[2].Descriptor()
+	// remotedevicecredential.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	remotedevicecredential.DefaultUpdatedAt = remotedevicecredentialDescUpdatedAt.Default.(func() time.Time)
+	// remotedevicecredential.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	remotedevicecredential.UpdateDefaultUpdatedAt = remotedevicecredentialDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// remotedevicecredentialDescPairingID is the schema descriptor for pairing_id field.
+	remotedevicecredentialDescPairingID := remotedevicecredentialFields[3].Descriptor()
+	// remotedevicecredential.PairingIDValidator is a validator for the "pairing_id" field. It is called by the builders before save.
+	remotedevicecredential.PairingIDValidator = remotedevicecredentialDescPairingID.Validators[0].(func(string) error)
+	// remotedevicecredentialDescDeviceID is the schema descriptor for device_id field.
+	remotedevicecredentialDescDeviceID := remotedevicecredentialFields[4].Descriptor()
+	// remotedevicecredential.DeviceIDValidator is a validator for the "device_id" field. It is called by the builders before save.
+	remotedevicecredential.DeviceIDValidator = remotedevicecredentialDescDeviceID.Validators[0].(func(string) error)
+	// remotedevicecredentialDescRole is the schema descriptor for role field.
+	remotedevicecredentialDescRole := remotedevicecredentialFields[5].Descriptor()
+	// remotedevicecredential.RoleValidator is a validator for the "role" field. It is called by the builders before save.
+	remotedevicecredential.RoleValidator = remotedevicecredentialDescRole.Validators[0].(func(string) error)
+	// remotedevicecredentialDescCredentialHash is the schema descriptor for credential_hash field.
+	remotedevicecredentialDescCredentialHash := remotedevicecredentialFields[6].Descriptor()
+	// remotedevicecredential.CredentialHashValidator is a validator for the "credential_hash" field. It is called by the builders before save.
+	remotedevicecredential.CredentialHashValidator = remotedevicecredentialDescCredentialHash.Validators[0].(func(string) error)
+	// remotedevicecredentialDescStatus is the schema descriptor for status field.
+	remotedevicecredentialDescStatus := remotedevicecredentialFields[7].Descriptor()
+	// remotedevicecredential.DefaultStatus holds the default value on creation for the status field.
+	remotedevicecredential.DefaultStatus = remotedevicecredentialDescStatus.Default.(string)
+	// remotedevicecredentialDescProviderUserID is the schema descriptor for provider_user_id field.
+	remotedevicecredentialDescProviderUserID := remotedevicecredentialFields[8].Descriptor()
+	// remotedevicecredential.DefaultProviderUserID holds the default value on creation for the provider_user_id field.
+	remotedevicecredential.DefaultProviderUserID = remotedevicecredentialDescProviderUserID.Default.(string)
+	// remotedevicecredentialDescIssuedAt is the schema descriptor for issued_at field.
+	remotedevicecredentialDescIssuedAt := remotedevicecredentialFields[9].Descriptor()
+	// remotedevicecredential.IssuedAtValidator is a validator for the "issued_at" field. It is called by the builders before save.
+	remotedevicecredential.IssuedAtValidator = remotedevicecredentialDescIssuedAt.Validators[0].(func(string) error)
+	// remotedevicecredentialDescRevokedAt is the schema descriptor for revoked_at field.
+	remotedevicecredentialDescRevokedAt := remotedevicecredentialFields[10].Descriptor()
+	// remotedevicecredential.DefaultRevokedAt holds the default value on creation for the revoked_at field.
+	remotedevicecredential.DefaultRevokedAt = remotedevicecredentialDescRevokedAt.Default.(string)
+	// remotedevicecredentialDescIssuedIdempotencyKey is the schema descriptor for issued_idempotency_key field.
+	remotedevicecredentialDescIssuedIdempotencyKey := remotedevicecredentialFields[11].Descriptor()
+	// remotedevicecredential.DefaultIssuedIdempotencyKey holds the default value on creation for the issued_idempotency_key field.
+	remotedevicecredential.DefaultIssuedIdempotencyKey = remotedevicecredentialDescIssuedIdempotencyKey.Default.(string)
+	// remotedevicecredentialDescID is the schema descriptor for id field.
+	remotedevicecredentialDescID := remotedevicecredentialFields[0].Descriptor()
+	// remotedevicecredential.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	remotedevicecredential.IDValidator = remotedevicecredentialDescID.Validators[0].(func(string) error)
+	remoteinvitationFields := schema.RemoteInvitation{}.Fields()
+	_ = remoteinvitationFields
+	// remoteinvitationDescCreatedAt is the schema descriptor for created_at field.
+	remoteinvitationDescCreatedAt := remoteinvitationFields[1].Descriptor()
+	// remoteinvitation.DefaultCreatedAt holds the default value on creation for the created_at field.
+	remoteinvitation.DefaultCreatedAt = remoteinvitationDescCreatedAt.Default.(func() time.Time)
+	// remoteinvitationDescUpdatedAt is the schema descriptor for updated_at field.
+	remoteinvitationDescUpdatedAt := remoteinvitationFields[2].Descriptor()
+	// remoteinvitation.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	remoteinvitation.DefaultUpdatedAt = remoteinvitationDescUpdatedAt.Default.(func() time.Time)
+	// remoteinvitation.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	remoteinvitation.UpdateDefaultUpdatedAt = remoteinvitationDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// remoteinvitationDescLabel is the schema descriptor for label field.
+	remoteinvitationDescLabel := remoteinvitationFields[3].Descriptor()
+	// remoteinvitation.DefaultLabel holds the default value on creation for the label field.
+	remoteinvitation.DefaultLabel = remoteinvitationDescLabel.Default.(string)
+	// remoteinvitationDescSecretHash is the schema descriptor for secret_hash field.
+	remoteinvitationDescSecretHash := remoteinvitationFields[4].Descriptor()
+	// remoteinvitation.SecretHashValidator is a validator for the "secret_hash" field. It is called by the builders before save.
+	remoteinvitation.SecretHashValidator = remoteinvitationDescSecretHash.Validators[0].(func(string) error)
+	// remoteinvitationDescSecretSalt is the schema descriptor for secret_salt field.
+	remoteinvitationDescSecretSalt := remoteinvitationFields[5].Descriptor()
+	// remoteinvitation.SecretSaltValidator is a validator for the "secret_salt" field. It is called by the builders before save.
+	remoteinvitation.SecretSaltValidator = remoteinvitationDescSecretSalt.Validators[0].(func(string) error)
+	// remoteinvitationDescExpiresAt is the schema descriptor for expires_at field.
+	remoteinvitationDescExpiresAt := remoteinvitationFields[6].Descriptor()
+	// remoteinvitation.ExpiresAtValidator is a validator for the "expires_at" field. It is called by the builders before save.
+	remoteinvitation.ExpiresAtValidator = remoteinvitationDescExpiresAt.Validators[0].(func(string) error)
+	// remoteinvitationDescStatus is the schema descriptor for status field.
+	remoteinvitationDescStatus := remoteinvitationFields[7].Descriptor()
+	// remoteinvitation.DefaultStatus holds the default value on creation for the status field.
+	remoteinvitation.DefaultStatus = remoteinvitationDescStatus.Default.(string)
+	// remoteinvitationDescConsumedAt is the schema descriptor for consumed_at field.
+	remoteinvitationDescConsumedAt := remoteinvitationFields[8].Descriptor()
+	// remoteinvitation.DefaultConsumedAt holds the default value on creation for the consumed_at field.
+	remoteinvitation.DefaultConsumedAt = remoteinvitationDescConsumedAt.Default.(string)
+	// remoteinvitationDescCreatedByUserID is the schema descriptor for created_by_user_id field.
+	remoteinvitationDescCreatedByUserID := remoteinvitationFields[9].Descriptor()
+	// remoteinvitation.DefaultCreatedByUserID holds the default value on creation for the created_by_user_id field.
+	remoteinvitation.DefaultCreatedByUserID = remoteinvitationDescCreatedByUserID.Default.(string)
+	// remoteinvitationDescIdempotencyKey is the schema descriptor for idempotency_key field.
+	remoteinvitationDescIdempotencyKey := remoteinvitationFields[10].Descriptor()
+	// remoteinvitation.DefaultIdempotencyKey holds the default value on creation for the idempotency_key field.
+	remoteinvitation.DefaultIdempotencyKey = remoteinvitationDescIdempotencyKey.Default.(string)
+	// remoteinvitationDescID is the schema descriptor for id field.
+	remoteinvitationDescID := remoteinvitationFields[0].Descriptor()
+	// remoteinvitation.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	remoteinvitation.IDValidator = remoteinvitationDescID.Validators[0].(func(string) error)
+	remotepairingFields := schema.RemotePairing{}.Fields()
+	_ = remotepairingFields
+	// remotepairingDescCreatedAt is the schema descriptor for created_at field.
+	remotepairingDescCreatedAt := remotepairingFields[1].Descriptor()
+	// remotepairing.DefaultCreatedAt holds the default value on creation for the created_at field.
+	remotepairing.DefaultCreatedAt = remotepairingDescCreatedAt.Default.(func() time.Time)
+	// remotepairingDescUpdatedAt is the schema descriptor for updated_at field.
+	remotepairingDescUpdatedAt := remotepairingFields[2].Descriptor()
+	// remotepairing.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	remotepairing.DefaultUpdatedAt = remotepairingDescUpdatedAt.Default.(func() time.Time)
+	// remotepairing.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	remotepairing.UpdateDefaultUpdatedAt = remotepairingDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// remotepairingDescInvitationID is the schema descriptor for invitation_id field.
+	remotepairingDescInvitationID := remotepairingFields[3].Descriptor()
+	// remotepairing.InvitationIDValidator is a validator for the "invitation_id" field. It is called by the builders before save.
+	remotepairing.InvitationIDValidator = remotepairingDescInvitationID.Validators[0].(func(string) error)
+	// remotepairingDescClaimSecretHash is the schema descriptor for claim_secret_hash field.
+	remotepairingDescClaimSecretHash := remotepairingFields[4].Descriptor()
+	// remotepairing.ClaimSecretHashValidator is a validator for the "claim_secret_hash" field. It is called by the builders before save.
+	remotepairing.ClaimSecretHashValidator = remotepairingDescClaimSecretHash.Validators[0].(func(string) error)
+	// remotepairingDescClaimSecretSalt is the schema descriptor for claim_secret_salt field.
+	remotepairingDescClaimSecretSalt := remotepairingFields[5].Descriptor()
+	// remotepairing.ClaimSecretSaltValidator is a validator for the "claim_secret_salt" field. It is called by the builders before save.
+	remotepairing.ClaimSecretSaltValidator = remotepairingDescClaimSecretSalt.Validators[0].(func(string) error)
+	// remotepairingDescManualCodeHash is the schema descriptor for manual_code_hash field.
+	remotepairingDescManualCodeHash := remotepairingFields[6].Descriptor()
+	// remotepairing.ManualCodeHashValidator is a validator for the "manual_code_hash" field. It is called by the builders before save.
+	remotepairing.ManualCodeHashValidator = remotepairingDescManualCodeHash.Validators[0].(func(string) error)
+	// remotepairingDescManualCodeSalt is the schema descriptor for manual_code_salt field.
+	remotepairingDescManualCodeSalt := remotepairingFields[7].Descriptor()
+	// remotepairing.ManualCodeSaltValidator is a validator for the "manual_code_salt" field. It is called by the builders before save.
+	remotepairing.ManualCodeSaltValidator = remotepairingDescManualCodeSalt.Validators[0].(func(string) error)
+	// remotepairingDescManualAttempts is the schema descriptor for manual_attempts field.
+	remotepairingDescManualAttempts := remotepairingFields[8].Descriptor()
+	// remotepairing.ManualAttemptsValidator is a validator for the "manual_attempts" field. It is called by the builders before save.
+	remotepairing.ManualAttemptsValidator = remotepairingDescManualAttempts.Validators[0].(func(int) error)
+	// remotepairingDescState is the schema descriptor for state field.
+	remotepairingDescState := remotepairingFields[9].Descriptor()
+	// remotepairing.DefaultState holds the default value on creation for the state field.
+	remotepairing.DefaultState = remotepairingDescState.Default.(string)
+	// remotepairingDescExpiresAt is the schema descriptor for expires_at field.
+	remotepairingDescExpiresAt := remotepairingFields[10].Descriptor()
+	// remotepairing.ExpiresAtValidator is a validator for the "expires_at" field. It is called by the builders before save.
+	remotepairing.ExpiresAtValidator = remotepairingDescExpiresAt.Validators[0].(func(string) error)
+	// remotepairingDescReservationExpiresAt is the schema descriptor for reservation_expires_at field.
+	remotepairingDescReservationExpiresAt := remotepairingFields[11].Descriptor()
+	// remotepairing.ReservationExpiresAtValidator is a validator for the "reservation_expires_at" field. It is called by the builders before save.
+	remotepairing.ReservationExpiresAtValidator = remotepairingDescReservationExpiresAt.Validators[0].(func(string) error)
+	// remotepairingDescDesktopDeviceID is the schema descriptor for desktop_device_id field.
+	remotepairingDescDesktopDeviceID := remotepairingFields[12].Descriptor()
+	// remotepairing.DefaultDesktopDeviceID holds the default value on creation for the desktop_device_id field.
+	remotepairing.DefaultDesktopDeviceID = remotepairingDescDesktopDeviceID.Default.(string)
+	// remotepairingDescDesktopDeviceLabel is the schema descriptor for desktop_device_label field.
+	remotepairingDescDesktopDeviceLabel := remotepairingFields[13].Descriptor()
+	// remotepairing.DefaultDesktopDeviceLabel holds the default value on creation for the desktop_device_label field.
+	remotepairing.DefaultDesktopDeviceLabel = remotepairingDescDesktopDeviceLabel.Default.(string)
+	// remotepairingDescIosDeviceID is the schema descriptor for ios_device_id field.
+	remotepairingDescIosDeviceID := remotepairingFields[14].Descriptor()
+	// remotepairing.DefaultIosDeviceID holds the default value on creation for the ios_device_id field.
+	remotepairing.DefaultIosDeviceID = remotepairingDescIosDeviceID.Default.(string)
+	// remotepairingDescIosDeviceLabel is the schema descriptor for ios_device_label field.
+	remotepairingDescIosDeviceLabel := remotepairingFields[15].Descriptor()
+	// remotepairing.DefaultIosDeviceLabel holds the default value on creation for the ios_device_label field.
+	remotepairing.DefaultIosDeviceLabel = remotepairingDescIosDeviceLabel.Default.(string)
+	// remotepairingDescDesktopPublicKey is the schema descriptor for desktop_public_key field.
+	remotepairingDescDesktopPublicKey := remotepairingFields[16].Descriptor()
+	// remotepairing.DesktopPublicKeyValidator is a validator for the "desktop_public_key" field. It is called by the builders before save.
+	remotepairing.DesktopPublicKeyValidator = remotepairingDescDesktopPublicKey.Validators[0].(func(string) error)
+	// remotepairingDescIosPublicKey is the schema descriptor for ios_public_key field.
+	remotepairingDescIosPublicKey := remotepairingFields[17].Descriptor()
+	// remotepairing.DefaultIosPublicKey holds the default value on creation for the ios_public_key field.
+	remotepairing.DefaultIosPublicKey = remotepairingDescIosPublicKey.Default.(string)
+	// remotepairingDescSas is the schema descriptor for sas field.
+	remotepairingDescSas := remotepairingFields[18].Descriptor()
+	// remotepairing.DefaultSas holds the default value on creation for the sas field.
+	remotepairing.DefaultSas = remotepairingDescSas.Default.(string)
+	// remotepairingDescDesktopProviderUserID is the schema descriptor for desktop_provider_user_id field.
+	remotepairingDescDesktopProviderUserID := remotepairingFields[19].Descriptor()
+	// remotepairing.DefaultDesktopProviderUserID holds the default value on creation for the desktop_provider_user_id field.
+	remotepairing.DefaultDesktopProviderUserID = remotepairingDescDesktopProviderUserID.Default.(string)
+	// remotepairingDescIosProviderUserID is the schema descriptor for ios_provider_user_id field.
+	remotepairingDescIosProviderUserID := remotepairingFields[20].Descriptor()
+	// remotepairing.DefaultIosProviderUserID holds the default value on creation for the ios_provider_user_id field.
+	remotepairing.DefaultIosProviderUserID = remotepairingDescIosProviderUserID.Default.(string)
+	// remotepairingDescDesktopProviderAbsent is the schema descriptor for desktop_provider_absent field.
+	remotepairingDescDesktopProviderAbsent := remotepairingFields[21].Descriptor()
+	// remotepairing.DefaultDesktopProviderAbsent holds the default value on creation for the desktop_provider_absent field.
+	remotepairing.DefaultDesktopProviderAbsent = remotepairingDescDesktopProviderAbsent.Default.(bool)
+	// remotepairingDescIosProviderAbsent is the schema descriptor for ios_provider_absent field.
+	remotepairingDescIosProviderAbsent := remotepairingFields[22].Descriptor()
+	// remotepairing.DefaultIosProviderAbsent holds the default value on creation for the ios_provider_absent field.
+	remotepairing.DefaultIosProviderAbsent = remotepairingDescIosProviderAbsent.Default.(bool)
+	// remotepairingDescConfirmedAt is the schema descriptor for confirmed_at field.
+	remotepairingDescConfirmedAt := remotepairingFields[23].Descriptor()
+	// remotepairing.DefaultConfirmedAt holds the default value on creation for the confirmed_at field.
+	remotepairing.DefaultConfirmedAt = remotepairingDescConfirmedAt.Default.(string)
+	// remotepairingDescRevokedAt is the schema descriptor for revoked_at field.
+	remotepairingDescRevokedAt := remotepairingFields[24].Descriptor()
+	// remotepairing.DefaultRevokedAt holds the default value on creation for the revoked_at field.
+	remotepairing.DefaultRevokedAt = remotepairingDescRevokedAt.Default.(string)
+	// remotepairingDescSeatReleased is the schema descriptor for seat_released field.
+	remotepairingDescSeatReleased := remotepairingFields[25].Descriptor()
+	// remotepairing.DefaultSeatReleased holds the default value on creation for the seat_released field.
+	remotepairing.DefaultSeatReleased = remotepairingDescSeatReleased.Default.(bool)
+	// remotepairingDescCreateIdempotencyKey is the schema descriptor for create_idempotency_key field.
+	remotepairingDescCreateIdempotencyKey := remotepairingFields[26].Descriptor()
+	// remotepairing.DefaultCreateIdempotencyKey holds the default value on creation for the create_idempotency_key field.
+	remotepairing.DefaultCreateIdempotencyKey = remotepairingDescCreateIdempotencyKey.Default.(string)
+	// remotepairingDescCreateRequestHash is the schema descriptor for create_request_hash field.
+	remotepairingDescCreateRequestHash := remotepairingFields[27].Descriptor()
+	// remotepairing.DefaultCreateRequestHash holds the default value on creation for the create_request_hash field.
+	remotepairing.DefaultCreateRequestHash = remotepairingDescCreateRequestHash.Default.(string)
+	// remotepairingDescClaimIdempotencyKey is the schema descriptor for claim_idempotency_key field.
+	remotepairingDescClaimIdempotencyKey := remotepairingFields[28].Descriptor()
+	// remotepairing.DefaultClaimIdempotencyKey holds the default value on creation for the claim_idempotency_key field.
+	remotepairing.DefaultClaimIdempotencyKey = remotepairingDescClaimIdempotencyKey.Default.(string)
+	// remotepairingDescClaimRequestHash is the schema descriptor for claim_request_hash field.
+	remotepairingDescClaimRequestHash := remotepairingFields[29].Descriptor()
+	// remotepairing.DefaultClaimRequestHash holds the default value on creation for the claim_request_hash field.
+	remotepairing.DefaultClaimRequestHash = remotepairingDescClaimRequestHash.Default.(string)
+	// remotepairingDescRevocationReceiptID is the schema descriptor for revocation_receipt_id field.
+	remotepairingDescRevocationReceiptID := remotepairingFields[30].Descriptor()
+	// remotepairing.DefaultRevocationReceiptID holds the default value on creation for the revocation_receipt_id field.
+	remotepairing.DefaultRevocationReceiptID = remotepairingDescRevocationReceiptID.Default.(string)
+	// remotepairingDescRevocationReceiptHash is the schema descriptor for revocation_receipt_hash field.
+	remotepairingDescRevocationReceiptHash := remotepairingFields[31].Descriptor()
+	// remotepairing.DefaultRevocationReceiptHash holds the default value on creation for the revocation_receipt_hash field.
+	remotepairing.DefaultRevocationReceiptHash = remotepairingDescRevocationReceiptHash.Default.(string)
+	// remotepairingDescRevocationReceiptSalt is the schema descriptor for revocation_receipt_salt field.
+	remotepairingDescRevocationReceiptSalt := remotepairingFields[32].Descriptor()
+	// remotepairing.DefaultRevocationReceiptSalt holds the default value on creation for the revocation_receipt_salt field.
+	remotepairing.DefaultRevocationReceiptSalt = remotepairingDescRevocationReceiptSalt.Default.(string)
+	// remotepairingDescID is the schema descriptor for id field.
+	remotepairingDescID := remotepairingFields[0].Descriptor()
+	// remotepairing.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	remotepairing.IDValidator = remotepairingDescID.Validators[0].(func(string) error)
+	remoteseatcapacityFields := schema.RemoteSeatCapacity{}.Fields()
+	_ = remoteseatcapacityFields
+	// remoteseatcapacityDescCreatedAt is the schema descriptor for created_at field.
+	remoteseatcapacityDescCreatedAt := remoteseatcapacityFields[1].Descriptor()
+	// remoteseatcapacity.DefaultCreatedAt holds the default value on creation for the created_at field.
+	remoteseatcapacity.DefaultCreatedAt = remoteseatcapacityDescCreatedAt.Default.(func() time.Time)
+	// remoteseatcapacityDescUpdatedAt is the schema descriptor for updated_at field.
+	remoteseatcapacityDescUpdatedAt := remoteseatcapacityFields[2].Descriptor()
+	// remoteseatcapacity.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	remoteseatcapacity.DefaultUpdatedAt = remoteseatcapacityDescUpdatedAt.Default.(func() time.Time)
+	// remoteseatcapacity.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	remoteseatcapacity.UpdateDefaultUpdatedAt = remoteseatcapacityDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// remoteseatcapacityDescSeatCount is the schema descriptor for seat_count field.
+	remoteseatcapacityDescSeatCount := remoteseatcapacityFields[3].Descriptor()
+	// remoteseatcapacity.SeatCountValidator is a validator for the "seat_count" field. It is called by the builders before save.
+	remoteseatcapacity.SeatCountValidator = remoteseatcapacityDescSeatCount.Validators[0].(func(int) error)
+	// remoteseatcapacityDescSeatLimit is the schema descriptor for seat_limit field.
+	remoteseatcapacityDescSeatLimit := remoteseatcapacityFields[4].Descriptor()
+	// remoteseatcapacity.DefaultSeatLimit holds the default value on creation for the seat_limit field.
+	remoteseatcapacity.DefaultSeatLimit = remoteseatcapacityDescSeatLimit.Default.(int)
+	// remoteseatcapacity.SeatLimitValidator is a validator for the "seat_limit" field. It is called by the builders before save.
+	remoteseatcapacity.SeatLimitValidator = remoteseatcapacityDescSeatLimit.Validators[0].(func(int) error)
+	// remoteseatcapacityDescWarningThreshold is the schema descriptor for warning_threshold field.
+	remoteseatcapacityDescWarningThreshold := remoteseatcapacityFields[5].Descriptor()
+	// remoteseatcapacity.DefaultWarningThreshold holds the default value on creation for the warning_threshold field.
+	remoteseatcapacity.DefaultWarningThreshold = remoteseatcapacityDescWarningThreshold.Default.(int)
+	// remoteseatcapacity.WarningThresholdValidator is a validator for the "warning_threshold" field. It is called by the builders before save.
+	remoteseatcapacity.WarningThresholdValidator = remoteseatcapacityDescWarningThreshold.Validators[0].(func(int) error)
+	// remoteseatcapacityDescID is the schema descriptor for id field.
+	remoteseatcapacityDescID := remoteseatcapacityFields[0].Descriptor()
+	// remoteseatcapacity.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	remoteseatcapacity.IDValidator = remoteseatcapacityDescID.Validators[0].(func(string) error)
 	runtimeoperationFields := schema.RuntimeOperation{}.Fields()
 	_ = runtimeoperationFields
 	// runtimeoperationDescCreatedAt is the schema descriptor for created_at field.

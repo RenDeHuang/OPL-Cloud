@@ -43,6 +43,9 @@ var multiWorkspacePagination string
 //go:embed 202607250001_control_plane_capacity_indexes.sql
 var controlPlaneCapacityIndexes string
 
+//go:embed 202608170001_remote_companion_broker.sql
+var remoteCompanionBroker string
+
 func Apply(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, monthlyHardCut, []any{}, nil)
 }
@@ -113,4 +116,8 @@ func ApplyMultiWorkspacePagination(ctx context.Context, driver dialect.Driver) e
 
 func ApplyControlPlaneCapacityIndexes(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, controlPlaneCapacityIndexes, []any{}, nil)
+}
+
+func ApplyRemoteCompanionBroker(ctx context.Context, driver dialect.Driver) error {
+	return driver.Exec(ctx, remoteCompanionBroker, []any{}, nil)
 }

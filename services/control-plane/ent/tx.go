@@ -36,6 +36,14 @@ type Tx struct {
 	ProductionE2ERecord *ProductionE2ERecordClient
 	// ProjectTaskSyncHead is the client for interacting with the ProjectTaskSyncHead builders.
 	ProjectTaskSyncHead *ProjectTaskSyncHeadClient
+	// RemoteDeviceCredential is the client for interacting with the RemoteDeviceCredential builders.
+	RemoteDeviceCredential *RemoteDeviceCredentialClient
+	// RemoteInvitation is the client for interacting with the RemoteInvitation builders.
+	RemoteInvitation *RemoteInvitationClient
+	// RemotePairing is the client for interacting with the RemotePairing builders.
+	RemotePairing *RemotePairingClient
+	// RemoteSeatCapacity is the client for interacting with the RemoteSeatCapacity builders.
+	RemoteSeatCapacity *RemoteSeatCapacityClient
 	// RuntimeOperation is the client for interacting with the RuntimeOperation builders.
 	RuntimeOperation *RuntimeOperationClient
 	// Session is the client for interacting with the Session builders.
@@ -195,6 +203,10 @@ func (tx *Tx) init() {
 	tx.Organization = NewOrganizationClient(tx.config)
 	tx.ProductionE2ERecord = NewProductionE2ERecordClient(tx.config)
 	tx.ProjectTaskSyncHead = NewProjectTaskSyncHeadClient(tx.config)
+	tx.RemoteDeviceCredential = NewRemoteDeviceCredentialClient(tx.config)
+	tx.RemoteInvitation = NewRemoteInvitationClient(tx.config)
+	tx.RemotePairing = NewRemotePairingClient(tx.config)
+	tx.RemoteSeatCapacity = NewRemoteSeatCapacityClient(tx.config)
 	tx.RuntimeOperation = NewRuntimeOperationClient(tx.config)
 	tx.Session = NewSessionClient(tx.config)
 	tx.StorageAttachment = NewStorageAttachmentClient(tx.config)

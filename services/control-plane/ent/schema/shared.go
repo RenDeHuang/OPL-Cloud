@@ -340,6 +340,76 @@ func productionE2ERecordFields() []ent.Field {
 	)
 }
 
+func remoteSeatCapacityFields() []ent.Field {
+	return append(baseFields(),
+		field.Int("seat_count").NonNegative(),
+		field.Int("seat_limit").Positive().Default(40),
+		field.Int("warning_threshold").Positive().Default(35),
+	)
+}
+
+func remoteInvitationFields() []ent.Field {
+	return append(baseFields(),
+		field.String("label").Default(""),
+		field.String("secret_hash").NotEmpty(),
+		field.String("secret_salt").NotEmpty(),
+		field.String("expires_at").NotEmpty(),
+		field.String("status").Default("active"),
+		field.String("consumed_at").Default(""),
+		field.String("created_by_user_id").Default(""),
+		field.String("idempotency_key").Default(""),
+	)
+}
+
+func remotePairingFields() []ent.Field {
+	return append(baseFields(),
+		field.String("invitation_id").NotEmpty(),
+		field.String("claim_secret_hash").NotEmpty(),
+		field.String("claim_secret_salt").NotEmpty(),
+		field.String("manual_code_hash").NotEmpty(),
+		field.String("manual_code_salt").NotEmpty(),
+		field.Int("manual_attempts").NonNegative(),
+		field.String("state").Default("reserved"),
+		field.String("expires_at").NotEmpty(),
+		field.String("reservation_expires_at").NotEmpty(),
+		field.String("desktop_device_id").Default(""),
+		field.String("desktop_device_label").Default(""),
+		field.String("ios_device_id").Default(""),
+		field.String("ios_device_label").Default(""),
+		field.String("desktop_public_key").NotEmpty(),
+		field.String("ios_public_key").Default(""),
+		field.String("sas").Default(""),
+		field.String("desktop_provider_user_id").Default(""),
+		field.String("ios_provider_user_id").Default(""),
+		field.Bool("desktop_provider_absent").Default(false),
+		field.Bool("ios_provider_absent").Default(false),
+		field.String("confirmed_at").Default(""),
+		field.String("revoked_at").Default(""),
+		field.Bool("seat_released").Default(false),
+		field.String("create_idempotency_key").Default(""),
+		field.String("create_request_hash").Default(""),
+		field.String("claim_idempotency_key").Default(""),
+		field.String("claim_request_hash").Default(""),
+		field.String("revocation_receipt_id").Default(""),
+		field.String("revocation_receipt_hash").Default(""),
+		field.String("revocation_receipt_salt").Default(""),
+	)
+}
+
+func remoteDeviceCredentialFields() []ent.Field {
+	return append(baseFields(),
+		field.String("pairing_id").NotEmpty(),
+		field.String("device_id").NotEmpty(),
+		field.String("role").NotEmpty(),
+		field.String("credential_hash").NotEmpty(),
+		field.String("status").Default("active"),
+		field.String("provider_user_id").Default(""),
+		field.String("issued_at").NotEmpty(),
+		field.String("revoked_at").Default(""),
+		field.String("issued_idempotency_key").Default(""),
+	)
+}
+
 func (Account) Annotations() []schema.Annotation      { return table("control_plane_accounts") }
 func (Organization) Annotations() []schema.Annotation { return table("control_plane_organizations") }
 func (User) Annotations() []schema.Annotation         { return table("control_plane_users") }
@@ -383,4 +453,16 @@ func (ProductionE2ERecord) Annotations() []schema.Annotation {
 }
 func (ArchivedAdminAuditEvent) Annotations() []schema.Annotation {
 	return table("control_plane_archived_admin_audit_events")
+}
+func (RemoteSeatCapacity) Annotations() []schema.Annotation {
+	return table("control_plane_remote_seat_capacities")
+}
+func (RemoteInvitation) Annotations() []schema.Annotation {
+	return table("control_plane_remote_invitations")
+}
+func (RemotePairing) Annotations() []schema.Annotation {
+	return table("control_plane_remote_pairings")
+}
+func (RemoteDeviceCredential) Annotations() []schema.Annotation {
+	return table("control_plane_remote_device_credentials")
 }
