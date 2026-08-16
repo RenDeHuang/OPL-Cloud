@@ -396,90 +396,108 @@ func stringField(input map[string]any, key string) string {
 	return value
 }
 func ledgerResourceKind(path string) string {
-	if strings.Contains(path, "reconciliation") {
-		return "reconciliation"
+	parsed, err := url.Parse(path)
+	if err != nil {
+		return ""
 	}
-	if strings.Contains(path, "review-policies") {
-		if strings.Contains(path, "?") {
+	pathname := strings.Trim(parsed.Path, "/")
+	parts := strings.Split(pathname, "/")
+	if len(parts) < 2 || parts[0] != "ledger" {
+		return ""
+	}
+	switch parts[1] {
+	case "reconciliation":
+		return "reconciliation"
+	case "review-policies":
+		if len(parts) == 2 && parsed.RawQuery != "" {
 			return "review_policy_collection"
 		}
 		return "review_policy"
-	}
-	if strings.Contains(path, "review-gates/evaluate") {
+	case "review-gates":
 		return "review_gate"
-	}
-	if strings.Contains(path, "artifacts") {
-		if strings.Contains(path, "?") {
+	case "artifacts":
+		if len(parts) == 2 && parsed.RawQuery != "" {
 			return "artifact_collection"
 		}
 		return "artifact"
-	}
-	if strings.Contains(path, "reviews") {
-		if strings.Contains(path, "?") {
+	case "reviews":
+		if len(parts) == 2 && parsed.RawQuery != "" {
 			return "review_collection"
 		}
 		return "review"
+	case "receipts":
+		if len(parts) == 2 && parsed.RawQuery != "" {
+			return "receipt_collection"
+		}
+		return "receipt"
 	}
-	if strings.Contains(path, "receipts?") {
-		return "receipt_collection"
-	}
-	return "receipt"
+	return ""
 }
 func ledgerResourceID(path string) string {
 	parsed, err := url.Parse(path)
-	if err == nil && strings.HasSuffix(strings.Trim(parsed.Path, "/"), "receipts") {
+	if err != nil {
+		return ""
+	}
+	if strings.HasSuffix(strings.Trim(parsed.Path, "/"), "receipts") {
 		return parsed.Query().Get("accountId")
 	}
-	if err == nil && strings.HasSuffix(strings.Trim(parsed.Path, "/"), "review-policies") {
+	if strings.HasSuffix(strings.Trim(parsed.Path, "/"), "review-policies") {
 		return parsed.Query().Get("workspaceId")
 	}
-	parts := strings.Split(strings.Trim(path, "/"), "/")
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	if len(parts) >= 3 {
 		return parts[2]
 	}
 	return ""
 }
 func ledgerAction(path string) string {
-	if strings.Contains(path, "/continuation") {
-		return "read_continuation"
+	parsed, err := url.Parse(path)
+	if err != nil {
+		return ""
 	}
-	if strings.Contains(path, "reconciliation") {
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 2 || parts[0] != "ledger" {
+		return ""
+	}
+	switch parts[1] {
+	case "reconciliation":
 		return "record_reconciliation"
-	}
-	if strings.Contains(path, "review-gates/evaluate") {
+	case "review-gates":
 		return "evaluate_review_gate"
-	}
-	if strings.Contains(path, "review-policies") {
-		if strings.Contains(path, "?") {
-			return "list_review_policies"
-		}
-		if strings.Count(path, "/") > 2 {
+	case "review-policies":
+		if len(parts) > 2 {
 			return "read_review_policy"
 		}
+		if parsed.RawQuery != "" {
+			return "list_review_policies"
+		}
 		return "create_review_policy"
-	}
-	if strings.Contains(path, "artifacts") {
-		if strings.Count(path, "/") > 2 {
+	case "artifacts":
+		if len(parts) > 2 {
 			return "read_artifact"
 		}
 		return "record_artifact"
-	}
-	if strings.Contains(path, "reviews") {
-		if strings.Contains(path, "?") {
-			return "list_reviews"
-		}
-		if strings.Count(path, "/") > 2 {
+	case "reviews":
+		if len(parts) > 2 {
 			return "read_review"
 		}
+		if parsed.RawQuery != "" {
+			return "list_reviews"
+		}
 		return "record_review"
+	case "receipts":
+		if len(parts) == 2 && parsed.RawQuery != "" {
+			return "list_receipts"
+		}
+		if len(parts) == 4 && parts[3] == "continuation" {
+			return "read_continuation"
+		}
+		if len(parts) > 2 {
+			return "read_receipt"
+		}
+		return "record_receipt"
 	}
-	if strings.Contains(path, "receipts?") {
-		return "list_receipts"
-	}
-	if strings.Contains(path, "receipts/") {
-		return "read_receipt"
-	}
-	return "record_receipt"
+	return ""
 }
 func ledgerRequestOperation(req *http.Request) string {
 	hash := sha256.Sum256([]byte(req.Method + " " + req.URL.RequestURI()))

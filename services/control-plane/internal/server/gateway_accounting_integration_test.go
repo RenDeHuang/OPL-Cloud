@@ -771,6 +771,14 @@ func assertGatewayAccountingReadback(t *testing.T, api *gatewayAccountingAPI, su
 		stringValue(receipt.Cost["sub2apiRedeemCode"]) != code || gatewayAccountingInt64(receipt.Cost["totalUsdMicros"]) != gatewayAccountingChargeMicros {
 		t.Fatalf("Ledger purchase receipt identity = %#v", receipt)
 	}
+	scopedLedger, ok := ledger.(clients.LedgerScopedReceiptClient)
+	if !ok {
+		t.Fatal("typed Ledger HTTP client does not support scoped receipt readback")
+	}
+	scopedReceipt, err := scopedLedger.ReceiptForAccount(context.Background(), accountID, workspaceID, receipt.ReceiptID)
+	if err != nil || scopedReceipt.ReceiptID != receipt.ReceiptID || scopedReceipt.AccountID != accountID || scopedReceipt.WorkspaceID != workspaceID {
+		t.Fatalf("Owner Delete scoped purchase receipt=%#v err=%v", scopedReceipt, err)
+	}
 	projected := gatewayAccountingEnvelopeData(t, api.mustRequest(t, http.MethodGet, "/api/billing/receipts", nil, "", http.StatusOK))
 	projectedReceipts, ok := projected["receipts"].([]any)
 	if !ok || len(projectedReceipts) != 1 {
@@ -779,6 +787,10 @@ func assertGatewayAccountingReadback(t *testing.T, api *gatewayAccountingAPI, su
 	projectedReceipt, ok := projectedReceipts[0].(map[string]any)
 	if !ok || stringValue(projectedReceipt["receiptId"]) != receipt.ReceiptID || stringValue(projectedReceipt["workspaceId"]) != workspaceID || stringValue(projectedReceipt["chargeReference"]) != code {
 		t.Fatalf("Control Plane purchase receipt projection = %#v", projectedReceipt)
+	}
+	projectedDetail := gatewayAccountingEnvelopeData(t, api.mustRequest(t, http.MethodGet, "/api/billing/receipts/"+receipt.ReceiptID, nil, "", http.StatusOK))
+	if stringValue(projectedDetail["receiptId"]) != receipt.ReceiptID || stringValue(projectedDetail["workspaceId"]) != workspaceID || stringValue(projectedDetail["chargeReference"]) != code {
+		t.Fatalf("Control Plane purchase receipt detail = %#v", projectedDetail)
 	}
 }
 

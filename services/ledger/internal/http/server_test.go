@@ -125,6 +125,66 @@ func TestLedgerCapabilityComparesPersistedOwnerAfterPreverification(t *testing.T
 	}
 }
 
+func TestLedgerReceiptReadCapabilityAcceptsExactAccountAndOptionalWorkspace(t *testing.T) {
+	const key = "ledger-capability-key-for-http-tests-32-chars"
+	store := ledger.NewMemoryStore()
+	server := NewServerWithAuth(store, "internal-secret", key)
+	for _, receiptType := range []string{"billing.workspace_purchased.v1", "billing.workspace_refunded.v1"} {
+		receipt, err := store.RecordReceipt(context.Background(), capabilityWorkspaceReceiptInput(receiptType))
+		if err != nil {
+			t.Fatalf("record %s: %v", receiptType, err)
+		}
+		for _, test := range []struct {
+			name, accountID, workspaceID string
+			wantStatus                   int
+		}{
+			{name: "account only", accountID: "acct-alpha", wantStatus: http.StatusOK},
+			{name: "exact workspace", accountID: "acct-alpha", workspaceID: "workspace-alpha", wantStatus: http.StatusOK},
+			{name: "empty account", wantStatus: http.StatusForbidden},
+			{name: "wrong account", accountID: "acct-other", wantStatus: http.StatusForbidden},
+			{name: "wrong workspace", accountID: "acct-alpha", workspaceID: "workspace-other", wantStatus: http.StatusForbidden},
+		} {
+			t.Run(receiptType+"/"+test.name, func(t *testing.T) {
+				path := queryWithOwner("/ledger/receipts/"+receipt.ReceiptID, test.accountID, test.workspaceID)
+				req := testRequest(http.MethodGet, path, nil)
+				req.Header.Set("Authorization", "Bearer internal-secret")
+				claims := ledgerCapabilityClaims{
+					Version: 1, Caller: "control-plane", AccountID: test.accountID, WorkspaceID: test.workspaceID,
+					ResourceKind: "receipt", ResourceID: receipt.ReceiptID, Action: "read_receipt",
+					OperationID: requestOperationID(req), ExpiresAt: time.Now().Add(time.Minute).Unix(),
+				}
+				req.Header.Set(ledgerCapabilityHeader, testLedgerCapability(t, key, claims, nil))
+				rec := httptest.NewRecorder()
+				server.ServeHTTP(rec, req)
+				if rec.Code != test.wantStatus {
+					t.Fatalf("status=%d want=%d body=%s", rec.Code, test.wantStatus, rec.Body.String())
+				}
+			})
+		}
+	}
+}
+
+func capabilityWorkspaceReceiptInput(receiptType string) ledger.ReceiptInput {
+	cost := map[string]any{
+		"priceVersion": "pilot-usd-2026-07-v1", "currency": "USD", "billingUnit": "calendar_month",
+		"totalUsdMicros": int64(52_580_000), "sub2apiUserId": int64(41), "sub2apiRedeemCode": "opl:workspace:charge:v1",
+		"postChargeBalanceUsdMicros": int64(947_420_000), "periodStart": "2026-07-20T00:00:00Z", "paidThrough": "2026-08-20T00:00:00Z",
+		"resourceType": "workspace", "resourceId": "workspace-alpha",
+		"components": map[string]any{
+			"compute": map[string]any{"resourceType": "compute", "resourceId": "compute-alpha", "chargeUsdMicros": int64(50_000_000)},
+			"storage": map[string]any{"resourceType": "storage", "resourceId": "storage-alpha", "sizeGb": int64(10), "chargeUsdMicros": int64(2_580_000)},
+		},
+	}
+	if receiptType == "billing.workspace_refunded.v1" {
+		delete(cost, "postChargeBalanceUsdMicros")
+		cost["sub2apiRefundCode"], cost["refundUsdMicros"] = "opl:workspace:refund:v1", int64(52_580_000)
+	}
+	return ledger.ReceiptInput{
+		Type: receiptType, Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
+		Cost: cost, IdempotencyKey: "capability-" + receiptType,
+	}
+}
+
 func testLedgerCapability(t *testing.T, key string, claims ledgerCapabilityClaims, body []byte) string {
 	t.Helper()
 	digest := sha256.Sum256(body)
