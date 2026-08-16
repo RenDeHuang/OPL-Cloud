@@ -16,6 +16,12 @@ test("CONTRACT-OWNER-02 has one current owner for each retained hard boundary", 
 
   assert.equal(billing.owner, "OPL Control Plane");
   assert.ok(billing.chargePolicy);
+  assert.deepEqual(billing.reconciliationPolicy, {
+    reportSchemaContract: "opl-cloud-evidence-ledger-contract.json#reconciliationReportV1",
+    exceptionOnly: true,
+    mayBlockNewPurchases: true,
+    requestUsageCopied: false
+  });
   assert.equal(
     billing.workspaceLaunchFulfillment.manualReviewRecoveryContract,
     "opl-cloud-control-plane-launch-contract.json#recovery"
@@ -39,6 +45,7 @@ test("CONTRACT-OWNER-02 has one current owner for each retained hard boundary", 
   assert.equal(ledger.owner, "OPL Ledger");
   assert.ok(ledger.workspaceMonthlyBillingReceiptV1);
   assert.ok(ledger.generalReceiptV1);
+  assert.ok(ledger.reconciliationReportV1);
 
   assert.deepEqual(serviceBoundary.focusedOwners, {
     settlement: "opl-cloud-billing-ledger-contract.json",
