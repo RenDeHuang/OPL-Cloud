@@ -16,7 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
+      - &checkout
+        name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -64,7 +65,7 @@ jobs:
     name: postgres-ledger
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
+    services: &postgres_service
       postgres:
         image: postgres:16
         env:
@@ -84,12 +85,10 @@ jobs:
       PGSSLMODE: disable
       OPL_POSTGRES_TESTS: "1"
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
+      - *checkout
 
-      - name: Set up Node 24
+      - &setup_node
+        name: Set up Node 24
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
@@ -104,14 +103,17 @@ jobs:
 
       - name: Test PostgreSQL migrations
         working-directory: services/internal/postgresmigrate
-        run: |
+        env:
+          GO_TEST_ARGS: "-race -count=1"
+        run: &go_test |
           set -o pipefail
           go test -run '^$' ./...
           package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
           mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
           ((${#test_packages[@]} > 0))
+          read -r -a go_test_args <<< "$GO_TEST_ARGS"
           # shellcheck disable=SC2016
-          go test -race -count=1 -json "${test_packages[@]}" | node -e '
+          go test "${go_test_args[@]}" -json "${test_packages[@]}" | node -e '
             let output = "";
             process.stdin.setEncoding("utf8");
             process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
@@ -128,44 +130,15 @@ jobs:
 
       - name: Test Ledger
         working-directory: services/ledger
-        run: |
-          set -o pipefail
-          go test -run '^$' ./...
-          package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
-          mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
-          ((${#test_packages[@]} > 0))
-          # shellcheck disable=SC2016
-          go test -count=1 -json "${test_packages[@]}" | node -e '
-            let output = "";
-            process.stdin.setEncoding("utf8");
-            process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
-            process.stdin.on("end", () => {
-              const events = output.trim().split(/\n/).filter(Boolean).map(JSON.parse);
-              const failed = events.filter((event) => event.Action === "fail");
-              const skipped = events.filter((event) => event.Action === "skip");
-              if (failed.length || skipped.length) {
-                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}; Go SKIP result missing or nonzero`);
-                process.exit(1);
-              }
-            });
-          '
+        env:
+          GO_TEST_ARGS: "-count=1"
+        run: *go_test
 
   control_plane:
     name: control-plane
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    services: *postgres_service
     env:
       PGHOST: 127.0.0.1
       PGPORT: 5432
@@ -175,15 +148,9 @@ jobs:
       OPL_POSTGRES_TESTS: "1"
       OPL_CAPACITY_TESTS: "1"
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
+      - *checkout
 
-      - name: Set up Node 24
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
+      - *setup_node
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -193,44 +160,15 @@ jobs:
 
       - name: Test Control Plane
         working-directory: services/control-plane
-        run: |
-          set -o pipefail
-          go test -run '^$' ./...
-          package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
-          mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
-          ((${#test_packages[@]} > 0))
-          # shellcheck disable=SC2016
-          go test -timeout=15m -count=1 -json "${test_packages[@]}" | node -e '
-            let output = "";
-            process.stdin.setEncoding("utf8");
-            process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
-            process.stdin.on("end", () => {
-              const events = output.trim().split(/\n/).filter(Boolean).map(JSON.parse);
-              const failed = events.filter((event) => event.Action === "fail");
-              const skipped = events.filter((event) => event.Action === "skip");
-              if (failed.length || skipped.length) {
-                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}; Go SKIP result missing or nonzero`);
-                process.exit(1);
-              }
-            });
-          '
+        env:
+          GO_TEST_ARGS: "-timeout=15m -count=1"
+        run: *go_test
 
   fabric:
     name: fabric
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    services: *postgres_service
     env:
       PGHOST: 127.0.0.1
       PGPORT: 5432
@@ -240,15 +178,9 @@ jobs:
       OPL_POSTGRES_TESTS: "1"
       OPL_FABRIC_LOCAL_DOCKER_INTEGRATION: "1"
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
+      - *checkout
 
-      - name: Set up Node 24
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
+      - *setup_node
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -258,27 +190,9 @@ jobs:
 
       - name: Test Fabric
         working-directory: services/fabric
-        run: |
-          set -o pipefail
-          go test -run '^$' ./...
-          package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
-          mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
-          ((${#test_packages[@]} > 0))
-          # shellcheck disable=SC2016
-          go test -count=1 -json "${test_packages[@]}" | node -e '
-            let output = "";
-            process.stdin.setEncoding("utf8");
-            process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
-            process.stdin.on("end", () => {
-              const events = output.trim().split(/\n/).filter(Boolean).map(JSON.parse);
-              const failed = events.filter((event) => event.Action === "fail");
-              const skipped = events.filter((event) => event.Action === "skip");
-              if (failed.length || skipped.length) {
-                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}; Go SKIP result missing or nonzero`);
-                process.exit(1);
-              }
-            });
-          '
+        env:
+          GO_TEST_ARGS: "-count=1"
+        run: *go_test
 
   validate:
     name: validate
