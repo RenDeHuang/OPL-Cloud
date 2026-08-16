@@ -16,6 +16,15 @@ import {
   productMatrixVerticalTests,
   validateProductMatrixLanes
 } from "./verify-local.ts";
+import {
+  collectLocalJ1RecoveryAuthority,
+  createLocalJ1RecoveryArtifact,
+  createLocalJ1RecoveryReadbackPendingArtifact,
+  localJ1CleanupPlan,
+  localJ1RecoveryArtifactPath,
+  noLocalJ1ExternalWrites,
+  writeLocalJ1RecoveryArtifact
+} from "./local-workspace-recovery.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const baseComposeFiles = ["compose.yaml", "deploy/portable/compose.local-workspace.yaml"];
@@ -890,6 +899,8 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
   } = input;
   let cleanupEvidence;
   let cleanupScope = {};
+  let launchSubmitted = false;
+  let auth = null;
   try {
     onStage("bootstrap_ready");
     const bootstrap = await http.json("/api/healthz");
@@ -903,7 +914,7 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
     });
     cleanupScope = { accountId: provision.accountId };
     onStage("qualification_login");
-    const auth = await login(http, qualificationEmail, qualificationPassword, provision.accountId);
+    auth = await login(http, qualificationEmail, qualificationPassword, provision.accountId);
     const me = sourceData((await http.json("/api/auth/me", {}, auth)).payload, "sub2api");
     const sub2apiUserId = String(me?.sub2apiUserId || "");
     if (me?.accountId !== provision.accountId || me?.email !== qualificationEmail.toLowerCase() || me?.role !== "owner" || me?.status !== "active" ||
@@ -931,6 +942,7 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
       throw new Error("qualification quote is invalid or wallet is insufficient");
     }
     onStage("workspace_launch");
+    launchSubmitted = true;
     const initial = (await http.json("/api/workspace-launches", {
       method: "POST", headers: { "idempotency-key": launchKey },
       body: { name: workspaceName, packageId: "basic", sizeGb: 10, autoRenew: false }
@@ -966,10 +978,7 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
       baselineKeys, baselineReceipts, keys, receipts, key, keyUsage, usage, history: historyPage, debit, evidence
     });
 
-    onStage("qualification_cleanup");
-    cleanupEvidence = await cleanup({ accountId: provision.accountId, workspaceId });
-    onStage("receipt_validation");
-    const receipt = validateLocalQualificationReceipt({
+    const receiptCandidate = {
       ...receiptBase,
       images: {
         ...receiptBase.images,
@@ -994,10 +1003,25 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
       refund: { count: 0 },
       refundReceipt: { count: 0 },
       usage: { source: "sub2api", status: "available", totalRequests: usage.totalRequests }
-    });
+    };
+    onStage("receipt_validation");
+    validateLocalQualificationReceipt({ ...receiptCandidate, residuals: { containers: 0, volumes: 0, networks: 0 } });
+    onStage("qualification_cleanup");
+    cleanupEvidence = await cleanup({ accountId: provision.accountId, workspaceId });
+    const receipt = validateLocalQualificationReceipt({ ...receiptCandidate, residuals: cleanupEvidence });
     return { receipt, auth, provision, launch, evidence, cleanupEvidence };
   } finally {
-    if (cleanupEvidence === undefined) await cleanup({ ...cleanupScope, failed: true });
+    if (cleanupEvidence === undefined) {
+      let recoveryAuthority = null;
+      if (launchSubmitted && auth) {
+        try {
+          recoveryAuthority = await collectLocalJ1RecoveryAuthority({ http, auth, operationId, launchSubmitted });
+        } catch {
+          // The preserved service and PostgreSQL state remain the recovery authority when readback is temporarily unavailable.
+        }
+      }
+      await cleanup({ ...cleanupScope, failed: true, launchSubmitted, recoveryAuthority });
+    }
   }
 }
 
@@ -1229,6 +1253,8 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
   let auth = null;
   let finalReceipt;
   let failure;
+  let recovery = null;
+  let preserveRecoveryAuthority = false;
   let ownerDeletePending = null;
   let residuals = { containers: null, volumes: null, networks: null };
   const composePrefix = ["compose", "--project-name", project, "--env-file", envFile];
@@ -1347,6 +1373,39 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
           return { code: readback.code, userId: readback.userId, amountUsdMicros, count: readback.count };
         },
         cleanup: async (scope) => {
+          const authority = scope?.recoveryAuthority || { externalWrites: noLocalJ1ExternalWrites() };
+          const cleanupPlan = localJ1CleanupPlan({
+            ready: !scope?.failed,
+            launchSubmitted: scope?.launchSubmitted === true,
+            authority
+          });
+          if (cleanupPlan.preserveRecoveryAuthority) {
+            preserveRecoveryAuthority = true;
+            const postgresVolumeRefs = (await runProcess("docker", [
+              "volume", "ls", "-q", "--filter", `label=com.docker.compose.project=${project}`
+            ])).stdout.trim().split(/\r?\n/).filter(Boolean);
+            const providerVolumeRefs = scope?.accountId && scope?.workspaceId
+              ? await exactLabelIDs("volumes", scope.accountId, scope.workspaceId)
+              : [];
+            const recoveryPath = localJ1RecoveryArtifactPath(options.receiptPath);
+            const common = {
+              source: { sha: options.sourceSha, tree: sourceTree },
+              failure: { stage, errorCode: "local_workspace_qualification_failed" },
+              compose: {
+                project,
+                recoveryRoot: tempRoot,
+                fabricSecretRoot,
+                postgresVolumeRefs,
+                providerVolumeRefs
+              }
+            };
+            const artifact = scope?.recoveryAuthority
+              ? createLocalJ1RecoveryArtifact({ ...common, authority })
+              : createLocalJ1RecoveryReadbackPendingArtifact({ ...common, operationId, workspaceId });
+            await writeLocalJ1RecoveryArtifact(recoveryPath, artifact);
+            recovery = { status: artifact.status, path: recoveryPath, artifact };
+            return null;
+          }
           if (!scope?.accountId || !scope?.workspaceId) return { containers: 0, volumes: 0, networks: 0 };
           const counts = await cleanupLocalQualificationResources(scope.accountId, scope.workspaceId, async () => {
             await compose(["down", "--volumes", "--remove-orphans", "--timeout", "30"], { allowFailure: false });
@@ -1564,19 +1623,19 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
   } catch (error) {
     failure = error;
   } finally {
-    if (composeStarted) {
+    if (composeStarted && !preserveRecoveryAuthority) {
       const stop = await compose(["stop", "--timeout", "30", "control-plane", "fabric"], { allowFailure: true });
       const down = await compose(["down", "--volumes", "--remove-orphans"], { allowFailure: true });
       const observed = await residualCounts(accountId, workspaceId).catch(() => null);
       if (stop.code !== 0 || !observed || down.code !== 0) failure ||= new Error("local qualification teardown was not confirmed");
       if (observed) residuals = observed;
     }
-    for (const tag of builtTags) await runProcess("docker", ["image", "rm", tag], { allowFailure: true });
-    if (registryContainer) {
+    if (!preserveRecoveryAuthority) for (const tag of builtTags) await runProcess("docker", ["image", "rm", tag], { allowFailure: true });
+    if (registryContainer && !preserveRecoveryAuthority) {
       const removed = await runProcess("docker", ["rm", "-f", registryContainer], { allowFailure: true });
       if (removed.code !== 0) failure ||= new Error("local source registry cleanup was not confirmed");
     }
-    await rm(tempRoot, { recursive: true, force: true });
+    if (!preserveRecoveryAuthority) await rm(tempRoot, { recursive: true, force: true });
   }
 
   if (failure) {
@@ -1595,6 +1654,17 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
       errorCode: "local_workspace_qualification_failed",
       error: redactedError(failure),
       residuals,
+      ...(recovery?.artifact ? {
+        recovery: {
+          status: recovery.artifact.status,
+          path: recovery.path,
+          operationIdDigest: recovery.artifact.authority.operationIdDigest,
+          workspaceIdDigest: recovery.artifact.authority.workspaceIdDigest,
+          externalWrites: recovery.artifact.authority.externalWrites,
+          compose: recovery.artifact.compose,
+          cleanup: recovery.artifact.cleanup
+        }
+      } : {}),
       ...(ownerDeletePending ? { ownerDeletePending } : {}),
       deferred: [...deferredCloudGates]
     };

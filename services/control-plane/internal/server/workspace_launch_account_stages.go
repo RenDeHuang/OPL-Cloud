@@ -82,6 +82,9 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchDebit(ctx c
 	}
 	entry, found := history[code]
 	if !found {
+		if workspaceLaunchDebitReadbackCanConverge(operation) {
+			return workspaceLaunchStageObservation{State: workspaceLaunchStagePending}, nil
+		}
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, nil
 	}
 	row := map[string]any{"sub2apiRedeemCode": code, "chargeUsdMicros": operation.int64Fact("totalChargeUsdMicros")}
@@ -89,10 +92,16 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchDebit(ctx c
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, errors.New(reason)
 	}
 	if entry.UsedAt == nil || entry.UsedAt.IsZero() {
+		if workspaceLaunchDebitReadbackCanConverge(operation) {
+			return workspaceLaunchStageObservation{State: workspaceLaunchStagePending}, nil
+		}
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, nil
 	}
 	postChargeBalance, err := a.service.Sub2APIBalance(ctx, userID)
 	if err != nil {
+		if workspaceLaunchDebitReadbackCanConverge(operation) {
+			return workspaceLaunchStageObservation{State: workspaceLaunchStagePending}, nil
+		}
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, err
 	}
 	if postChargeBalance.UserID != userID || postChargeBalance.USDMicros < 0 {
@@ -107,6 +116,12 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchDebit(ctx c
 		"billingPeriodState": "frozen", "periodStart": periodStart.Format(time.RFC3339Nano),
 		"paidThrough": nextBillingMonth(periodStart, periodStart.Day()).Format(time.RFC3339Nano), "billingAnchorDay": periodStart.Day(),
 	}}, nil
+}
+
+func workspaceLaunchDebitReadbackCanConverge(operation workspaceLaunchReconcileOperation) bool {
+	attempt, ok := operation.Attempts["debit"]
+	return ok && operation.Stage == "debit" && attempt.Attempted == 1 && attempt.Confirmed == 0 && attempt.Unknown == 0 &&
+		attempt.Max == 1 && attempt.Status == "reserved" && attempt.IdempotencyKey == workspaceLaunchStageIdempotencyKey(operation, 1)
 }
 
 func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchDebit(ctx context.Context, operation workspaceLaunchReconcileOperation) error {

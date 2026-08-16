@@ -923,7 +923,7 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
     assert.deepEqual(writtenReceipt.j0Ready.source, { sha, tree: "d".repeat(40), clean: true });
     assert.deepEqual(writtenReceipt.j0Ready.gates.map(({ id, status }) => ({ id, status })), j0ReadyReceipt().gates.map(({ id, status }) => ({ id, status })));
     assert.equal(Object.prototype.hasOwnProperty.call(writtenReceipt, "productMatrix"), false);
-    assert.deepEqual(stages, ["bootstrap_ready", "admin_login", "account_provision", "qualification_login", "wallet_usage_baseline", "pricing_preview", "workspace_launch", "terminal_readback", "workspace_open", "accounting_readback", "qualification_cleanup", "receipt_validation"]);
+    assert.deepEqual(stages, ["bootstrap_ready", "admin_login", "account_provision", "qualification_login", "wallet_usage_baseline", "pricing_preview", "workspace_launch", "terminal_readback", "workspace_open", "accounting_readback", "receipt_validation", "qualification_cleanup"]);
     assert.deepEqual(cleanupCalls, [{ accountId, workspaceId }]);
     assert.deepEqual(counts, { mappingPosts: 1, workspacePosts: 1, keyCreates: 1, debits: 1, refunds: 0, deletes: 0, restarts: 0 });
     assert.equal(requests.filter((request) => request.method === "POST" && request.path === "/api/workspace-launches").length, 1);
@@ -935,7 +935,7 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
   }
 });
 
-test("canonical J1 HTTP preview fails closed on source conflict and still runs finally cleanup", async () => {
+test("canonical J1 HTTP preview cleans a failure before Workspace Create", async () => {
   const cleanupCalls = [];
   const http = {
     json: async (path) => {
@@ -956,8 +956,98 @@ test("canonical J1 HTTP preview fails closed on source conflict and still runs f
     accountProvisionKey: "mapping", launchKey: "launch", operationId: "operation", workspaceId: "workspace", workspaceName: "J1",
     readRuntime: async () => ({}), readDebit: async () => ({}), cleanup: async (scope) => { cleanupCalls.push(scope); return { containers: 0, volumes: 0, networks: 0 }; }, receiptBase: {}
   }), /provision response/);
-  assert.deepEqual(cleanupCalls, [{ failed: true }]);
+  assert.deepEqual(cleanupCalls, [{ failed: true, launchSubmitted: false, recoveryAuthority: null }]);
   assert.throws(() => sourceData({ source: "control-plane+sub2api", available: true, status: "conflict", data: {} }, "control-plane+sub2api"), /unavailable/);
+});
+
+test("canonical J1 HTTP preview preserves exact recovery authority after Workspace Create submission", async () => {
+  const accountId = `acct-${stableID("account", "customer@example.test").slice(0, 18)}`;
+  const provisionOperationId = `account-provision-${stableID("mapping", "customer@example.test").slice(0, 18)}`;
+  const cleanupCalls = [];
+  const launch = {
+    operationId: "operation", workspaceId: "workspace", schemaVersion: 3, version: 7,
+    status: "manual_review", stage: "debit", phase: "debit",
+    continuationAttemptBudgets: Object.fromEntries([
+      "key", "debit", "ensure_compute_allocation", "storage", "attachment", "secret", "runtime", "activation", "receipt"
+    ].map((stage) => [stage, {
+      attempted: stage === "key" || stage === "debit" ? 1 : 0,
+      confirmed: stage === "key" ? 1 : 0,
+      unknown: stage === "debit" ? 1 : 0,
+      max: 1,
+      status: stage === "key" ? "confirmed" : stage === "debit" ? "unknown" : "",
+      idempotencyKey: stage === "key" ? "key-write" : stage === "debit" ? "debit-write" : "",
+      pendingReadbacks: 0,
+      maxPendingReadbacks: 3
+    }]))
+  };
+  const http = {
+    request: async (path) => path === "/"
+      ? { response: { status: 200 }, text: '<div id="root"><script src="/app.js"></script></div>' }
+      : { response: { status: 200 }, text: "asset" },
+    json: async (path, init = {}) => {
+      if (path === "/api/healthz") return { payload: { status: "ok" } };
+      if (path === "/api/auth/login") return { response: { headers: new Headers({ "set-cookie": "session=test", "x-opl-csrf-token": "csrf" }) }, payload: { user: { accountId: init.body.email === "customer@example.test" ? accountId : "acct-admin" } } };
+      if (path === "/api/operator/accounts" && init.method === "POST") return { payload: { status: "succeeded", accountId, operationId: provisionOperationId } };
+      if (path.startsWith("/api/operator/accounts?")) return { payload: { source: "control-plane+sub2api", available: true, status: "available", data: { items: [{ accountId, email: "customer@example.test", status: "active", sub2apiUserId: "41" }], total: 1, page: 1, pageSize: 50 } } };
+      if (path === "/api/auth/me") return { payload: { source: "sub2api", available: true, status: "available", data: { accountId, email: "customer@example.test", role: "owner", status: "active", sub2apiUserId: "41" } } };
+      if (path === "/api/gateway/wallet") return { payload: { source: "sub2api", available: true, status: "available", data: { usdMicros: "100000000" } } };
+      if (path === "/api/gateway/usage-summary?period=month") return { payload: { source: "sub2api", available: true, status: "available", data: { totalRequests: 0 } } };
+      if (path === "/api/gateway/keys?page=1&pageSize=100") return { payload: { source: "sub2api", available: true, status: "available", data: { items: [], total: 0, page: 1, pageSize: 100, pages: 1 } } };
+      if (path === "/api/billing/receipts?limit=100") return { payload: { source: "ledger", available: true, status: "available", data: { receipts: [], hasMore: false } } };
+      if (path === "/api/pricing/preview") return { payload: { resourceType: "workspace", packageId: "basic", currency: "USD", totalChargeUsdMicros: "52580000" } };
+      if (path === "/api/workspace-launches" && init.method === "POST") return { payload: { operationId: "operation", workspaceId: "workspace" } };
+      if (path === "/api/workspace-launches/operation") return { payload: launch };
+      throw new Error(`unexpected request ${path}`);
+    }
+  };
+  await assert.rejects(() => runLocalWorkspaceJ1HTTPQualification({
+    http, adminEmail: "admin@example.test", adminPassword: "password", qualificationEmail: "customer@example.test", qualificationPassword: "password",
+    accountProvisionKey: "mapping", launchKey: "launch", operationId: "operation", workspaceId: "workspace", workspaceName: "J1",
+    wait: async () => {}, readRuntime: async () => ({}), readDebit: async () => ({}),
+    cleanup: async (scope) => { cleanupCalls.push(scope); return null; }, receiptBase: {}
+  }), /manual_review\/debit\/none/);
+  assert.equal(cleanupCalls.length, 1);
+  assert.equal(cleanupCalls[0].failed, true);
+  assert.equal(cleanupCalls[0].launchSubmitted, true);
+  assert.equal(cleanupCalls[0].recoveryAuthority.status, "manual_review");
+  assert.deepEqual(cleanupCalls[0].recoveryAuthority.externalWrites.debits, { attempted: 1, confirmed: 0, unknown: 1 });
+  const serializedAuthority = JSON.stringify(cleanupCalls[0].recoveryAuthority);
+  for (const forbidden of ['"operationId":"operation"', '"workspaceId":"workspace"', "key-write", "debit-write"]) {
+    assert.equal(serializedAuthority.includes(forbidden), false, forbidden);
+  }
+});
+
+test("canonical J1 HTTP preview still forbids cleanup when the post-Create owner readback is unavailable", async () => {
+  let submitted = false;
+  const cleanupCalls = [];
+  const accountId = `acct-${stableID("account", "customer@example.test").slice(0, 18)}`;
+  const http = {
+    request: async (path) => path === "/"
+      ? { response: { status: 200 }, text: '<div id="root"><script src="/app.js"></script></div>' }
+      : { response: { status: 200 }, text: "asset" },
+    json: async (path, init = {}) => {
+      if (path === "/api/healthz") return { payload: { status: "ok" } };
+      if (path === "/api/auth/login") return { response: { headers: new Headers({ "set-cookie": "session=test", "x-opl-csrf-token": "csrf" }) }, payload: { user: { accountId: init.body.email === "customer@example.test" ? accountId : "acct-admin" } } };
+      if (path === "/api/operator/accounts" && init.method === "POST") return { payload: { status: "succeeded", accountId, operationId: `account-provision-${stableID("mapping", "customer@example.test").slice(0, 18)}` } };
+      if (path.startsWith("/api/operator/accounts?")) return { payload: { source: "control-plane+sub2api", available: true, status: "available", data: { items: [{ accountId, email: "customer@example.test", status: "active", sub2apiUserId: "41" }], total: 1, page: 1, pageSize: 50 } } };
+      if (path === "/api/auth/me") return { payload: { source: "sub2api", available: true, status: "available", data: { accountId, email: "customer@example.test", role: "owner", status: "active", sub2apiUserId: "41" } } };
+      if (path === "/api/gateway/wallet") return { payload: { source: "sub2api", available: true, status: "available", data: { usdMicros: "100000000" } } };
+      if (path === "/api/gateway/usage-summary?period=month") return { payload: { source: "sub2api", available: true, status: "available", data: { totalRequests: 0 } } };
+      if (path === "/api/gateway/keys?page=1&pageSize=100") return { payload: { source: "sub2api", available: true, status: "available", data: { items: [], total: 0, page: 1, pageSize: 100, pages: 1 } } };
+      if (path === "/api/billing/receipts?limit=100") return { payload: { source: "ledger", available: true, status: "available", data: { receipts: [], hasMore: false } } };
+      if (path === "/api/pricing/preview") return { payload: { resourceType: "workspace", packageId: "basic", currency: "USD", totalChargeUsdMicros: "52580000" } };
+      if (path === "/api/workspace-launches" && init.method === "POST") { submitted = true; throw new Error("response unavailable"); }
+      if (path === "/api/workspace-launches/operation" && submitted) throw new Error("owner readback unavailable");
+      throw new Error(`unexpected request ${path}`);
+    }
+  };
+  await assert.rejects(() => runLocalWorkspaceJ1HTTPQualification({
+    http, adminEmail: "admin@example.test", adminPassword: "password", qualificationEmail: "customer@example.test", qualificationPassword: "password",
+    accountProvisionKey: "mapping", launchKey: "launch", operationId: "operation", workspaceId: "workspace", workspaceName: "J1",
+    wait: async () => {}, readRuntime: async () => ({}), readDebit: async () => ({}),
+    cleanup: async (scope) => { cleanupCalls.push(scope); return null; }, receiptBase: {}
+  }), /response unavailable/);
+  assert.deepEqual(cleanupCalls, [{ accountId, failed: true, launchSubmitted: true, recoveryAuthority: null }]);
 });
 
 test("live authority configuration fails closed before Docker and writes a redacted receipt", async () => {
