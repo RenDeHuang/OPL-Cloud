@@ -149,6 +149,11 @@ type remoteCreateHTTPResponse struct {
 	BrokerURL        string `json:"broker_url"`
 }
 
+type remoteInviteHTTPResponse struct {
+	InvitationCode string `json:"invitation_code"`
+	ExpiresAt      string `json:"expires_at"`
+}
+
 type remoteClaimHTTPResponse struct {
 	ProtocolVersion      string `json:"protocol_version"`
 	PairingID            string `json:"pairing_id"`
@@ -172,6 +177,14 @@ type remoteCredentialHTTPResponse struct {
 	PeerProviderUserID string `json:"peer_provider_user_id"`
 	UserSig            string `json:"usersig"`
 	UserSigExpiresAt   string `json:"usersig_expires_at"`
+}
+
+type remoteRevokeHTTPResponse struct {
+	ProtocolVersion        string `json:"protocol_version"`
+	PairingID              string `json:"pairing_id"`
+	State                  string `json:"state"`
+	RevocationReceiptID    string `json:"revocation_receipt_id"`
+	RevocationReceiptToken string `json:"revocation_receipt_token"`
 }
 
 type remoteDeviceActivation struct {
@@ -324,7 +337,7 @@ func (b *remoteCompanionBroker) lockCapacityTx(ctx context.Context, tx *controlp
 
 func (b *remoteCompanionBroker) reclaimExpiredReservationsTx(ctx context.Context, tx *controlplaneent.Tx, now time.Time) error {
 	expired, err := tx.RemotePairing.Query().
-		Where(remotepairing.StateEQ("reserved"), remotepairing.ReservationExpiresAtLT(now.Format(time.RFC3339Nano)), remotepairing.SeatReleasedEQ(false)).
+		Where(remotepairing.StateIn("reserved", "awaiting_desktop_confirmation"), remotepairing.ReservationExpiresAtLT(now.Format(time.RFC3339Nano)), remotepairing.SeatReleasedEQ(false)).
 		All(ctx)
 	if err != nil {
 		return err
@@ -1007,7 +1020,9 @@ func (b *remoteCompanionBroker) confirmPairing(ctx context.Context, pairingID, c
 	}
 	providerPair, err := b.provider.ProvisionPair(ctx, pairingID)
 	if err != nil {
-		_ = b.setPairingState(ctx, pairingID, "provider_reclaim_pending")
+		if persistErr := b.persistProviderReclaimPending(ctx, pairingID, providerPair); persistErr != nil {
+			return remotePairingResponse{}, errors.Join(err, persistErr)
+		}
 		return remotePairingResponse{}, err
 	}
 	now = b.now()
@@ -1059,9 +1074,21 @@ func (b *remoteCompanionBroker) confirmPairing(ctx context.Context, pairingID, c
 	return b.pairingResponse(active, capacity), nil
 }
 
-func (b *remoteCompanionBroker) setPairingState(ctx context.Context, pairingID, state string) error {
-	_, err := b.store.client.RemotePairing.UpdateOneID(pairingID).SetState(state).Save(ctx)
-	return err
+func (b *remoteCompanionBroker) persistProviderReclaimPending(ctx context.Context, pairingID string, providerPair remoteProviderPair) error {
+	now := b.now()
+	return b.withTx(ctx, func(tx *controlplaneent.Tx) error {
+		if err := b.lockCapacityTx(ctx, tx, now); err != nil {
+			return err
+		}
+		_, err := tx.RemotePairing.UpdateOneID(pairingID).
+			SetState("provider_reclaim_pending").
+			SetDesktopProviderUserID(providerPair.DesktopUserID).
+			SetIosProviderUserID(providerPair.IOSUserID).
+			SetDesktopProviderAbsent(false).
+			SetIosProviderAbsent(false).
+			Save(ctx)
+		return err
+	})
 }
 
 func (b *remoteCompanionBroker) credentials(ctx context.Context, pairingID, credential string) (remoteCredentialResponse, error) {
@@ -1634,7 +1661,10 @@ func registerRemoteCompanionRoutes(mux *http.ServeMux, app *controlPlaneServer) 
 			writeRemoteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, created)
+		writeJSON(w, http.StatusCreated, remoteInviteHTTPResponse{
+			InvitationCode: created.Secret,
+			ExpiresAt:      created.ExpiresAt,
+		})
 	}))
 
 	mux.HandleFunc("POST "+remoteCompanionBasePath+"/pairings", func(w http.ResponseWriter, r *http.Request) {
@@ -1804,7 +1834,13 @@ func registerRemoteCompanionRoutes(mux *http.ServeMux, app *controlPlaneServer) 
 		if !revoked.SeatReleased {
 			status = http.StatusAccepted
 		}
-		writeJSON(w, status, revoked)
+		writeJSON(w, status, remoteRevokeHTTPResponse{
+			ProtocolVersion:        revoked.ProtocolVersion,
+			PairingID:              revoked.PairingID,
+			State:                  revoked.State,
+			RevocationReceiptID:    revoked.RevocationReceiptID,
+			RevocationReceiptToken: revoked.RevocationReceiptToken,
+		})
 	})
 
 	mux.HandleFunc("GET "+remoteCompanionBasePath+"/revocations/{receiptId}", func(w http.ResponseWriter, r *http.Request) {

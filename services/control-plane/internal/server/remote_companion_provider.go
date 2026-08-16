@@ -60,21 +60,20 @@ func (p *tencentRemoteCompanionProvider) configured() error {
 }
 
 func (p *tencentRemoteCompanionProvider) ProvisionPair(ctx context.Context, pairingID string) (remoteProviderPair, error) {
-	if err := p.configured(); err != nil {
-		return remoteProviderPair{}, err
-	}
 	users := remoteProviderPair{DesktopUserID: tencentPairUserID(pairingID, "desktop"), IOSUserID: tencentPairUserID(pairingID, "ios")}
+	if err := p.configured(); err != nil {
+		return users, err
+	}
 	if err := p.importUser(ctx, users.DesktopUserID); err != nil {
-		return remoteProviderPair{}, err
+		return users, err
 	}
 	if err := p.importUser(ctx, users.IOSUserID); err != nil {
-		_ = p.DeleteUser(ctx, users.DesktopUserID)
-		return remoteProviderPair{}, err
+		return users, err
 	}
 	for _, userID := range []string{users.DesktopUserID, users.IOSUserID} {
 		absent, err := p.UserAbsent(ctx, userID)
 		if err != nil || absent {
-			return remoteProviderPair{}, errRemoteProviderUnavailable
+			return users, errRemoteProviderUnavailable
 		}
 	}
 	return users, nil
@@ -255,11 +254,12 @@ func tencentUserSig(secret string, sdkAppID int64, userID string, now time.Time,
 // selected by production configuration. Tests can inject it through the
 // server constructor to exercise the full broker path without Tencent calls.
 type fakeRemoteCompanionProvider struct {
-	mu            sync.Mutex
-	users         map[string]bool
-	failProvision bool
-	failDeleteFor map[string]bool
-	secret        string
+	mu                        sync.Mutex
+	users                     map[string]bool
+	failProvision             bool
+	failProvisionAfterDesktop bool
+	failDeleteFor             map[string]bool
+	secret                    string
 }
 
 func newFakeRemoteCompanionProvider() *fakeRemoteCompanionProvider {
@@ -269,11 +269,14 @@ func newFakeRemoteCompanionProvider() *fakeRemoteCompanionProvider {
 func (p *fakeRemoteCompanionProvider) ProvisionPair(_ context.Context, pairingID string) (remoteProviderPair, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.failProvision {
-		return remoteProviderPair{}, errRemoteProviderUnavailable
-	}
 	pair := remoteProviderPair{DesktopUserID: tencentPairUserID(pairingID, "desktop"), IOSUserID: tencentPairUserID(pairingID, "ios")}
+	if p.failProvision {
+		return pair, errRemoteProviderUnavailable
+	}
 	p.users[pair.DesktopUserID] = true
+	if p.failProvisionAfterDesktop {
+		return pair, errRemoteProviderUnavailable
+	}
 	p.users[pair.IOSUserID] = true
 	return pair, nil
 }

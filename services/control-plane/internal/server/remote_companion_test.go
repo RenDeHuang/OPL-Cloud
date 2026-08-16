@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	controlplaneent "opl-cloud/services/control-plane/ent"
 )
 
 const remoteTestHashKey = "01234567890123456789012345678901"
@@ -166,6 +168,62 @@ func TestRemoteCompanionManualCodeAttemptsReleaseSeat(t *testing.T) {
 	}
 }
 
+func TestRemoteCompanionExpiredClaimReleasesSeatOnce(t *testing.T) {
+	broker, _ := newRemoteBrokerTest(t)
+	created := createRemoteInviteAndPairing(t, broker)
+	claimed, err := broker.claimPairing(context.Background(), created.PairingID, created.ClaimSecret, "", "ios-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.State != "awaiting_desktop_confirmation" {
+		t.Fatalf("claimed state = %q, want awaiting_desktop_confirmation", claimed.State)
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, created.ReservationExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := deadline.Add(time.Second)
+	broker.now = func() time.Time { return future }
+
+	const reclaimers = 8
+	errs := make(chan error, reclaimers)
+	var wg sync.WaitGroup
+	for i := 0; i < reclaimers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- broker.withTx(context.Background(), func(tx *controlplaneent.Tx) error {
+				if err := broker.lockCapacityTx(context.Background(), tx, future); err != nil {
+					return err
+				}
+				return broker.reclaimExpiredReservationsTx(context.Background(), tx, future)
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pairing, err := broker.store.client.RemotePairing.Get(context.Background(), created.PairingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pairing.State != "revoked" || !pairing.SeatReleased {
+		t.Fatalf("pairing state = %q, seat_released = %v, want revoked/true", pairing.State, pairing.SeatReleased)
+	}
+	capacity, err := broker.capacity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capacity.SeatCount != 0 {
+		t.Fatalf("seat count = %d, want 0 after repeated reclaim", capacity.SeatCount)
+	}
+}
+
 func TestRemoteCompanionConfirmRequiresAuthenticationString(t *testing.T) {
 	broker, _ := newRemoteBrokerTest(t)
 	created := createRemoteInviteAndPairing(t, broker)
@@ -230,6 +288,61 @@ func TestRemoteCompanionRevocationReceiptSupportsPartialRetry(t *testing.T) {
 	}
 	if capacity.SeatCount != 0 {
 		t.Fatalf("seat count = %d, want 0", capacity.SeatCount)
+	}
+}
+
+func TestRemoteCompanionProvisionFailurePersistsProviderIDsForReclaim(t *testing.T) {
+	broker, provider := newRemoteBrokerTest(t)
+	created := createRemoteInviteAndPairing(t, broker)
+	claimed, err := broker.claimPairing(context.Background(), created.PairingID, created.ClaimSecret, "", "ios-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.failProvisionAfterDesktop = true
+	provider.mu.Unlock()
+	if _, err := broker.confirmPairing(context.Background(), created.PairingID, created.DesktopCredential, claimed.AuthenticationString); err == nil {
+		t.Fatal("confirm unexpectedly succeeded after partial provider failure")
+	}
+
+	desktopID := tencentPairUserID(created.PairingID, "desktop")
+	iosID := tencentPairUserID(created.PairingID, "ios")
+	pairing, err := broker.store.client.RemotePairing.Get(context.Background(), created.PairingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pairing.State != "provider_reclaim_pending" || pairing.DesktopProviderUserID != desktopID || pairing.IosProviderUserID != iosID || pairing.DesktopProviderAbsent || pairing.IosProviderAbsent || pairing.SeatReleased {
+		t.Fatalf("partial provision pairing = %#v", pairing)
+	}
+	provider.mu.Lock()
+	desktopPresent := provider.users[desktopID]
+	iosPresent := provider.users[iosID]
+	provider.failProvisionAfterDesktop = false
+	provider.mu.Unlock()
+	if !desktopPresent || iosPresent {
+		t.Fatalf("provider users after partial provision: desktop=%v ios=%v", desktopPresent, iosPresent)
+	}
+
+	receipt, err := broker.revokePairing(context.Background(), created.PairingID, created.DesktopCredential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.State != "revoked" || !receipt.DesktopProviderAbsent || !receipt.IOSProviderAbsent || !receipt.SeatReleased {
+		t.Fatalf("reclaim receipt = %#v", receipt)
+	}
+	provider.mu.Lock()
+	desktopPresent = provider.users[desktopID]
+	iosPresent = provider.users[iosID]
+	provider.mu.Unlock()
+	if desktopPresent || iosPresent {
+		t.Fatalf("provider users remained after reclaim: desktop=%v ios=%v", desktopPresent, iosPresent)
+	}
+	capacity, err := broker.capacity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capacity.SeatCount != 0 {
+		t.Fatalf("seat count = %d, want 0 after provider reclaim", capacity.SeatCount)
 	}
 }
 
@@ -322,6 +435,54 @@ func TestTencentUserSigUsesCompressedOfficialFormat(t *testing.T) {
 	_, _ = mac.Write([]byte(expectedMessage))
 	if document["TLS.sig"] != base64.StdEncoding.EncodeToString(mac.Sum(nil)) {
 		t.Fatal("UserSig HMAC does not match official payload")
+	}
+}
+
+func TestTencentProvisionPairKeepsDeterministicIDsAfterPartialImport(t *testing.T) {
+	importCount := 0
+	deleted := false
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v4/im_open_login_svc/account_import":
+			importCount++
+			if importCount == 2 {
+				_, _ = io.WriteString(w, `{"ActionStatus":"FAIL","ErrorCode":100}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"ActionStatus":"OK","ErrorCode":0}`)
+		case "/v4/im_open_login_svc/account_delete":
+			deleted = true
+			_, _ = io.WriteString(w, `{"ActionStatus":"OK","ErrorCode":0}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer providerServer.Close()
+	provider := &tencentRemoteCompanionProvider{
+		config: tencentRemoteCompanionConfig{
+			SDKAppID:        1400000000,
+			AdminIdentifier: "admin",
+			Secret:          "test-secret",
+			BaseURL:         providerServer.URL,
+			Configured:      true,
+		},
+		client: providerServer.Client(),
+	}
+
+	pairingID := "pair-partial-provider"
+	users, err := provider.ProvisionPair(context.Background(), pairingID)
+	if err == nil {
+		t.Fatal("partial provider import unexpectedly succeeded")
+	}
+	if users.DesktopUserID != tencentPairUserID(pairingID, "desktop") || users.IOSUserID != tencentPairUserID(pairingID, "ios") {
+		t.Fatalf("provider IDs = %#v, want deterministic pair IDs", users)
+	}
+	if importCount != 2 {
+		t.Fatalf("account imports = %d, want 2", importCount)
+	}
+	if deleted {
+		t.Fatal("provider attempted to delete the partial desktop user")
 	}
 }
 
@@ -418,6 +579,35 @@ func TestRemoteCompanionPairingIdempotencyReplaysWithoutAnotherSeat(t *testing.T
 	}
 	if capacity.SeatCount != 1 {
 		t.Fatalf("seat count = %d, want 1", capacity.SeatCount)
+	}
+}
+
+func TestRemoteCompanionInvitationHTTPResponseIsNarrow(t *testing.T) {
+	broker, _ := newRemoteBrokerTest(t)
+	app := newControlPlaneAppEmpty()
+	app.remoteCompanion = broker
+	user, found, err := app.tables.GetUser(context.Background(), "usr-admin")
+	if err != nil || !found {
+		t.Fatalf("operator lookup found=%v err=%v", found, err)
+	}
+	payload, sessionID, err := app.createSession(user, "remote-invite-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	registerRemoteCompanionRoutes(mux, app)
+	request := httptest.NewRequest(http.MethodPost, remoteCompanionBasePath+"/invitations", strings.NewReader(`{"protocol_version":"`+remoteProtocolVersion+`","label":"internal-only"}`))
+	request.AddCookie(sessionCookie(sessionID, 12*60*60))
+	request.Header.Set("x-opl-csrf", stringValue(payload["csrfToken"]))
+	request.Header.Set("Idempotency-Key", "wire-invite-1")
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("invitation status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	response := assertExactJSONKeys(t, recorder.Body.Bytes(), "invitation_code", "expires_at")
+	if response["invitation_code"] == "" || response["expires_at"] == "" {
+		t.Fatalf("invitation response omitted required values: %#v", response)
 	}
 }
 
@@ -651,9 +841,10 @@ func TestRemoteCompanionCanonicalHTTPLifecycle(t *testing.T) {
 	if err := json.Unmarshal(revokeRecorder.Body.Bytes(), &revoked); err != nil {
 		t.Fatal(err)
 	}
+	assertExactJSONKeys(t, revokeRecorder.Body.Bytes(), "protocol_version", "pairing_id", "state", "revocation_receipt_id", "revocation_receipt_token")
 	receiptID, _ := revoked["revocation_receipt_id"].(string)
 	receiptToken, _ := revoked["revocation_receipt_token"].(string)
-	if receiptID == "" || receiptToken == "" || revoked["seat_released"] != true {
+	if receiptID == "" || receiptToken == "" {
 		t.Fatalf("revoke response = %#v", revoked)
 	}
 
@@ -661,8 +852,12 @@ func TestRemoteCompanionCanonicalHTTPLifecycle(t *testing.T) {
 	readRequest.Header.Set("Authorization", "Bearer "+receiptToken)
 	readRecorder := httptest.NewRecorder()
 	mux.ServeHTTP(readRecorder, readRequest)
-	if readRecorder.Code != http.StatusOK || !strings.Contains(readRecorder.Body.String(), `"seat_released":true`) {
+	if readRecorder.Code != http.StatusOK {
 		t.Fatalf("revocation readback status = %d, body = %s", readRecorder.Code, readRecorder.Body.String())
+	}
+	readback := assertExactJSONKeys(t, readRecorder.Body.Bytes(), "protocol_version", "pairing_id", "state", "desktop_provider_identity_absent", "ios_provider_identity_absent", "seat_released")
+	if readback["seat_released"] != true {
+		t.Fatalf("revocation readback did not release seat: %#v", readback)
 	}
 }
 

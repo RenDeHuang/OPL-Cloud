@@ -14,7 +14,7 @@
     "wireCase": "snake_case",
     "mutationIdempotencyHeader": "Idempotency-Key",
     "mutatingRequestRequirement": "Every broker POST body contains exactly the current protocol_version and rejects an unsupported or missing value.",
-    "responseRequirement": "Broker responses include protocol_version and use snake_case field names; provider secrets, pair master keys, task content, and workspace paths are never returned.",
+    "responseRequirement": "Broker responses use route-specific snake_case field names; protocol_version is required except for operator_create_invitation, whose response is limited to invitation_code and expires_at; provider secrets, pair master keys, task content, and workspace paths are never returned.",
     "endpoints": [
       {"id": "operator_create_invitation", "method": "POST", "path": "/v1/remote-companion/invitations", "idempotencyRequired": true},
       {"id": "desktop_create_pairing", "method": "POST", "path": "/v1/remote-companion/pairings", "idempotencyRequired": true},
