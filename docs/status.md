@@ -33,7 +33,8 @@ Sub2API management origin and credentials are never exposed to the browser.
   public interfaces, typed HTTP contracts, PostgreSQL schemas, provider
   operations, and authority boundaries are unchanged. Focused tests plus the
   repository's complete local PostgreSQL, capacity, and local-Docker gate pass;
-  no live Tencent mutation or Instance deployment was run. The remaining mixed
+  no live Tencent mutation was run in this Cloud-source gate. The Instance
+  deployment receipt is recorded below. The remaining mixed
   facades stay in the cohesion backlog and require caller-led slices rather than
   a new cross-service framework.
 - `npm run verify:local` is the repeatable source gate for product boundaries,
@@ -133,24 +134,26 @@ Sub2API management origin and credentials are never exposed to the browser.
   (`bb0a221b12273d4dd788003c3d44b0d14e8dee87`): canonical compute and storage
   provider IDs remain required authority, while legacy `nodePoolId` and
   `persistentVolumeId` values are optional response-only projections that do not
-  decide readiness or resource continuity. The Instance owner has not adopted
-  and read back this current contract. This is source and CI evidence, not a
-  complete Console-to-Workspace installation or Instance Provider Acceptance.
+  decide readiness or resource continuity. Instance `main` now carries the
+  instance-owned callers and protected workflow boundary, but this remains
+  source and CI evidence, not a complete Console-to-Workspace installation or
+  successful Instance Provider Acceptance.
 - The Fabric resource catalog contract now retains only provider-neutral package,
   storage-class, ingress, availability, and capacity boundaries. Its unused
   `workspacePackageNodePools` provider-specific subtree was removed through
   Catalog hard-cut PR `#295`; NodePool, SKU, bootstrap, ownership, and launch
   interpretation remain owned by the Fabric adapter/provisioner and Instance
   workflow. This contract cleanup does not change catalog runtime behavior or
-  establish Instance adoption.
+  establish production acceptance.
 - Control Plane Provider Acceptance now consumes Fabric's provider-neutral
   monthly-preflight availability plus Control Plane-owned package, size, and
   zone facts. It no longer interprets Tencent purchase mode, renewal policy, or
   CVM/CBS resource kinds. The isolated Console recovery-plan DTO, read adapter,
   controller intents, and Admin review modal are removed; operator
   reconciliation projects the server-owned action back into the same durable
-  Launch Reconciler. Instance recovery workflows and their pinned Cloud tool
-  callers remain an external cutover obligation. PR `#280`'s legacy Launch
+  Launch Reconciler. Instance recovery workflows now execute their tools from
+  the Instance checkout; exact candidate deployment and production acceptance
+  remain external owner obligations. PR `#280`'s legacy Launch
   migration implementation was replayed against current `main` and not
   admitted: its test harness was Linux-only, its compute readback used retired
   Fabric interfaces, and its partial-history response did not satisfy the
@@ -433,23 +436,23 @@ an exact Cloud `product_sha` and digest-addressed TCR image, but Cloud has not
 yet supplied a deployable non-Release candidate whose exact bytes can later be
 promoted as a formal Release.
 
-This product repository holds no current instance deployment readback. The
-`opl-instance-medopl` repository now owns the medopl profile and production
-workflow source, but GitHub currently reports no Instance Environment or
-Deployment, and the tracked profile remains `deployed_unverified` with no product
-SHA, release tag, image digest, or receipt. Earlier medopl rollout and provider
-evidence is migration provenance only; current deployment, Runtime, billing,
-rollback, and receipt evidence must be read back from the Instance owner for one
-exact Cloud candidate before that candidate may become a formal Release.
+The `opl-instance-medopl` repository now owns the medopl profile, production
+workflow source, instance-specific production/acceptance/recovery tools, and
+receipts. Its checked-in first-deployment receipt records a successful TKE
+rollout and public health readback for Cloud release `v0.1.7`, while keeping the
+tracked profile `deployed_unverified`: runtime readiness is `ready=false` and
+Acceptance B remains incomplete. This is Instance-owner evidence, not a Cloud
+deployment claim; current deployment, Runtime, billing, rollback, and receipt
+claims must still be read back from Instance for the exact candidate.
 
-The Cloud GitHub repository still carries the legacy production authority. It
-has six non-release Environments in addition to `cloud-release`, and 2,086
+The Cloud GitHub repository still carries residual legacy production settings.
+It has six non-release Environments in addition to `cloud-release`, and 2,086
 historical Deployment records; 2,079 records name the `production` environment,
 whose current configuration exposes 23 Secret names and 31 variables. These
 records include every Actions job that declared an environment and are not
-evidence of 2,079 server rollouts. The residual authority is migration state, not
-evidence that Cloud still owns medopl deployment, and it cannot be retired until
-the Instance successor and one exact deployment receipt are proven.
+evidence of 2,079 server rollouts. The settings are external cleanup state, not
+an excuse to keep instance tool source in Cloud; the protected `cloud-release`
+environment remains product-release authority and is not a retirement target.
 
 Capacity evidence targets a 1000-provisioned-user data set. It does not claim
 1000 concurrent users, concurrent provisioning, multiple Control Plane

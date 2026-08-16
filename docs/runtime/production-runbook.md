@@ -12,6 +12,14 @@ artifacts, and owner-admitted product releases.
 Production credentials, provider resources, approval gates, rollout, rollback,
 and receipts must remain with the selected instance owner.
 
+Medopl-specific production, acceptance, recovery, canary, rollback, and
+approval/evidence tools are owned by `opl-instance-medopl` and are executed from
+its run-scoped `main` checkout. Cloud retains only the product runtime,
+provider-neutral contracts, reusable adapters, and portable candidate/release
+assets. The Cloud checkout supplied to an Instance workflow is the immutable
+product source identified by `product_sha`; it is not the source of an instance
+operation.
+
 ## Product Release Admission
 
 A formal OPL Cloud Release records a candidate that has already passed the

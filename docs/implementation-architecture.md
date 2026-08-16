@@ -158,7 +158,7 @@ These are current implementation facts, not deletion authorization:
 | Cluster | Current implementation fact |
 | --- | --- |
 | Control Plane persistence | Archive and `ExecutionRequest` application models are deleted while historical SQL/tables remain; Organization/Membership are one-to-one compatibility storage |
-| Control Plane instance extension | The normal Launch/Resume path is provider-neutral. Provider Acceptance consumes one provider-neutral facts batch and a narrow Runtime path; Cloud tooling requires canonical compute/storage provider IDs and treats legacy node-pool and persistent-volume values as optional response-only projections. Instance adoption remains external |
+| Control Plane instance extension | The normal Launch/Resume path is provider-neutral. Instance-owned Provider Acceptance consumes one provider-neutral facts batch and a narrow Runtime path; it requires canonical compute/storage provider IDs and treats legacy node-pool and persistent-volume values as optional response-only projections. Instance deployment and production acceptance remain external |
 | Fabric optional verticals | ContentTransfer runtime/API/schema surfaces are retired while historical migrations and data remain; Snapshot/Restore still has provider/service/store/route/test surfaces but no current in-repo product caller and remains excluded from the Pilot |
 | Fabric launch residue | Recovery proof/claim Service/provider/store mutation shells, unassigned legacy `LaunchBinding` branches, and the duplicate Tencent compute-ownership implementation are retired. Typed Tencent Launch has exact stage-chain readback/replay coverage; other operation-list consumers and the remaining mixed Fabric facade still require caller-led cohesion work |
 | Ledger optional verticals | Artifact, Review, ReviewPolicy, and Continuation Ledger APIs remain current, while the caller-zero Control Plane Artifact/Review/Continuation client adapter and its test-only DTOs are deleted; current Control Plane production callers consume receipts and reconciliation |
@@ -187,6 +187,15 @@ consume exact `one-person-lab-cloud` candidates for pre-publication
 qualification and immutable Releases after publication. Their internal
 artifacts may use the `opl-cloud` identifier, but they never copy runtime code,
 product contracts, or spendable-balance state.
+
+The Instance boundary also owns medopl-specific production, acceptance,
+recovery, canary, rollback, and approval/evidence tooling. Those sources and
+focused tests are now canonical in `opl-instance-medopl` `main`; Cloud retains
+product runtime code, provider-neutral contracts, reusable adapters, and
+portable candidate/release assets. Instance workflows still checkout an exact
+Cloud `product_sha`, but they execute instance tools from the run-scoped
+Instance checkout. Cloud no longer provides an instance-specific production
+command or an accepted caller for these paths.
 
 ## Console Source Truth
 
@@ -489,10 +498,11 @@ product Agents and domain agents are separate concepts.
 
 The private `opl-instance-medopl` repository owns the current medopl/TKE
 configuration, production environment, deployment workflow, rollback, canaries,
-and receipts. Historical rollout evidence predates this owner split and does
-not prove the migrated Instance path. Fresh production claims require Instance
-workflow readback for the exact Cloud candidate SHA and image digest; formal
-publication must retain those same bytes.
+receipts, and instance-specific tool source. Its first TKE deployment receipt
+proves the exact `v0.1.7` Cloud artifact and public health readback, while
+keeping readiness and Acceptance B incomplete. Fresh production claims still
+require Instance workflow readback for the exact Cloud candidate SHA and image
+digest; formal publication must retain those same bytes.
 
 Control Plane remains one Pod. Existing load evidence covers request concurrency
 and replay, but its historical per-resource renewal scan is not proof of the

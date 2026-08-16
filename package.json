@@ -21,7 +21,6 @@
     "validate:product-boundary": "node tools/validate-product-boundary.mjs",
     "verify:local": "node tools/verify-local.ts",
     "verify:local:full": "node tools/verify-local.ts --with-postgres",
-    "verify:production": "node tools/production-verifier.ts",
     "validate:production-manifest": "node tools/validate-production-manifest.ts"
   },
   "dependencies": {
