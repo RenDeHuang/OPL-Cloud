@@ -59,6 +59,24 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 		if operation.Status != "succeeded" || operation.Stage != "succeeded" {
 			t.Fatalf("launch terminal state = %s/%s", operation.Status, operation.Stage)
 		}
+		for resource, read := range map[string]func(context.Context, string) ([]map[string]any, error){
+			"compute":    process.store.ListComputes,
+			"storage":    process.store.ListStorages,
+			"attachment": process.store.ListAttachments,
+		} {
+			rows, err := read(context.Background(), operation.stringFact("accountId"))
+			if err != nil || len(rows) != 0 {
+				t.Fatalf("canonical launch copied %s truth: rows=%#v err=%v", resource, rows, err)
+			}
+		}
+		runtimeStatus := gatewayAccountingEnvelopeData(t, api.mustRequest(t, http.MethodGet, "/api/workspaces/"+operation.stringFact("workspaceId")+"/runtime-status", nil, "", http.StatusOK))
+		if stringValue(runtimeStatus["workspaceId"]) != operation.stringFact("workspaceId") || stringValue(runtimeStatus["runtimeId"]) != operation.stringFact("runtimeId") ||
+			stringValue(runtimeStatus["url"]) != operation.stringFact("url") || stringValue(runtimeStatus["serviceName"]) != operation.stringFact("runtimeServiceName") || runtimeStatus["ready"] != true {
+			t.Fatalf("terminal Fabric runtime readback = %#v operation=%s", runtimeStatus, workspaceLaunchReconcileResultSummary(operation))
+		}
+		if process.fabric.calls == nil || len(*process.fabric.calls) != 1 || (*process.fabric.calls)[0] != "fabric.runtime-status" {
+			t.Fatalf("terminal Fabric runtime calls = %#v", process.fabric.calls)
+		}
 
 		beforeReplay := fixture.writeCounts()
 		replay := api.mustRequest(t, http.MethodPost, "/api/workspace-launches", map[string]any{
@@ -488,6 +506,21 @@ func newGatewayAccountingFabric() *gatewayAccountingFabric {
 	return &gatewayAccountingFabric{stages: map[string]clients.WorkspaceLaunchStageResult{}}
 }
 
+func (f *gatewayAccountingFabric) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {
+	f.record("fabric.runtime-status")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result, ok := f.stages["runtime"]
+	if !ok || result.State != "ready" || result.Binding.WorkspaceID != workspaceID {
+		return clients.WorkspaceRuntime{WorkspaceID: workspaceID, Status: "not_found"}, nil
+	}
+	return clients.WorkspaceRuntime{
+		ID: result.Resources.RuntimeID, WorkspaceID: workspaceID, URL: result.Resources.RuntimeURL,
+		ServiceName: result.Resources.RuntimeServiceName, Status: "running", Ready: true,
+		Checks: []any{map[string]any{"name": "service_endpoints_ready", "ok": true}},
+	}, nil
+}
+
 func (f *gatewayAccountingFabric) PreflightWorkspaceLaunch(_ context.Context, input clients.WorkspaceLaunchPreflightInput) (clients.WorkspaceLaunchPreflight, error) {
 	return clients.WorkspaceLaunchPreflight{
 		SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, Available: true, Reason: "none",
@@ -553,6 +586,7 @@ type gatewayAccountingControlPlane struct {
 	server  *httptest.Server
 	handler *controlPlaneHTTPHandler
 	store   StateStore
+	fabric  *gatewayAccountingFabric
 }
 
 func newGatewayAccountingControlPlane(t *testing.T, ledger clients.LedgerClient, sub2API *gatewayAccountingSub2API, accountID, userID string) *gatewayAccountingControlPlane {
@@ -572,7 +606,10 @@ func newGatewayAccountingControlPlane(t *testing.T, ledger clients.LedgerClient,
 	if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
 		t.Fatalf("seed Control Plane owner: %v", err)
 	}
-	service := controlplane.NewService(ledger, newGatewayAccountingFabric(), sub2API.client)
+	fabric := newGatewayAccountingFabric()
+	fabricCalls := []string{}
+	fabric.fakeFabricClient.calls = &fabricCalls
+	service := controlplane.NewService(ledger, fabric, sub2API.client)
 	handler, err := NewPersistentServer(service, store)
 	if err != nil {
 		t.Fatalf("start Control Plane HTTP owner: %v", err)
@@ -583,7 +620,7 @@ func newGatewayAccountingControlPlane(t *testing.T, ledger clients.LedgerClient,
 	}
 	server := httptest.NewTLSServer(handler)
 	t.Cleanup(server.Close)
-	return &gatewayAccountingControlPlane{server: server, handler: typed, store: store}
+	return &gatewayAccountingControlPlane{server: server, handler: typed, store: store, fabric: fabric}
 }
 
 func (p *gatewayAccountingControlPlane) login(t *testing.T, email, password string) *gatewayAccountingAPI {
