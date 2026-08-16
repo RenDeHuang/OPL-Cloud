@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseDocument } from "yaml";
 
 import {
   productMatrixLaneSpecs,
@@ -19,6 +21,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const baseComposeFiles = ["compose.yaml", "deploy/portable/compose.local-workspace.yaml"];
 const digestPattern = /^sha256:[0-9a-f]{64}$/;
 const shaPattern = /^[0-9a-f]{40}$/;
+const sub2apiSecretFileFields = Object.freeze([
+  "OPL_SUB2API_BASE_URL",
+  "OPL_SUB2API_ADMIN_EMAIL",
+  "OPL_SUB2API_ADMIN_PASSWORD",
+  "OPL_QUALIFICATION_AUTHORITY_CLASS",
+  "OPL_QUALIFICATION_USER_EMAIL",
+  "OPL_QUALIFICATION_USER_PASSWORD"
+]);
 const deferredCloudGates = Object.freeze([
   "tencent-tke",
   "tcr-and-tke-image-pull",
@@ -51,7 +61,7 @@ function optionValues(args) {
       buildSourceImages = true;
       continue;
     }
-    if (!["--source-sha", "--cloud-image", "--workspace-image", "--receipt", "--authority-mode", "--product-matrix-receipt"].includes(token)) {
+    if (!["--source-sha", "--cloud-image", "--workspace-image", "--receipt", "--authority-mode", "--product-matrix-receipt", "--sub2api-secret-file"].includes(token)) {
       throw new Error(`unknown local qualification argument: ${token}`);
     }
     const value = args[index + 1];
@@ -72,6 +82,7 @@ export function parseLocalQualificationArgs(args = process.argv.slice(2)) {
   const receiptPath = String(values.get("--receipt") || "").trim();
   const authorityMode = String(values.get("--authority-mode") || "fixture").trim();
   const productMatrixReceipt = String(values.get("--product-matrix-receipt") || "").trim();
+  const sub2apiSecretFile = String(values.get("--sub2api-secret-file") || "").trim();
   if (!shaPattern.test(sourceSha)) throw new Error("source SHA must be an exact 40-character lowercase commit");
   if (!receiptPath) throw new Error("receipt path is required");
   if (!buildSourceImages && !immutableImageReference(cloudImage)) throw new Error("immutable cloud image repository@digest is required");
@@ -80,7 +91,81 @@ export function parseLocalQualificationArgs(args = process.argv.slice(2)) {
     throw new Error("source image build cannot be combined with explicit image inputs");
   }
   if (authorityMode !== "fixture" && authorityMode !== "live") throw new Error("authority mode must be fixture or live");
-  return { sourceSha, cloudImage, workspaceImage, receiptPath, buildSourceImages, authorityMode, productMatrixReceipt };
+  if (sub2apiSecretFile && authorityMode !== "live") throw new Error("Sub2API secret file requires live authority mode");
+  if (sub2apiSecretFile && !isAbsolute(sub2apiSecretFile)) throw new Error("Sub2API secret file path must be absolute");
+  return { sourceSha, cloudImage, workspaceImage, receiptPath, buildSourceImages, authorityMode, productMatrixReceipt, sub2apiSecretFile };
+}
+
+function sub2apiSecretFileError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
+
+function validLiveAuthorityConfiguration(value) {
+  if (!value || !/^https:\/\/[^\s]+$/.test(value.baseURL) || !value.adminEmail || !value.adminPassword ||
+    !value.qualificationUserEmail || !value.qualificationUserPassword || !["sandbox", "preproduction"].includes(value.authorityClass)) {
+    return false;
+  }
+  return true;
+}
+
+export async function loadSub2APISecretFile(path, { environment = process.env, currentUid = typeof process.getuid === "function" ? process.getuid() : null } = {}) {
+  if (!isAbsolute(String(path || "")) || !Number.isSafeInteger(currentUid) || currentUid < 0) {
+    throw sub2apiSecretFileError("sub2api_secret_file_invalid");
+  }
+  if (sub2apiSecretFileFields.some((name) => Object.prototype.hasOwnProperty.call(environment, name))) {
+    throw sub2apiSecretFileError("sub2api_secret_file_env_conflict");
+  }
+  let handle;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = await handle.stat();
+    if (!stat.isFile() || (stat.mode & 0o777) !== 0o600 || stat.uid !== currentUid || stat.size <= 0 || stat.size > 64 * 1024) {
+      throw sub2apiSecretFileError("sub2api_secret_file_invalid");
+    }
+    const document = parseDocument(await handle.readFile("utf8"), { uniqueKeys: true, maxAliasCount: 0 });
+    if (document.errors.length !== 0) throw sub2apiSecretFileError("sub2api_secret_file_schema_invalid");
+    const value = document.toJS({ maxAliasCount: 0 });
+    if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).sort().join("\0") !== [...sub2apiSecretFileFields].sort().join("\0") ||
+      sub2apiSecretFileFields.some((name) => typeof value[name] !== "string" || !value[name].trim())) {
+      throw sub2apiSecretFileError("sub2api_secret_file_schema_invalid");
+    }
+    const admitted = {
+      baseURL: value.OPL_SUB2API_BASE_URL.trim(),
+      adminEmail: value.OPL_SUB2API_ADMIN_EMAIL.trim(),
+      adminPassword: value.OPL_SUB2API_ADMIN_PASSWORD,
+      authorityClass: value.OPL_QUALIFICATION_AUTHORITY_CLASS,
+      qualificationUserEmail: value.OPL_QUALIFICATION_USER_EMAIL.trim(),
+      qualificationUserPassword: value.OPL_QUALIFICATION_USER_PASSWORD
+    };
+    if (!validLiveAuthorityConfiguration(admitted)) throw sub2apiSecretFileError("sub2api_secret_file_schema_invalid");
+    return admitted;
+  } catch (error) {
+    if (String(error?.code || "").startsWith("sub2api_secret_file_")) throw error;
+    throw sub2apiSecretFileError("sub2api_secret_file_invalid");
+  } finally {
+    await handle?.close();
+  }
+}
+
+function liveAuthorityConfigurationFromEnvironment(environment) {
+  const adminEmail = String(environment.OPL_SUB2API_ADMIN_EMAIL || "").trim();
+  const adminPassword = String(environment.OPL_SUB2API_ADMIN_PASSWORD || "");
+  return {
+    baseURL: String(environment.OPL_SUB2API_BASE_URL || "").trim(),
+    adminEmail,
+    adminPassword,
+    authorityClass: String(environment.OPL_QUALIFICATION_AUTHORITY_CLASS || ""),
+    qualificationUserEmail: String(environment.OPL_QUALIFICATION_USER_EMAIL || adminEmail).trim(),
+    qualificationUserPassword: String(environment.OPL_QUALIFICATION_USER_PASSWORD || adminPassword)
+  };
+}
+
+export function qualificationEnvFileEntries(entries, options) {
+  if (options.authorityMode !== "live" || !options.sub2apiSecretFile) return [...entries];
+  return entries.filter(([name]) => !sub2apiSecretFileFields.includes(name));
 }
 
 function requireString(value, label) {
@@ -745,16 +830,18 @@ async function writeEarlyNotReady(options, stage, errorCode, error) {
 }
 
 export async function runLocalWorkspaceQualification(options) {
+  let liveAuthority = null;
   if (options.authorityMode === "live") {
-    const baseURL = String(process.env.OPL_SUB2API_BASE_URL || "").trim();
-    const email = String(process.env.OPL_SUB2API_ADMIN_EMAIL || "").trim();
-    const password = String(process.env.OPL_SUB2API_ADMIN_PASSWORD || "");
-    const userEmail = String(process.env.OPL_QUALIFICATION_USER_EMAIL || email).trim();
-    const userPassword = String(process.env.OPL_QUALIFICATION_USER_PASSWORD || password);
-    if (!/^https:\/\/[^\s]+$/.test(baseURL) || !email || !password || !userEmail || !userPassword ||
-      !["sandbox", "preproduction"].includes(String(process.env.OPL_QUALIFICATION_AUTHORITY_CLASS || ""))) {
-      const error = new Error("live qualification requires protected non-production Sub2API credentials and HTTPS authority");
-      await writeEarlyNotReady(options, "authority_preflight", "live_authority_configuration_missing", error);
+    try {
+      liveAuthority = options.sub2apiSecretFile
+        ? await loadSub2APISecretFile(options.sub2apiSecretFile)
+        : liveAuthorityConfigurationFromEnvironment(process.env);
+      if (!validLiveAuthorityConfiguration(liveAuthority)) {
+        throw new Error("live qualification requires protected non-production Sub2API credentials and HTTPS authority");
+      }
+    } catch (error) {
+      const errorCode = String(error?.code || "live_authority_configuration_missing");
+      await writeEarlyNotReady(options, "authority_preflight", errorCode, error);
       throw error;
     }
   }
@@ -772,8 +859,8 @@ export async function runLocalWorkspaceQualification(options) {
   const accountId = "acct-admin";
   const fixtureEmail = "local-qualification@example.test";
   const fixturePassword = `Local-${randomBytes(18).toString("base64url")}-Aa1!`;
-  const adminEmail = options.authorityMode === "live" ? String(process.env.OPL_QUALIFICATION_USER_EMAIL || process.env.OPL_SUB2API_ADMIN_EMAIL || "") : fixtureEmail;
-  const adminPassword = options.authorityMode === "live" ? String(process.env.OPL_QUALIFICATION_USER_PASSWORD || process.env.OPL_SUB2API_ADMIN_PASSWORD || "") : fixturePassword;
+  const adminEmail = options.authorityMode === "live" ? liveAuthority.qualificationUserEmail : fixtureEmail;
+  const adminPassword = options.authorityMode === "live" ? liveAuthority.qualificationUserPassword : fixturePassword;
   const userToken = randomBytes(32).toString("hex");
   const authorityToken = randomBytes(32).toString("hex");
   const launchKey = `local-qualification:${suffix}`;
@@ -846,9 +933,9 @@ export async function runLocalWorkspaceQualification(options) {
       ["OPL_FABRIC_CAPABILITY_KEY", secrets[8]],
       ["OPL_LEDGER_CAPABILITY_KEY", secrets[9]],
       ["OPL_AIONUI_ADMIN_PASSWORD_SEED", randomBytes(32).toString("hex")],
-      ["OPL_SUB2API_BASE_URL", options.authorityMode === "live" ? String(process.env.OPL_SUB2API_BASE_URL || "") : "http://sub2api-authority:8080"],
-      ["OPL_SUB2API_ADMIN_EMAIL", options.authorityMode === "live" ? String(process.env.OPL_SUB2API_ADMIN_EMAIL || "") : adminEmail],
-      ["OPL_SUB2API_ADMIN_PASSWORD", options.authorityMode === "live" ? String(process.env.OPL_SUB2API_ADMIN_PASSWORD || "") : adminPassword],
+      ["OPL_SUB2API_BASE_URL", options.authorityMode === "live" ? liveAuthority.baseURL : "http://sub2api-authority:8080"],
+      ["OPL_SUB2API_ADMIN_EMAIL", options.authorityMode === "live" ? liveAuthority.adminEmail : adminEmail],
+      ["OPL_SUB2API_ADMIN_PASSWORD", options.authorityMode === "live" ? liveAuthority.adminPassword : adminPassword],
       ["OPL_QUALIFICATION_USER_EMAIL", adminEmail],
       ["OPL_QUALIFICATION_USER_PASSWORD", adminPassword],
       ["OPL_QUALIFICATION_USER_TOKEN", userToken],
@@ -865,7 +952,8 @@ export async function runLocalWorkspaceQualification(options) {
       ["OPL_FABRIC_LOCAL_DOCKER_HOST", "127.0.0.1"]
     ];
     composeEnvironment = qualificationComposeEnvironment(process.env, envEntries);
-    await writeFile(envFile, `${envEntries.map(([key, value]) => `${key}=${value}`).join("\n")}\n`, { mode: 0o600 });
+    const envFileEntries = qualificationEnvFileEntries(envEntries, options);
+    await writeFile(envFile, `${envFileEntries.map(([key, value]) => `${key}=${value}`).join("\n")}\n`, { mode: 0o600 });
     await compose(["config", "--quiet"]);
 
     stage = "compose_start";
@@ -923,7 +1011,7 @@ export async function runLocalWorkspaceQualification(options) {
     const authorityBeforeDelete = options.authorityMode === "fixture" ? await authorityState(authorityPort, authorityToken) : null;
     const debits = authorityBeforeDelete?.adjustments?.filter((candidate) => candidate?.kind === "debit") || [];
     const liveDebit = options.authorityMode === "live" ? await liveAuthorityAdjustmentReadback(
-      process.env.OPL_SUB2API_BASE_URL, process.env.OPL_SUB2API_ADMIN_EMAIL, process.env.OPL_SUB2API_ADMIN_PASSWORD,
+      liveAuthority.baseURL, liveAuthority.adminEmail, liveAuthority.adminPassword,
       sub2apiUserId, evidence.receipt.chargeReference, `-${amountUsdMicros}`
     ) : null;
     const debit = options.authorityMode === "fixture" ? debits.find((candidate) => candidate?.code === evidence.receipt.chargeReference) : {
@@ -990,7 +1078,7 @@ export async function runLocalWorkspaceQualification(options) {
     }
     const fixtureRefunds = authorityAfterOwnerDelete?.adjustments?.filter((candidate) => candidate?.kind === "refund" && candidate?.code === deletion.refundCode) || [];
     const liveRefund = options.authorityMode === "live" ? await liveAuthorityAdjustmentReadback(
-      process.env.OPL_SUB2API_BASE_URL, process.env.OPL_SUB2API_ADMIN_EMAIL, process.env.OPL_SUB2API_ADMIN_PASSWORD,
+      liveAuthority.baseURL, liveAuthority.adminEmail, liveAuthority.adminPassword,
       sub2apiUserId, deletion.refundCode, amountUsdMicros
     ) : null;
     const refund = options.authorityMode === "fixture" ? fixtureRefunds[0] : {

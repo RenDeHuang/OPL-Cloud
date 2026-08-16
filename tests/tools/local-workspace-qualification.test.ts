@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,7 +10,9 @@ import {
   exactRepoDigestFromInspection,
   immutableImageDigest,
   liveAuthorityAdjustmentReadback,
+  loadSub2APISecretFile,
   localBuildProxyArgs,
+  qualificationEnvFileEntries,
   qualificationComposeEnvironment,
   parseLocalQualificationArgs,
   redactedError,
@@ -236,7 +238,8 @@ test("local qualification accepts exact source and immutable image identities", 
     receiptPath: "/tmp/qualification.json",
     buildSourceImages: false,
     authorityMode: "fixture",
-    productMatrixReceipt: ""
+    productMatrixReceipt: "",
+    sub2apiSecretFile: ""
   });
   assert.equal(immutableImageDigest(`ghcr.io/example/cloud@${cloudDigest}`), cloudDigest);
   assert.equal(immutableImageDigest(workspaceDigest), workspaceDigest);
@@ -251,6 +254,114 @@ test("local qualification accepts exact source and immutable image identities", 
     "--workspace-image", workspaceReference,
     "--receipt", "/tmp/qualification.json"
   ]), /immutable cloud image/);
+});
+
+const sub2apiSecretValues = Object.freeze({
+  OPL_SUB2API_BASE_URL: "https://sandbox.example.test",
+  OPL_SUB2API_ADMIN_EMAIL: "admin@example.test",
+  OPL_SUB2API_ADMIN_PASSWORD: "admin-password-not-real",
+  OPL_QUALIFICATION_AUTHORITY_CLASS: "sandbox",
+  OPL_QUALIFICATION_USER_EMAIL: "user@example.test",
+  OPL_QUALIFICATION_USER_PASSWORD: "user-password-not-real"
+});
+
+function sub2apiSecretYAML(values = sub2apiSecretValues) {
+  return Object.entries(values).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n") + "\n";
+}
+
+test("live Sub2API secret file admission is exact and never creates a second env SSOT", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-sub2api-secret-test-"));
+  const path = join(root, "sub2api.yaml");
+  const link = join(root, "sub2api-link.yaml");
+  try {
+    await writeFile(path, sub2apiSecretYAML(), { mode: 0o600 });
+    const admitted = await loadSub2APISecretFile(path, { environment: {} });
+    assert.deepEqual(admitted, {
+      baseURL: sub2apiSecretValues.OPL_SUB2API_BASE_URL,
+      adminEmail: sub2apiSecretValues.OPL_SUB2API_ADMIN_EMAIL,
+      adminPassword: sub2apiSecretValues.OPL_SUB2API_ADMIN_PASSWORD,
+      authorityClass: sub2apiSecretValues.OPL_QUALIFICATION_AUTHORITY_CLASS,
+      qualificationUserEmail: sub2apiSecretValues.OPL_QUALIFICATION_USER_EMAIL,
+      qualificationUserPassword: sub2apiSecretValues.OPL_QUALIFICATION_USER_PASSWORD
+    });
+    assert.deepEqual(parseLocalQualificationArgs([
+      "--source-sha", sha, "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
+      "--workspace-image", workspaceReference, "--receipt", "/tmp/qualification.json",
+      "--authority-mode", "live", "--sub2api-secret-file", path
+    ]).sub2apiSecretFile, path);
+    assert.throws(() => parseLocalQualificationArgs([
+      "--source-sha", sha, "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
+      "--workspace-image", workspaceReference, "--receipt", "/tmp/qualification.json",
+      "--sub2api-secret-file", path
+    ]), /live authority mode/);
+    assert.throws(() => parseLocalQualificationArgs([
+      "--source-sha", sha, "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
+      "--workspace-image", workspaceReference, "--receipt", "/tmp/qualification.json",
+      "--authority-mode", "live", "--sub2api-secret-file", "relative.yaml"
+    ]), /absolute/);
+
+    await assert.rejects(() => loadSub2APISecretFile(path, {
+      environment: { OPL_SUB2API_BASE_URL: "https://outer.example.test" }
+    }), /sub2api_secret_file_env_conflict/);
+    await assert.rejects(() => loadSub2APISecretFile(path, {
+      environment: {}, currentUid: typeof process.getuid === "function" ? process.getuid() + 1 : 1
+    }), /sub2api_secret_file_invalid/);
+    await assert.rejects(() => loadSub2APISecretFile(root, { environment: {} }), /sub2api_secret_file_invalid/);
+
+    await symlink(path, link);
+    await assert.rejects(() => loadSub2APISecretFile(link, { environment: {} }), /sub2api_secret_file_invalid/);
+    await chmod(path, 0o640);
+    await assert.rejects(() => loadSub2APISecretFile(path, { environment: {} }), /sub2api_secret_file_invalid/);
+    await chmod(path, 0o600);
+
+    for (const [name, values] of Object.entries({
+      unknown: { ...sub2apiSecretValues, UNKNOWN_FIELD: "forbidden" },
+      missing: Object.fromEntries(Object.entries(sub2apiSecretValues).slice(1)),
+      wrongType: { ...sub2apiSecretValues, OPL_SUB2API_ADMIN_PASSWORD: 42 }
+    })) {
+      await writeFile(path, sub2apiSecretYAML(values), { mode: 0o600 });
+      await assert.rejects(() => loadSub2APISecretFile(path, { environment: {} }), /sub2api_secret_file_schema_invalid/, name);
+    }
+
+    const envFileEntries = qualificationEnvFileEntries([
+      ...Object.entries(sub2apiSecretValues), ["OPL_CLOUD_IMAGE", "cloud-image"]
+    ], { authorityMode: "live", sub2apiSecretFile: path });
+    assert.deepEqual(envFileEntries, [["OPL_CLOUD_IMAGE", "cloud-image"]]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Sub2API secret file failures redact the path and values before Docker", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-sub2api-secret-redaction-"));
+  const path = join(root, "private-source.yaml");
+  const receiptPath = join(root, "receipt.json");
+  const previous = Object.fromEntries(Object.keys(sub2apiSecretValues).map((name) => [name, process.env[name]]));
+  for (const name of Object.keys(sub2apiSecretValues)) delete process.env[name];
+  try {
+    await writeFile(path, `${sub2apiSecretYAML()}UNKNOWN_FIELD: ${JSON.stringify("do-not-leak-value")}\n`, { mode: 0o600 });
+    await assert.rejects(() => runLocalWorkspaceQualification({
+      sourceSha: sha,
+      cloudImage: `ghcr.io/example/cloud@${cloudDigest}`,
+      workspaceImage: workspaceReference,
+      receiptPath,
+      buildSourceImages: false,
+      authorityMode: "live",
+      productMatrixReceipt: "",
+      sub2apiSecretFile: path
+    }), /sub2api_secret_file_schema_invalid/);
+    const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+    assert.equal(receipt.stage, "authority_preflight");
+    assert.equal(receipt.errorCode, "sub2api_secret_file_schema_invalid");
+    assert.equal(receipt.error, "sub2api_secret_file_schema_invalid");
+    assert.doesNotMatch(JSON.stringify(receipt), /private-source|do-not-leak-value|admin-password-not-real/);
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("live authority adjustment readback counts the exact code through the final financial page", async () => {
