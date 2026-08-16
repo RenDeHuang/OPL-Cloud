@@ -128,8 +128,14 @@ Sub2API management origin and credentials are never exposed to the browser.
   controller intents, and Admin review modal are removed; operator
   reconciliation projects the server-owned action back into the same durable
   Launch Reconciler. Instance recovery workflows and their pinned Cloud tool
-  callers remain an external cutover obligation, so this source cleanup does
-  not admit PR `#280` or complete Instance Provider Acceptance.
+  callers remain an external cutover obligation. PR `#280`'s legacy Launch
+  migration implementation was replayed against current `main` and not
+  admitted: its test harness was Linux-only, its compute readback used retired
+  Fabric interfaces, and its partial-history response did not satisfy the
+  Control Plane next-stage boundary. No protected Instance inventory currently
+  proves an eligible schema-2 row or active consumer. Current source therefore
+  has no legacy migration route or temporary Fabric contract; a fresh
+  implementation is triggered only by owner-authoritative row evidence.
 - Fabric's unused recovery proof/claim Service, provider, and operation-store
   mutation shell is retired. Five legacy resource inputs no longer carry
   unassigned `LaunchBinding` branches, and the orphan launch-binding readback is
