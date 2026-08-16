@@ -13,6 +13,7 @@ import {
   immutableImageDigest,
   liveAuthorityAdjustmentReadback,
   login,
+  loadJ0ReadyReceipt,
   loadSub2APISecretFile,
   localBuildProxyArgs,
   qualificationEnvFileEntries,
@@ -23,6 +24,7 @@ import {
   sourceData,
   stableID,
   validateQualificationSourceIdentity,
+  validateJ0ReadyReceipt,
   validateLocalQualificationReceipt,
   validateProductMatrixReceipt,
   workspaceDeleteFailureEvidence
@@ -245,6 +247,7 @@ test("local qualification accepts exact source and immutable image identities", 
     buildSourceImages: false,
     authorityMode: "fixture",
     productMatrixReceipt: "",
+    j0ReadyReceipt: "",
     sub2apiSecretFile: ""
   });
   assert.equal(immutableImageDigest(`ghcr.io/example/cloud@${cloudDigest}`), cloudDigest);
@@ -260,6 +263,139 @@ test("local qualification accepts exact source and immutable image identities", 
     "--workspace-image", workspaceReference,
     "--receipt", "/tmp/qualification.json"
   ]), /immutable cloud image/);
+});
+
+function j0ReadyReceipt(sourceSha = sha, sourceTree = "d".repeat(40)) {
+  return {
+    schemaVersion: 1,
+    kind: "opl.local-workspace.j0-ready.v1",
+    status: "READY",
+    source: { sha: sourceSha, tree: sourceTree, clean: true },
+    gates: [
+      ...["E0", "E1", "E2", "E3"].map((id) => ({ id, status: "GREEN", failed: 0, skipped: 0 })),
+      { id: "E4", status: "BLOCKED_PRODUCT_DECISION_OUT_OF_P0", failed: 0, skipped: 0 },
+      ...["E5", "E6", "E7"].map((id) => ({ id, status: "GREEN", failed: 0, skipped: 0 }))
+    ],
+    authority: { mode: "live", class: "sandbox", dedicated: true, confirmed: true },
+    provider: "local-docker",
+    failed: 0,
+    skipped: 0
+  };
+}
+
+test("live arguments require one external J0 READY receipt instead of a Product matrix", () => {
+  const parsed = parseLocalQualificationArgs([
+    "--source-sha", sha,
+    "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
+    "--workspace-image", workspaceReference,
+    "--receipt", "/tmp/qualification.json",
+    "--authority-mode", "live",
+    "--j0-ready-receipt", "/tmp/j0-ready.json"
+  ]);
+  assert.equal(parsed.j0ReadyReceipt, "/tmp/j0-ready.json");
+  assert.equal(parsed.productMatrixReceipt, "");
+  assert.throws(() => parseLocalQualificationArgs([
+    "--source-sha", sha,
+    "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
+    "--workspace-image", workspaceReference,
+    "--receipt", "/tmp/qualification.json",
+    "--authority-mode", "live"
+  ]), /J0 READY receipt/);
+  assert.throws(() => parseLocalQualificationArgs([
+    "--source-sha", sha,
+    "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
+    "--workspace-image", workspaceReference,
+    "--receipt", "/tmp/qualification.json",
+    "--authority-mode", "live",
+    "--j0-ready-receipt", "/tmp/j0-ready.json",
+    "--product-matrix-receipt", "/tmp/product-matrix.json"
+  ]), /Product matrix/);
+});
+
+test("J0 READY admission binds exact clean source, P0 gates, authority, provider, and external 0600 file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-j0-ready-test-"));
+  const path = join(root, "j0-ready.json");
+  const link = join(root, "j0-ready-link.json");
+  const parentLink = join(root, "repo-parent");
+  const value = j0ReadyReceipt();
+  await writeFile(path, JSON.stringify(value), { mode: 0o600 });
+  try {
+    assert.equal(validateJ0ReadyReceipt(value, sha, "d".repeat(40)), value);
+    const loaded = await loadJ0ReadyReceipt(path, sha, "d".repeat(40));
+    assert.match(loaded.digest, /^sha256:[0-9a-f]{64}$/);
+    assert.deepEqual(loaded.source, value.source);
+    assert.deepEqual(loaded.gates, value.gates);
+    for (const invalid of [
+      { ...value, kind: "opl.local-workspace.product-matrix.v1" },
+      { ...value, status: "NOT_READY" },
+      { ...value, source: { ...value.source, sha: "b".repeat(40) } },
+      { ...value, source: { ...value.source, tree: "c".repeat(40) } },
+      { ...value, source: { ...value.source, clean: false } },
+      { ...value, gates: value.gates.map((gate) => gate.id === "E5" ? { ...gate, status: "BLOCKED" } : gate) },
+      { ...value, gates: value.gates.map((gate) => gate.id === "E4" ? { ...gate, status: "GREEN" } : gate) },
+      { ...value, authority: { ...value.authority, dedicated: false } },
+      { ...value, provider: "tencent" },
+      { ...value, skipped: 1 },
+      { ...value, unexpected: true },
+      { ...value, authority: { ...value.authority, token: "forbidden" } },
+      { ...value, gates: value.gates.map((gate) => gate.id === "E7" ? { ...gate, detail: "duplicate truth" } : gate) }
+    ]) {
+      assert.throws(() => validateJ0ReadyReceipt(invalid, sha, "d".repeat(40)), /j0_ready_receipt_invalid/);
+    }
+    await chmod(path, 0o644);
+    await assert.rejects(() => loadJ0ReadyReceipt(path, sha, "d".repeat(40)), /j0_ready_receipt_invalid/);
+    await chmod(path, 0o600);
+    await symlink(path, link);
+    await assert.rejects(() => loadJ0ReadyReceipt(link, sha, "d".repeat(40)), /j0_ready_receipt_invalid/);
+    await symlink(new URL("../..", import.meta.url).pathname, parentLink);
+    await assert.rejects(() => loadJ0ReadyReceipt(join(parentLink, "package.json"), sha, "d".repeat(40)), /j0_ready_receipt_invalid/);
+    await assert.rejects(() => loadJ0ReadyReceipt(path, sha, "d".repeat(40), {
+      currentUid: typeof process.getuid === "function" ? process.getuid() + 1 : 1
+    }), /j0_ready_receipt_invalid/);
+    await assert.rejects(() => loadJ0ReadyReceipt(new URL("../../package.json", import.meta.url).pathname, sha, "d".repeat(40)), /j0_ready_receipt_invalid/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("top-level live entry rejects J0 source and gate drift before starting the J1 stack or HTTP", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-j0-top-level-reject-"));
+  const path = join(root, "j0-ready.json");
+  const outputPath = join(root, "j1.json");
+  const baseOptions = {
+    sourceSha: sha,
+    cloudImage: `ghcr.io/example/cloud@${cloudDigest}`,
+    workspaceImage: workspaceReference,
+    receiptPath: outputPath,
+    buildSourceImages: false,
+    authorityMode: "live",
+    productMatrixReceipt: "",
+    j0ReadyReceipt: path,
+    sub2apiSecretFile: ""
+  };
+  let stackStarts = 0;
+  const dependencies = {
+    loadLiveAuthority: async () => ({ baseURL: "https://sandbox.example.test", adminEmail: "admin@example.test", adminPassword: "password", authorityClass: "sandbox", qualificationUserEmail: "user@example.test", qualificationUserPassword: "password" }),
+    readSourceIdentity: async () => ({ sha, tree: "d".repeat(40), clean: true }),
+    runLiveJ1: async () => { stackStarts += 1; throw new Error("J1 stack must not start"); }
+  };
+  try {
+    for (const invalid of [
+      j0ReadyReceipt("b".repeat(40)),
+      j0ReadyReceipt(sha, "c".repeat(40)),
+      { ...j0ReadyReceipt(), gates: j0ReadyReceipt().gates.slice(0, -1) },
+      { ...j0ReadyReceipt(), gates: j0ReadyReceipt().gates.map((gate) => gate.id === "E6" ? { ...gate, skipped: 1 } : gate) }
+    ]) {
+      await writeFile(path, JSON.stringify(invalid), { mode: 0o600 });
+      await assert.rejects(() => runLocalWorkspaceQualification(baseOptions, dependencies), /j0_ready_receipt_invalid/);
+    }
+    assert.equal(stackStarts, 0);
+    const failureReceipt = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(failureReceipt.stage, "j0_ready_preflight");
+    assert.equal(failureReceipt.errorCode, "j0_ready_receipt_invalid");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 const sub2apiSecretValues = Object.freeze({
@@ -293,7 +429,7 @@ test("live Sub2API secret file admission is exact and never creates a second env
     assert.deepEqual(parseLocalQualificationArgs([
       "--source-sha", sha, "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
       "--workspace-image", workspaceReference, "--receipt", "/tmp/qualification.json",
-      "--authority-mode", "live", "--sub2api-secret-file", path
+      "--authority-mode", "live", "--j0-ready-receipt", "/tmp/j0-ready.json", "--sub2api-secret-file", path
     ]).sub2apiSecretFile, path);
     assert.throws(() => parseLocalQualificationArgs([
       "--source-sha", sha, "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
@@ -303,7 +439,7 @@ test("live Sub2API secret file admission is exact and never creates a second env
     assert.throws(() => parseLocalQualificationArgs([
       "--source-sha", sha, "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
       "--workspace-image", workspaceReference, "--receipt", "/tmp/qualification.json",
-      "--authority-mode", "live", "--sub2api-secret-file", "relative.yaml"
+      "--authority-mode", "live", "--j0-ready-receipt", "/tmp/j0-ready.json", "--sub2api-secret-file", "relative.yaml"
     ]), /absolute/);
 
     await assert.rejects(() => loadSub2APISecretFile(path, {
@@ -694,22 +830,40 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
   const http = createHTTP(`http://127.0.0.1:${address.port}`);
   const stages = [];
   const cleanupCalls = [];
+  const j0Root = await mkdtemp(join(tmpdir(), "opl-j0-top-level-"));
+  const j0Path = join(j0Root, "ready.json");
+  const outputPath = join(j0Root, "j1.json");
+  await writeFile(j0Path, JSON.stringify(j0ReadyReceipt(sha, "d".repeat(40))), { mode: 0o600 });
   try {
-    const result = await runLocalWorkspaceJ1HTTPQualification({
-      http, adminEmail: "admin@example.test", adminPassword: "admin-password", qualificationEmail: accountEmail, qualificationPassword: accountPassword,
-      accountProvisionKey, launchKey, operationId, workspaceId, workspaceName: "J1", wait: async () => {},
-      onStage: (stage) => stages.push(stage), readRuntime: async () => ({ runningDigest: workspaceDigest }),
-      readDebit: async ({ code, sub2apiUserId, amountUsdMicros: value }) => ({ code, userId: sub2apiUserId, amountUsdMicros: value, count: 1 }),
-      cleanup: async (scope) => { cleanupCalls.push(scope); return { containers: 0, volumes: 0, networks: 0 }; },
-      receiptBase: {
-        schemaVersion: 1, status: "READY", source: { sha, tree: "d".repeat(40) },
-        images: { cloud: { input: `ghcr.io/example/cloud@${cloudDigest}`, repoDigest: `ghcr.io/example/cloud@${cloudDigest}`, digest: cloudDigest, runningDigest: cloudDigest }, workspace: { input: workspaceReference, repoDigest: workspaceReference, digest: workspaceDigest, runningDigest: workspaceDigest } },
-        command: "npm run qualify:local:workspace", processes: { console: "ready", controlPlane: "ready", fabric: "ready", ledger: "ready" }, stores: { controlPlane: "durable", fabric: "durable", ledger: "durable", ownerSeparated: true },
-        productMatrix: { digest: `sha256:${"e".repeat(64)}`, stages: ["key", "debit", "ensure_compute_allocation", "storage", "attachment", "secret", "runtime", "activation", "receipt"], packages: [...productMatrixRequiredPackages], tests: productMatrixRequiredTests.map((entry) => `${entry.package}:${entry.name}`), lanes: completeMatrixLanes().map((lane) => ({ order: lane.order, cwd: lane.cwd, command: lane.command, args: lane.args, packages: lane.packages, failed: lane.failed, skipped: lane.skipped })), verticalTests: [...productMatrixVerticalTests], zeroSkip: true, casWinnerCount: 1, unknownAuthorityWriteDeltas: { controlPlane: 0, sub2api: 0, fabric: 0, ledger: 0 } },
-        qualification: { authorityMode: "live", p0Ready: true }, deferred: []
-      }
+    const options = parseLocalQualificationArgs([
+      "--source-sha", sha, "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
+      "--workspace-image", workspaceReference, "--receipt", outputPath,
+      "--authority-mode", "live", "--j0-ready-receipt", j0Path
+    ]);
+    const result = await runLocalWorkspaceQualification(options, {
+      loadLiveAuthority: async () => ({ baseURL: "https://sandbox.example.test", adminEmail: "admin@example.test", adminPassword: "admin-password", authorityClass: "sandbox", qualificationUserEmail: "admin@example.test", qualificationUserPassword: "admin-password" }),
+      readSourceIdentity: async () => ({ sha, tree: "d".repeat(40), clean: true }),
+      runLiveJ1: async ({ j0Ready }) => runLocalWorkspaceJ1HTTPQualification({
+        http, adminEmail: "admin@example.test", adminPassword: "admin-password", qualificationEmail: accountEmail, qualificationPassword: accountPassword,
+        accountProvisionKey, launchKey, operationId, workspaceId, workspaceName: "J1", wait: async () => {},
+        onStage: (stage) => stages.push(stage), readRuntime: async () => ({ runningDigest: workspaceDigest }),
+        readDebit: async ({ code, sub2apiUserId, amountUsdMicros: value }) => ({ code, userId: sub2apiUserId, amountUsdMicros: value, count: 1 }),
+        cleanup: async (scope) => { cleanupCalls.push(scope); return { containers: 0, volumes: 0, networks: 0 }; },
+        receiptBase: {
+          schemaVersion: 1, status: "READY", source: { sha, tree: "d".repeat(40) },
+          images: { cloud: { input: `ghcr.io/example/cloud@${cloudDigest}`, repoDigest: `ghcr.io/example/cloud@${cloudDigest}`, digest: cloudDigest, runningDigest: cloudDigest }, workspace: { input: workspaceReference, repoDigest: workspaceReference, digest: workspaceDigest, runningDigest: workspaceDigest } },
+          command: "npm run qualify:local:workspace", processes: { console: "ready", controlPlane: "ready", fabric: "ready", ledger: "ready" }, stores: { controlPlane: "durable", fabric: "durable", ledger: "durable", ownerSeparated: true },
+          j0Ready: { ...j0Ready, digest: j0Ready.digest },
+          qualification: { authorityMode: "live", p0Ready: true }, deferred: []
+        }
+      })
     });
-    assert.equal(result.receipt.status, "READY");
+    assert.equal(result.status, "READY");
+    const writtenReceipt = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(writtenReceipt.j0Ready.digest, result.j0Ready.digest);
+    assert.deepEqual(writtenReceipt.j0Ready.source, { sha, tree: "d".repeat(40), clean: true });
+    assert.deepEqual(writtenReceipt.j0Ready.gates.map(({ id, status }) => ({ id, status })), j0ReadyReceipt().gates.map(({ id, status }) => ({ id, status })));
+    assert.equal(Object.prototype.hasOwnProperty.call(writtenReceipt, "productMatrix"), false);
     assert.deepEqual(stages, ["bootstrap_ready", "admin_login", "account_provision", "qualification_login", "wallet_usage_baseline", "pricing_preview", "workspace_launch", "terminal_readback", "workspace_open", "accounting_readback", "qualification_cleanup", "receipt_validation"]);
     assert.deepEqual(cleanupCalls, [{ accountId, workspaceId }]);
     assert.deepEqual(counts, { mappingPosts: 1, workspacePosts: 1, keyCreates: 1, debits: 1, refunds: 0, deletes: 0, restarts: 0 });
@@ -718,6 +872,7 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
     assert.equal(requests.some((request) => request.path.includes("refund")), false);
   } finally {
     await new Promise((resolvePromise) => server.close(() => resolvePromise()));
+    await rm(j0Root, { recursive: true, force: true });
   }
 });
 

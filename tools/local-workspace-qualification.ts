@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseDocument } from "yaml";
 
@@ -37,6 +37,16 @@ const deferredCloudGates = Object.freeze([
   "production-secrets-and-network",
   "instance-deployment-and-rollback"
 ]);
+const j0GateStatuses = Object.freeze([
+  ["E0", "GREEN"],
+  ["E1", "GREEN"],
+  ["E2", "GREEN"],
+  ["E3", "GREEN"],
+  ["E4", "BLOCKED_PRODUCT_DECISION_OUT_OF_P0"],
+  ["E5", "GREEN"],
+  ["E6", "GREEN"],
+  ["E7", "GREEN"]
+]);
 
 export function immutableImageDigest(value) {
   const normalized = String(value || "").trim();
@@ -61,7 +71,7 @@ function optionValues(args) {
       buildSourceImages = true;
       continue;
     }
-    if (!["--source-sha", "--cloud-image", "--workspace-image", "--receipt", "--authority-mode", "--product-matrix-receipt", "--sub2api-secret-file"].includes(token)) {
+    if (!["--source-sha", "--cloud-image", "--workspace-image", "--receipt", "--authority-mode", "--product-matrix-receipt", "--j0-ready-receipt", "--sub2api-secret-file"].includes(token)) {
       throw new Error(`unknown local qualification argument: ${token}`);
     }
     const value = args[index + 1];
@@ -82,6 +92,7 @@ export function parseLocalQualificationArgs(args = process.argv.slice(2)) {
   const receiptPath = String(values.get("--receipt") || "").trim();
   const authorityMode = String(values.get("--authority-mode") || "fixture").trim();
   const productMatrixReceipt = String(values.get("--product-matrix-receipt") || "").trim();
+  const j0ReadyReceipt = String(values.get("--j0-ready-receipt") || "").trim();
   const sub2apiSecretFile = String(values.get("--sub2api-secret-file") || "").trim();
   if (!shaPattern.test(sourceSha)) throw new Error("source SHA must be an exact 40-character lowercase commit");
   if (!receiptPath) throw new Error("receipt path is required");
@@ -91,9 +102,13 @@ export function parseLocalQualificationArgs(args = process.argv.slice(2)) {
     throw new Error("source image build cannot be combined with explicit image inputs");
   }
   if (authorityMode !== "fixture" && authorityMode !== "live") throw new Error("authority mode must be fixture or live");
+  if (authorityMode === "live" && !j0ReadyReceipt) throw new Error("live qualification requires a J0 READY receipt");
+  if (authorityMode === "live" && productMatrixReceipt) throw new Error("live qualification does not accept a Product matrix receipt");
+  if (j0ReadyReceipt && !isAbsolute(j0ReadyReceipt)) throw new Error("J0 READY receipt path must be absolute");
+  if (j0ReadyReceipt && authorityMode !== "live") throw new Error("J0 READY receipt requires live authority mode");
   if (sub2apiSecretFile && authorityMode !== "live") throw new Error("Sub2API secret file requires live authority mode");
   if (sub2apiSecretFile && !isAbsolute(sub2apiSecretFile)) throw new Error("Sub2API secret file path must be absolute");
-  return { sourceSha, cloudImage, workspaceImage, receiptPath, buildSourceImages, authorityMode, productMatrixReceipt, sub2apiSecretFile };
+  return { sourceSha, cloudImage, workspaceImage, receiptPath, buildSourceImages, authorityMode, productMatrixReceipt, j0ReadyReceipt, sub2apiSecretFile };
 }
 
 function sub2apiSecretFileError(code) {
@@ -233,6 +248,68 @@ export function validateProductMatrixReceipt(value, sourceSha, sourceTree) {
   return value;
 }
 
+function j0ReadyReceiptError() {
+  const error = new Error("j0_ready_receipt_invalid");
+  error.code = "j0_ready_receipt_invalid";
+  return error;
+}
+
+function hasExactKeys(value, keys) {
+  return value && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
+}
+
+export function validateJ0ReadyReceipt(value, sourceSha, sourceTree) {
+  if (!hasExactKeys(value, ["schemaVersion", "kind", "status", "source", "gates", "authority", "provider", "failed", "skipped"]) ||
+    value.schemaVersion !== 1 || value.kind !== "opl.local-workspace.j0-ready.v1" || value.status !== "READY" ||
+    !hasExactKeys(value.source, ["sha", "tree", "clean"]) ||
+    value.source?.sha !== sourceSha || value.source?.tree !== sourceTree || value.source?.clean !== true ||
+    value.failed !== 0 || value.skipped !== 0 || value.provider !== "local-docker" ||
+    !hasExactKeys(value.authority, ["mode", "class", "dedicated", "confirmed"]) ||
+    value.authority?.mode !== "live" || value.authority?.class !== "sandbox" ||
+    value.authority?.dedicated !== true || value.authority?.confirmed !== true ||
+    !Array.isArray(value.gates) || value.gates.length !== j0GateStatuses.length ||
+    value.gates.some((gate, index) => !hasExactKeys(gate, ["id", "status", "failed", "skipped"]) ||
+      gate?.id !== j0GateStatuses[index][0] || gate?.status !== j0GateStatuses[index][1] ||
+      gate?.failed !== 0 || gate?.skipped !== 0)) {
+    throw j0ReadyReceiptError();
+  }
+  return value;
+}
+
+export async function loadJ0ReadyReceipt(path, sourceSha, sourceTree, { currentUid = typeof process.getuid === "function" ? process.getuid() : null } = {}) {
+  const exactPath = resolve(String(path || ""));
+  if (!isAbsolute(String(path || "")) || !Number.isSafeInteger(currentUid) || currentUid < 0) {
+    throw j0ReadyReceiptError();
+  }
+  let handle;
+  try {
+    handle = await open(exactPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = await handle.stat();
+    const canonicalPath = await realpath(exactPath);
+    if (canonicalPath === root || canonicalPath.startsWith(`${root}${sep}`) || !stat.isFile() ||
+      (stat.mode & 0o777) !== 0o600 || stat.uid !== currentUid || stat.size <= 0 || stat.size > 1024 * 1024) {
+      throw j0ReadyReceiptError();
+    }
+    const raw = await handle.readFile();
+    const value = validateJ0ReadyReceipt(JSON.parse(raw.toString("utf8")), sourceSha, sourceTree);
+    return {
+      digest: `sha256:${createHash("sha256").update(raw).digest("hex")}`,
+      source: { sha: value.source.sha, tree: value.source.tree, clean: true },
+      gates: value.gates.map((gate) => ({ id: gate.id, status: gate.status, failed: 0, skipped: 0 })),
+      authority: { mode: "live", class: "sandbox", dedicated: true, confirmed: true },
+      provider: "local-docker",
+      failed: 0,
+      skipped: 0
+    };
+  } catch (error) {
+    if (error?.code === "j0_ready_receipt_invalid") throw error;
+    throw j0ReadyReceiptError();
+  } finally {
+    await handle?.close();
+  }
+}
+
 async function loadProductMatrixReceipt(path, sourceSha, sourceTree) {
   if (!path) return null;
   const raw = await readFile(resolve(path));
@@ -267,20 +344,17 @@ export function validateLocalQualificationReceipt(value) {
   }
   requireString(value.command, "qualification command");
   if (!value.qualification || !["fixture", "live"].includes(value.qualification.authorityMode) ||
-    value.qualification.p0Ready !== (value.qualification.authorityMode === "live" && value.productMatrix?.zeroSkip === true)) {
+    value.qualification.p0Ready !== (value.qualification.authorityMode === "live" && value.j0Ready?.failed === 0 && value.j0Ready?.skipped === 0)) {
     throw new Error("qualification authority classification is invalid");
   }
-  if (value.qualification.authorityMode === "live" && (!digestPattern.test(String(value.productMatrix?.digest || "")) ||
-    value.productMatrix?.casWinnerCount !== 1 || value.productMatrix?.stages?.join("\0") !== productMatrixStages.join("\0") ||
-    value.productMatrix?.lanes?.length !== productMatrixLaneSpecs.length ||
-    value.productMatrix?.lanes?.some((lane, index) => lane?.order !== productMatrixLaneSpecs[index].order ||
-      lane?.cwd !== productMatrixLaneSpecs[index].cwd || lane?.command !== productMatrixLaneSpecs[index].command ||
-      lane?.failed !== 0 || lane?.skipped !== 0) ||
-    value.productMatrix?.verticalTests?.join("\0") !== productMatrixVerticalTests.join("\0") ||
-    !Array.isArray(value.productMatrix?.packages) || productMatrixRequiredPackages.some((name) => !value.productMatrix.packages.includes(name)) ||
-    value.productMatrix?.tests?.join("\0") !== productMatrixRequiredTests.map((entry) => `${entry.package}:${entry.name}`).join("\0") ||
-    ["controlPlane", "sub2api", "fabric", "ledger"].some((name) => value.productMatrix?.unknownAuthorityWriteDeltas?.[name] !== 0))) {
-    throw new Error("live qualification requires the exact Product matrix receipt binding");
+  if (value.qualification.authorityMode === "live" && (!digestPattern.test(String(value.j0Ready?.digest || "")) || value.j0Ready?.source?.sha !== value.source.sha ||
+    value.j0Ready?.source?.tree !== value.source.tree || value.j0Ready?.source?.clean !== true ||
+    value.j0Ready?.provider !== "local-docker" || value.j0Ready?.authority?.mode !== "live" ||
+    value.j0Ready?.authority?.class !== "sandbox" || value.j0Ready?.authority?.dedicated !== true ||
+    value.j0Ready?.authority?.confirmed !== true || value.j0Ready?.failed !== 0 || value.j0Ready?.skipped !== 0 ||
+    !Array.isArray(value.j0Ready?.gates) || value.j0Ready.gates.length !== j0GateStatuses.length ||
+    value.j0Ready.gates.some((gate, index) => gate?.id !== j0GateStatuses[index]?.[0] || gate?.status !== j0GateStatuses[index]?.[1] || gate?.failed !== 0 || gate?.skipped !== 0))) {
+    throw new Error("live qualification requires the exact J0 READY receipt binding");
   }
   for (const name of ["console", "controlPlane", "fabric", "ledger"]) {
     if (value.processes?.[name] !== "ready") throw new Error(`${name} process is not ready`);
@@ -987,7 +1061,8 @@ function receiptCommand(options) {
     ? "--build-source-images"
     : `--cloud-image ${options.cloudImage} --workspace-image ${options.workspaceImage}`;
   const matrixArg = options.productMatrixReceipt ? ` --product-matrix-receipt ${options.productMatrixReceipt}` : "";
-  return `npm run qualify:local:workspace -- --source-sha ${options.sourceSha} ${imageArgs} --authority-mode ${options.authorityMode}${matrixArg} --receipt ${options.receiptPath}`;
+  const j0Arg = options.j0ReadyReceipt ? ` --j0-ready-receipt ${options.j0ReadyReceipt}` : "";
+  return `npm run qualify:local:workspace -- --source-sha ${options.sourceSha} ${imageArgs} --authority-mode ${options.authorityMode}${matrixArg}${j0Arg} --receipt ${options.receiptPath}`;
 }
 
 async function writeEarlyNotReady(options, stage, errorCode, error) {
@@ -1014,11 +1089,11 @@ async function writeEarlyNotReady(options, stage, errorCode, error) {
   });
 }
 
-export async function runLocalWorkspaceQualification(options) {
+export async function runLocalWorkspaceQualification(options, dependencies = {}) {
   let liveAuthority = null;
   if (options.authorityMode === "live") {
     try {
-      liveAuthority = options.sub2apiSecretFile
+      liveAuthority = dependencies.loadLiveAuthority ? await dependencies.loadLiveAuthority(options) : options.sub2apiSecretFile
         ? await loadSub2APISecretFile(options.sub2apiSecretFile)
         : liveAuthorityConfigurationFromEnvironment(process.env);
       if (!validLiveAuthorityConfiguration(liveAuthority)) {
@@ -1029,6 +1104,29 @@ export async function runLocalWorkspaceQualification(options) {
       await writeEarlyNotReady(options, "authority_preflight", errorCode, error);
       throw error;
     }
+  }
+  const readSourceIdentity = dependencies.readSourceIdentity || readQualificationSourceIdentity;
+  const sourceBefore = await readSourceIdentity();
+  validateQualificationSourceIdentity(sourceBefore, sourceBefore, options.sourceSha);
+  const sourceTree = sourceBefore.tree;
+  let productMatrix = null;
+  let j0Ready = null;
+  try {
+    if (options.authorityMode === "live") {
+      j0Ready = await loadJ0ReadyReceipt(options.j0ReadyReceipt, options.sourceSha, sourceTree);
+    } else {
+      productMatrix = await loadProductMatrixReceipt(options.productMatrixReceipt, options.sourceSha, sourceTree);
+    }
+  } catch (error) {
+    await writeEarlyNotReady(options, options.authorityMode === "live" ? "j0_ready_preflight" : "product_matrix_preflight", options.authorityMode === "live" ? "j0_ready_receipt_invalid" : "product_matrix_receipt_invalid", error);
+    throw error;
+  }
+  if (options.authorityMode === "live" && dependencies.runLiveJ1) {
+    const result = await dependencies.runLiveJ1({ options, liveAuthority, source: sourceBefore, j0Ready });
+    const receipt = validateLocalQualificationReceipt(result?.receipt || result);
+    validateQualificationSourceIdentity(sourceBefore, await readSourceIdentity(), options.sourceSha);
+    await writeJSONAtomic(options.receiptPath, receipt);
+    return receipt;
   }
   const startedAt = new Date().toISOString();
   const suffix = `${process.pid}-${randomBytes(4).toString("hex")}`;
@@ -1052,18 +1150,6 @@ export async function runLocalWorkspaceQualification(options) {
   const launchKey = `local-qualification:${suffix}`;
   let operationId = `workspace-launch-${stableID(accountId, launchKey).slice(0, 18)}`;
   let workspaceId = `ws-${stableID("workspace-launch-v2", accountId, operationId).slice(0, 18)}`;
-  const sourceBefore = await readQualificationSourceIdentity();
-  validateQualificationSourceIdentity(sourceBefore, sourceBefore, options.sourceSha);
-  const sourceTree = sourceBefore.tree;
-  let productMatrix;
-  try {
-    productMatrix = await loadProductMatrixReceipt(options.productMatrixReceipt, options.sourceSha, sourceTree);
-    if (options.authorityMode === "live" && !productMatrix) throw new Error("live qualification requires the canonical Product matrix receipt");
-  } catch (error) {
-    await writeEarlyNotReady(options, "product_matrix_preflight", "product_matrix_receipt_invalid", error);
-    throw error;
-  }
-
   let cloudImage = options.cloudImage;
   let workspaceImage = options.workspaceImage;
   let builtTags = [];
@@ -1212,8 +1298,8 @@ export async function runLocalWorkspaceQualification(options) {
           command: receiptCommand({ ...options, cloudImage, workspaceImage }),
           processes: { console: "ready", controlPlane: "ready", fabric: "ready", ledger: "ready" },
           stores,
-          productMatrix,
-          qualification: { authorityMode: "live", p0Ready: productMatrix?.zeroSkip === true },
+          j0Ready,
+          qualification: { authorityMode: "live", p0Ready: true },
           deferred: [...deferredCloudGates]
         }
       })).receipt;
