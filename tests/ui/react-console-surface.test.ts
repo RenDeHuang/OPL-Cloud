@@ -145,10 +145,7 @@ test("React controller preserves source truth, idempotency and secret lifetime",
   assert.match(controller, /workspaceLaunchIdempotencyKey/);
   assert.match(controller, /requestGeneration/);
   assert.match(controller, /unavailableSource/);
-  assert.match(
-    controller,
-    /if \(!session \|\| !review\.allowedActions\.includes\("diagnose_workspace_recovery_plan"\)\) return null;/
-  );
+  assert.doesNotMatch(controller, /recovery-plan/);
   assert.doesNotMatch(controller, /localStorage|sessionStorage/);
 });
 

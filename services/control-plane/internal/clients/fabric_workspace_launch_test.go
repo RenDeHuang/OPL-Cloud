@@ -85,23 +85,6 @@ func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T)
 				}
 			}
 			_ = json.NewEncoder(w).Encode(WorkspaceLaunchStageResult{SchemaVersion: 1, State: "pending", Reason: "none", Binding: input.Binding, Resources: input.Resources})
-		case "/fabric/workspace-launches/legacy-bindings/read":
-			if got := r.Header.Get("Idempotency-Key"); got != "" {
-				t.Fatalf("legacy read unexpectedly sent Idempotency-Key=%q", got)
-			}
-			var input LegacyWorkspaceLaunchBindingInput
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Fatal(err)
-			}
-			if len(input.Stages) != 1 || input.Stages[0] != (LegacyWorkspaceLaunchStageIdentity{Stage: "storage", ResourceRef: "storage-1", PersistedOperationRef: "storage-op"}) {
-				t.Fatalf("legacy stage identity=%#v", input.Stages)
-			}
-			_ = json.NewEncoder(w).Encode(LegacyWorkspaceLaunchBindingResult{
-				SchemaVersion: 1, State: "ready", LaunchOperationID: input.LaunchOperationID,
-				AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
-				PreflightBindingRef: "preflight-binding",
-				Stages:              []LegacyWorkspaceLaunchStageReadback{{Stage: "storage", State: "ready", OperationRef: "storage-op", ResourceBindingRef: "storage-op", AuthoritativeReadbackRef: "readback-storage"}},
-			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -120,17 +103,7 @@ func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T)
 	if _, err := client.EnsureWorkspaceLaunchStage(context.Background(), stageInput); err != nil {
 		t.Fatal(err)
 	}
-	legacyClient := client.(FabricLegacyWorkspaceLaunchClient)
-	legacyResult, err := legacyClient.ReadLegacyWorkspaceLaunchBinding(context.Background(), LegacyWorkspaceLaunchBindingInput{
-		SchemaVersion: 2, LaunchOperationID: "launch-1", AccountID: "acct-1", WorkspaceID: "ws-1",
-		RequestHash: "request", PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: "repo@sha256:digest",
-		Stages: []LegacyWorkspaceLaunchStageIdentity{{Stage: "storage", ResourceRef: "storage-1", PersistedOperationRef: "storage-op"}},
-	})
-	if err != nil || legacyResult.PreflightBindingRef != "preflight-binding" || len(legacyResult.Stages) != 1 || legacyResult.Stages[0].AuthoritativeReadbackRef != "readback-storage" {
-		t.Fatalf("legacy result=%#v err=%v", legacyResult, err)
-	}
 	want := []string{"/fabric/workspace-launches/preflight", "/fabric/workspace-launches/stages/read", "/fabric/workspace-launches/stages/ensure"}
-	want = append(want, "/fabric/workspace-launches/legacy-bindings/read")
 	if len(paths) != len(want) {
 		t.Fatalf("paths=%#v", paths)
 	}

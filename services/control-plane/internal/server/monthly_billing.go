@@ -8,18 +8,20 @@ import (
 	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
+	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 var (
-	errMonthlyInsufficientBalance = errors.New("monthly_balance_insufficient")
-	errMonthlyAccountUnmapped     = errors.New("sub2api_account_mapping_required")
-	errBillingReviewNotFound      = errors.New("billing_review_not_found")
-	errBillingReviewNotPending    = errors.New("billing_review_not_pending")
-	errBillingReviewIdentity      = errors.New("billing_review_identity_mismatch")
-	errBillingReviewChargeFact    = errors.New("billing_review_charge_fact_unconfirmed")
-	errBillingReviewProviderFact  = errors.New("billing_review_provider_fact_unconfirmed")
-	errBillingReviewReceipt       = errors.New("billing_review_receipt_pending")
-	errInvalidBillingReview       = errors.New("invalid_billing_review_request")
+	errMonthlyInsufficientBalance             = errors.New("monthly_balance_insufficient")
+	errMonthlyAccountUnmapped                 = errors.New("sub2api_account_mapping_required")
+	errWorkspaceLaunchMonthlyPreflightInvalid = errors.New("fabric_monthly_preflight_invalid")
+	errBillingReviewNotFound                  = errors.New("billing_review_not_found")
+	errBillingReviewNotPending                = errors.New("billing_review_not_pending")
+	errBillingReviewIdentity                  = errors.New("billing_review_identity_mismatch")
+	errBillingReviewChargeFact                = errors.New("billing_review_charge_fact_unconfirmed")
+	errBillingReviewProviderFact              = errors.New("billing_review_provider_fact_unconfirmed")
+	errBillingReviewReceipt                   = errors.New("billing_review_receipt_pending")
+	errInvalidBillingReview                   = errors.New("invalid_billing_review_request")
 )
 
 const billingReviewActivateCharged = "activate_charged_resource"
@@ -38,6 +40,26 @@ type billingReviewResolutionInput struct {
 func monthlyPreflightConfirmed(input clients.MonthlyPreflightInput, result clients.MonthlyPreflight) bool {
 	return result.ResourceType == input.ResourceType && result.PackageID == input.PackageID && result.SizeGB == input.SizeGB &&
 		result.Zone == input.Zone && result.Available
+}
+
+func (a *controlPlaneWorkspaceLaunchStageAdapter) preflightWorkspaceLaunchMonthly(ctx context.Context, operation workspaceLaunchReconcileOperation) error {
+	zone := controlplane.ProviderAcceptanceLaunchZone()
+	if zone == "" {
+		return errWorkspaceLaunchMonthlyPreflightInvalid
+	}
+	for _, input := range []clients.MonthlyPreflightInput{
+		{ResourceType: "compute", PackageID: operation.stringFact("packageId"), Zone: zone},
+		{ResourceType: "storage", PackageID: operation.stringFact("packageId"), SizeGB: operation.intFact("sizeGb"), Zone: zone},
+	} {
+		result, err := a.service.PreflightMonthlyResource(ctx, input)
+		if err != nil {
+			return err
+		}
+		if !monthlyPreflightConfirmed(input, result) {
+			return errWorkspaceLaunchMonthlyPreflightInvalid
+		}
+	}
+	return nil
 }
 
 func monthlyChargeConfirmationMatches(confirmation map[string]any, code string, userID, chargeUSDMicros int64) bool {
@@ -63,15 +85,6 @@ func (app *controlPlaneServer) sub2APIUserID(ctx context.Context, accountID stri
 		}
 	}
 	return 0, errMonthlyAccountUnmapped
-}
-
-func monthlyResourceInProgress(row map[string]any) bool {
-	switch stringValue(row["status"]) {
-	case "provisioning", "pending", "creating":
-		return stringValue(row["providerRequestId"]) != ""
-	default:
-		return false
-	}
 }
 
 func monthlyResourceType(row map[string]any) string {

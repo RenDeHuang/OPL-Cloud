@@ -174,11 +174,16 @@ export function getWorkspaceRuntimeStatus(workspaceId: string): Promise<SourceEn
   ));
 }
 
-export function revealWorkspaceCredentials(workspaceId: string, csrfToken: string): Promise<RuntimeCredentialResponse> {
+export function revealWorkspaceCredentials(
+  workspaceId: string,
+  csrfToken: string,
+  idempotencyKey = `runtime-credential-reveal:${crypto.randomUUID()}`
+): Promise<RuntimeCredentialResponse> {
   return postJson<unknown>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/runtime-credentials/reveal`,
     {},
-    csrfToken
+    csrfToken,
+    idempotencyKey
   ).then(decodeDto<RuntimeCredentialResponse>);
 }
 

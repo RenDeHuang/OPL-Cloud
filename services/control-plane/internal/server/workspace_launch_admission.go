@@ -25,16 +25,16 @@ const (
 )
 
 var productionAcceptanceBAllowedWrites = []string{
-	"submit_one_workspace_launch", "debit_one_basic_month", "create_one_workspace_key", "ensure_one_compute_allocation",
-	"ensure_one_storage", "ensure_one_attachment", "ensure_one_gateway_secret", "ensure_one_runtime",
-	"activate_one_workspace", "record_one_purchase_receipt",
+	"submit_one_workspace_launch", "debit_one_basic_month", "create_one_workspace_key", "create_one_cvm",
+	"claim_one_cvm_ownership", "claim_one_node", "create_one_cbs", "create_one_attachment", "upsert_one_gateway_secret",
+	"create_one_runtime", "activate_one_workspace", "record_one_purchase_receipt",
 }
 
 var productionAcceptanceBApprovalIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$`)
 var productionAcceptanceBReleaseSHAPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
 
 var productionAcceptanceBForbiddenWrites = []string{
-	"provision_account", "adjust_wallet", "submit_second_workspace_launch", "create_second_compute_allocation", "create_second_storage",
+	"provision_account", "adjust_wallet", "submit_second_workspace_launch", "create_second_cvm", "create_second_cbs",
 	"refund", "renew", "delete", "replace", "send_model_request",
 }
 
@@ -62,6 +62,10 @@ type productionAcceptanceBApproval struct {
 		SizeGB         int    `json:"sizeGb"`
 		AutoRenew      bool   `json:"autoRenew"`
 	} `json:"launch"`
+	Expected struct {
+		NodePoolID           string `json:"nodePoolId"`
+		ResolvedInstanceType string `json:"resolvedInstanceType"`
+	} `json:"expected"`
 	AllowedWrites   []string `json:"allowedWrites"`
 	ForbiddenWrites []string `json:"forbiddenWrites"`
 }
@@ -148,7 +152,7 @@ func parseProductionAcceptanceBApproval() (productionAcceptanceBApproval, bool) 
 	var envelope map[string]any
 	var approval productionAcceptanceBApproval
 	if json.Unmarshal([]byte(raw), &envelope) != nil || !exactWorkspaceComputeClaimKeys(envelope, []string{
-		"schemaVersion", "operationMode", "approvalId", "expiresAt", "confirmation", "release", "customer", "launch", "allowedWrites", "forbiddenWrites",
+		"schemaVersion", "operationMode", "approvalId", "expiresAt", "confirmation", "release", "customer", "launch", "expected", "allowedWrites", "forbiddenWrites",
 	}) || !exactNestedAcceptanceBApprovalKeys(envelope) || json.Unmarshal([]byte(raw), &approval) != nil {
 		return productionAcceptanceBApproval{}, false
 	}
@@ -160,6 +164,7 @@ func exactNestedAcceptanceBApprovalKeys(envelope map[string]any) bool {
 		"release":  {"mergedMainSha", "cloudImageDigest", "workspaceImageDigest"},
 		"customer": {"email", "accountId"},
 		"launch":   {"idempotencyKey", "operationId", "workspaceId", "name", "packageId", "sizeGb", "autoRenew"},
+		"expected": {"nodePoolId", "resolvedInstanceType"},
 	}
 	for field, want := range wants {
 		value, ok := envelope[field].(map[string]any)
@@ -183,14 +188,30 @@ func deployedImageDigest(value string) string {
 	return digest
 }
 
-func productionAcceptanceBLaunchApproved(rHeader http.Header, approval productionAcceptanceBApproval, accountID, ownerEmail, name, packageID string, storageGB int, autoRenew bool, key string) bool {
+func productionAcceptanceBDeploymentApproved(approval productionAcceptanceBApproval, accountID, ownerEmail string, now time.Time) bool {
 	expiresAt, expiryErr := time.Parse(time.RFC3339, approval.ExpiresAt)
 	canonicalOwnerEmail, ownerEmailErr := canonicalEmail(ownerEmail)
 	canonicalApprovedEmail, approvedEmailErr := canonicalEmail(approval.Customer.Email)
 	currentCloudDigest := deployedImageDigest(os.Getenv("OPL_CLOUD_IMAGE"))
 	currentWorkspaceDigest := deployedImageDigest(os.Getenv("OPL_WORKSPACE_IMAGE"))
+	key := approval.Launch.IdempotencyKey
 	operationID := workspaceLaunchOperationID(accountID, key)
 	workspaceID := "ws-" + stableID("workspace-launch-v2", accountID, operationID)[:18]
+	return expiryErr == nil && now.Before(expiresAt) && ownerEmailErr == nil && approvedEmailErr == nil &&
+		approval.SchemaVersion == 1 && approval.OperationMode == "acceptance_b_fresh_order" && approval.Confirmation == productionAcceptanceBConfirmation &&
+		productionAcceptanceBApprovalIDPattern.MatchString(approval.ApprovalID) &&
+		approval.Release.MergedMainSHA == strings.TrimSpace(os.Getenv("OPL_RELEASE_SHA")) && productionAcceptanceBReleaseSHAPattern.MatchString(approval.Release.MergedMainSHA) &&
+		approval.Release.CloudImageDigest == currentCloudDigest && approval.Release.WorkspaceImageDigest == currentWorkspaceDigest &&
+		canonicalApprovedEmail == canonicalOwnerEmail && approval.Customer.Email == canonicalApprovedEmail && approval.Customer.AccountID == accountID &&
+		key == strings.TrimSpace(key) && len(key) >= 8 && len(key) <= 200 && approval.Launch.OperationID == operationID && approval.Launch.WorkspaceID == workspaceID &&
+		approval.Launch.Name != "" && approval.Launch.Name == strings.TrimSpace(approval.Launch.Name) &&
+		approval.Launch.PackageID == "basic" && approval.Launch.SizeGB == 10 && !approval.Launch.AutoRenew &&
+		approval.Expected.NodePoolID == strings.TrimSpace(os.Getenv("OPL_BASIC_COMPUTE_NODE_POOL_ID")) && approval.Expected.NodePoolID != "" &&
+		approval.Expected.ResolvedInstanceType == strings.TrimSpace(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE")) && approval.Expected.ResolvedInstanceType != "" &&
+		exactStringSlice(approval.AllowedWrites, productionAcceptanceBAllowedWrites) && exactStringSlice(approval.ForbiddenWrites, productionAcceptanceBForbiddenWrites)
+}
+
+func productionAcceptanceBLaunchApproved(rHeader http.Header, approval productionAcceptanceBApproval, accountID, ownerEmail, name, packageID string, storageGB int, autoRenew bool, key string) bool {
 	internalToken := strings.TrimSpace(os.Getenv("OPL_INTERNAL_SERVICE_TOKEN"))
 	header := func(name string) string {
 		values := rHeader.Values(name)
@@ -199,17 +220,12 @@ func productionAcceptanceBLaunchApproved(rHeader http.Header, approval productio
 		}
 		return strings.TrimSpace(values[0])
 	}
-	return expiryErr == nil && time.Now().Before(expiresAt) && ownerEmailErr == nil && approvedEmailErr == nil &&
-		approval.SchemaVersion == 1 && approval.OperationMode == "acceptance_b_fresh_order" && approval.Confirmation == productionAcceptanceBConfirmation &&
+	return productionAcceptanceBDeploymentApproved(approval, accountID, ownerEmail, time.Now()) &&
 		productionAcceptanceBApprovalIDPattern.MatchString(approval.ApprovalID) && header(productionAcceptanceBApprovalID) == approval.ApprovalID &&
 		secureHeaderMatches(header(productionAcceptanceBCapability), internalToken) &&
-		approval.Release.MergedMainSHA == strings.TrimSpace(os.Getenv("OPL_RELEASE_SHA")) && productionAcceptanceBReleaseSHAPattern.MatchString(approval.Release.MergedMainSHA) &&
-		approval.Release.CloudImageDigest == currentCloudDigest && approval.Release.WorkspaceImageDigest == currentWorkspaceDigest &&
-		canonicalApprovedEmail == canonicalOwnerEmail && approval.Customer.Email == canonicalApprovedEmail && approval.Customer.AccountID == accountID &&
-		approval.Launch.IdempotencyKey == key && key == strings.TrimSpace(key) && len(key) >= 8 && len(key) <= 200 && approval.Launch.OperationID == operationID && approval.Launch.WorkspaceID == workspaceID &&
+		approval.Launch.IdempotencyKey == key &&
 		approval.Launch.Name == name && approval.Launch.PackageID == packageID && approval.Launch.SizeGB == storageGB && approval.Launch.AutoRenew == autoRenew &&
-		packageID == "basic" && storageGB == 10 && !autoRenew &&
-		exactStringSlice(approval.AllowedWrites, productionAcceptanceBAllowedWrites) && exactStringSlice(approval.ForbiddenWrites, productionAcceptanceBForbiddenWrites)
+		packageID == "basic" && storageGB == 10 && !autoRenew
 }
 
 func controlledBasicPilotGlobalInFlightLimit() int {

@@ -3,6 +3,10 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +16,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"opl-cloud/services/ledger/internal/ledger"
 )
@@ -45,6 +50,93 @@ func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLedgerCapabilityRejectsUnscopedBearerAndAcceptsBoundRequest(t *testing.T) {
+	const key = "ledger-capability-key-for-http-tests-32-chars"
+	store := ledger.NewMemoryStore()
+	server := NewServerWithAuth(store, "internal-secret", key)
+	body := `{"type":"workspace.created","status":"completed","surface":"workspace","accountId":"acct-alpha","workspaceId":"ws-alpha"}`
+	req := testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer internal-secret")
+	req.Header.Set("Idempotency-Key", "ledger-capability-once")
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, req)
+	if unauthorized.Code != http.StatusForbidden {
+		t.Fatalf("missing capability status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
+	}
+
+	capability := testLedgerCapability(t, key, ledgerCapabilityClaims{Version: 1, Caller: "control-plane", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceKind: "receipt", ResourceID: "ledger-capability-once", Action: "record_receipt", OperationID: "ledger-capability-once", ExpiresAt: time.Now().Add(time.Minute).Unix()}, []byte(body))
+	req = testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer internal-secret")
+	req.Header.Set("Idempotency-Key", "ledger-capability-once")
+	req.Header.Set(ledgerCapabilityHeader, capability)
+	accepted := httptest.NewRecorder()
+	server.ServeHTTP(accepted, req)
+	if accepted.Code != http.StatusCreated {
+		t.Fatalf("valid capability status=%d body=%s", accepted.Code, accepted.Body.String())
+	}
+}
+
+func TestLedgerCapabilityIsPreverifiedBeforeOwnerLookup(t *testing.T) {
+	const key = "ledger-capability-key-for-http-tests-32-chars"
+	store := &callCountingStore{Store: ledger.NewMemoryStore()}
+	server := NewServerWithAuth(store, "internal-secret", key)
+	for _, path := range []string{
+		"/ledger/receipts/receipt-alpha?accountId=acct-alpha&workspaceId=ws-alpha",
+		"/ledger/artifacts/artifact-alpha?workspaceId=ws-alpha",
+		"/ledger/reviews/review-alpha?workspaceId=ws-alpha",
+		"/ledger/review-policies/policy-alpha?workspaceId=ws-alpha",
+	} {
+		req := testRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+	if store.calls != 0 {
+		t.Fatalf("invalid capabilities reached owner lookup: calls=%d", store.calls)
+	}
+}
+
+func TestLedgerCapabilityComparesPersistedOwnerAfterPreverification(t *testing.T) {
+	const key = "ledger-capability-key-for-http-tests-32-chars"
+	store := ledger.NewMemoryStore()
+	artifact, err := store.RecordArtifact(context.Background(), ledger.ArtifactInput{
+		OrganizationID: "org-alpha", WorkspaceID: "ws-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", JobID: "job-alpha",
+		Digest: "sha256:artifact-alpha", MediaType: "application/json", SizeBytes: 42, StorageRef: "artifact-alpha", IdempotencyKey: "artifact-alpha",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServerWithAuth(store, "internal-secret", key)
+	path := "/ledger/artifacts/" + artifact.ArtifactID + "?workspaceId=ws-alpha"
+	req := testRequest(http.MethodGet, path, nil)
+	claims := ledgerCapabilityClaims{
+		Version: 1, Caller: "control-plane", WorkspaceID: "ws-alpha", ResourceKind: "artifact", ResourceID: artifact.ArtifactID,
+		Action: "read_artifact", OperationID: requestOperationID(req), ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	req.Header.Set(ledgerCapabilityHeader, testLedgerCapability(t, key, claims, nil))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), artifact.ArtifactID) {
+		t.Fatalf("valid capability status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func testLedgerCapability(t *testing.T, key string, claims ledgerCapabilityClaims, body []byte) string {
+	t.Helper()
+	digest := sha256.Sum256(body)
+	claims.BodySHA256 = hex.EncodeToString(digest[:])
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	mac := hmac.New(sha256.New, []byte(key))
+	_, _ = mac.Write([]byte(encoded))
+	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 type unavailableReadinessStore struct {
@@ -139,6 +231,153 @@ func TestJSONBodiesRejectTrailingDataWithoutPersistence(t *testing.T) {
 				t.Fatalf("valid reconciliation after trailing rejection status=%d body=%s", validReconciliationRec.Code, validReconciliationRec.Body.String())
 			}
 		})
+	}
+}
+
+type callCountingStore struct {
+	ledger.Store
+	calls int
+}
+
+func (s *callCountingStore) Receipt(ctx context.Context, id string) (ledger.Receipt, error) {
+	s.calls++
+	return s.Store.Receipt(ctx, id)
+}
+
+func (s *callCountingStore) Artifact(ctx context.Context, id string) (ledger.Artifact, error) {
+	s.calls++
+	return s.Store.Artifact(ctx, id)
+}
+
+func (s *callCountingStore) Review(ctx context.Context, id string) (ledger.Review, error) {
+	s.calls++
+	return s.Store.Review(ctx, id)
+}
+
+func (s *callCountingStore) ReviewPolicy(ctx context.Context, id string) (ledger.ReviewPolicy, error) {
+	s.calls++
+	return s.Store.ReviewPolicy(ctx, id)
+}
+
+func (s *callCountingStore) RecordReceipt(context.Context, ledger.ReceiptInput) (ledger.Receipt, error) {
+	s.calls++
+	return ledger.Receipt{}, nil
+}
+
+func (s *callCountingStore) UpdateReceiptRetention(context.Context, ledger.ReceiptRetentionInput) (ledger.ReceiptRetentionResult, error) {
+	s.calls++
+	return ledger.ReceiptRetentionResult{}, nil
+}
+
+func (s *callCountingStore) PrivacyDeleteReceipt(context.Context, ledger.ReceiptPrivacyDeleteInput) (ledger.ReceiptRetentionResult, error) {
+	s.calls++
+	return ledger.ReceiptRetentionResult{}, nil
+}
+
+func (s *callCountingStore) RecordArtifact(context.Context, ledger.ArtifactInput) (ledger.Artifact, error) {
+	s.calls++
+	return ledger.Artifact{}, nil
+}
+
+func (s *callCountingStore) RecordReview(context.Context, ledger.ReviewInput) (ledger.Review, error) {
+	s.calls++
+	return ledger.Review{}, nil
+}
+
+func (s *callCountingStore) CreateReviewPolicy(context.Context, ledger.ReviewPolicyInput) (ledger.ReviewPolicy, error) {
+	s.calls++
+	return ledger.ReviewPolicy{}, nil
+}
+
+func (s *callCountingStore) EvaluateReviewGate(context.Context, ledger.ReviewGateInput) (ledger.ReviewGateResult, error) {
+	s.calls++
+	return ledger.ReviewGateResult{}, nil
+}
+
+func (s *callCountingStore) RecordReconciliation(context.Context, ledger.ReconciliationInput) (ledger.ReconciliationResult, error) {
+	s.calls++
+	return ledger.ReconciliationResult{}, nil
+}
+
+func TestJSONBodyLimitAppliesBeforeLedgerStoreCall(t *testing.T) {
+	oversizedBody := `{"padding":"` + strings.Repeat("x", int(maxJSONBodyBytes)) + `"}`
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "receipt", path: "/ledger/receipts"},
+		{name: "retention", path: "/ledger/receipts/receipt-alpha/retention"},
+		{name: "privacy delete", path: "/ledger/receipts/receipt-alpha/privacy-delete"},
+		{name: "artifact", path: "/ledger/artifacts"},
+		{name: "review", path: "/ledger/reviews"},
+		{name: "review policy", path: "/ledger/review-policies"},
+		{name: "review gate", path: "/ledger/review-gates/evaluate"},
+		{name: "reconciliation", path: "/ledger/reconciliation"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &callCountingStore{Store: ledger.NewMemoryStore()}
+			server := NewServer(store, "internal-secret")
+			req := testRequest(http.MethodPost, test.path, strings.NewReader(oversizedBody))
+			req.Header.Set("Idempotency-Key", "oversized-body")
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), `"error":"request body too large"`) {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if store.calls != 0 {
+				t.Fatalf("store calls=%d, want 0", store.calls)
+			}
+		})
+	}
+}
+
+func TestJSONBodyLimitPrecedesMalformedJSONError(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(`}`+strings.Repeat("x", int(maxJSONBodyBytes))))
+	req.Header.Set("Idempotency-Key", "oversized-malformed-body")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), `"error":"request body too large"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestJSONBodyLimitPreservesMissingIdempotencyKeyError(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(strings.Repeat("x", int(maxJSONBodyBytes)+1)))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"error":"missing Idempotency-Key"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestJSONBodyLimitPreservesAuthenticationOrder(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := httptest.NewRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(strings.Repeat("x", int(maxJSONBodyBytes)+1)))
+	req.Header.Set("Idempotency-Key", "unauthorized-oversized-body")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), `"error":"unauthorized"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReceiptAcceptsExactJSONBodyLimit(t *testing.T) {
+	prefix := `{"type":"execution.receipt.v1","status":"completed","surface":"workspace","workspaceId":"workspace-alpha","outputRefs":{"padding":"`
+	suffix := `"}}`
+	payload := prefix + strings.Repeat("x", int(maxJSONBodyBytes)-len(prefix)-len(suffix)) + suffix
+	if len(payload) != int(maxJSONBodyBytes) {
+		t.Fatalf("payload size=%d, want %d", len(payload), maxJSONBodyBytes)
+	}
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(payload))
+	req.Header.Set("Idempotency-Key", "exact-limit-body")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

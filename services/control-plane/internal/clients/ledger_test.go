@@ -436,3 +436,23 @@ func TestLedgerHTTPClientReadsReviewAndContinuation(t *testing.T) {
 		t.Fatalf("continuation = %#v err=%v", continuation, err)
 	}
 }
+
+func TestLedgerHTTPClientBindsEvidenceReadsToOwnerScope(t *testing.T) {
+	const capabilityKey = "ledger-capability-key-for-client-tests-32-chars"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("accountId") != "acct-alpha" || r.URL.Query().Get("workspaceId") != "workspace-alpha" {
+			t.Fatalf("owner scope query = %s", r.URL.RawQuery)
+		}
+		if r.Header.Get("X-OPL-Ledger-Capability") == "" {
+			t.Fatal("missing Ledger capability")
+		}
+		_ = json.NewEncoder(w).Encode(Artifact{ArtifactID: "artifact-alpha", WorkspaceID: "workspace-alpha"})
+	}))
+	defer server.Close()
+
+	client := NewLedgerHTTPClientWithCapability(server.URL, "internal-secret", capabilityKey, server.Client()).(LedgerScopedEvidenceClient)
+	artifact, err := client.ArtifactForWorkspace(context.Background(), "acct-alpha", "workspace-alpha", "artifact-alpha")
+	if err != nil || artifact.ArtifactID != "artifact-alpha" {
+		t.Fatalf("artifact = %#v err=%v", artifact, err)
+	}
+}

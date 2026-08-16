@@ -9,8 +9,12 @@ import (
 	"opl-cloud/services/control-plane/internal/clients"
 )
 
-// ProviderAcceptanceLaunchZone preserves the legacy create-only configuration
-// until the Instance caller cutover. ProviderFactsBatch remains readback authority.
+// ProviderAcceptanceLaunchZone preserves the legacy create-only zone configuration
+// through the OPL_TENCENT_ZONE environment variable as an explicit external
+// Instance/Fabric cutover shim. The Instance owner supplies the value and the Fabric
+// Tencent adapter owns its interpretation. Do not add a fallback, a second configuration
+// path, or provider-specific validation here; retire this read once the Instance adopts
+// a provider-neutral zone supply. ProviderFactsBatch remains readback authority.
 func ProviderAcceptanceLaunchZone() string {
 	return strings.TrimSpace(os.Getenv("OPL_TENCENT_ZONE"))
 }

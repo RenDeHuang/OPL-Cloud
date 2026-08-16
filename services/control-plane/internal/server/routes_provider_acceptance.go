@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	providerAcceptanceConfirmation           = "I_UNDERSTAND_THIS_BUYS_ONE_PREPAID_CVM_AND_CBS"
+	providerAcceptanceConfirmation           = "I_UNDERSTAND_THIS_BUYS_ONE_MONTHLY_PREPAID_RESOURCE"
 	providerAcceptanceLifetimePurchaseBudget = 2
 )
 
@@ -380,8 +380,11 @@ func providerAcceptancePreflight(ctx context.Context, service *controlplane.Serv
 }
 
 func providerAcceptancePreflightValid(preflight clients.MonthlyPreflight, slot providerAcceptanceSlot, resourceType string, sizeGB int, zone string) bool {
-	return preflight.ResourceType == resourceType && preflight.PackageID == slot.PackageID && preflight.SizeGB == sizeGB && preflight.Zone == zone && preflight.Available &&
-		preflight.ChargeType == "PREPAID" && preflight.PeriodMonths == 1 && preflight.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && preflight.ProviderPriceCNY > 0
+	// ChargeType, RenewFlag, PeriodMonths, and price semantics are provider facts owned by
+	// the Fabric adapter. Control Plane consumes only the adapter's provider-neutral
+	// Available verdict plus its own package/size/zone input echo, and fails closed when
+	// any of those do not match.
+	return preflight.ResourceType == resourceType && preflight.PackageID == slot.PackageID && preflight.SizeGB == sizeGB && preflight.Zone == zone && preflight.Available
 }
 
 func providerAcceptanceComputeID(slot providerAcceptanceSlot) string {
@@ -564,7 +567,7 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 		return "", "provider_acceptance_attachment_state_ambiguous", nil
 	}
 	if attachmentCount == 0 {
-		created, createErr := service.CreateStorageAttachment(ctx, controlplane.StorageAttachmentInput{WorkspaceID: workspaceID, ComputeID: computeID, VolumeID: storageID}, slot.Key+":attachment")
+		created, createErr := service.CreateStorageAttachment(ctx, controlplane.StorageAttachmentInput{AccountID: slot.AccountID, WorkspaceID: workspaceID, ComputeID: computeID, VolumeID: storageID}, slot.Key+":attachment")
 		attachment = providerAcceptanceAttachmentRow(structToMap(created), map[string]any{"computeAllocationId": computeID, "storageId": storageID, "mountPath": "/data"})
 		attachment["accountId"], attachment["ownerAccountId"] = slot.AccountID, slot.AccountID
 		if err := app.saveAttachmentFact(attachment, attachment); err != nil {

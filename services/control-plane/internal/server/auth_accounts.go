@@ -221,7 +221,7 @@ func (app *controlPlaneServer) loginRateLimited(r *http.Request, input map[strin
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	failure := app.loginRateLimits[key]
-	if !failure.FirstAt.IsZero() && time.Since(failure.FirstAt) > 15*time.Minute {
+	if !failure.FirstAt.IsZero() && time.Since(failure.FirstAt) > loginFailureWindow {
 		delete(app.loginRateLimits, key)
 		return false
 	}
@@ -233,11 +233,38 @@ func (app *controlPlaneServer) recordLoginFailure(r *http.Request, input map[str
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	failure := app.loginRateLimits[key]
-	if failure.FirstAt.IsZero() || time.Since(failure.FirstAt) > 15*time.Minute {
+	if failure.FirstAt.IsZero() || time.Since(failure.FirstAt) > loginFailureWindow {
+		if _, exists := app.loginRateLimits[key]; !exists && len(app.loginRateLimits) >= maxLoginRateEntries {
+			app.expireLoginFailuresLocked(time.Now().UTC())
+		}
+		if _, exists := app.loginRateLimits[key]; !exists && len(app.loginRateLimits) >= maxLoginRateEntries {
+			app.evictOldestLoginFailureLocked()
+		}
 		failure = loginFailure{FirstAt: time.Now().UTC()}
 	}
 	failure.Count++
 	app.loginRateLimits[key] = failure
+}
+
+func (app *controlPlaneServer) expireLoginFailuresLocked(now time.Time) {
+	for key, failure := range app.loginRateLimits {
+		if !failure.FirstAt.IsZero() && now.Sub(failure.FirstAt) > loginFailureWindow {
+			delete(app.loginRateLimits, key)
+		}
+	}
+}
+
+func (app *controlPlaneServer) evictOldestLoginFailureLocked() {
+	var oldestKey string
+	var oldest time.Time
+	for key, failure := range app.loginRateLimits {
+		if oldestKey == "" || failure.FirstAt.Before(oldest) {
+			oldestKey, oldest = key, failure.FirstAt
+		}
+	}
+	if oldestKey != "" {
+		delete(app.loginRateLimits, oldestKey)
+	}
 }
 
 func (app *controlPlaneServer) clearLoginFailures(r *http.Request, input map[string]any) {
@@ -247,16 +274,58 @@ func (app *controlPlaneServer) clearLoginFailures(r *http.Request, input map[str
 	delete(app.loginRateLimits, key)
 }
 
+const (
+	loginFailureWindow        = 15 * time.Minute
+	maxLoginRateEntries       = 10000
+	maxLoginRateKeyEmailBytes = 256
+)
+
 func loginFailureKey(r *http.Request, input map[string]any) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil || host == "" {
 		host = r.RemoteAddr
 	}
 	email := strings.ToLower(strings.TrimSpace(stringField(input, "email", "")))
+	if len(email) > maxLoginRateKeyEmailBytes {
+		email = email[:maxLoginRateKeyEmailBytes]
+	}
 	return email + "|" + host
 }
 
 func (app *controlPlaneServer) createSession(user map[string]any, bearer string) (map[string]any, string, error) {
+	const maxSessionsPerUser = 8
+	userID := stringValue(user["id"])
+	if existing, err := app.tables.ListSessionsByUser(context.Background(), userID); err != nil {
+		return nil, "", err
+	} else {
+		now := time.Now().UTC()
+		for key, session := range existing {
+			expiresAt, parseErr := time.Parse(time.RFC3339, stringValue(session["expiresAt"]))
+			if parseErr != nil || !expiresAt.After(now) {
+				_ = app.tables.DeleteSession(context.Background(), key)
+				app.sessionCredentials.Delete(key)
+				delete(existing, key)
+			}
+		}
+		for len(existing) >= maxSessionsPerUser {
+			var oldestKey string
+			var oldestExpiry time.Time
+			for key, session := range existing {
+				expiresAt, _ := time.Parse(time.RFC3339, stringValue(session["expiresAt"]))
+				if oldestKey == "" || expiresAt.Before(oldestExpiry) || expiresAt.Equal(oldestExpiry) && key < oldestKey {
+					oldestKey, oldestExpiry = key, expiresAt
+				}
+			}
+			if oldestKey == "" {
+				break
+			}
+			if err := app.tables.DeleteSession(context.Background(), oldestKey); err != nil {
+				return nil, "", err
+			}
+			app.sessionCredentials.Delete(oldestKey)
+			delete(existing, oldestKey)
+		}
+	}
 	sessionID, err := randomToken(32)
 	if err != nil {
 		return nil, "", err
@@ -270,7 +339,7 @@ func (app *controlPlaneServer) createSession(user map[string]any, bearer string)
 	if err := app.sessionCredentials.Put(sessionKey, SessionDelegatedCredential{Bearer: bearer, ExpiresAt: expiresAt}); err != nil {
 		return nil, "", err
 	}
-	if err := app.tables.SaveSession(context.Background(), map[string]any{"id": sessionKey, "userId": stringValue(user["id"]), "csrf": csrf, "expiresAt": expiresAt.Format(time.RFC3339)}); err != nil {
+	if err := app.tables.SaveSession(context.Background(), map[string]any{"id": sessionKey, "userId": userID, "csrf": csrf, "expiresAt": expiresAt.Format(time.RFC3339)}); err != nil {
 		app.sessionCredentials.Delete(sessionKey)
 		return nil, "", err
 	}

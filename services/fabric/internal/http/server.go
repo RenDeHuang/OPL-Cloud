@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -11,6 +12,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +22,10 @@ import (
 
 const fabricCapabilityHeader = "X-OPL-Fabric-Capability"
 
+const maxJSONBodyBytes int64 = 1 << 20
+
+var errRequestBodyTooLarge = errors.New("request body too large")
+
 type ServerAuthConfig struct {
 	ControlPlaneToken string
 	RunnerToken       string
@@ -26,11 +33,15 @@ type ServerAuthConfig struct {
 	Now               func() time.Time
 }
 
+type fabricMutationScopeResolver interface {
+	ComputePoolHeadTerminalizationAuthorization(context.Context, fabric.ComputePoolHeadTerminalizationInput) (fabric.ComputePoolHeadTerminalizationAuthorization, error)
+}
+
 func NewServerWithAuth(service *fabric.Service, config ServerAuthConfig) http.Handler {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
-	return authorizeFabricRequests(newFabricMux(service), config)
+	return authorizeFabricRequests(newFabricMux(service), service, config)
 }
 
 func newFabricMux(service *fabric.Service) http.Handler {
@@ -54,15 +65,6 @@ func newFabricMux(service *fabric.Service) http.Handler {
 			return
 		}
 		result, err := service.ReadWorkspaceLaunchStage(r.Context(), input)
-		writeWorkspaceLaunchResult(w, result, err)
-	})
-	mux.HandleFunc("POST /fabric/workspace-launches/legacy-bindings/read", func(w http.ResponseWriter, r *http.Request) {
-		var input fabric.LegacyWorkspaceLaunchBindingInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
-			return
-		}
-		result, err := service.ReadLegacyWorkspaceLaunchBinding(r.Context(), input)
 		writeWorkspaceLaunchResult(w, result, err)
 	})
 	mux.HandleFunc("POST /fabric/workspace-launches/stages/ensure", func(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +155,7 @@ func newFabricMux(service *fabric.Service) http.Handler {
 			return
 		}
 		var input fabric.ComputePoolHeadTerminalizationInput
-		decoder := json.NewDecoder(io.LimitReader(r.Body, 4097))
+		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -221,12 +223,39 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /fabric/operations", func(w http.ResponseWriter, r *http.Request) {
-		operations, err := service.ListOperations(r.Context())
+		query, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil || len(query["limit"]) > 1 || len(query["cursor"]) > 1 {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidOperationPage.Error())
+			return
+		}
+		for key := range query {
+			if key != "limit" && key != "cursor" {
+				writeError(w, http.StatusBadRequest, fabric.ErrInvalidOperationPage.Error())
+				return
+			}
+		}
+		limit := fabric.MaxFabricOperationPageSize
+		if rawLimit, ok := query["limit"]; ok {
+			limit, err = strconv.Atoi(rawLimit[0])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fabric.ErrInvalidOperationPage.Error())
+				return
+			}
+		}
+		cursor := ""
+		if rawCursor, ok := query["cursor"]; ok {
+			cursor = rawCursor[0]
+		}
+		page, err := service.ListOperationsPage(r.Context(), cursor, limit)
+		if errors.Is(err, fabric.ErrInvalidOperationPage) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, operations)
+		writeJSON(w, http.StatusOK, page)
 	})
 	mux.HandleFunc("GET /fabric/machine-ownerships/{resourceId}", func(w http.ResponseWriter, r *http.Request) {
 		ownership, err := service.MachineOwnership(r.Context(), r.PathValue("resourceId"))
@@ -317,10 +346,6 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, allocation)
 	})
-	mux.HandleFunc("POST /fabric/compute-allocations/{id}/sync", func(w http.ResponseWriter, r *http.Request) {
-		allocation, err := service.SyncComputeAllocation(r.Context(), strings.TrimSpace(r.PathValue("id")))
-		writeResult(w, allocation, err)
-	})
 	mux.HandleFunc("POST /fabric/compute-allocations/{id}/destroy", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Idempotency-Key") == "" {
 			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
@@ -375,13 +400,13 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		volume, err := service.DestroyStorageVolume(r.Context(), strings.TrimSpace(r.PathValue("id")))
 		writeResult(w, volume, err)
 	})
-	mux.HandleFunc("POST /fabric/storage-volumes/{id}/sync", func(w http.ResponseWriter, r *http.Request) {
-		volume, err := service.SyncStorageVolume(r.Context(), strings.TrimSpace(r.PathValue("id")))
-		writeResult(w, volume, err)
-	})
 	mux.HandleFunc("POST /fabric/storage-snapshots", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.StorageSnapshotInput
 		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
+			return
+		}
+		if volume, ok := service.GetStorageVolume(r.Context(), input.VolumeID); !ok || volume.AccountID != input.AccountID || volume.WorkspaceID != input.WorkspaceID {
+			writeError(w, http.StatusBadRequest, "storage_snapshot_source_identity_mismatch")
 			return
 		}
 		snapshot, err := service.CreateStorageSnapshot(r.Context(), input)
@@ -395,33 +420,64 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, snapshot)
 	})
-	mux.HandleFunc("POST /fabric/storage-snapshots/{id}/sync", func(w http.ResponseWriter, r *http.Request) {
-		snapshot, err := service.SyncStorageSnapshot(r.Context(), strings.TrimSpace(r.PathValue("id")))
-		writeResult(w, snapshot, err)
-	})
 	mux.HandleFunc("POST /fabric/storage-snapshots/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.StorageRestoreInput
 		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
 			return
 		}
-		input.SnapshotID = strings.TrimSpace(r.PathValue("id"))
+		if input.SnapshotID != strings.TrimSpace(r.PathValue("id")) {
+			writeError(w, http.StatusBadRequest, "storage_snapshot_id_mismatch")
+			return
+		}
+		if existing, ok := service.GetStorageSnapshot(r.Context(), input.SnapshotID); !ok || existing.AccountID != input.AccountID {
+			writeError(w, http.StatusBadRequest, "storage_snapshot_source_identity_mismatch")
+			return
+		}
 		volume, err := service.RestoreStorageSnapshot(r.Context(), input)
 		writeResult(w, volume, err)
 	})
 	mux.HandleFunc("POST /fabric/storage-snapshots/{id}/destroy", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Idempotency-Key") == "" {
-			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
-			return
+		var input struct {
+			AccountID      string `json:"accountId"`
+			WorkspaceID    string `json:"workspaceId"`
+			SnapshotID     string `json:"snapshotId"`
+			IdempotencyKey string `json:"-"`
 		}
-		snapshot, err := service.DestroyStorageSnapshot(r.Context(), strings.TrimSpace(r.PathValue("id")))
-		writeResult(w, snapshot, err)
-	})
-	mux.HandleFunc("POST /fabric/storage-attachments", func(w http.ResponseWriter, r *http.Request) {
-		var input fabric.StorageAttachmentInput
 		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
 			return
 		}
-		attachment, err := service.CreateStorageAttachment(r.Context(), input)
+		if input.SnapshotID != strings.TrimSpace(r.PathValue("id")) {
+			writeError(w, http.StatusBadRequest, "storage_snapshot_id_mismatch")
+			return
+		}
+		if existing, ok := service.GetStorageSnapshot(r.Context(), input.SnapshotID); !ok || existing.AccountID != input.AccountID || existing.WorkspaceID != input.WorkspaceID {
+			writeError(w, http.StatusBadRequest, "storage_snapshot_identity_mismatch")
+			return
+		}
+		snapshot, err := service.DestroyStorageSnapshot(r.Context(), input.SnapshotID)
+		writeResult(w, snapshot, err)
+	})
+	mux.HandleFunc("POST /fabric/storage-attachments", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			AccountID      string `json:"accountId"`
+			WorkspaceID    string `json:"workspaceId"`
+			ComputeID      string `json:"computeId"`
+			VolumeID       string `json:"volumeId"`
+			IdempotencyKey string `json:"-"`
+		}
+		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
+			return
+		}
+		compute, computeOK := service.GetComputeAllocation(r.Context(), input.ComputeID)
+		volume, volumeOK := service.GetStorageVolume(r.Context(), input.VolumeID)
+		if !computeOK || !volumeOK || compute.AccountID != input.AccountID || volume.AccountID != input.AccountID ||
+			compute.WorkspaceID != input.WorkspaceID || volume.WorkspaceID != input.WorkspaceID {
+			writeError(w, http.StatusBadRequest, "storage_attachment_source_identity_mismatch")
+			return
+		}
+		attachment, err := service.CreateStorageAttachment(r.Context(), fabric.StorageAttachmentInput{
+			WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, IdempotencyKey: input.IdempotencyKey,
+		})
 		writeResult(w, attachment, err)
 	})
 	mux.HandleFunc("POST /fabric/storage-attachments/{id}/detach", func(w http.ResponseWriter, r *http.Request) {
@@ -453,6 +509,29 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
 		writeResult(w, runtime, err)
 	})
+	mux.HandleFunc("POST /fabric/workspace-runtimes/{workspaceId}/credentials/reveal", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			AccountID   string `json:"accountId"`
+			WorkspaceID string `json:"workspaceId"`
+		}
+		key := r.Header.Get("Idempotency-Key")
+		if key == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		workspaceID := strings.TrimSpace(r.PathValue("workspaceId"))
+		accountID := strings.TrimSpace(input.AccountID)
+		if accountID == "" || input.WorkspaceID != workspaceID {
+			writeError(w, http.StatusBadRequest, "workspace_runtime_credential_input_required")
+			return
+		}
+		runtime, err := service.WorkspaceRuntimeCredentials(r.Context(), accountID, workspaceID)
+		writeResult(w, runtime, err)
+	})
 	mux.HandleFunc("POST /fabric/workspace-runtimes/{workspaceId}/gateway-secret", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.WorkspaceRuntimeGatewaySecretInput
 		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
@@ -477,7 +556,7 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		secret, err := service.UpsertGatewaySecret(r.Context(), input)
 		writeResult(w, secret, err)
 	})
-	return mux
+	return limitRequestBody(mux)
 }
 
 type fabricCapabilityClaims struct {
@@ -494,6 +573,7 @@ type fabricCapabilityClaims struct {
 }
 
 type fabricMutationScope struct {
+	Caller       string
 	AccountID    string
 	WorkspaceID  string
 	ResourceKind string
@@ -502,7 +582,7 @@ type fabricMutationScope struct {
 	OperationID  string
 }
 
-func authorizeFabricRequests(next http.Handler, config ServerAuthConfig) http.Handler {
+func authorizeFabricRequests(next http.Handler, resolver fabricMutationScopeResolver, config ServerAuthConfig) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
@@ -525,13 +605,16 @@ func authorizeFabricRequests(next http.Handler, config ServerAuthConfig) http.Ha
 			next.ServeHTTP(w, r)
 			return
 		}
-		body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+		body, err := readBoundedBody(r)
 		if err != nil {
+			if errors.Is(err, errRequestBodyTooLarge) {
+				writeError(w, http.StatusRequestEntityTooLarge, "request_body_too_large")
+				return
+			}
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		scope, ok := fabricMutationScopeForRequest(r, body)
+		scope, ok := fabricMutationScopeForRequest(r.Context(), resolver, r, body)
 		if !ok {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -581,22 +664,27 @@ func isFabricMutation(r *http.Request) bool {
 		return false
 	}
 	if r.URL.Path == "/fabric/compute-allocations" || r.URL.Path == "/fabric/storage-volumes" || r.URL.Path == "/fabric/workspace-runtimes" ||
-		r.URL.Path == "/fabric/gateway-secrets" || r.URL.Path == "/fabric/workspace-launches/stages/ensure" {
+		r.URL.Path == "/fabric/gateway-secrets" || r.URL.Path == "/fabric/workspace-launches/stages/ensure" ||
+		r.URL.Path == "/fabric/storage-snapshots" || r.URL.Path == "/fabric/storage-attachments" ||
+		r.URL.Path == "/fabric/compute-pool-head/terminalization" {
 		return true
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) == 5 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "credentials" && parts[4] == "reveal" {
+		return true
+	}
 	if len(parts) != 4 || parts[0] != "fabric" || parts[2] == "" {
 		return false
 	}
 	switch parts[1] + "/" + parts[3] {
-	case "compute-allocations/renew", "compute-allocations/destroy", "storage-volumes/renew", "storage-volumes/destroy", "storage-attachments/detach", "workspace-runtimes/destroy", "workspace-runtimes/gateway-secret":
+	case "compute-allocations/renew", "compute-allocations/destroy", "storage-volumes/renew", "storage-volumes/destroy", "storage-snapshots/restore", "storage-snapshots/destroy", "storage-attachments/detach", "workspace-runtimes/destroy", "workspace-runtimes/gateway-secret":
 		return true
 	default:
 		return false
 	}
 }
 
-func fabricMutationScopeForRequest(r *http.Request, body []byte) (fabricMutationScope, bool) {
+func fabricMutationScopeForRequest(ctx context.Context, resolver fabricMutationScopeResolver, r *http.Request, body []byte) (fabricMutationScope, bool) {
 	var input map[string]any
 	if len(body) == 0 || json.Unmarshal(body, &input) != nil {
 		return fabricMutationScope{}, false
@@ -605,7 +693,7 @@ func fabricMutationScopeForRequest(r *http.Request, body []byte) (fabricMutation
 		result, _ := input[name].(string)
 		return strings.TrimSpace(result)
 	}
-	scope := fabricMutationScope{AccountID: value("accountId"), WorkspaceID: value("workspaceId"), OperationID: strings.TrimSpace(r.Header.Get("Idempotency-Key"))}
+	scope := fabricMutationScope{Caller: "control-plane", AccountID: value("accountId"), WorkspaceID: value("workspaceId"), OperationID: strings.TrimSpace(r.Header.Get("Idempotency-Key"))}
 	path := strings.Trim(r.URL.Path, "/")
 	parts := strings.Split(path, "/")
 	switch {
@@ -620,6 +708,26 @@ func fabricMutationScopeForRequest(r *http.Request, body []byte) (fabricMutation
 		}
 	case r.URL.Path == "/fabric/gateway-secrets":
 		scope.ResourceKind, scope.ResourceID, scope.Action = "gateway_secret", scope.WorkspaceID, "upsert_gateway_secret"
+	case r.URL.Path == "/fabric/storage-snapshots":
+		scope.ResourceKind, scope.ResourceID, scope.Action = "storage_snapshot", value("volumeId"), "create_storage_snapshot"
+	case r.URL.Path == "/fabric/storage-attachments":
+		computeID, volumeID := value("computeId"), value("volumeId")
+		if computeID != "" && volumeID != "" {
+			scope.ResourceKind, scope.ResourceID, scope.Action = "storage_attachment", computeID+":"+volumeID, "create_storage_attachment"
+		}
+	case r.URL.Path == "/fabric/compute-pool-head/terminalization":
+		if resolver == nil {
+			return fabricMutationScope{}, false
+		}
+		input := fabric.ComputePoolHeadTerminalizationInput{
+			NodePoolID: value("nodePoolId"), ApprovalID: value("approvalId"), ApprovalDigest: value("approvalDigest"), IdempotencyKey: scope.OperationID,
+		}
+		authorization, err := resolver.ComputePoolHeadTerminalizationAuthorization(ctx, input)
+		if err == nil && authorization.NodePoolID == input.NodePoolID && input.ApprovalID == scope.OperationID {
+			scope.Caller = "operator"
+			scope.AccountID, scope.WorkspaceID = authorization.AccountID, authorization.WorkspaceID
+			scope.ResourceKind, scope.ResourceID, scope.Action = "compute_pool_head", authorization.NodePoolID, "terminalize_compute_pool_head"
+		}
 	case r.URL.Path == "/fabric/workspace-launches/stages/ensure":
 		binding, _ := input["binding"].(map[string]any)
 		bindingValue := func(name string) string {
@@ -647,10 +755,26 @@ func fabricMutationScopeForRequest(r *http.Request, body []byte) (fabricMutation
 		}
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "storage-attachments" && parts[2] != "" && parts[3] == "detach":
 		scope.ResourceKind, scope.ResourceID, scope.Action = "storage_attachment", parts[2], "detach_storage_attachment"
+	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "storage-snapshots" && parts[2] != "":
+		if value("snapshotId") != parts[2] {
+			return fabricMutationScope{}, false
+		}
+		scope.ResourceKind, scope.ResourceID = "storage_snapshot", parts[2]
+		switch parts[3] {
+		case "restore":
+			scope.Action = "restore_storage_snapshot"
+		case "destroy":
+			scope.Action = "destroy_storage_snapshot"
+		}
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "destroy":
 		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime", parts[2], "destroy_workspace_runtime"
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "gateway-secret":
 		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime_gateway_secret", parts[2], "bind_workspace_runtime_gateway_secret"
+	case len(parts) == 5 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "credentials" && parts[4] == "reveal":
+		if value("workspaceId") != parts[2] {
+			return fabricMutationScope{}, false
+		}
+		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime_credential", parts[2], "reveal_workspace_runtime_credential"
 	}
 	return scope, scope.AccountID != "" && scope.WorkspaceID != "" && scope.ResourceKind != "" && scope.ResourceID != "" && scope.Action != "" && scope.OperationID != ""
 }
@@ -678,7 +802,7 @@ func verifyFabricCapability(raw, key string, expected fabricMutationScope, body 
 		return false
 	}
 	digest := sha256.Sum256(body)
-	return claims.Version == 1 && claims.Caller == "control-plane" && claims.AccountID == expected.AccountID &&
+	return claims.Version == 1 && claims.Caller == expected.Caller && claims.AccountID == expected.AccountID &&
 		claims.WorkspaceID == expected.WorkspaceID && claims.ResourceKind == expected.ResourceKind && claims.ResourceID == expected.ResourceID &&
 		claims.Action == expected.Action && claims.OperationID == expected.OperationID && claims.ExpiresAt > now.Unix() &&
 		claims.ExpiresAt <= now.Add(2*time.Minute).Unix() && claims.BodySHA256 == hex.EncodeToString(digest[:])
@@ -710,6 +834,36 @@ func decodeWrite(w http.ResponseWriter, r *http.Request, idempotencyKey *string,
 		return false
 	}
 	return true
+}
+
+func limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := readBoundedBody(r); err != nil {
+			if errors.Is(err, errRequestBodyTooLarge) {
+				writeError(w, http.StatusRequestEntityTooLarge, "request_body_too_large")
+				return
+			}
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func readBoundedBody(r *http.Request) ([]byte, error) {
+	reader := r.Body
+	if reader == nil {
+		reader = http.NoBody
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, maxJSONBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxJSONBodyBytes {
+		return nil, errRequestBodyTooLarge
+	}
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	return data, nil
 }
 
 func exactQueryValue(r *http.Request, name string) (string, bool) {

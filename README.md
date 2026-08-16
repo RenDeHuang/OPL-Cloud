@@ -19,7 +19,7 @@ Machine boundary: Human-readable product and architecture entry. This repository
 -->
 
 <p align="center">
-  <img src="assets/branding/opl-cloud-overview-v2.png" alt="OPL Cloud carries work from local projects into online continuation, private data, remote compute, shared review, and optional publication" width="100%" />
+  <img src="assets/branding/opl-cloud-overview-v2.png" alt="OPL Cloud carries work from local projects into online continuation, private data, remote compute, shared review, and service delivery" width="100%" />
 </p>
 
 ## Why OPL Cloud
@@ -39,6 +39,13 @@ OPL Cloud keeps those needs in one OPL work chain:
 - keep approval, usage, provenance, review, and continuation connected to the
   original work;
 - leave professional judgment with the responsible domain Agent and human owner.
+
+OPL Cloud is the fourth product layer in the stable OPL ecology and is under active implementation:
+`OPL Base` supplies the Framework Host, `OPL App` supplies the local workbench,
+`OPL Packages` supply installable capabilities, and Cloud adds online Workspace,
+governance, hosted resources, collaboration, and Agent services. Cloud consumes
+their owner references; it does not replace Base, publish Packages, or create a
+second Cordis Host.
 
 ## Product Model
 
@@ -82,7 +89,7 @@ Local OPL App project
 -> use approved Gateway and Fabric capabilities
 -> return results and review to the workbench
 -> preserve review and continuation refs in Ledger
--> optionally publish an exact Agent Revision through OPL Serve
+-> publish an exact Agent Revision through OPL Serve when the service is ready
 ```
 
 Each account may own zero or more independent OPL Workspaces. Every Workspace
@@ -116,7 +123,7 @@ steps; it is not a readiness dashboard.
 
 ## Start Here
 
-- [Read the OPL Cloud whitepaper](https://gaofeng21cn.github.io/one-person-lab-cloud/latest/whitepapers/opl-cloud-whitepaper.html)
+- [Read the OPL Cloud whitepaper](https://gaofeng21cn.github.io/one-person-lab/latest/whitepapers/opl-cloud-whitepaper.html)
 - [Documentation and owner map](docs/README.md)
 - [Architecture and authority boundaries](docs/architecture.md)
 - [Current implementation capability](docs/status.md)

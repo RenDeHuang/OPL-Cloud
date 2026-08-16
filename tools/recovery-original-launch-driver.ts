@@ -382,6 +382,24 @@ function listPayload(result: { payload?: unknown }): unknown[] {
   if (Array.isArray((value as Record<string, unknown>)?.items)) return (value as Record<string, unknown>).items as unknown[];
   throw new Error("recovery_acceptance_readback_invalid");
 }
+async function readFabricOperations(requestOptions: any): Promise<any[]> {
+  const operations: any[] = [];
+  const seenCursors = new Set<string>();
+  let cursor = "";
+  for (;;) {
+    const path = `/fabric/operations?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const page = (await requestJson({ ...requestOptions, path })).payload as Record<string, unknown>;
+    if (!page || !Array.isArray(page.operations) || page.nextCursor !== undefined && typeof page.nextCursor !== "string") {
+      throw new Error("recovery_acceptance_fabric_operations_page_invalid");
+    }
+    operations.push(...page.operations);
+    const nextCursor = String(page.nextCursor || "");
+    if (!nextCursor) return operations;
+    if (seenCursors.has(nextCursor)) throw new Error("recovery_acceptance_fabric_operations_cursor_repeated");
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+}
 function sourceData(result: { payload?: unknown; response?: Response }, source: string, allowEmpty = false): any {
   return sourceEnvelope(result as any, source, allowEmpty).data;
 }
@@ -506,7 +524,7 @@ export async function runRecoveryAcceptanceOriginalLaunch(options: RecoveryAccep
     launch = next;
   }
   if (launch.status !== "manual_review" || launch.phase !== "storage_fulfilling" || launch.errorCode !== "recovery_acceptance_canary_manual_review" || launch.storageId || launch.runtimeServiceName || launch.receiptId || !launch.computeAllocationId || !verifyContinuationBudgets(launch)) throw new Error("recovery_acceptance_manual_review_invalid");
-  const operations = listPayload(await requestJson({ ...fabricOptions, path: "/fabric/operations" })).filter((operation: any) => operation?.workspaceId === approval.launch.workspaceId);
+  const operations = (await readFabricOperations(fabricOptions)).filter((operation: any) => operation?.workspaceId === approval.launch.workspaceId);
   const computeOperations = operations.filter((operation: any) => operation?.action === "create_compute_allocation" && operation?.status === "succeeded" && operation?.resourceId === launch.computeAllocationId);
   const forbiddenOperations = operations.filter((operation: any) => ["create_storage_volume", "create_storage_attachment", "upsert_gateway_secret", "create_workspace_runtime"].includes(operation?.action));
   if (computeOperations.length !== 1 || forbiddenOperations.length !== 0 || !verifyComputeBudgets(computeOperations[0])) throw new Error("recovery_acceptance_fabric_operation_counts_invalid");

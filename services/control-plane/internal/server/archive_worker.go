@@ -13,7 +13,10 @@ const defaultRetentionInterval = 24 * time.Hour
 
 func retentionWorkerEnabled() bool {
 	value := strings.TrimSpace(os.Getenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED"))
-	return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
+	if value == "0" || strings.EqualFold(value, "false") || strings.EqualFold(value, "no") {
+		return false
+	}
+	return value == "" || value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
 }
 
 func retentionWorkerInterval() time.Duration {

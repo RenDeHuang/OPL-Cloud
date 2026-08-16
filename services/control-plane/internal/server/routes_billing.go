@@ -65,7 +65,7 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 		}
 		accountID := stringValue(user["accountId"])
 		receiptID := strings.TrimSpace(r.PathValue("id"))
-		receipt, err := service.BillingReceipt(r.Context(), receiptID)
+		receipt, err := service.BillingReceiptForAccount(r.Context(), accountID, "", receiptID)
 		if err != nil {
 			writeSourceEnvelope(w, http.StatusBadGateway, "ledger", "unavailable", nil)
 			return

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"reflect"
@@ -281,24 +282,6 @@ func TestPostgresPersistedClaimPendingConcurrentReplayWaitsForControlPlaneDecisi
 	ownership, ownershipErr := secondStore.MachineOwnership(context.Background(), allocation.ID)
 	if ownershipErr != nil || ownership.Status != "quarantined" {
 		t.Fatalf("PostgreSQL ownership=%#v err=%v", ownership, ownershipErr)
-	}
-}
-
-func waitForPostgresComputeLeaseExpiry(t *testing.T, store *PostgresOperationStore, resourceID string) {
-	t.Helper()
-	var remainingMilliseconds int64
-	if err := store.db.QueryRowContext(context.Background(), `
-		SELECT COALESCE(CEIL(EXTRACT(EPOCH FROM GREATEST(
-			compute_pool_lease_expires_at - clock_timestamp(), interval '0 seconds'
-		)) * 1000), 0)::bigint
-		FROM fabric_operations
-		WHERE action = 'create_compute_allocation' AND resource_id = $1`, resourceID).Scan(&remainingMilliseconds); err != nil {
-		t.Fatal(err)
-	}
-	if remainingMilliseconds > 0 {
-		timer := time.NewTimer(time.Duration(remainingMilliseconds+10) * time.Millisecond)
-		defer timer.Stop()
-		<-timer.C
 	}
 }
 
@@ -1093,16 +1076,6 @@ func postgresComputeClaimRecoveryBinding(suffix string) computeClaimRecoveryBind
 	}
 }
 
-func postgresComputeClaimOwnership(suffix string) MachineOwnership {
-	return MachineOwnership{
-		ID: "owner-postgres-" + suffix, ResourceID: "ca-postgres-" + suffix,
-		AccountID: "acct-postgres-" + suffix, WorkspaceID: "workspace-postgres-" + suffix,
-		PackageID: "basic", NodePoolID: "np-postgres-basic", MachineID: "machine-postgres-" + suffix,
-		InstanceID: "ins-postgres-" + suffix, NodeName: "node-postgres-" + suffix, Status: "quarantined",
-		ProviderRequestID: "redacted-provider-reference", ClaimedAt: time.Date(2026, 7, 28, 1, 0, 0, 0, time.UTC),
-	}
-}
-
 func TestPostgresOperationStoreReadsExactIdentitiesAndFailsClosedOnDuplicates(t *testing.T) {
 	t.Run("action idempotency", func(t *testing.T) {
 		store, err := newTestPostgresOperationStore(fabricTestDatabaseURL(t))
@@ -1169,6 +1142,112 @@ func TestPostgresOperationStoreReadsExactIdentitiesAndFailsClosedOnDuplicates(t 
 	})
 }
 
+func TestPostgresOperationStoreBoundsJobHistoryAndOperationPages(t *testing.T) {
+	ctx := context.Background()
+	store, err := newTestPostgresOperationStore(fabricTestDatabaseURL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.client.Close()
+
+	now := time.Date(2026, 8, 14, 4, 0, 0, 0, time.UTC)
+	service := NewServiceWithOperationStore(testProvider{}, store)
+	service.now = func() time.Time { return now }
+	created, err := service.CreateJob(ctx, JobInput{
+		OrganizationID: "org-postgres", WorkspaceID: "workspace-postgres", ProjectID: "project-postgres",
+		TaskID: "task-postgres", RequestID: "request-postgres", ApprovalID: "approval-postgres", IdempotencyKey: "job-postgres-bounded",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := service.ClaimJob(ctx, created.JobID, JobClaimInput{RunnerID: "runner-postgres", IdempotencyKey: "claim-postgres-bounded"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 50; index++ {
+		now = now.Add(time.Second)
+		service.now = func() time.Time { return now }
+		if _, err := service.HeartbeatJob(ctx, created.JobID, JobHeartbeatInput{
+			RunnerID: "runner-postgres", LeaseToken: claimed.LeaseToken, IdempotencyKey: fmt.Sprintf("heartbeat-postgres-%d", index),
+		}); err != nil {
+			t.Fatalf("heartbeat %d: %v", index, err)
+		}
+	}
+	var jobOperationCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM fabric_operations WHERE resource_kind = 'job' AND resource_id = $1`, created.JobID).Scan(&jobOperationCount); err != nil {
+		t.Fatal(err)
+	}
+	if jobOperationCount != 3 {
+		t.Fatalf("job operation count=%d, want create + claim + one heartbeat", jobOperationCount)
+	}
+	latest, found, err := store.LatestResourceOperation(ctx, "job", created.JobID)
+	var latestJob Job
+	if err != nil || !found || latest.Action != "heartbeat_job" || !decodeOperationResource(latest, &latestJob) || latestJob.LeaseExpiresAt == nil || !latestJob.LeaseExpiresAt.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("latest=%#v job=%#v found=%v err=%v", latest, latestJob, found, err)
+	}
+
+	claim, found, err := store.OperationByResourceActionIdempotency(ctx, "job", created.JobID, "claim_job", "claim-postgres-bounded")
+	if err != nil || !found || claim.Action != "claim_job" {
+		t.Fatalf("claim=%#v found=%v err=%v", claim, found, err)
+	}
+	duplicateClaim := claim
+	duplicateClaim.ID, duplicateClaim.OperationID = "fop-postgres-duplicate-job-claim", "op-postgres-duplicate-job-claim"
+	duplicateClaim.CreatedAt = now.Add(time.Second)
+	if err := store.Append(ctx, duplicateClaim); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.OperationByResourceActionIdempotency(ctx, "job", created.JobID, "claim_job", "claim-postgres-bounded"); !errors.Is(err, ErrOperationIdentityConflict) {
+		t.Fatalf("duplicate resource identity error=%v", err)
+	}
+
+	for index := 0; index < 2; index++ {
+		operation := newOperation(
+			"create_workspace_runtime", "workspace_runtime", "workspace-runtime-postgres", "acct-postgres", "workspace-runtime-postgres",
+			fmt.Sprintf("runtime-postgres-%d", index), fmt.Sprintf("runtime-hash-%d", index), now.Add(time.Duration(index+2)*time.Second),
+		)
+		operation.ID = fmt.Sprintf("fop-runtime-postgres-%d", index)
+		operation.Status = "succeeded"
+		operation.CreatedAt = operation.StartedAt
+		fillOperationResource(&operation, WorkspaceRuntime{ID: fmt.Sprintf("runtime-postgres-%d", index), WorkspaceID: operation.WorkspaceID, OperationID: operation.IdempotencyKey})
+		if err := store.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	candidates, err := store.WorkspaceRuntimeIdentityCandidates(ctx, "workspace-runtime-postgres")
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("runtime candidates=%#v err=%v", candidates, err)
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	for {
+		page, err := store.ListPage(ctx, cursor, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, operation := range page.Operations {
+			if seen[operation.ID] {
+				t.Fatalf("operation %q appeared in multiple pages", operation.ID)
+			}
+			seen[operation.ID] = true
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		if page.NextCursor == cursor {
+			t.Fatalf("cursor did not advance: %q", cursor)
+		}
+		cursor = page.NextCursor
+	}
+	var totalOperationCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM fabric_operations`).Scan(&totalOperationCount); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != totalOperationCount {
+		t.Fatalf("paged operations=%d total=%d", len(seen), totalOperationCount)
+	}
+}
+
 func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	first, err := newTestPostgresOperationStore(databaseURL)
@@ -1187,8 +1266,8 @@ func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'fabric'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read Fabric migration journal: %v", err)
 	}
-	if migrationCount != 6 {
-		t.Fatalf("Fabric migration count = %d, want 6", migrationCount)
+	if migrationCount != 7 {
+		t.Fatalf("Fabric migration count = %d, want 7", migrationCount)
 	}
 	if _, err := db.Exec(`DROP TABLE machine_ownerships`); err != nil {
 		t.Fatal(err)

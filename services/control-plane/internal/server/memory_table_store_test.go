@@ -697,22 +697,6 @@ func (s *memoryTableStore) PersistWorkspaceLaunchReconcile(_ context.Context, up
 	return errWorkspaceLaunchCASConflict
 }
 
-func (s *memoryTableStore) UpcastLegacyWorkspaceLaunch(_ context.Context, update workspaceLaunchLegacyCAS) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i, row := range s.runtimeOps {
-		if stringValue(row["id"]) != update.OperationID {
-			continue
-		}
-		if !workspaceLaunchLegacyUpcastMatches(row, update) {
-			return errWorkspaceLaunchCASConflict
-		}
-		s.runtimeOps[i] = cloneMap(update.DesiredOperation)
-		return nil
-	}
-	return errWorkspaceLaunchCASConflict
-}
-
 func (s *memoryTableStore) ClaimWorkspaceRenewal(_ context.Context, claim workspaceRenewalClaimCAS) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -977,6 +961,26 @@ func (s *memoryTableStore) ListSupportMappings(_ context.Context, accountID stri
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return filteredRecords(s.support, accountID)
+}
+
+func (s *memoryTableStore) CreateSupportMapping(_ context.Context, row map[string]any, limit int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := stringValue(row["id"])
+	accountID := stringValue(row["accountId"])
+	if _, exists := s.support[id]; !exists {
+		count := 0
+		for _, existing := range s.support {
+			if stringValue(existing["accountId"]) == accountID {
+				count++
+			}
+		}
+		if count >= limit {
+			return errors.New("support_mapping_limit_reached")
+		}
+	}
+	s.support[id] = cloneMap(row)
+	return nil
 }
 
 func (s *memoryTableStore) SaveSupportMapping(_ context.Context, row map[string]any) error {

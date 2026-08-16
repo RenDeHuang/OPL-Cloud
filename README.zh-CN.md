@@ -19,7 +19,7 @@ Machine boundary: 面向人的产品与架构入口。本仓同时持有 Cloud �
 -->
 
 <p align="center">
-  <img src="assets/branding/opl-cloud-overview-v2.png" alt="OPL Cloud 让工作从本机延伸到在线继续、私有数据、远端计算、共同审阅和按需发布" width="100%" />
+  <img src="assets/branding/opl-cloud-overview-v2.png" alt="OPL Cloud 让工作从本机延伸到在线继续、私有数据、远端计算、共同审阅和服务交付" width="100%" />
 </p>
 
 ## 为什么需要 OPL Cloud
@@ -33,6 +33,11 @@ OPL Cloud 定义如何让这些需求留在同一条 OPL 工作链中：
 - 把经过验证的精确 Agent Revision 发布为稳定 API、嵌入组件或托管界面；
 - 让批准、用量、来源、审阅和继续入口始终连接到原工作；
 - 把专业判断留给对应领域 Agent 和人类负责人。
+
+OPL Cloud 是 OPL 稳定生态中正在落地的第四个产品层：`OPL Base` 提供 Framework Host，
+`OPL App` 提供本地工作台，`OPL Packages` 提供可安装能力，Cloud 再增加在线 Workspace、
+账号治理、托管资源、协作和 Agent 服务。Cloud 只消费这些 owner 的引用，不替代 Base、
+发布 Packages，也不创建第二个 Cordis Host。
 
 ## 产品模型
 
@@ -66,11 +71,11 @@ Invocation 与 Session 执行生命周期；领域 Agent 持有专业策略、�
 
 ```text
 本机 OPL App 项目
--> 按需进入在线 OPL Workspace
+-> 进入在线 OPL Workspace
 -> 使用获准的 Gateway / Fabric 能力
 -> 结果与审阅回到工作台
 -> Ledger refs 保留复查和继续线索
--> 按需通过 OPL Serve 发布精确 Agent Revision
+-> 通过 OPL Serve 发布精确 Agent Revision
 ```
 
 每个用户账号可以拥有零个或多个相互独立的 OPL Workspace。每个 Workspace 都有独立的稳定 identity、URL、runtime、资源绑定、账期、凭据和回执。OPL Cloud 在产品层不设置固定数量上限；每次创建仍受余额、provider 容量、额度与策略约束。一个账号也可以发布多个 Agent Service，因为 Service 是部署资源，不是 Workspace。
@@ -85,7 +90,7 @@ Invocation 与 Session 执行生命周期；领域 Agent 持有专业策略、�
 
 ## 从这里开始
 
-- [在线阅读 OPL Cloud 白皮书](https://gaofeng21cn.github.io/one-person-lab-cloud/latest/whitepapers/opl-cloud-whitepaper.html)
+- [在线阅读 OPL Cloud 白皮书](https://gaofeng21cn.github.io/one-person-lab/latest/whitepapers/opl-cloud-whitepaper.html)
 - [文档索引与 owner 映射](docs/README.md)
 - [架构与权威边界](docs/architecture.md)
 - [当前实现能力](docs/status.md)

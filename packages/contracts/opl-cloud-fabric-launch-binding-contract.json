@@ -15,32 +15,6 @@
     "bindingType": "WorkspaceLaunchStageBinding",
     "ensureIdempotencyHeader": "Idempotency-Key equals binding.idempotencyKey"
   },
-  "legacyMigrationPointRead": {
-    "route": "POST /fabric/workspace-launches/legacy-bindings/read",
-    "lifecycle": "temporary_until_all_quiesced_schema2_manual_review_launches_are_migrated_or_retired",
-    "mode": "get_only_no_operation_store_or_provider_mutation",
-    "requestIdentity": [
-      "launchOperationId",
-      "accountId",
-      "workspaceId",
-      "stage",
-      "resourceRef",
-      "persistedOperationRef"
-    ],
-    "persistedOperationRefSemantics": "additional_exact_logical_operation_binding_only_when_schema2_persisted_that_identity",
-    "preflightHistoryRead": "deterministic_exact_fabric_preflight_binding_ref_from_launch_account_workspace_package_size_image_request_hash_and_provider_profile_then_existing_record_point_read",
-    "historyRead": "fabric_owner_store_exact_action_resource_kind_resource_id_account_workspace_scope",
-    "admission": "owner_store_scope_proves_exactly_one_logical_operation_and_one_succeeded_record_then_owner_authoritative_current_resource_readback_matches",
-    "storeMutation": "operation_store_count_and_content_unchanged_by_point_read",
-    "nonUniqueOrUnavailable": "conflict_or_unknown_without_migration_cas_or_external_mutation",
-    "forbiddenInference": [
-      "idempotency_suffix",
-      "provider_tag",
-      "provider_resource_name",
-      "unscoped_operation_list",
-      "current_ready_implies_historical_attempted_or_confirmed"
-    ]
-  },
   "preflight": {
     "mode": "read_only_admission",
     "configuredProfileSelectionOwner": "instance_repository",

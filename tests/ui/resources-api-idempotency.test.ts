@@ -124,5 +124,7 @@ test("Workspace credential and renewal commands use explicit routes and mutation
     "/api/workspaces/workspace-alpha/runtime-credentials/rotate",
     "/api/workspaces/workspace-alpha/auto-renew"
   ]);
-  assert.deepEqual(requests.map(({ init }) => new Headers(init?.headers).get("Idempotency-Key")), [null, "rotate-once", "renew-once"]);
+  const keys = requests.map(({ init }) => new Headers(init?.headers).get("Idempotency-Key"));
+  assert.match(keys[0] ?? "", /^runtime-credential-reveal:/);
+  assert.deepEqual(keys.slice(1), ["rotate-once", "renew-once"]);
 });

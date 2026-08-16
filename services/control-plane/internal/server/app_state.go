@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -78,18 +79,16 @@ var (
 	errMembershipAccountMismatch = errors.New("membership_account_mismatch")
 )
 
-func newControlPlaneApp() *controlPlaneServer {
-	return newControlPlaneAppEmpty()
-}
-
 func newControlPlaneAppWithStore(store StateStore) (*controlPlaneServer, error) {
-	app := newControlPlaneAppEmpty()
-	app.store = store
-	if tableStore, ok := store.(controlPlaneTableStore); ok {
-		app.tables = tableStore
+	tableStore, ok := store.(controlPlaneTableStore)
+	if !ok {
+		return nil, errors.New("control_plane_store_must_implement_table_store")
 	}
-	if app.tables == nil {
-		app.tables = newMemoryTableStore()
+	app := &controlPlaneServer{
+		store:              store,
+		tables:             tableStore,
+		sessionCredentials: newSessionCredentialVault(time.Now),
+		loginRateLimits:    map[string]loginFailure{},
 	}
 	if err := app.importBootstrapUsers(); err != nil {
 		return nil, err
@@ -161,15 +160,6 @@ func (app *controlPlaneServer) ensureBootstrapAdmin(ctx context.Context, service
 	return app.tables.CreateProvisionedAccount(ctx, bootstrapAccount, bootstrapUser, bootstrapOrganization, bootstrapMembership)
 }
 
-func newControlPlaneAppEmpty() *controlPlaneServer {
-	tables := newMemoryTableStore()
-	return &controlPlaneServer{
-		tables:             tables,
-		sessionCredentials: newSessionCredentialVault(time.Now),
-		loginRateLimits:    map[string]loginFailure{},
-	}
-}
-
 func (app *controlPlaneServer) state(accountID string, computePools []any) map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
@@ -190,7 +180,6 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 		"storageAttachments":     rowsAsAnyFromMaps(app.listAttachments(accountID)),
 		"accounts":               accounts,
 		"supportTickets":         rowsAsAnyFromMaps(app.listSupportMappings(accountID)),
-		"auditEvents":            rowsAsAnyFromMaps(app.listAuditEvents(accountID)),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(accountID),
 		"notifications":          []any{},
 		"runtimeOperations":      rowsAsAnyFromMaps(app.runtimeOperationRows(runtimeOperationQuery{AccountID: accountID})),
@@ -240,10 +229,6 @@ func (app *controlPlaneServer) listAttachments(accountID string) []map[string]an
 		return nil
 	}
 	return rows
-}
-
-func (app *controlPlaneServer) attachmentRecordSet(accountID string) controlPlaneRecordSet {
-	return recordSetFromRows(app.listAttachments(accountID))
 }
 
 func (app *controlPlaneServer) listWorkspaces(accountID string) []map[string]any {
@@ -327,13 +312,22 @@ func failedRuntimeOperations(operations []map[string]any) []any {
 }
 
 func workspaceServiceTarget(serviceName string) (*url.URL, error) {
-	if strings.HasPrefix(serviceName, "http://") || strings.HasPrefix(serviceName, "https://") {
-		return url.Parse(serviceName)
+	value := strings.TrimSpace(serviceName)
+	if value == "" || len(value) > 63 || strings.ContainsAny(value, ".:/@\\\r\n") || !strings.HasPrefix(value, "opl-") {
+		return nil, errors.New("invalid_workspace_runtime_destination")
 	}
-	if strings.Contains(serviceName, ":") {
-		return url.Parse("http://" + serviceName)
+	if net.ParseIP(value) != nil || strings.EqualFold(value, "localhost") || strings.HasSuffix(strings.ToLower(value), ".localhost") {
+		return nil, errors.New("invalid_workspace_runtime_destination")
 	}
-	return url.Parse("http://" + serviceName + ":3000")
+	if value[len(value)-1] == '-' {
+		return nil, errors.New("invalid_workspace_runtime_destination")
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+			return nil, errors.New("invalid_workspace_runtime_destination")
+		}
+	}
+	return url.Parse("http://" + value + ":3000")
 }
 
 func workspaceIDFromPath(path string) string {
@@ -486,19 +480,6 @@ func nested(root map[string]any, keys ...string) any {
 	return current
 }
 
-func number(value any) float64 {
-	switch typed := value.(type) {
-	case float64:
-		return typed
-	case int:
-		return float64(typed)
-	case int64:
-		return float64(typed)
-	default:
-		return 0
-	}
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -523,31 +504,6 @@ func cloneStateTable(input controlPlaneRecordSet) controlPlaneRecordSet {
 	output := controlPlaneRecordSet{}
 	for key, value := range input {
 		output[key] = cloneMap(value)
-	}
-	return output
-}
-
-func values(input controlPlaneRecordSet) []any {
-	keys := make([]string, 0, len(input))
-	for key := range input {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	output := make([]any, 0, len(keys))
-	for _, key := range keys {
-		output = append(output, cloneMap(input[key]))
-	}
-	return output
-}
-
-func filteredValues(input controlPlaneRecordSet, include func(map[string]any) bool) []any {
-	rows := values(input)
-	output := make([]any, 0, len(rows))
-	for _, row := range rows {
-		item := row.(map[string]any)
-		if include(item) {
-			output = append(output, item)
-		}
 	}
 	return output
 }
@@ -593,15 +549,6 @@ func stringSliceField(input map[string]any, key string) []string {
 		}
 	}
 	return output
-}
-
-func firstNonNil(values ...any) any {
-	for _, value := range values {
-		if value != nil {
-			return value
-		}
-	}
-	return nil
 }
 
 func mapContainsAnyID(input map[string]any, ids ...string) bool {

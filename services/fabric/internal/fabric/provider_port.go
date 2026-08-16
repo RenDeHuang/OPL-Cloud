@@ -107,14 +107,6 @@ type storageVolumeStatusReader interface {
 	ReadStorageVolumeStatus(context.Context, StorageVolume) (StorageVolume, error)
 }
 
-type computeAllocationReadbackProvider interface {
-	ReadComputeAllocation(context.Context, ComputeAllocation) (ComputeAllocation, error)
-}
-
-type computeAllocationDiscoveryProvider interface {
-	DiscoverComputeAllocation(context.Context, ComputeAllocation, ComputeAllocationPreparation) (ComputeAllocation, error)
-}
-
 type runtimeHealthSummaryProvider interface {
 	RuntimeHealthSummary(context.Context) (RuntimeHealthSummary, error)
 }

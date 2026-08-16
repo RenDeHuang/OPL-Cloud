@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_MODE,
+  SUCCESS_STATUSES,
+  readProductionBasicAcceptanceBReconcile,
   reconcileProductionBasicAcceptanceBAccount,
   runProductionBasicAcceptanceBReconcileCli,
   validateProductionBasicAcceptanceBReconcileReadback
@@ -38,12 +40,20 @@ function routeData(overrides = {}) {
     customerIdentitySha256: DIGEST,
     accountProvisionIdentitySha256: DIGEST,
     walletAdjustmentIdentitySha256: DIGEST,
+    approvalIdentitySha256: DIGEST,
+    workspaceDebitIdentitySha256: DIGEST,
     localGraph: "complete",
     remoteIdentity: "active",
     customerLogin: "not_attempted",
     wallet: "available",
     walletUsdMicros: "60000000",
     walletAdjustment: "succeeded",
+    approvalState: "bound",
+    workspaceLaunchState: "absent",
+    workspaceState: "absent",
+    workspaceKeyState: "absent",
+    workspaceReceiptState: "absent",
+    workspaceDebitState: "absent",
     workspaceCount: 0,
     launchCount: 0,
     keyCount: 0,
@@ -82,7 +92,8 @@ function baseOptions(fetchImpl) {
   };
 }
 
-test("reconcile readback accepts prepared, absent, and unknown states with zero writes", () => {
+test("only prepared is a successful reconcile status", () => {
+  assert.deepEqual([...SUCCESS_STATUSES], ["prepared"]);
   for (const status of ["prepared", "safe_to_retry_absent", "unknown"]) {
     const value = {
       schemaVersion: 1,
@@ -92,19 +103,27 @@ test("reconcile readback accepts prepared, absent, and unknown states with zero 
       customerIdentitySha256: DIGEST,
       accountProvisionIdentitySha256: DIGEST,
       walletAdjustmentIdentitySha256: DIGEST,
+      approvalIdentitySha256: DIGEST,
+      workspaceDebitIdentitySha256: DIGEST,
       localGraph: status === "safe_to_retry_absent" ? "absent" : status === "unknown" ? "unknown" : "complete",
       remoteIdentity: status === "safe_to_retry_absent" ? "absent" : status === "unknown" ? "unknown" : "active",
       customerLogin: status === "prepared" ? "active" : status === "safe_to_retry_absent" ? "not_attempted" : "unknown",
       wallet: status === "prepared" ? "available" : status === "safe_to_retry_absent" ? "absent" : "unknown",
       walletUsdMicros: status === "prepared" ? "60000000" : "",
       walletAdjustment: status === "prepared" ? "succeeded" : status === "safe_to_retry_absent" ? "absent" : "unknown",
+      approvalState: status === "prepared" ? "bound" : "unknown",
+      workspaceLaunchState: status === "prepared" ? "absent" : "unknown",
+      workspaceState: status === "prepared" ? "absent" : "unknown",
+      workspaceKeyState: status === "prepared" ? "absent" : "unknown",
+      workspaceReceiptState: status === "prepared" ? "absent" : "unknown",
+      workspaceDebitState: status === "prepared" ? "absent" : "unknown",
       workspaceCount: 0,
       launchCount: 0,
       keyCount: 0,
       receiptCount: 0,
-      failureStage: status === "unknown" ? "remote_identity" : "none",
+      failureStage: status === "prepared" ? "none" : status === "unknown" ? "remote_identity" : "local_graph",
       readbackError: status === "unknown" ? "sub2api_authority_unavailable" : "none",
-      errorCode: status === "unknown" ? "acceptance_b_account_reconcile_unknown" : "none",
+      errorCode: status === "prepared" ? "none" : status === "unknown" ? "acceptance_b_account_reconcile_unknown" : "acceptance_b_account_reconcile_local_graph",
       writeCounts: { ...ZERO_COUNTS },
       runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
     };
@@ -141,6 +160,90 @@ test("reconcile account mode uses only login and GET readbacks for an active acc
   assert.deepEqual(result.writeCounts, ZERO_COUNTS);
   assert.deepEqual(requests.map((request) => request.method), ["POST", "GET", "POST", "GET", "GET", "GET", "GET", "GET"]);
   assert.equal(requests.filter((request) => request.method === "POST").length, 2);
+});
+
+test("reconcile read helper reuses existing admin and customer sessions", async () => {
+  const requests = [];
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    requests.push({ method: init.method || "GET", path: parsed.pathname });
+    if (parsed.pathname === "/api/operator/account-reconciliation") return response(envelope("control-plane+sub2api+ledger", routeData()));
+    if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
+    if (parsed.pathname === "/api/workspaces") return response(envelope("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/workspace-launches") return response([]);
+    if (parsed.pathname === "/api/gateway/keys") return response(envelope("sub2api", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/billing/receipts") return response(envelope("ledger", { receipts: [], nextCursor: "", hasMore: false }, "empty"));
+    throw new Error(`unexpected_request:${parsed.pathname}`);
+  };
+  const result = await readProductionBasicAcceptanceBReconcile({
+    origin: "https://cloud.medopl.cn",
+    customerEmail: EMAIL,
+    mergedSha: MERGED_SHA,
+    adminAuth: { cookie: "opl_session=admin", csrfToken: "csrf", user: { accountId: "acct-admin", role: "admin" } },
+    customerAuth: { cookie: "opl_session=owner", csrfToken: "csrf", user: { accountId: "acct-reconcile", role: "owner" } },
+    fetchImpl,
+    now: new Date("2026-08-04T00:00:00.000Z")
+  });
+  assert.equal(result.status, "prepared");
+  assert.equal(requests.every((request) => request.method === "GET"), true);
+  assert.equal(requests.some((request) => request.path === "/api/auth/login"), false);
+});
+
+test("reconcile treats non-Workspace gateway keys as a fresh Acceptance B baseline", async () => {
+  const keys = Array.from({ length: 5 }, (_, index) => ({
+    id: `general-${index + 1}`,
+    kind: "general",
+    status: "active"
+  }));
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/api/auth/login") {
+      const body = JSON.parse(init.body);
+      return loginPayload(body.email === ADMIN_EMAIL ? "acct-admin" : "acct-reconcile", body.email === ADMIN_EMAIL ? "admin" : "owner");
+    }
+    if (parsed.pathname === "/api/operator/account-reconciliation") {
+      return response(envelope("control-plane+sub2api+ledger", routeData()));
+    }
+    if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
+    if (parsed.pathname === "/api/workspaces") return response(envelope("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/workspace-launches") return response([]);
+    if (parsed.pathname === "/api/gateway/keys") return response(envelope("sub2api", { items: keys, total: keys.length, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/billing/receipts") return response(envelope("ledger", { receipts: [], nextCursor: "", hasMore: false }, "empty"));
+    throw new Error(`unexpected_request:${parsed.pathname}`);
+  };
+
+  const result = await reconcileProductionBasicAcceptanceBAccount(baseOptions(fetchImpl));
+  assert.equal(result.status, "prepared");
+  assert.equal(result.keyCount, 0);
+  assert.equal(result.failureStage, "none");
+  assert.equal(result.readbackError, "none");
+  assert.equal(result.errorCode, "none");
+  assert.deepEqual(validateProductionBasicAcceptanceBReconcileReadback(result, { mergedSha: MERGED_SHA }), result);
+});
+
+test("reconcile fails closed when a gateway key kind cannot be classified", async () => {
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/api/auth/login") {
+      const body = JSON.parse(init.body);
+      return loginPayload(body.email === ADMIN_EMAIL ? "acct-admin" : "acct-reconcile", body.email === ADMIN_EMAIL ? "admin" : "owner");
+    }
+    if (parsed.pathname === "/api/operator/account-reconciliation") {
+      return response(envelope("control-plane+sub2api+ledger", routeData()));
+    }
+    if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
+    if (parsed.pathname === "/api/workspaces") return response(envelope("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/workspace-launches") return response([]);
+    if (parsed.pathname === "/api/gateway/keys") return response(envelope("sub2api", { items: [{ id: "unknown-1" }], total: 1, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/billing/receipts") return response(envelope("ledger", { receipts: [], nextCursor: "", hasMore: false }, "empty"));
+    throw new Error(`unexpected_request:${parsed.pathname}`);
+  };
+
+  const result = await reconcileProductionBasicAcceptanceBAccount(baseOptions(fetchImpl));
+  assert.equal(result.status, "unknown");
+  assert.equal(result.failureStage, "baseline");
+  assert.equal(result.readbackError, "baseline_authority_unavailable");
+  assert.equal(result.errorCode, "acceptance_b_account_reconcile_unknown");
 });
 
 test("reconcile preserves an authority unknown without attempting customer login or mutation", async () => {
@@ -215,7 +318,7 @@ test("request failure before the account-reconcile response uses a zero-digest f
   assert.doesNotMatch(stdout, /reconcile@example\.com|acct-admin|operationId|password|secret|token/i);
 });
 
-test("only prepared passes the CLI business gate while safe_to_retry_absent and unknown remain validator-valid but rejected", async () => {
+test("safe_to_retry_absent and unknown both fail the CLI business gate", async () => {
   const base = {
     OPL_MERGED_SHA: MERGED_SHA,
     OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
@@ -254,6 +357,38 @@ test("only prepared passes the CLI business gate while safe_to_retry_absent and 
     assert.equal(artifact.status, status);
     assert.deepEqual(validateProductionBasicAcceptanceBReconcileReadback(artifact, { mergedSha: MERGED_SHA }), artifact);
   }
+});
+
+test("a manual-review account with active identity, available wallet, zero baseline, and absent adjustment remains blocked", async () => {
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/api/auth/login") {
+      const body = JSON.parse(init.body);
+      return loginPayload(body.email === ADMIN_EMAIL ? "acct-admin" : "acct-reconcile", body.email === ADMIN_EMAIL ? "admin" : "owner");
+    }
+    if (parsed.pathname === "/api/operator/account-reconciliation") {
+      return response(envelope("control-plane+sub2api+ledger", routeData({
+        status: "manual_review",
+        walletAdjustment: "absent",
+        failureStage: "none",
+        readbackError: "none"
+      })));
+    }
+    if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
+    if (parsed.pathname === "/api/workspaces") return response(envelope("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/workspace-launches") return response([]);
+    if (parsed.pathname === "/api/gateway/keys") return response(envelope("sub2api", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/billing/receipts") return response(envelope("ledger", { receipts: [], nextCursor: "", hasMore: false }, "empty"));
+    throw new Error(`unexpected_request:${parsed.pathname}`);
+  };
+  const result = await reconcileProductionBasicAcceptanceBAccount(baseOptions(fetchImpl));
+  assert.equal(result.status, "manual_review");
+  assert.notEqual(result.failureStage, "none");
+  assert.equal(result.readbackError, "none");
+  assert.notEqual(result.errorCode, "none");
+  assert.equal(result.wallet, "available");
+  assert.equal(result.walletAdjustment, "absent");
+  assert.deepEqual(result.writeCounts, ZERO_COUNTS);
 });
 
 test("an HTTP response without a valid DTO uses a nonzero response digest, never a zero fallback, and validates", async () => {
@@ -391,7 +526,7 @@ test("manual-review server DTOs get a wallet-adjustment failure stage without lo
     }
     if (parsed.pathname === "/api/operator/account-reconciliation") {
       return response(envelope("control-plane+sub2api+ledger", routeData({
-        status: "manual_review", walletAdjustment: "absent", failureStage: "none", readbackError: "none"
+        status: "manual_review", walletAdjustment: "manual_review", failureStage: "none", readbackError: "none"
       })));
     }
     if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
@@ -417,12 +552,20 @@ test("reconcile validator rejects a nonzero mutation count or sensitive field", 
     customerIdentitySha256: DIGEST,
     accountProvisionIdentitySha256: DIGEST,
     walletAdjustmentIdentitySha256: DIGEST,
+    approvalIdentitySha256: DIGEST,
+    workspaceDebitIdentitySha256: DIGEST,
     localGraph: "complete",
     remoteIdentity: "active",
     customerLogin: "active",
     wallet: "available",
     walletUsdMicros: "60000000",
     walletAdjustment: "succeeded",
+    approvalState: "bound",
+    workspaceLaunchState: "absent",
+    workspaceState: "absent",
+    workspaceKeyState: "absent",
+    workspaceReceiptState: "absent",
+    workspaceDebitState: "absent",
     workspaceCount: 0,
     launchCount: 0,
     keyCount: 0,
@@ -435,5 +578,8 @@ test("reconcile validator rejects a nonzero mutation count or sensitive field", 
   };
   assert.throws(() => validateProductionBasicAcceptanceBReconcileReadback({ ...base, writeCounts: { ...ZERO_COUNTS, receiptCreates: 1 } }, { mergedSha: MERGED_SHA }), /acceptance_b_account_reconcile_readback_invalid/);
   assert.throws(() => validateProductionBasicAcceptanceBReconcileReadback({ ...base, customerEmail: EMAIL }, { mergedSha: MERGED_SHA }), /acceptance_b_account_reconcile_readback_invalid/);
+  assert.throws(() => validateProductionBasicAcceptanceBReconcileReadback({ ...base, workspaceDebitState: "confirmed" }, { mergedSha: MERGED_SHA }), /acceptance_b_account_reconcile_readback_invalid/);
+  assert.throws(() => validateProductionBasicAcceptanceBReconcileReadback({ ...base, approvalState: "unknown" }, { mergedSha: MERGED_SHA }), /acceptance_b_account_reconcile_readback_invalid/);
+  assert.throws(() => validateProductionBasicAcceptanceBReconcileReadback({ ...base, redeemCode: "raw-redeem-code" }, { mergedSha: MERGED_SHA }), /acceptance_b_account_reconcile_readback_invalid/);
   assert.throws(() => validateProductionBasicAcceptanceBReconcileReadback({ ...base, failureStage: "provider" }, { mergedSha: MERGED_SHA }), /acceptance_b_account_reconcile_readback_invalid/);
 });

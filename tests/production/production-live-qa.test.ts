@@ -3,12 +3,13 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 
 import * as productionLiveQa from "../../tools/production-live-qa.ts";
 
 import {
   LIVE_QA_CONFIRMATION,
+  resourceIds,
   runProductionLiveQaEntrypoint,
   runProductionLiveQaCli,
   verifyProductionLiveQa
@@ -31,6 +32,16 @@ const ADMIN_ACCOUNT_ID = "acct-admin";
 const ADMIN_USER_ID = "usr-admin";
 const ADMIN_EMAIL = "admin@medopl.cn";
 const ADMIN_PASSWORD = "existing-admin-password";
+const previousVerifierAdminEmail = process.env.OPL_SUB2API_ADMIN_EMAIL;
+const previousVerifierAdminPassword = process.env.OPL_SUB2API_ADMIN_PASSWORD;
+process.env.OPL_SUB2API_ADMIN_EMAIL = ADMIN_EMAIL;
+process.env.OPL_SUB2API_ADMIN_PASSWORD = ADMIN_PASSWORD;
+after(() => {
+  if (previousVerifierAdminEmail === undefined) delete process.env.OPL_SUB2API_ADMIN_EMAIL;
+  else process.env.OPL_SUB2API_ADMIN_EMAIL = previousVerifierAdminEmail;
+  if (previousVerifierAdminPassword === undefined) delete process.env.OPL_SUB2API_ADMIN_PASSWORD;
+  else process.env.OPL_SUB2API_ADMIN_PASSWORD = previousVerifierAdminPassword;
+});
 const ownerSeed = JSON.stringify([{
   id: "usr-verifier",
   email: "owner@example.com",
@@ -156,6 +167,22 @@ test("stage-aware compute readback keeps Node ownership first when storage is at
   assert.equal(result.node.taint.value, "unallocated");
 });
 
+test("rollout QA resource ids normalize missing legacy projections without weakening canonical ids", () => {
+  assert.deepEqual(resourceIds({ slot: {
+    computeProviderResourceId: "ins-slot-1",
+    storageProviderResourceId: "disk-slot-1"
+  } }), {
+    cvmInstanceId: "ins-slot-1",
+    cbsDiskId: "disk-slot-1",
+    nodePoolId: "",
+    persistentVolumeId: ""
+  });
+  assert.throws(() => resourceIds({ slot: {
+    computeProviderResourceId: "",
+    storageProviderResourceId: "disk-slot-1"
+  } }), /production_live_qa_resource_ids_required/);
+});
+
 test("compute claim readback preserves a canonical evaluator storage approval predicate", () => {
   const predicate = "provider.storageApprovalBinding";
   const artifact = productionLiveQa.workspaceComputeClaimReadbackArtifact({
@@ -251,7 +278,10 @@ test("compute claim production readback derives the original resources and perfo
     calls.push({ command, args });
     if (args.includes("get") && args.includes("node")) return { stdout: JSON.stringify(node) };
     const path = args.at(-1);
-    const payload = path === "/fabric/operations" ? operations
+    const payload = path.startsWith("/fabric/operations?")
+      ? path.includes("cursor=storage-page")
+        ? { operations: [operations[1]] }
+        : { operations: [operations[0]], nextCursor: "storage-page" }
       : path.includes("/compute-allocations/") ? allocation
         : path.includes("/machine-ownerships/") ? ownership
           : path.includes("/storage-volumes/") ? { id: storageId, accountId, workspaceId: "ws-30e2861bbdf9805492", status: "pending" }
@@ -282,6 +312,7 @@ test("compute claim production readback derives the original resources and perfo
   assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
   assert.equal(result.reads.controlPlaneTrace, "unavailable");
   assert.deepEqual(result.readbackErrors, ["control_plane_trace_unavailable"]);
+  assert.equal(calls.filter((call) => String(call.args.at(-1)).startsWith("/fabric/operations?")).length, 2);
   assert.equal(calls.filter((call) => call.args.includes("patch")).length, 0);
   assert.equal(calls.filter((call) => call.args.includes("node") && call.args.includes("get")).length, 1);
 
@@ -322,7 +353,7 @@ test("compute claim production readback rejects missing exact package and pool i
   const execFileImpl = async (_command, args) => {
     calls.push(args);
     const path = args.at(-1);
-    if (path === "/fabric/operations") return { stdout: JSON.stringify({ statusCode: 200, payload: operations, errorCode: "none" }) };
+    if (path.startsWith("/fabric/operations?")) return { stdout: JSON.stringify({ statusCode: 200, payload: { operations }, errorCode: "none" }) };
     if (path.includes("/compute-allocations/")) return { stdout: JSON.stringify({ statusCode: 200, payload: allocation, errorCode: "none" }) };
     throw new Error("unexpected_followup_read");
   };
@@ -630,753 +661,6 @@ function json(payload, status = 200, headers = {}) {
     headers: { "content-type": "application/json", ...headers }
   });
 }
-
-test("Recovery Plan validation consumes only the persisted plan identity and never diagnoses or executes", async () => {
-  const launchOperationId = "workspace-launch-huangrende";
-  const planDigest = "a".repeat(64);
-  const plan = {
-    planId: `recovery-plan-${planDigest.slice(0, 20)}`,
-    planDigest,
-    status: "diagnosed",
-    operationId: launchOperationId,
-    stages: [{ stage: "compute_claim", status: "manual_review" }],
-    mismatches: [],
-    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-  };
-  const calls = [];
-  const fetchImpl = async (input, init = {}) => {
-    const url = new URL(String(input));
-    const method = String(init.method || "GET").toUpperCase();
-    const body = init.body ? JSON.parse(String(init.body)) : null;
-    calls.push({ method, path: url.pathname, body, headers: init.headers || {} });
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
-        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
-        "x-opl-csrf-token": "admin-csrf"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan") && method === "GET") return json(plan);
-    if (url.pathname.endsWith("/recovery-plan/validate")) return json({ ...plan, status: "validated" });
-    return json({ error: "unexpected" }, 404);
-  };
-
-  const result = await productionLiveQa.validateWorkspaceRecoveryPlan({
-    launchOperationId,
-    planId: plan.planId,
-    planDigest,
-    origin: "https://cloud.medopl.cn",
-    adminEmail: ADMIN_EMAIL,
-    adminPassword: ADMIN_PASSWORD,
-    fetchImpl
-  });
-
-  assert.equal(result.operationMode, "recovery_plan_validate");
-  assert.equal(result.status, "proven");
-  assert.equal(result.recoveryEligible, true);
-  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
-  const planCalls = calls.filter((call) => call.path.includes("/recovery-plan"));
-  assert.deepEqual(planCalls.map(({ method, path, body }) => ({ method, path, body })), [
-    {
-      method: "GET",
-      path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan`,
-      body: null
-    },
-    {
-      method: "POST",
-      path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan/validate`,
-      body: { planId: plan.planId, planDigest }
-    }
-  ]);
-  assert.equal(calls.some((call) => call.path.endsWith("/recovery-plan/diagnose")), false);
-  assert.equal(calls.some((call) => call.path.endsWith("/recovery-plan/execute")), false);
-  assert.equal(JSON.stringify(planCalls).includes("cvmInstanceId"), false);
-  assert.equal(JSON.stringify(planCalls).includes("cloudImageDigest"), false);
-});
-
-test("Recovery Plan diagnosis uses the operator session to persist and re-read one server-owned plan", async () => {
-  const accountId = "acct-f947b18f844e42b3c0";
-  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
-  const planDigest = "b".repeat(64);
-  const plan = {
-    planId: `recovery-plan-${planDigest.slice(0, 20)}`,
-    planDigest,
-    status: "diagnosed",
-    operationId: launchOperationId,
-    stages: [{ stage: "compute_claim", status: "manual_review" }],
-    mismatches: [],
-    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-  };
-  const calls = [];
-  const fetchImpl = async (input, init = {}) => {
-    const url = new URL(String(input));
-    const method = String(init.method || "GET").toUpperCase();
-    const body = init.body ? JSON.parse(String(init.body)) : null;
-    calls.push({ method, path: url.pathname, body, headers: init.headers || {} });
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
-        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
-        "x-opl-csrf-token": "admin-csrf"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan/diagnose")) return json(plan);
-    if (url.pathname.endsWith("/recovery-plan") && method === "GET") return json(plan);
-    return json({ error: "unexpected" }, 404);
-  };
-
-  const result = await productionLiveQa.diagnoseWorkspaceRecoveryPlan({
-    accountId,
-    launchOperationId,
-    origin: "https://cloud.medopl.cn",
-    adminEmail: ADMIN_EMAIL,
-    adminPassword: ADMIN_PASSWORD,
-    fetchImpl
-  });
-
-  assert.equal(result.operationMode, "recovery_plan_diagnose");
-  assert.equal(result.status, "proven");
-  assert.equal(result.planId, plan.planId);
-  assert.equal(result.planDigest, planDigest);
-  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
-  const planCalls = calls.filter((call) => call.path.includes("/recovery-plan"));
-  assert.deepEqual(planCalls.map(({ method, path, body }) => ({ method, path, body })), [
-    {
-      method: "POST",
-      path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan/diagnose`,
-      body: { accountId }
-    },
-    {
-      method: "GET",
-      path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan`,
-      body: null
-    }
-  ]);
-  assert.equal(calls.some((call) => call.path.endsWith("/recovery-plan/validate")), false);
-  assert.equal(calls.some((call) => call.path.endsWith("/recovery-plan/execute")), false);
-});
-
-test("Recovery Plan diagnosis emits only the redacted terminal successor gate", async () => {
-  const accountId = "acct-f947b18f844e42b3c0";
-  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
-  const planDigest = "e".repeat(64);
-  const plan = {
-    planId: `recovery-plan-${planDigest.slice(0, 20)}`,
-    planDigest,
-    status: "blocked",
-    operationId: launchOperationId,
-    stages: [{ stage: "compute_claim", status: "manual_review" }],
-    mismatches: [],
-    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-  };
-  const successorGate = {
-    applicable: true,
-    allowed: false,
-    planState: "terminal",
-    executionState: "failed",
-    completionState: "completed",
-    leaseState: "held",
-    identityState: "matches",
-    persistedMutationState: "missing",
-    fabricLedgerState: "absent"
-  };
-  const fetchImpl = async (input, init = {}) => {
-    const url = new URL(String(input));
-    const method = String(init.method || "GET").toUpperCase();
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
-        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
-        "x-opl-csrf-token": "admin-csrf"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan/diagnose")) {
-      return json({
-        ...plan,
-        successorGate,
-        approvalDigest: "f".repeat(64),
-        leaseToken: "g".repeat(64),
-        cvmInstanceId: "ins-protected"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan") && method === "GET") return json(plan);
-    return json({ error: "unexpected" }, 404);
-  };
-
-  const result = await productionLiveQa.diagnoseWorkspaceRecoveryPlan({
-    accountId,
-    launchOperationId,
-    origin: "https://cloud.medopl.cn",
-    adminEmail: ADMIN_EMAIL,
-    adminPassword: ADMIN_PASSWORD,
-    fetchImpl,
-    now: new Date("2026-08-03T12:00:00Z")
-  });
-
-  assert.equal(result.status, "blocked");
-  assert.deepEqual(result.successorGate, successorGate);
-  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
-  assert.deepEqual(Object.keys(result).sort(), [
-    "errorCode", "failureStage", "mismatches", "operationMode", "planDigest", "planId", "readbackError",
-    "recoveryEligible", "runnerDirectMutationCounts", "schemaVersion", "stages", "status", "successorGate", "verifiedAt"
-  ]);
-  assert.doesNotMatch(JSON.stringify(result), /approvalDigest|leaseToken|cvmInstanceId|ins-protected|password|secret|cookie|csrf/i);
-});
-
-test("Recovery Plan diagnosis preserves a terminal failed successor response without retry", async () => {
-  const accountId = "acct-f947b18f844e42b3c0";
-  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
-  const planDigest = "f".repeat(64);
-  const plan = {
-    planId: `recovery-plan-${planDigest.slice(0, 20)}`,
-    planDigest,
-    status: "failed",
-    operationId: launchOperationId,
-    stages: [{ stage: "compute_claim", status: "manual_review" }],
-    mismatches: [],
-    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-    executionId: "recovery-exec-terminal-failure",
-    runId: "control-plane-run-terminal-failure",
-    errorCode: "workspace_compute_claim_provider_describe"
-  };
-  const successorGate = {
-    applicable: true,
-    allowed: false,
-    planState: "terminal",
-    executionState: "failed",
-    completionState: "completed",
-    leaseState: "released",
-    identityState: "matches",
-    persistedMutationState: "confirmed_zero",
-    fabricLedgerState: "confirmed_zero"
-  };
-  const calls = [];
-  const fetchImpl = async (input, init = {}) => {
-    const url = new URL(String(input));
-    const method = String(init.method || "GET").toUpperCase();
-    calls.push({ method, path: url.pathname });
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
-        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
-        "x-opl-csrf-token": "admin-csrf"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan/diagnose")) {
-      return json({
-        ...plan,
-        successorGate,
-        approvalDigest: "a".repeat(64),
-        leaseToken: "b".repeat(64),
-        cvmInstanceId: "ins-protected"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan") && method === "GET") return json(plan);
-    return json({ error: "unexpected" }, 404);
-  };
-
-  const result = await productionLiveQa.diagnoseWorkspaceRecoveryPlan({
-    accountId,
-    launchOperationId,
-    origin: "https://cloud.medopl.cn",
-    adminEmail: ADMIN_EMAIL,
-    adminPassword: ADMIN_PASSWORD,
-    fetchImpl,
-    now: new Date("2026-08-07T05:30:00Z")
-  });
-
-  assert.equal(result.status, "blocked");
-  assert.equal(result.failureStage, "successor_gate");
-  assert.equal(result.readbackError, "successor_not_allowed");
-  assert.equal(result.errorCode, plan.errorCode);
-  assert.deepEqual(result.successorGate, successorGate);
-  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
-  assert.deepEqual(calls.filter((call) => call.path.includes("/recovery-plan")), [
-    { method: "POST", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan/diagnose` },
-    { method: "GET", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan` }
-  ]);
-  assert.equal(productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact(result), result);
-  assert.doesNotMatch(JSON.stringify(result), /approvalDigest|leaseToken|cvmInstanceId|ins-protected|password|secret|cookie|csrf/i);
-});
-
-test("Recovery Plan diagnosis CLI preserves one validated redacted server failure artifact", async () => {
-  const accountId = "acct-f947b18f844e42b3c0";
-  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
-  const calls = [];
-  const fetchImpl = async (input, init = {}) => {
-    const url = new URL(String(input));
-    const method = String(init.method || "GET").toUpperCase();
-    calls.push({ method, path: url.pathname });
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
-        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
-        "x-opl-csrf-token": "admin-csrf"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan/diagnose")) {
-      return json({
-        schemaVersion: 1,
-        status: "blocked",
-        recoveryEligible: false,
-        failureStage: "cvm_tag_readback",
-        readbackError: "readback_mismatch",
-        errorCode: "workspace_recovery_plan_fabric_proof_failed",
-        providerIdentityFailure: {
-          predicate: "compute_claim.cvm_ownership.opl_account_id",
-          expectedDigest: "a".repeat(64),
-          actualDigest: "b".repeat(64)
-        },
-        mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-      }, 409);
-    }
-    return json({ error: "unexpected" }, 404);
-  };
-  let stdout = "";
-  let stderr = "";
-  const code = await runProductionLiveQaCli({
-    argv: ["--recovery-plan-diagnose", "--account-id", accountId, "--launch-operation-id", launchOperationId],
-    env: {
-      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
-      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
-      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
-    },
-    stdout: { write: (chunk) => { stdout += chunk; } },
-    stderr: { write: (chunk) => { stderr += chunk; } },
-    fetchImpl,
-    now: new Date("2026-08-05T00:00:00Z")
-  });
-
-  assert.equal(code, 1);
-  assert.deepEqual(JSON.parse(stdout), {
-    schemaVersion: 1,
-    operationMode: "recovery_plan_diagnose",
-    status: "blocked",
-    recoveryEligible: false,
-    failureStage: "cvm_tag_readback",
-    readbackError: "readback_mismatch",
-    errorCode: "workspace_recovery_plan_fabric_proof_failed",
-    providerIdentityFailure: {
-      predicate: "compute_claim.cvm_ownership.opl_account_id",
-      expectedDigest: "a".repeat(64),
-      actualDigest: "b".repeat(64)
-    },
-    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-  });
-  assert.match(stderr, /workspace_recovery_plan_fabric_proof_failed/);
-  assert.deepEqual(calls.map(({ method, path }) => ({ method, path })), [
-    { method: "POST", path: "/api/auth/login" },
-    { method: "POST", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan/diagnose` }
-  ]);
-  assert.doesNotMatch(stdout, /accountId|launchOperationId|cvmInstanceId|password|secret|cookie|csrf/i);
-});
-
-test("Recovery Plan diagnosis CLI preserves persisted unknown CVM claim evidence", async () => {
-  const accountId = "acct-f947b18f844e42b3c0";
-  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
-  const computeClaimEvidence = {
-    schemaVersion: 1,
-    bindingClassification: "request-hash-reconciliation",
-    mismatchField: "binding.requestHash",
-    expectedDigest: "a".repeat(64),
-    actualDigest: "b".repeat(64),
-    mutationLedger: "observed",
-    mutationLedgerOutcome: "unknown",
-    cvm: { attempted: 1, confirmed: 0, unknown: 1, missing: ["opl_account_id"] },
-    node: { attempted: 0, confirmed: 0, unknown: 0, missing: [] },
-    ledgerFailureStage: "cvm_tag_readback",
-    ledgerProviderErrorClass: "provider_error",
-    failureStage: "cvm_pre_read",
-    providerErrorClass: "readback_mismatch"
-  };
-  const fetchImpl = async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
-        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
-        "x-opl-csrf-token": "admin-csrf"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan/diagnose")) {
-      return json({
-        schemaVersion: 1,
-        status: "blocked",
-        recoveryEligible: false,
-        failureStage: "cvm_pre_read",
-        readbackError: "readback_mismatch",
-        errorCode: "workspace_recovery_plan_fabric_proof_failed",
-        mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-        computeClaimEvidence
-      }, 409);
-    }
-    return json({ error: "unexpected" }, 404);
-  };
-  let stdout = "";
-  const code = await runProductionLiveQaCli({
-    argv: ["--recovery-plan-diagnose", "--account-id", accountId, "--launch-operation-id", launchOperationId],
-    env: {
-      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
-      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
-      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
-    },
-    stdout: { write: (chunk) => { stdout += chunk; } },
-    stderr: { write: () => {} },
-    fetchImpl
-  });
-
-  assert.equal(code, 1);
-  assert.deepEqual(JSON.parse(stdout), {
-    schemaVersion: 1,
-    operationMode: "recovery_plan_diagnose",
-    status: "blocked",
-    recoveryEligible: false,
-    failureStage: "cvm_pre_read",
-    readbackError: "readback_mismatch",
-    errorCode: "workspace_recovery_plan_fabric_proof_failed",
-    computeClaimEvidence,
-    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-  });
-  assert.doesNotMatch(stdout, /accountId|launchOperationId|cvmInstanceId|password|secret|cookie|csrf/i);
-});
-
-test("Recovery Plan artifact accepts persisted compute-claim evidence without request-hash mismatch", () => {
-  const computeClaimEvidence = {
-    schemaVersion: 1,
-    bindingClassification: "compute-claim",
-    mutationLedger: "observed",
-    mutationLedgerOutcome: "unknown",
-    cvm: {
-      attempted: 1,
-      confirmed: 0,
-      unknown: 0,
-      missing: ["opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"]
-    },
-    node: { attempted: 0, confirmed: 0, unknown: 0, missing: [] },
-    ledgerFailureStage: "cvm_tag_readback",
-    ledgerProviderErrorClass: "readback_mismatch",
-    failureStage: "cvm_pre_read",
-    providerErrorClass: "readback_mismatch"
-  };
-  const artifact = {
-    schemaVersion: 1,
-    operationMode: "recovery_plan_diagnose",
-    status: "blocked",
-    recoveryEligible: false,
-    failureStage: "cvm_pre_read",
-    readbackError: "readback_mismatch",
-    errorCode: "workspace_recovery_plan_fabric_proof_failed",
-    computeClaimEvidence,
-    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-  };
-
-  assert.equal(productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact(artifact), artifact);
-  assert.throws(() => productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact({
-    ...artifact,
-    computeClaimEvidence: { ...computeClaimEvidence, bindingClassification: "untrusted" }
-  }), /workspace_recovery_plan_artifact_invalid|workspace_recovery_plan_compute_claim_evidence_invalid/);
-  assert.throws(() => productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact({
-    ...artifact,
-    computeClaimEvidence: { ...computeClaimEvidence, cvmInstanceId: "ins-sensitive" }
-  }), /workspace_recovery_plan_artifact_invalid|workspace_recovery_plan_compute_claim_evidence_invalid/);
-});
-
-test("Recovery Plan artifact rejects unallowlisted or non-digest provider identity evidence", () => {
-  const base = {
-    schemaVersion: 1,
-    operationMode: "recovery_plan_diagnose",
-    status: "blocked",
-    recoveryEligible: false,
-    failureStage: "cvm_pre_read",
-    readbackError: "readback_mismatch",
-    errorCode: "workspace_recovery_plan_fabric_proof_failed",
-    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-  };
-  for (const providerIdentityFailure of [
-    { predicate: "raw.provider.account", expectedDigest: "a".repeat(64), actualDigest: "b".repeat(64) },
-    { predicate: "compute_claim.cvm_identity", expectedDigest: "raw-account", actualDigest: "b".repeat(64) },
-    { predicate: "compute_claim.cvm_identity", expectedDigest: "a".repeat(64), actualDigest: "a".repeat(64) },
-    { predicate: "compute_claim.cvm_identity", expectedDigest: "a".repeat(64), actualDigest: "b".repeat(64), accountId: "acct-secret" }
-  ]) {
-    assert.throws(() => productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact({ ...base, providerIdentityFailure }),
-      /workspace_recovery_plan_artifact_invalid/);
-  }
-});
-
-test("Recovery Plan artifact accepts the production stage contract without allowing sensitive fields", () => {
-  const artifact = {
-    schemaVersion: 1,
-    operationMode: "recovery_plan_diagnose",
-    status: "proven",
-    recoveryEligible: true,
-    failureStage: "none",
-    readbackError: "none",
-    errorCode: "none",
-    planId: "recovery-plan-51e492d0f6b224c1ee81",
-    planDigest: "51e492d0f6b224c1ee815ae5759e3f5ee061bcd05f710e7cf5f98e04f2f78882",
-    stages: [
-      { stage: "compute_claim", status: "manual_review" },
-      { stage: "storage", status: "pending" },
-      { stage: "attachment", status: "pending" },
-      { stage: "secret", status: "pending" },
-      { stage: "runtime", status: "pending" },
-      { stage: "activation", status: "pending" },
-      { stage: "receipt", status: "pending" }
-    ],
-    mismatches: [],
-    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-    verifiedAt: "2026-08-05T23:23:33.358Z"
-  };
-
-  assert.equal(productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact(artifact), artifact);
-
-  for (const sensitiveField of ["password", "token", "cookie", "csrf", "accountId", "launchOperationId", "cvmInstanceId", "nodeName", "cloudImageDigest"]) {
-    assert.throws(() => productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact({
-      ...artifact,
-      stages: [{ ...artifact.stages[0], evidence: { [sensitiveField]: "redacted" } }]
-    }), /workspace_recovery_plan_artifact_invalid/);
-  }
-});
-
-test("Recovery Plan execution posts one exact continuation and polls only the same persisted plan", async () => {
-  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
-  const planDigest = "c".repeat(64);
-  const planId = `recovery-plan-${planDigest.slice(0, 20)}`;
-  const validated = {
-    planId,
-    planDigest,
-    status: "validated",
-    operationId: launchOperationId,
-    stages: [{ stage: "compute_claim", status: "manual_review" }],
-    mismatches: [],
-    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-  };
-  const executing = {
-    ...validated,
-    status: "executing",
-    executionId: "recovery-exec-authority",
-    runId: "control-plane-run-authority"
-  };
-  const completed = {
-    ...executing,
-    status: "completed",
-    stages: [
-      { stage: "compute_claim", status: "completed" },
-      { stage: "storage", status: "completed" },
-      { stage: "attachment", status: "completed" },
-      { stage: "secret", status: "completed" },
-      { stage: "runtime", status: "completed" },
-      { stage: "activation", status: "completed" },
-      { stage: "receipt", status: "completed" }
-    ],
-    mutationCounts: { sub2api: 0, tencent: 1, kubernetes: 1 },
-    url: "https://workspace.example.cloud.medopl.cn",
-    receiptId: "receipt-authority"
-  };
-  const calls = [];
-  let reads = 0;
-  const fetchImpl = async (input, init = {}) => {
-    const url = new URL(String(input));
-    const method = String(init.method || "GET").toUpperCase();
-    const body = init.body ? JSON.parse(String(init.body)) : null;
-    calls.push({ method, path: url.pathname, body, headers: init.headers || {} });
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
-        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
-        "x-opl-csrf-token": "admin-csrf"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan/execute")) return json(executing);
-    if (url.pathname.endsWith("/recovery-plan") && method === "GET") {
-      reads += 1;
-      return json(reads === 1 ? validated : completed);
-    }
-    return json({ error: "unexpected" }, 404);
-  };
-
-  const result = await productionLiveQa.executeWorkspaceRecoveryPlan({
-    launchOperationId,
-    planId,
-    planDigest,
-    origin: "https://cloud.medopl.cn",
-    adminEmail: ADMIN_EMAIL,
-    adminPassword: ADMIN_PASSWORD,
-    pollAttempts: 2,
-    pollDelayMs: 0,
-    sleepImpl: async () => {},
-    fetchImpl
-  });
-
-  assert.equal(result.operationMode, "recovery_plan_execute");
-  assert.equal(result.status, "completed");
-  assert.equal(result.errorCode, "none");
-  assert.equal(result.executionId, completed.executionId);
-  assert.equal(result.runId, completed.runId);
-  assert.equal(result.url, completed.url);
-  assert.equal(result.receiptId, completed.receiptId);
-  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
-  assert.deepEqual(result.controlPlaneExecutionMutationCounts, completed.mutationCounts);
-  const planCalls = calls.filter((call) => call.path.includes("/recovery-plan"));
-  assert.deepEqual(planCalls.map(({ method, path, body }) => ({ method, path, body })), [
-    { method: "GET", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan`, body: null },
-    {
-      method: "POST",
-      path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan/execute`,
-      body: { planId, planDigest, decision: "continue", confirmation: "CONTINUE_RECOVERY_PLAN" }
-    },
-    { method: "GET", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan`, body: null }
-  ]);
-  const executeCall = planCalls.find((call) => call.path.endsWith("/execute"));
-  assert.equal(executeCall.headers["Idempotency-Key"], `recovery-plan:${planDigest}`);
-  assert.equal(calls.some((call) => call.path === "/api/workspace-launches"), false);
-  assert.equal(calls.some((call) => /wallet|compute-allocations|storage-volumes/.test(call.path)), false);
-});
-
-test("Recovery Plan execution never resends after an unknown POST result", async () => {
-  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
-  const planDigest = "d".repeat(64);
-  const planId = `recovery-plan-${planDigest.slice(0, 20)}`;
-  const validated = {
-    planId,
-    planDigest,
-    status: "validated",
-    operationId: launchOperationId,
-    stages: [{ stage: "compute_claim", status: "manual_review" }],
-    mismatches: [],
-    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-  };
-  const executing = { ...validated, status: "executing", executionId: "recovery-exec-unknown", runId: "control-plane-run-unknown" };
-  const completed = {
-    ...executing,
-    status: "completed",
-    stages: [{ stage: "compute_claim", status: "completed" }],
-    url: "https://workspace.example.cloud.medopl.cn",
-    receiptId: "receipt-unknown"
-  };
-  let reads = 0;
-  let executePosts = 0;
-  const fetchImpl = async (input, init = {}) => {
-    const url = new URL(String(input));
-    const method = String(init.method || "GET").toUpperCase();
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
-        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
-        "x-opl-csrf-token": "admin-csrf"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan/execute")) {
-      executePosts += 1;
-      throw new Error("response_lost_after_commit");
-    }
-    if (url.pathname.endsWith("/recovery-plan") && method === "GET") {
-      reads += 1;
-      return json(reads === 1 ? validated : reads === 2 ? executing : completed);
-    }
-    return json({ error: "unexpected" }, 404);
-  };
-
-  const result = await productionLiveQa.executeWorkspaceRecoveryPlan({
-    launchOperationId,
-    planId,
-    planDigest,
-    origin: "https://cloud.medopl.cn",
-    adminEmail: ADMIN_EMAIL,
-    adminPassword: ADMIN_PASSWORD,
-    pollAttempts: 3,
-    pollDelayMs: 0,
-    sleepImpl: async () => {},
-    fetchImpl
-  });
-
-  assert.equal(result.status, "completed");
-  assert.equal(executePosts, 1);
-  assert.equal(reads, 3);
-});
-
-test("Recovery Plan execution preserves redacted request-hash reconciliation failure evidence", async () => {
-  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
-  const planDigest = "e".repeat(64);
-  const planId = `recovery-plan-${planDigest.slice(0, 20)}`;
-  const validated = {
-    planId,
-    planDigest,
-    status: "validated",
-    operationId: launchOperationId,
-    stages: [{ stage: "compute_claim", status: "manual_review" }],
-    mismatches: [],
-    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-  };
-  const computeClaimEvidence = {
-    schemaVersion: 1,
-    bindingClassification: "request-hash-reconciliation",
-    mismatchField: "binding.requestHash",
-    expectedDigest: "a".repeat(64),
-    actualDigest: "b".repeat(64),
-    mutationLedger: "observed",
-    mutationLedgerOutcome: "unknown",
-    cvm: { attempted: 1, confirmed: 0, unknown: 1, missing: ["opl_account_id"] },
-    node: { attempted: 0, confirmed: 0, unknown: 0, missing: [] },
-    ledgerFailureStage: "cvm_tag_readback",
-    ledgerProviderErrorClass: "provider_error",
-    failureStage: "node_patch_readback",
-    providerErrorClass: "transport_error",
-    reconciliation: {
-      schemaVersion: 1,
-      consumer: "claim_compute_recovery",
-      generation: "isolated_request_hash_v1",
-      state: "node_reserved",
-      failureStage: "node_patch_readback",
-      providerErrorClass: "transport_error",
-      node: { attempted: 1, confirmed: 0, unknown: 1, missing: ["node_ownership"] }
-    }
-  };
-  const failed = {
-    ...validated,
-    status: "failed",
-    executionId: "recovery-exec-reconciliation",
-    runId: "control-plane-run-reconciliation",
-    errorCode: "workspace_compute_claim_provider_describe",
-    computeClaimEvidence
-  };
-  let reads = 0;
-  let executePosts = 0;
-  const fetchImpl = async (input, init = {}) => {
-    const url = new URL(String(input));
-    const method = String(init.method || "GET").toUpperCase();
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
-        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
-        "x-opl-csrf-token": "admin-csrf"
-      });
-    }
-    if (url.pathname.endsWith("/recovery-plan/execute")) {
-      executePosts += 1;
-      return json({ ...validated, status: "executing", executionId: failed.executionId, runId: failed.runId });
-    }
-    if (url.pathname.endsWith("/recovery-plan") && method === "GET") {
-      reads += 1;
-      return json(reads === 1 ? validated : failed);
-    }
-    return json({ error: "unexpected" }, 404);
-  };
-
-  const result = await productionLiveQa.executeWorkspaceRecoveryPlan({
-    launchOperationId,
-    planId,
-    planDigest,
-    origin: "https://cloud.medopl.cn",
-    adminEmail: ADMIN_EMAIL,
-    adminPassword: ADMIN_PASSWORD,
-    pollAttempts: 1,
-    pollDelayMs: 0,
-    sleepImpl: async () => {},
-    fetchImpl,
-    now: new Date("2026-08-06T03:00:00Z")
-  });
-
-  assert.equal(result.status, "failed");
-  assert.equal(result.failureStage, "node_patch_readback");
-  assert.equal(result.readbackError, "transport_error");
-  assert.deepEqual(result.computeClaimEvidence, computeClaimEvidence);
-  assert.equal(executePosts, 1);
-  assert.equal(reads, 2);
-  assert.equal(productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact(result), result);
-  assert.doesNotMatch(JSON.stringify(result), /test@|acct-|workspace-launch-|ins-|nodeName|privateIp|password|secret|token/i);
-});
 
 function source(payload, sourceName = "sub2api", status = "available", headers = {}) {
   return json({ source: sourceName, status, available: true, fetchedAt: new Date().toISOString(), data: payload }, 200, {
@@ -2021,7 +1305,7 @@ function basicCanaryFixture({
         storageClasses: [],
         ingressDomains: []
       });
-      if (url.pathname === "/fabric/operations") return json(fabricOperations());
+      if (url.pathname === "/fabric/operations") return json({ operations: fabricOperations() });
       if (url.pathname === "/fabric/compute-allocations/ca-basic-canary") return json({
         id: "ca-basic-canary", accountId: BASIC_CANARY_ACCOUNT_ID, workspaceId: BASIC_CANARY_WORKSPACE_ID, packageId: "basic",
         status: "running", provider: "tencent-tke", providerResourceId: "ins-basic-canary", nodePoolId: "np-basic",
@@ -5768,7 +5052,7 @@ function manualReviewDiagnosisFixture({
     assert.equal(headers.get("authorization"), "Bearer internal-service-token");
     if (url.pathname === `/fabric/compute-allocations/${MANUAL_REVIEW_DIAGNOSE_TARGET.computeAllocationId}`) return json(allocation);
     if (url.pathname === `/fabric/machine-ownerships/${MANUAL_REVIEW_DIAGNOSE_TARGET.computeAllocationId}`) return json(ownership);
-    if (url.pathname === "/fabric/operations") return json([computeOperation, ...(storageOperation ? [storageOperation] : [])]);
+    if (url.pathname === "/fabric/operations") return json({ operations: [computeOperation, ...(storageOperation ? [storageOperation] : [])] });
     if (url.pathname === "/fabric/monthly-provider-truth") {
       if (!providerTruthAvailable) return json({ error: "monthly_provider_truth_unavailable" }, 503);
       return json(truth);
@@ -7253,6 +6537,7 @@ function readOnlyFixture({
 
 function liveFixture({
   changedResourceIds = false,
+  changedLegacyResourceIds = false,
   changedProviderOperations = false,
   changedLaunchOperation = false,
   changedRuntimeOperation = false,
@@ -7297,14 +6582,15 @@ function liveFixture({
   };
   const resourceState = () => {
     state.stateReads += 1;
-    const suffix = changedResourceIds && state.stateReads > 1 ? "changed" : "1";
+    const canonicalSuffix = changedResourceIds && state.stateReads > 1 ? "changed" : "1";
+    const legacySuffix = changedLegacyResourceIds && state.stateReads > 1 ? "changed" : "1";
     const result = {
       computeAllocations: [{
         id: "compute-slot-1",
         accountId: BASIC_ACCOUNT_ID,
         workspaceId: "workspace-slot-1",
-        providerResourceId: "ins-slot-1",
-        nodePoolId: `np-slot-${suffix}`,
+        providerResourceId: `ins-slot-${canonicalSuffix}`,
+        nodePoolId: `np-slot-${legacySuffix}`,
         status: "running",
         costTags: { opl_account_id: BASIC_ACCOUNT_ID, opl_workspace_id: "workspace-slot-1", opl_resource_id: "compute-slot-1" },
         providerData: { instanceType: "SA5.MEDIUM4", zone: "ap-guangzhou-3", chargeType: "PREPAID", periodMonths: "1", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline }
@@ -7313,11 +6599,11 @@ function liveFixture({
         id: "storage-slot-1",
         accountId: BASIC_ACCOUNT_ID,
         workspaceId: "workspace-slot-1",
-        providerResourceId: "disk-slot-1",
+        providerResourceId: `disk-slot-${canonicalSuffix}`,
         sizeGb: 10,
         status: "available",
         costTags: { opl_account_id: BASIC_ACCOUNT_ID, opl_workspace_id: "workspace-slot-1", opl_resource_id: "storage-slot-1" },
-        providerData: { diskChargeType: "PREPAID", periodMonths: "1", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline, zone: "ap-guangzhou-3", pvName: "pv-slot-1" }
+        providerData: { diskChargeType: "PREPAID", periodMonths: "1", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline, zone: "ap-guangzhou-3", pvName: `pv-slot-${legacySuffix}` }
       }],
       workspaces: [{
         id: "workspace-slot-1",
@@ -7365,9 +6651,28 @@ function liveFixture({
     if (url.hostname === "workspace.medopl.cn") return new Response("<main>workspace</main>", { status: 200 });
     if (url.pathname === "/api/production/readiness") return json({ ready: true, cloudImagesReady: true, workspaceImagesReady: true, immutableImagesReady: true });
     if (url.pathname === "/api/auth/login") {
+      const credentials = JSON.parse(init.body);
+      if (credentials.email === ADMIN_EMAIL && credentials.password === ADMIN_PASSWORD) {
+        return json({ user: { id: ADMIN_USER_ID, accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+          "set-cookie": "opl_session=session-admin; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-admin"
+        });
+      }
+      assert.deepEqual(credentials, { email: "owner@example.com", password: "console-password" });
       return json({ user: { accountId: BASIC_ACCOUNT_ID, role: "owner" } }, 200, {
         "set-cookie": "opl_session=session-alpha; Path=/; HttpOnly",
         "x-opl-csrf-token": "csrf-alpha"
+      });
+    }
+    if (url.pathname === "/api/state") throw new Error("retired_api_state_requested");
+    if (url.pathname === "/api/management/state") {
+      assert.match(headers.get("cookie") || "", /opl_session=session-admin/);
+      const accountState = resourceState();
+      return json({
+        computeAllocations: [...accountState.computeAllocations, { id: "compute-other", accountId: "acct-other", workspaceId: "workspace-other" }],
+        storageVolumes: [...accountState.storageVolumes, { id: "storage-other", accountId: "acct-other", workspaceId: "workspace-other" }],
+        workspaces: [...accountState.workspaces, { id: "workspace-other", accountId: "acct-other", ownerAccountId: "acct-other" }],
+        runtimeOperations: [...accountState.runtimeOperations, { id: "operation-other", accountId: "acct-other", action: "job.execute", status: "running" }]
       });
     }
     assert.match(headers.get("cookie") || "", /opl_session=session-alpha/);
@@ -7381,7 +6686,6 @@ function liveFixture({
         ]
       });
     }
-    if (url.pathname === "/api/state") return json(resourceState());
     if (url.pathname === "/api/gateway/wallet") {
       const charged = state.modelRequests > 0 && !usageStuck;
       const delta = charged ? liveUsage.actualCostUsdMicros + (balanceMismatch ? 1 : 0) : 0;
@@ -7622,6 +6926,17 @@ test("rollout QA fails closed when any retained provider resource id changes", a
   const fixture = liveFixture({ changedResourceIds: true });
   await assert.rejects(() => verifyProductionLiveQa(options(fixture)), /production_live_qa_resource_ids_changed/);
   assert.equal(fixture.state.modelRequests, 1);
+});
+
+test("rollout QA ignores changes to response-only legacy resource projections", async () => {
+  const fixture = liveFixture({ changedLegacyResourceIds: true });
+  const result = await verifyProductionLiveQa(options(fixture));
+  assert.equal(result.ok, true);
+  assert.equal(result.resourceIds.unchanged, true);
+  assert.notEqual(result.resourceIds.before.nodePoolId, result.resourceIds.after.nodePoolId);
+  assert.notEqual(result.resourceIds.before.persistentVolumeId, result.resourceIds.after.persistentVolumeId);
+  assert.equal(result.resourceIds.before.cvmInstanceId, result.resourceIds.after.cvmInstanceId);
+  assert.equal(result.resourceIds.before.cbsDiskId, result.resourceIds.after.cbsDiskId);
 });
 
 test("rollout QA CLI requires explicit one-request confirmation before network access", async () => {

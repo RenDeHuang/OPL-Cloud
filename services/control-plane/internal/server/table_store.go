@@ -11,7 +11,6 @@ import (
 	"opl-cloud/services/control-plane/internal/domain"
 )
 
-var errBillingOperationInProgress = errors.New("billing_operation_in_progress")
 var errSub2APIAccountMappingConflict = errors.New("sub2api_account_mapping_conflict")
 var errPrimaryWorkspaceExists = errors.New("primary_workspace_already_exists")
 var errWorkspaceActivationConflict = errors.New("workspace_activation_conflict")
@@ -267,7 +266,6 @@ type controlPlaneTableStore interface {
 	ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error
 	ClaimWorkspaceLaunchReconcile(ctx context.Context, claim workspaceLaunchReconcileClaim) error
 	PersistWorkspaceLaunchReconcile(ctx context.Context, update workspaceLaunchReconcileCAS) error
-	UpcastLegacyWorkspaceLaunch(ctx context.Context, update workspaceLaunchLegacyCAS) error
 	ClaimWorkspaceRenewal(ctx context.Context, claim workspaceRenewalClaimCAS) error
 	PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error
 	ActivateWorkspaceLaunchProjection(ctx context.Context, row map[string]any) (map[string]any, error)
@@ -282,6 +280,7 @@ type controlPlaneTableStore interface {
 	ListAnnouncementReads(ctx context.Context, userID string) ([]map[string]any, error)
 	MarkAnnouncementRead(ctx context.Context, announcementID, userID, readAt string) (map[string]any, error)
 	ListSupportMappings(ctx context.Context, accountID string) ([]map[string]any, error)
+	CreateSupportMapping(ctx context.Context, row map[string]any, limit int) error
 	SaveSupportMapping(ctx context.Context, row map[string]any) error
 	ListRuntimeOperations(ctx context.Context) ([]map[string]any, error)
 	GetRuntimeOperation(ctx context.Context, id string) (map[string]any, bool, error)

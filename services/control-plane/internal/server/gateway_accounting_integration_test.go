@@ -40,6 +40,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 	if controlPlaneTestPostgresBaseURL() == "" {
 		t.Skip("PostgreSQL test gate is not configured")
 	}
+	t.Setenv("OPL_TENCENT_ZONE", "na-siliconvalley-1")
 	ledger, ledgerClient := startGatewayAccountingLedger(t)
 
 	t.Run("stable debit and replay", func(t *testing.T) {
@@ -495,6 +496,14 @@ func (f *gatewayAccountingFabric) PreflightWorkspaceLaunch(_ context.Context, in
 	}, nil
 }
 
+func (*gatewayAccountingFabric) MonthlyPreflight(_ context.Context, input clients.MonthlyPreflightInput) (clients.MonthlyPreflight, error) {
+	return clients.MonthlyPreflight{
+		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
+		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+		ProviderPriceCNY: 12.34,
+	}, nil
+}
+
 func (f *gatewayAccountingFabric) ReadWorkspaceLaunchStage(_ context.Context, input clients.WorkspaceLaunchStageInput) (clients.WorkspaceLaunchStageResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -773,10 +782,12 @@ func startGatewayAccountingLedger(t *testing.T) (clients.LedgerClient, clients.L
 	address := listener.Addr().String()
 	_ = listener.Close()
 	token := "gateway-accounting-ledger-token"
+	capabilityKey := "gateway-accounting-ledger-capability-key-32-chars"
 	command := exec.Command(binary)
 	command.Env = gatewayAccountingProcessEnv(os.Environ(), map[string]string{
 		"LEDGER_ADDR": address, "OPL_INTERNAL_SERVICE_TOKEN": token, "DATABASE_URL": databaseURL,
-		"NODE_ENV": "local", "OPL_POSTGRES_TESTS": "1",
+		"OPL_LEDGER_CAPABILITY_KEY": capabilityKey,
+		"NODE_ENV":                  "local", "OPL_POSTGRES_TESTS": "1",
 	})
 	var logs bytes.Buffer
 	command.Stdout, command.Stderr = &logs, &logs
@@ -815,7 +826,7 @@ func startGatewayAccountingLedger(t *testing.T) (clients.LedgerClient, clients.L
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	ledger := clients.NewLedgerHTTPClient(baseURL, token, &http.Client{Timeout: 5 * time.Second})
+	ledger := clients.NewLedgerHTTPClientWithCapability(baseURL, token, capabilityKey, &http.Client{Timeout: 5 * time.Second})
 	list, ok := ledger.(clients.LedgerReceiptListClient)
 	if !ok {
 		t.Fatal("typed Ledger HTTP client does not support receipt readback")

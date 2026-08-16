@@ -152,25 +152,23 @@ func currentWorkspaceRenewalOperation(rows []map[string]any, workspaceID, paidTh
 	return nil
 }
 
-func planWorkspaceRenewalIntent(workspace, user map[string]any, operations []map[string]any, autoRenew bool, key string, now time.Time) (workspaceRenewalIntentCAS, map[string]any, error) {
+func workspaceAutoRenewResponse(workspace map[string]any, operations []map[string]any, autoRenew bool, now time.Time) (map[string]any, error) {
 	paidThrough, err := time.Parse(time.RFC3339, stringValue(workspace["paidThrough"]))
 	if err != nil {
-		return workspaceRenewalIntentCAS{}, nil, errInvalidWorkspaceBillingState
+		return nil, errInvalidWorkspaceBillingState
 	}
 	paidThrough = paidThrough.UTC()
 	if !now.UTC().Before(paidThrough) || stringValue(workspace["renewalStatus"]) == "expired_unpaid" {
-		return workspaceRenewalIntentCAS{}, nil, errWorkspaceReactivationRequired
+		return nil, errWorkspaceReactivationRequired
 	}
 	nextRenewal, err := time.Parse(time.RFC3339, stringValue(workspace["nextRenewalAt"]))
 	if err != nil {
-		return workspaceRenewalIntentCAS{}, nil, errInvalidWorkspaceBillingState
+		return nil, errInvalidWorkspaceBillingState
 	}
-	patch := workspaceRenewalIntentPatch{AutoRenew: autoRenew}
 	renewalStatus := "scheduled"
 	effectiveAfter := nextRenewal.UTC()
 	operation := currentWorkspaceRenewalOperation(operations, stringValue(workspace["id"]), paidThrough.Format(time.RFC3339Nano))
 	if autoRenew {
-		patch.AuthorizedBy, patch.AuthorizedAt = stringValue(user["id"]), now.UTC().Format(time.RFC3339Nano)
 		if operation != nil {
 			renewalStatus = stringValue(operation["status"])
 		}
@@ -181,9 +179,20 @@ func planWorkspaceRenewalIntent(workspace, user map[string]any, operations []map
 			effectiveAfter, renewalStatus = nextBillingMonth(paidThrough, anchor), stringValue(operation["status"])
 		}
 	}
-	response := map[string]any{
+	return map[string]any{
 		"autoRenew": autoRenew, "effectiveAfter": effectiveAfter.Format(time.RFC3339Nano),
 		"nextRenewalAt": nextRenewal.UTC().Format(time.RFC3339Nano), "paidThrough": paidThrough.Format(time.RFC3339Nano), "renewalStatus": renewalStatus,
+	}, nil
+}
+
+func planWorkspaceRenewalIntent(workspace, user map[string]any, operations []map[string]any, autoRenew bool, key string, now time.Time) (workspaceRenewalIntentCAS, map[string]any, error) {
+	response, err := workspaceAutoRenewResponse(workspace, operations, autoRenew, now)
+	if err != nil {
+		return workspaceRenewalIntentCAS{}, nil, err
+	}
+	patch := workspaceRenewalIntentPatch{AutoRenew: autoRenew}
+	if autoRenew {
+		patch.AuthorizedBy, patch.AuthorizedAt = stringValue(user["id"]), now.UTC().Format(time.RFC3339Nano)
 	}
 	requestHash := workspaceAutoRenewRequestHash(stringValue(workspace["id"]), autoRenew)
 	return workspaceRenewalIntentCAS{

@@ -3,7 +3,6 @@ package fabric
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -33,35 +32,6 @@ type normalLaunchComputeProvider struct {
 	nodeClaimGate              *normalLaunchProviderWriteGate
 }
 
-type journaledNormalLaunchComputeProvider struct {
-	*normalLaunchComputeProvider
-}
-
-func (p *journaledNormalLaunchComputeProvider) CreateComputeAllocation(ctx context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
-	attempt, err := beginProviderMutation(ctx, "test_compute_allocation_create", "compute_allocation", input.Allocation.ID, input.Plan.PoolID)
-	if err != nil {
-		return ComputeAllocation{}, err
-	}
-	if attempt != nil && !attempt.Fresh {
-		var persisted ComputeAllocation
-		if !attempt.resource(&persisted) {
-			return ComputeAllocation{}, errors.New("test_compute_allocation_readback_unavailable")
-		}
-		return persisted, ErrComputeAllocationPending
-	}
-	allocation, providerErr := p.normalLaunchComputeProvider.CreateComputeAllocation(ctx, input)
-	mutationErr := providerErr
-	if errors.Is(providerErr, ErrComputeAllocationPending) {
-		mutationErr = nil
-	}
-	if attempt != nil {
-		if err := attempt.complete(ctx, allocation.ProviderRequestID, allocation, mutationErr); err != nil {
-			return allocation, err
-		}
-	}
-	return allocation, providerErr
-}
-
 func (p *normalLaunchComputeProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
 	p.mu.Lock()
 	p.prepareCalls++
@@ -73,10 +43,6 @@ type normalLaunchProviderWriteGate struct {
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
-}
-
-func newNormalLaunchProviderWriteGate() *normalLaunchProviderWriteGate {
-	return &normalLaunchProviderWriteGate{entered: make(chan struct{}), release: make(chan struct{})}
 }
 
 func (g *normalLaunchProviderWriteGate) afterWrite() {
@@ -190,12 +156,6 @@ func (p *normalLaunchComputeProvider) automaticContinuationCounts() (prepare, cr
 	return p.prepareCalls, p.createCalls, p.proofCalls, p.cvmClaimCalls, p.nodeClaimCalls
 }
 
-func (p *normalLaunchComputeProvider) counts() (create, readback, discovery, cvmClaim, nodeClaim, legacyClaim int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.createCalls, p.readbackCalls, p.discoveryCalls, p.cvmClaimCalls, p.nodeClaimCalls, p.legacyClaimCalls
-}
-
 func seedNormalWorkspaceComputeClaimPending(t *testing.T, store OperationStore, provider *normalLaunchComputeProvider, suffix string) (ComputeAllocationInput, ComputeAllocation) {
 	t.Helper()
 	launchOperationID := "workspace-launch-" + suffix
@@ -277,122 +237,6 @@ func TestNormalWorkspaceClaimPendingReplayWaitsForControlPlaneDecision(t *testin
 	}
 }
 
-type normalLaunchStorageProvider struct {
-	testProvider
-	mu                   sync.Mutex
-	cbsCreateCalls       int
-	cbsReadbackCalls     int
-	bindingApplyCalls    int
-	bindingReadbackCalls int
-	created              StorageVolume
-	bindingApplied       bool
-	failBindingResponse  bool
-	cbsCreateGate        *normalLaunchProviderWriteGate
-}
-
-func (p *normalLaunchStorageProvider) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
-	volume := StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Zone: input.Zone}
-	cbs, err := beginProviderMutation(ctx, "cbs_create", "storage_volume", input.ID, input.ExpectedProviderResourceID)
-	if err != nil {
-		return volume, err
-	}
-	if cbs != nil && !cbs.Fresh {
-		_ = cbs.resource(&volume)
-		volume, err = p.ReadCBSVolume(ctx, input, volume)
-	} else {
-		volume, err = p.CreateCBSVolume(ctx, input)
-	}
-	if err != nil {
-		_ = cbs.complete(ctx, volume.ProviderRequestID, volume, err)
-		return volume, err
-	}
-	if err := cbs.complete(ctx, volume.ProviderRequestID, volume, nil); err != nil {
-		return volume, err
-	}
-
-	binding, err := beginProviderMutation(ctx, "static_binding_apply", "storage_binding", input.ID, volume.ProviderResourceID)
-	if err != nil {
-		return volume, err
-	}
-	if binding != nil && !binding.Fresh {
-		_ = binding.resource(&volume)
-		volume, err = p.ReadStaticStorageBinding(ctx, volume)
-	} else {
-		volume, err = p.ApplyStaticStorageBinding(ctx, volume)
-	}
-	if err != nil {
-		_ = binding.complete(ctx, volume.ProviderRequestID, volume, err)
-		return volume, err
-	}
-	if err := binding.complete(ctx, volume.ProviderRequestID, volume, nil); err != nil {
-		return volume, err
-	}
-	return volume, nil
-}
-
-func (p *normalLaunchStorageProvider) CreateCBSVolume(_ context.Context, input StorageVolumeInput) (StorageVolume, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.cbsCreateCalls++
-	p.created = normalLaunchStorageVolume(input)
-	gate := p.cbsCreateGate
-	p.mu.Unlock()
-	gate.afterWrite()
-	p.mu.Lock()
-	return p.created, nil
-}
-
-func (p *normalLaunchStorageProvider) ReadCBSVolume(_ context.Context, input StorageVolumeInput, persisted StorageVolume) (StorageVolume, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.cbsReadbackCalls++
-	if p.created.ID == "" {
-		return StorageVolume{}, errors.New("cbs absent")
-	}
-	return p.created, nil
-}
-
-func (p *normalLaunchStorageProvider) ApplyStaticStorageBinding(_ context.Context, volume StorageVolume) (StorageVolume, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.bindingApplyCalls++
-	p.bindingApplied = true
-	volume.Status = "ready"
-	if p.failBindingResponse {
-		return volume, errors.New("binding response lost")
-	}
-	return volume, nil
-}
-
-func (p *normalLaunchStorageProvider) ReadStaticStorageBinding(_ context.Context, volume StorageVolume) (StorageVolume, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.bindingReadbackCalls++
-	if !p.bindingApplied {
-		return volume, errors.New("static binding absent")
-	}
-	volume.Status = "ready"
-	return volume, nil
-}
-
-func (p *normalLaunchStorageProvider) storageCounts() (int, int, int, int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.cbsCreateCalls, p.cbsReadbackCalls, p.bindingApplyCalls, p.bindingReadbackCalls
-}
-
-func normalLaunchStorageVolume(input StorageVolumeInput) StorageVolume {
-	name := k8sName(input.ID)
-	return StorageVolume{
-		ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
-		Status: "provider_ready", Provider: "tencent-tke", ProviderResourceID: "disk-" + stableSuffix(input.ID)[:12],
-		ProviderRequestID: "req-cbs-create", SizeGB: input.SizeGB, DiskType: "CLOUD_BSSD", Zone: input.Zone,
-		CBSStatus: "UNATTACHED", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z",
-		ProviderData: map[string]string{"pvName": name + "-pv", "pvcName": name + "-data", "diskChargeType": "PREPAID"},
-		CostTags:     oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID), CreatedAt: time.Now().UTC(),
-	}
-}
-
 type noDeletePendingStorageProvider struct {
 	testProvider
 	deleteCalls int
@@ -424,80 +268,4 @@ func TestActivePaidPendingStorageNeverDeletesOrReplacesStaticBinding(t *testing.
 	if err != nil || got.Status != "pending" || got.ProviderResourceID != volume.ProviderResourceID || provider.deleteCalls != 0 {
 		t.Fatalf("sync=%#v err=%v deleteCalls=%d", got, err, provider.deleteCalls)
 	}
-}
-
-func assertNormalLaunchStageBudget(t *testing.T, store OperationStore, action, stage string, attempted, confirmed, unknown int) {
-	t.Helper()
-	operations, err := store.List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, operation := range operations {
-		if operation.Action != action {
-			continue
-		}
-		budgets, _ := operation.RedactedProviderPayload["normalLaunchMutationBudget"].(map[string]any)
-		budget, _ := budgets[stage].(map[string]any)
-		if fmt.Sprint(budget["attempted"]) == fmt.Sprint(attempted) && fmt.Sprint(budget["confirmed"]) == fmt.Sprint(confirmed) &&
-			fmt.Sprint(budget["unknown"]) == fmt.Sprint(unknown) && fmt.Sprint(budget["max"]) == "1" {
-			return
-		}
-	}
-	t.Fatalf("missing %s budget attempted=%d confirmed=%d unknown=%d in %#v", stage, attempted, confirmed, unknown, operations)
-}
-
-func assertNormalLaunchOperationStatus(t *testing.T, store OperationStore, action, resourceID, status string) {
-	t.Helper()
-	operations, err := store.List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, operation := range operations {
-		if operation.Action == action && operation.ResourceID == resourceID && operation.Status == status {
-			return
-		}
-	}
-	t.Fatalf("missing operation %s/%s/%s in %#v", action, resourceID, status, operations)
-}
-
-func assertNormalLaunchStageBudgetAbsent(t *testing.T, store OperationStore, action, stage string) {
-	t.Helper()
-	operations, err := store.List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, operation := range operations {
-		if operation.Action != action {
-			continue
-		}
-		_, present, valid := normalLaunchStageBudget(operation.RedactedProviderPayload, stage)
-		if present || !valid {
-			t.Fatalf("unexpected %s budget present=%v valid=%v in %#v", stage, present, valid, operation)
-		}
-		return
-	}
-	t.Fatalf("missing %s operation in %#v", action, operations)
-}
-
-func assertNormalLaunchStageOperation(t *testing.T, store OperationStore, action string, input StorageVolumeInput, volume StorageVolume, status string) {
-	t.Helper()
-	operations, err := store.List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, operation := range operations {
-		if operation.Action != action || operation.Status != status || operation.ResourceID != input.ID || operation.AccountID != input.AccountID ||
-			operation.WorkspaceID != input.WorkspaceID || operation.RequestHash == "" {
-			continue
-		}
-		var stored StorageVolume
-		if decodeOperationResource(operation, &stored) && stored.ProviderResourceID == volume.ProviderResourceID && stored.SizeGB == input.SizeGB && stored.Zone == input.Zone {
-			return
-		}
-	}
-	t.Fatalf("missing %s %s operation for %#v in %#v", action, status, input, operations)
-}
-
-func stringsHasDiskPrefix(value string) bool {
-	return len(value) > len("disk-") && value[:len("disk-")] == "disk-"
 }

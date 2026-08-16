@@ -23,6 +23,7 @@ func (app *controlPlaneServer) createSupportMapping(input map[string]any) (map[s
 	if accountID == "" {
 		return nil, errors.New("missing_account_id")
 	}
+	const maxSupportMappingsPerAccount = 1000
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := "support-" + stableID(accountID, externalTicketID)[:12]
 	message := strings.TrimSpace(stringField(input, "description", ""))
@@ -37,9 +38,9 @@ func (app *controlPlaneServer) createSupportMapping(input map[string]any) (map[s
 		"resourceIds":      stringSliceField(input, "resourceIds"),
 		"operationId":      stringField(input, "operationId", ""),
 		"title":            stringField(input, "title", externalTicketID),
-		"category":         stringField(input, "category", "Workspace"),
-		"priority":         stringField(input, "priority", "normal"),
-		"status":           stringField(input, "status", "external_open"),
+		"category":         "Workspace",
+		"priority":         "normal",
+		"status":           "external_open",
 		"createdAt":        now,
 		"updatedAt":        now,
 		"messages":         []any{},
@@ -47,5 +48,5 @@ func (app *controlPlaneServer) createSupportMapping(input map[string]any) (map[s
 	if message != "" {
 		row["messages"] = []any{map[string]any{"author": "requester", "text": message, "createdAt": now}}
 	}
-	return cloneMap(row), app.tables.SaveSupportMapping(context.Background(), row)
+	return cloneMap(row), app.tables.CreateSupportMapping(context.Background(), row, maxSupportMappingsPerAccount)
 }

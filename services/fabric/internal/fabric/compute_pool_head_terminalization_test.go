@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -174,6 +175,66 @@ func TestOperatorTerminalizesOnlyExactManualRecoveryPoolHeadWithoutProviderMutat
 	})
 	if replayErr != nil || replayed.Status != "succeeded" || replayed.Replayed != true {
 		t.Fatalf("replayed=%#v err=%v", replayed, replayErr)
+	}
+}
+
+func TestComputePoolHeadTerminalizationAuthorizationUsesPersistedOwner(t *testing.T) {
+	store := NewMemoryOperationStore()
+	provider := &normalLaunchComputeProvider{}
+	input, allocation, _ := seedOperatorTerminalizationHead(t, store, provider)
+	service := NewServiceWithOperationStore(provider, store)
+
+	candidate, err := service.ReadComputePoolHeadTerminalization(context.Background(), input.NodePoolID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ComputePoolHeadTerminalizationInput{
+		NodePoolID: input.NodePoolID, ApprovalID: "terminalize-owner-scope-01", ApprovalDigest: candidate.ApprovalDigest,
+		IdempotencyKey: "terminalize-owner-scope-01",
+	}
+	authorization, err := service.ComputePoolHeadTerminalizationAuthorization(context.Background(), request)
+
+	if err != nil || authorization.AccountID != allocation.AccountID || authorization.WorkspaceID != allocation.WorkspaceID || authorization.NodePoolID != allocation.NodePoolID {
+		t.Fatalf("authorization=%#v allocation=%#v err=%v", authorization, allocation, err)
+	}
+	stale := request
+	stale.ApprovalDigest = strings.Repeat("0", 64)
+	if _, err := service.ComputePoolHeadTerminalizationAuthorization(context.Background(), stale); !errors.Is(err, ErrComputePoolHeadTerminalizationConflict) {
+		t.Fatalf("stale authorization error=%v", err)
+	}
+	if candidate.AuthorizationScope == nil || *candidate.AuthorizationScope != authorization {
+		t.Fatalf("readback authorization=%#v want=%#v", candidate.AuthorizationScope, authorization)
+	}
+	operations, listErr := store.List(context.Background())
+	if listErr != nil || len(operations) != 1 || operations[0].Status != "claim_pending" {
+		t.Fatalf("authorization lookup changed operations=%#v err=%v", operations, listErr)
+	}
+}
+
+func TestComputePoolHeadTerminalizationDoesNotReplayAuthorizationScope(t *testing.T) {
+	store := NewMemoryOperationStore()
+	provider := &normalLaunchComputeProvider{}
+	input, _, _ := seedOperatorTerminalizationHead(t, store, provider)
+	service := NewServiceWithOperationStore(provider, store)
+	candidate, err := service.ReadComputePoolHeadTerminalization(context.Background(), input.NodePoolID)
+	if err != nil || candidate.AuthorizationScope == nil {
+		t.Fatalf("candidate=%#v err=%v", candidate, err)
+	}
+	request := ComputePoolHeadTerminalizationInput{
+		NodePoolID: input.NodePoolID, ApprovalID: "terminalize-scope-redaction-01", ApprovalDigest: candidate.ApprovalDigest,
+		IdempotencyKey: "terminalize-scope-redaction-01",
+	}
+	result, err := service.TerminalizeComputePoolHead(context.Background(), request)
+	if err != nil || result.AuthorizationScope != nil {
+		t.Fatalf("terminal result=%#v err=%v", result, err)
+	}
+	replayed, err := service.ReadComputePoolHeadTerminalizationResult(context.Background(), request)
+	if err != nil || replayed.AuthorizationScope != nil {
+		t.Fatalf("replayed result=%#v err=%v", replayed, err)
+	}
+	authorization, err := service.ComputePoolHeadTerminalizationAuthorization(context.Background(), request)
+	if err != nil || authorization.AccountID == "" || authorization.WorkspaceID == "" || authorization.NodePoolID != input.NodePoolID {
+		t.Fatalf("replay authorization=%#v err=%v", authorization, err)
 	}
 }
 

@@ -57,6 +57,14 @@ function acceptedSlotPayload(slotId, accountId, overrides = {}) {
   };
 }
 
+function acceptedSlotPayloadWithStatus(slotId, accountId, status, overrides = {}) {
+  const payload = acceptedSlotPayload(slotId, accountId, overrides);
+  for (const key of ["nodePoolId", "persistentVolumeId"]) {
+    if (!Object.hasOwn(overrides, key)) delete payload.slot[key];
+  }
+  return { ...payload, ok: status === "ready" || status === "reused", status };
+}
+
 test("Provider Acceptance replays each fixed Basic and Pro operation with separate authority", async () => {
   assert.deepEqual(PROVIDER_ACCEPTANCE_SLOTS, {
     "verification-slot-basic-01": { accountId: "acct-verification-slot-basic-01", idempotencyKey: "provider-acceptance:verification-slot-basic-01" },
@@ -144,12 +152,42 @@ test("Provider Acceptance rejects missing authority before network access and st
   await rm(directory, { recursive: true, force: true });
 });
 
-test("Provider Acceptance validates every successful response fact before writing evidence", async () => {
+test("Provider Acceptance accepts ready and reused facts without legacy slot projections", async () => {
+  const slotId = "verification-slot-basic-01";
+  const accountId = PROVIDER_ACCEPTANCE_SLOTS[slotId].accountId;
+  const directory = await mkdtemp(join(tmpdir(), "opl-provider-acceptance-legacy-cutover-"));
+  const manifestPath = join(directory, "manifest.json");
+
+  for (const status of ["ready", "reused"]) {
+    for (const legacyProjection of [
+      { nodePoolId: "np-compat", persistentVolumeId: "pv-compat" },
+      { nodePoolId: "", persistentVolumeId: "" },
+      { }
+    ]) {
+      const result = await runProviderAcceptance({
+        origin: "https://cloud.medopl.cn", acceptanceToken, slotId, accountId,
+        confirmation: PROVIDER_ACCEPTANCE_CONFIRMATION, environmentApproved: true, purchaseBudget: 1,
+        maxApprovedProviderCost: 100, attempts: 1, retryDelayMs: 0, manifestPath,
+        fetchImpl: async () => json(acceptedSlotPayloadWithStatus(slotId, accountId, status, legacyProjection)),
+        ...acceptanceAuthority(slotId, accountId)
+      });
+      assert.equal(result.status, status);
+      assert.equal(result.slot.computeProviderId, `ins-${slotId}`);
+      assert.equal(result.slot.storageProviderId, `disk-${slotId}`);
+      assert.equal(result.slot.nodePoolId, legacyProjection.nodePoolId ?? "");
+      assert.equal(result.slot.persistentVolumeId, legacyProjection.persistentVolumeId ?? "");
+      await rm(manifestPath, { force: true });
+    }
+  }
+  await rm(directory, { recursive: true, force: true });
+});
+
+test("Provider Acceptance validates canonical successful response facts before writing evidence", async () => {
   const slotId = "verification-slot-basic-01";
   const accountId = PROVIDER_ACCEPTANCE_SLOTS[slotId].accountId;
   const requiredIds = [
-    "workspaceId", "workspaceUrl", "computeAllocationId", "computeProviderId", "nodePoolId", "storageId",
-    "storageProviderId", "persistentVolumeId", "attachmentId"
+    "workspaceId", "workspaceUrl", "computeAllocationId", "computeProviderId", "storageId",
+    "storageProviderId", "attachmentId"
   ];
   const invalidPayloads = [
     { ...acceptedSlotPayload(slotId, accountId), ok: false },

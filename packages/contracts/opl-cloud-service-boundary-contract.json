@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 41,
+  "schemaVersion": 43,
   "owner": "OPL Platform Architecture",
   "purpose": "Enforce the physical boundaries between Console UI, Control Plane, Fabric, Ledger, and external Sub2API while pointing launch and settlement facts to their focused owners.",
   "state": "current",
@@ -11,7 +11,17 @@
   "physicalBoundaries": {
     "crossServiceTransport": "typed_public_http_contracts_only",
     "fabricMutationAuthorization": {
-      "issuer": "services/control-plane",
+      "defaultIssuer": "services/control-plane",
+      "operatorExceptions": [
+        {
+          "issuer": "opl-instance-medopl_protected_production_workflow",
+          "route": "POST /fabric/compute-pool-head/terminalization",
+          "caller": "operator",
+          "action": "terminalize_compute_pool_head",
+          "scopeSource": "fabric_persisted_candidate_or_exact_terminal_replay",
+          "deploymentRequiredForUse": true
+        }
+      ],
       "verifier": "services/fabric",
       "integrity": "hmac_sha256",
       "shortLived": true,
@@ -29,6 +39,29 @@
       "verificationOrder": "before_operation_store_or_provider_mutation",
       "transportCredentialReuse": "forbidden",
       "runnerScope": "job_read_and_lease_mutations_only"
+    },
+    "fabricCredentialReadAuthorization": {
+      "ordinaryStatusPassword": "always_redacted",
+      "revealRoute": "POST /fabric/workspace-runtimes/{workspaceId}/credentials/reveal",
+      "issuer": "services/control-plane_after_workspace_owner_check",
+      "verifier": "services/fabric",
+      "capabilityFields": "same_as_fabric_mutation_authorization",
+      "ownerScopeSource": "fabric_persisted_workspace_runtime_operation",
+      "transportTokenOnly": "forbidden"
+    },
+    "ledgerCapabilityAuthorization": {
+      "issuer": "services/control-plane",
+      "verifier": "services/ledger",
+      "preverification": "signature_caller_resource_action_operation_expiry_and_body_digest_before_owner_lookup",
+      "finalVerification": "persisted_owner_account_and_workspace_match",
+      "indexedOwnerLookups": [
+        "receipt_id",
+        "artifact_id",
+        "review_id",
+        "review_policy_id"
+      ],
+      "reviewGateLookup": "bounded_indexed_review_id_set",
+      "transportTokenOnly": "forbidden"
     },
     "crossServiceSourceImports": "forbidden",
     "crossServiceDatabaseAccess": "forbidden",

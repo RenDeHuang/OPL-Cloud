@@ -81,24 +81,6 @@ func reservedConfirmedNodeDriftMutation(attemptDigest string) computeClaimRecove
 	}
 }
 
-func observedConfirmedNodeDriftMutation(reserved computeClaimRecoveryMutationLedger, result ComputeClaimRecoveryProof) computeClaimRecoveryMutationLedger {
-	ledger := reserved
-	ledger.State = "observed"
-	ledger.Reason = safeComputeClaimRecoveryReason(result.Reason, "provider_describe")
-	ledger.FailureStage = result.FailureStage
-	ledger.ProviderErrorClass = result.ProviderErrorClass
-	if result.Eligible && result.Reason == "none" {
-		ledger.Reason, ledger.FailureStage, ledger.ProviderErrorClass = "confirmed_node_drift", "", ""
-	}
-	if result.Evidence != nil && result.TencentMutationCount == 0 &&
-		reflect.DeepEqual(result.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
-		validComputeClaimMutationEvidenceShape(result.Evidence.Node, result.KubernetesMutationCount, 1, "node") {
-		ledger.KubernetesMutationCount = result.KubernetesMutationCount
-		ledger.Evidence.Node = cloneComputeClaimMutationEvidence(result.Evidence.Node)
-	}
-	return ledger
-}
-
 func reservedComputeClaimRecoveryMutation() computeClaimRecoveryMutationLedger {
 	return computeClaimRecoveryMutationLedger{
 		State: "reserved", Reason: "provider_describe", TencentMutationCount: 5, KubernetesMutationCount: 1,
@@ -138,41 +120,6 @@ func validNodeReservedComputeClaimRecoveryMutation(ledger computeClaimRecoveryMu
 		ledger.KubernetesMutationCount == 1 && ledger.Evidence.CVM.Attempted == ledger.TencentMutationCount &&
 		ledger.Evidence.CVM.Confirmed == ledger.TencentMutationCount && ledger.Evidence.CVM.Unknown == 0 && len(ledger.Evidence.CVM.Missing) == 0 &&
 		reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}})
-}
-
-func successfulNodeClaimRecoveryMutation(ledger computeClaimRecoveryMutationLedger) bool {
-	return ledger.Generation == "" && ledger.AttemptDigest == "" && ledger.State == "observed" && ledger.Reason == "none" && ledger.TencentMutationCount >= 0 && ledger.TencentMutationCount <= 5 &&
-		ledger.KubernetesMutationCount == 1 && validComputeClaimMutationEvidence(ledger.Evidence.CVM, ledger.TencentMutationCount, 5, "cvm") &&
-		reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1})
-}
-
-func observedNodeClaimRecoveryMutation(reserved computeClaimRecoveryMutationLedger, result ComputeClaimRecoveryProof) computeClaimRecoveryMutationLedger {
-	ledger := reserved
-	ledger.State = "observed"
-	ledger.Reason = safeComputeClaimRecoveryReason(result.Reason, "provider_describe")
-	if result.Reason == "none" {
-		ledger.Reason = "none"
-	}
-	ledger.FailureStage = result.FailureStage
-	ledger.ProviderErrorClass = result.ProviderErrorClass
-	if result.Evidence != nil && result.TencentMutationCount == 0 && reflect.DeepEqual(result.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
-		validComputeClaimMutationEvidenceShape(result.Evidence.Node, result.KubernetesMutationCount, 1, "node") {
-		ledger.KubernetesMutationCount = result.KubernetesMutationCount
-		ledger.Evidence.Node = cloneComputeClaimMutationEvidence(result.Evidence.Node)
-	}
-	if ledger.Reason == "none" {
-		ledger.FailureStage, ledger.ProviderErrorClass = "", ""
-	}
-	return ledger
-}
-
-func observedNodeClaimReadbackMutation(reserved computeClaimRecoveryMutationLedger) computeClaimRecoveryMutationLedger {
-	ledger := reserved
-	ledger.State, ledger.Reason, ledger.FailureStage, ledger.ProviderErrorClass = "observed", "none", "", ""
-	ledger.Evidence.Node.Confirmed = ledger.Evidence.Node.Attempted
-	ledger.Evidence.Node.Unknown = 0
-	ledger.Evidence.Node.Missing = nil
-	return ledger
 }
 
 func observedComputeClaimRecoveryMutation(result ComputeClaimRecoveryProof) computeClaimRecoveryMutationLedger {
@@ -323,32 +270,6 @@ func withComputeClaimRecoveryMutation(payload map[string]any, ledger computeClai
 	}
 	result[computeClaimRecoveryMutationPayloadKey] = value
 	return result
-}
-
-func applyComputeClaimRecoveryMutation(result *ComputeClaimRecoveryProof, ledger computeClaimRecoveryMutationLedger) {
-	result.Eligible = false
-	result.Reason = ledger.Reason
-	result.TencentMutationCount = ledger.TencentMutationCount
-	result.KubernetesMutationCount = ledger.KubernetesMutationCount
-	result.FailureStage = ledger.FailureStage
-	result.ProviderErrorClass = ledger.ProviderErrorClass
-	result.Evidence = &ComputeClaimEvidence{
-		CVM:  cloneComputeClaimMutationEvidence(ledger.Evidence.CVM),
-		Node: cloneComputeClaimMutationEvidence(ledger.Evidence.Node),
-	}
-}
-
-func applyComputeClaimRecoveryReplayFailure(result *ComputeClaimRecoveryProof, ledger computeClaimRecoveryMutationLedger, readbackReason string) {
-	applyComputeClaimRecoveryMutation(result, ledger)
-	if ledger.State != "observed" || ledger.Reason != "none" {
-		return
-	}
-	result.Reason = safeComputeClaimRecoveryReason(readbackReason, "identity_mismatch")
-	if result.Reason == "none" {
-		result.Reason = "identity_mismatch"
-	}
-	result.FailureStage = "claim_final_readback"
-	result.ProviderErrorClass = "readback_mismatch"
 }
 
 func validComputeClaimRecoveryMutationTransition(current, next FabricOperation) bool {
@@ -585,122 +506,6 @@ func isolatedRequestHashReconciliationBinding(operation FabricOperation, input C
 	return ok
 }
 
-func computeClaimRecoveryAllocationIdentityDigest(allocation ComputeAllocation) string {
-	identity := struct {
-		ID, AccountID, WorkspaceID, PackageID, Provider, ProviderResourceID, ProviderRequestID string
-		PoolID, NodePoolID, MachineName, InstanceID, CVMInstanceID, NodeName, PrivateIP        string
-		InstanceType, Zone, ChargeType, RenewFlag, Deadline                                    string
-	}{
-		allocation.ID, allocation.AccountID, allocation.WorkspaceID, allocation.PackageID, allocation.Provider,
-		allocation.ProviderResourceID, allocation.ProviderRequestID, allocation.PoolID, allocation.NodePoolID,
-		allocation.MachineName, allocation.InstanceID, allocation.CVMInstanceID, allocation.NodeName, allocation.PrivateIP,
-		allocation.InstanceType, allocation.Zone, allocation.ChargeType, allocation.RenewFlag, allocation.Deadline,
-	}
-	return hashInput(identity)
-}
-
-func computeClaimRecoveryOwnershipIdentityDigest(ownership MachineOwnership) string {
-	identity := struct {
-		ID, ResourceID, AccountID, WorkspaceID, PackageID, NodePoolID string
-		MachineID, InstanceID, NodeName, ProviderRequestID            string
-		ReleasedAt                                                    *time.Time
-	}{
-		ownership.ID, ownership.ResourceID, ownership.AccountID, ownership.WorkspaceID, ownership.PackageID, ownership.NodePoolID,
-		ownership.MachineID, ownership.InstanceID, ownership.NodeName, ownership.ProviderRequestID, ownership.ReleasedAt,
-	}
-	return hashInput(identity)
-}
-
-func newComputeClaimRecoveryReconciliation(
-	operation FabricOperation,
-	allocation ComputeAllocation,
-	plan ComputeAllocationPreparation,
-	ownership MachineOwnership,
-	input ComputeClaimRecoveryClaimInput,
-	proof ComputeClaimRecoveryProof,
-	binding computeClaimRecoveryBinding,
-	ledger computeClaimRecoveryMutationLedger,
-) computeClaimRecoveryReconciliation {
-	want := newComputeClaimRecoveryBinding(input)
-	provenance, provenanceOK := isolatedRequestHashReconciliationProvenance(operation, input, binding, true, true)
-	if provenanceOK && provenance.SchemaVersion == 2 {
-		authority := struct {
-			FabricRecordID              string                         `json:"fabricRecordId"`
-			OperationID                 string                         `json:"operationId"`
-			OperationHash               string                         `json:"operationHash"`
-			AllocationID                string                         `json:"allocationId"`
-			AllocationProviderRequestID string                         `json:"allocationProviderRequestId"`
-			AllocationIdentityDigest    string                         `json:"allocationIdentityDigest"`
-			AdmittedAllocationStatus    string                         `json:"admittedAllocationStatus"`
-			Plan                        ComputeAllocationPreparation   `json:"plan"`
-			OwnershipID                 string                         `json:"ownershipId"`
-			OwnershipProviderRequestID  string                         `json:"ownershipProviderRequestId"`
-			OwnershipIdentityDigest     string                         `json:"ownershipIdentityDigest"`
-			AdmittedOwnershipStatus     string                         `json:"admittedOwnershipStatus"`
-			Input                       ComputeClaimRecoveryClaimInput `json:"input"`
-			ChargeType                  string                         `json:"chargeType"`
-			PeriodMonths                int                            `json:"periodMonths"`
-			RenewFlag                   string                         `json:"renewFlag"`
-			Deadline                    string                         `json:"deadline"`
-			StorageState                string                         `json:"storageState"`
-			Binding                     computeClaimRecoveryBinding    `json:"binding"`
-			ProvenanceSource            string                         `json:"provenanceSource"`
-			ProvenanceDigest            string                         `json:"provenanceDigest"`
-		}{
-			FabricRecordID: operation.ID, OperationID: operation.OperationID, OperationHash: operation.RequestHash,
-			AllocationID: allocation.ID, AllocationProviderRequestID: allocation.ProviderRequestID,
-			AllocationIdentityDigest: computeClaimRecoveryAllocationIdentityDigest(allocation), AdmittedAllocationStatus: "quarantined", Plan: plan,
-			OwnershipID: ownership.ID, OwnershipProviderRequestID: ownership.ProviderRequestID,
-			OwnershipIdentityDigest: computeClaimRecoveryOwnershipIdentityDigest(ownership), AdmittedOwnershipStatus: "quarantined", Input: input,
-			ChargeType: proof.ChargeType, PeriodMonths: proof.PeriodMonths, RenewFlag: proof.RenewFlag, Deadline: proof.Deadline,
-			StorageState: proof.StorageState, Binding: binding, ProvenanceSource: provenance.Source, ProvenanceDigest: provenance.Digest,
-		}
-		return computeClaimRecoveryReconciliation{
-			SchemaVersion: 2, Consumer: "claim_compute_recovery", Generation: provenance.Generation,
-			ProvenanceSource: provenance.Source, ProvenanceDigest: provenance.Digest, State: "verified",
-			BindingDigest: computeClaimRecoveryBindingDigest(binding), ExpectedRequestHashDigest: computeClaimIdentityDigest(want.RequestHash),
-			PersistedRequestHashDigest: computeClaimIdentityDigest(binding.RequestHash), AuthorityDigest: hashInput(authority),
-		}
-	}
-	authority := struct {
-		FabricRecordID              string                             `json:"fabricRecordId"`
-		OperationID                 string                             `json:"operationId"`
-		OperationHash               string                             `json:"operationHash"`
-		AllocationID                string                             `json:"allocationId"`
-		AllocationProviderRequestID string                             `json:"allocationProviderRequestId"`
-		AllocationIdentityDigest    string                             `json:"allocationIdentityDigest"`
-		AdmittedAllocationStatus    string                             `json:"admittedAllocationStatus"`
-		Plan                        ComputeAllocationPreparation       `json:"plan"`
-		OwnershipID                 string                             `json:"ownershipId"`
-		OwnershipProviderRequestID  string                             `json:"ownershipProviderRequestId"`
-		OwnershipIdentityDigest     string                             `json:"ownershipIdentityDigest"`
-		AdmittedOwnershipStatus     string                             `json:"admittedOwnershipStatus"`
-		Input                       ComputeClaimRecoveryClaimInput     `json:"input"`
-		ChargeType                  string                             `json:"chargeType"`
-		PeriodMonths                int                                `json:"periodMonths"`
-		RenewFlag                   string                             `json:"renewFlag"`
-		Deadline                    string                             `json:"deadline"`
-		StorageState                string                             `json:"storageState"`
-		Binding                     computeClaimRecoveryBinding        `json:"binding"`
-		Ledger                      computeClaimRecoveryMutationLedger `json:"ledger"`
-	}{
-		FabricRecordID: operation.ID, OperationID: operation.OperationID, OperationHash: operation.RequestHash,
-		AllocationID: allocation.ID, AllocationProviderRequestID: allocation.ProviderRequestID,
-		AllocationIdentityDigest: computeClaimRecoveryAllocationIdentityDigest(allocation), AdmittedAllocationStatus: "quarantined", Plan: plan,
-		OwnershipID: ownership.ID, OwnershipProviderRequestID: ownership.ProviderRequestID,
-		OwnershipIdentityDigest: computeClaimRecoveryOwnershipIdentityDigest(ownership), AdmittedOwnershipStatus: "quarantined", Input: input,
-		ChargeType: proof.ChargeType, PeriodMonths: proof.PeriodMonths, RenewFlag: proof.RenewFlag, Deadline: proof.Deadline,
-		StorageState: proof.StorageState, Binding: binding, Ledger: ledger,
-	}
-	return computeClaimRecoveryReconciliation{
-		SchemaVersion: 1, Consumer: "claim_compute_recovery", Generation: "isolated_request_hash_v1", State: "verified",
-		BindingDigest:              computeClaimRecoveryBindingDigest(binding),
-		ExpectedRequestHashDigest:  computeClaimIdentityDigest(want.RequestHash),
-		PersistedRequestHashDigest: computeClaimIdentityDigest(binding.RequestHash),
-		MutationLedgerDigest:       computeClaimRecoveryMutationDigest(ledger), AuthorityDigest: hashInput(authority),
-	}
-}
-
 func validComputeClaimRecoveryReconciliation(value computeClaimRecoveryReconciliation) bool {
 	if value.Consumer != "claim_compute_recovery" || !validComputeClaimRecoveryDigest(value.BindingDigest) || !validComputeClaimRecoveryDigest(value.ExpectedRequestHashDigest) ||
 		!validComputeClaimRecoveryDigest(value.PersistedRequestHashDigest) || value.ExpectedRequestHashDigest == value.PersistedRequestHashDigest ||
@@ -772,19 +577,6 @@ func decodeComputeClaimNodeClientRejectionRecovery(operation FabricOperation) (c
 		return computeClaimNodeClientRejectionRecovery{}, true, false
 	}
 	return recovery, true, true
-}
-
-func withComputeClaimNodeClientRejectionRecovery(payload map[string]any, value computeClaimNodeClientRejectionRecovery) map[string]any {
-	result := maps.Clone(payload)
-	if result == nil {
-		result = map[string]any{}
-	}
-	result[computeClaimNodeClientRejectionPayloadKey] = map[string]any{
-		"schemaVersion": value.SchemaVersion, "classification": value.Classification, "invocation": value.Invocation,
-		"recordedCalls": value.RecordedCalls, "apiAcceptedMutations": value.APIAcceptedMutations,
-		"sourceReconciliationDigest": value.SourceReconciliationDigest,
-	}
-	return result
 }
 
 func computeClaimRecoveryReconciliationMatches(

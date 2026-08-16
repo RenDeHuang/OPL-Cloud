@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -15,6 +15,18 @@ import {
 const FIXED_VERIFICATION_SLOT_ID = "verification-slot-basic-01";
 const BASIC_ACCOUNT_ID = "acct-verification-slot-basic-01";
 const PRO_ACCOUNT_ID = "acct-verification-slot-pro-01";
+const ADMIN_EMAIL = "admin@medopl.cn";
+const ADMIN_PASSWORD = "admin-password";
+const previousAdminEmail = process.env.OPL_SUB2API_ADMIN_EMAIL;
+const previousAdminPassword = process.env.OPL_SUB2API_ADMIN_PASSWORD;
+process.env.OPL_SUB2API_ADMIN_EMAIL = ADMIN_EMAIL;
+process.env.OPL_SUB2API_ADMIN_PASSWORD = ADMIN_PASSWORD;
+after(() => {
+  if (previousAdminEmail === undefined) delete process.env.OPL_SUB2API_ADMIN_EMAIL;
+  else process.env.OPL_SUB2API_ADMIN_EMAIL = previousAdminEmail;
+  if (previousAdminPassword === undefined) delete process.env.OPL_SUB2API_ADMIN_PASSWORD;
+  else process.env.OPL_SUB2API_ADMIN_PASSWORD = previousAdminPassword;
+});
 const fixedSlotDescriptor = {
   id: FIXED_VERIFICATION_SLOT_ID,
   customerProduct: false,
@@ -133,6 +145,8 @@ function fixedSlotFixture({
   includeCurrentReceipt = true,
   receiptCacheControl = "private, no-store",
   receiptOverrides = {},
+  adminUserOverrides = {},
+  managementStateOverrides = {},
   mutate
 } = {}) {
   const calls = [];
@@ -209,6 +223,7 @@ function fixedSlotFixture({
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
     const method = init.method || "GET";
+    const headers = new Headers(init.headers);
     calls.push({ method, path: url.pathname, search: url.search, signal: init.signal });
 
     if (url.hostname === "workspace.medopl.cn") {
@@ -216,25 +231,51 @@ function fixedSlotFixture({
     }
     if (url.pathname === "/api/production/readiness") return json(readiness);
     if (url.pathname === "/api/auth/login") {
+      const credentials = JSON.parse(init.body);
+      if (credentials.email === ADMIN_EMAIL && credentials.password === ADMIN_PASSWORD) {
+        return json({ user: { id: "usr-admin", accountId: "acct-admin", role: "admin", ...adminUserOverrides } }, 200, {
+          "set-cookie": "opl_session=session-admin; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-admin"
+        });
+      }
+      const expectedOwner = JSON.parse(ownerSeed).find((user) => user.accountId === accountId);
+      assert.deepEqual(credentials, { email: expectedOwner.email, password: expectedOwner.password });
       return json({ user: { id: `usr-verifier-${descriptor.id}`, accountId, role: "owner" } }, 200, {
         "set-cookie": "opl_session=session-alpha; Path=/; HttpOnly",
         "x-opl-csrf-token": "csrf-alpha"
       });
     }
 
-    assert.match(new Headers(init.headers).get("cookie") || "", /opl_session=session-alpha/);
     assert.equal(method, "GET", `ordinary production verification must be read only: ${method} ${url.pathname}`);
+
+    if (url.pathname === "/api/state") throw new Error("retired_api_state_requested");
+    if (url.pathname === "/api/management/state") {
+      assert.match(headers.get("cookie") || "", /opl_session=session-admin/);
+      return json({
+        computeAllocations: [
+          ...computeAllocations,
+          { id: "compute-other", accountId: "acct-other", workspaceId: "workspace-other" }
+        ],
+        storageVolumes: [
+          ...storageVolumes,
+          { id: "storage-other", accountId: "acct-other", workspaceId: "workspace-other" }
+        ],
+        workspaces: [
+          ...workspaces,
+          { id: "workspace-other", accountId: "acct-other", ownerAccountId: "acct-other" }
+        ],
+        runtimeOperations: [
+          ...(slotCount > 0 ? runtimeOperations : []),
+          { id: "operation-other", accountId: "acct-other", action: "job.execute", status: "running" }
+        ],
+        ...managementStateOverrides
+      });
+    }
+
+    assert.match(headers.get("cookie") || "", /opl_session=session-alpha/);
 
     if (url.pathname === "/api/pricing/catalog") {
       return json(catalog);
-    }
-    if (url.pathname === "/api/state") {
-      return json({
-        computeAllocations,
-        storageVolumes,
-        workspaces,
-        runtimeOperations: slotCount > 0 ? runtimeOperations : []
-      });
     }
     if (url.pathname === "/api/gateway/wallet") {
       return source({ userId: accountId === PRO_ACCOUNT_ID ? "42" : "41", currency: "USD", usdMicros: "500000000", status: "active" });
@@ -307,6 +348,26 @@ test("production verifier requires the dedicated account id before network acces
     fetchImpl: async () => { calls += 1; return json({}); }
   }), /verification_account_id_required/);
   assert.equal(calls, 0);
+});
+
+test("production verifier requires the independent reserved admin credentials before network access", async () => {
+  for (const credentials of [
+    { adminEmail: "", adminPassword: ADMIN_PASSWORD },
+    { adminEmail: ADMIN_EMAIL, adminPassword: "" },
+    { adminEmail: "owner@example.com", adminPassword: ADMIN_PASSWORD }
+  ]) {
+    let calls = 0;
+    await assert.rejects(() => verifyProductionChain({
+      origin: "https://cloud.medopl.cn",
+      authUsersJson: ownerSeed,
+      accountId: BASIC_ACCOUNT_ID,
+      slotDescriptor: fixedSlotDescriptor,
+      runId: "reserved-admin-guard",
+      ...credentials,
+      fetchImpl: async () => { calls += 1; return json({}); }
+    }), /verification_admin_credentials_required/);
+    assert.equal(calls, 0);
+  }
 });
 
 test("production verifier freezes each slot to its reserved account before network access", async () => {
@@ -428,8 +489,11 @@ test("ordinary production verifier reuses exactly one fixed slot without resourc
   assert.equal(fixture.calls.some((call) => call.path === "/api/billing/receipts"), false);
   assert.equal(fixture.calls.some((call) => call.path === "/api/gateway/summary" || /^\/api\/workspaces\/[^/]+\/receipt$/.test(call.path)), false);
   assert.deepEqual(fixture.calls.filter((call) => call.method !== "GET"), [
-    { method: "POST", path: "/api/auth/login", search: "", signal: fixture.calls[1].signal }
+    { method: "POST", path: "/api/auth/login", search: "", signal: fixture.calls[1].signal },
+    { method: "POST", path: "/api/auth/login", search: "", signal: fixture.calls[3].signal }
   ]);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/management/state"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/state"), false);
   assert.equal(fixture.calls.some((call) => /create|destroy|detach|sync/i.test(call.path)), false);
   assert.equal(fixture.calls.every((call) => call.signal instanceof AbortSignal), true);
 });
@@ -479,6 +543,31 @@ test("production verifier snapshots every account RuntimeOperation without retur
       slotDescriptor: fixedSlotDescriptor, runId: "runtime-operation-snapshot", fetchImpl: fixture.fetchImpl
     }), /runtime_operation_history_required/);
   }
+});
+
+test("production verifier fails closed when management state omits a reserved-account inventory", async () => {
+  const fixture = fixedSlotFixture({ managementStateOverrides: { runtimeOperations: null } });
+  await assert.rejects(() => verifyProductionChain({
+    origin: "https://cloud.medopl.cn",
+    authUsersJson: ownerSeed,
+    accountId: BASIC_ACCOUNT_ID,
+    slotDescriptor: fixedSlotDescriptor,
+    runId: "management-state-inventory",
+    fetchImpl: fixture.fetchImpl
+  }), /management_state_account_inventory_invalid/);
+});
+
+test("production verifier rejects a session that is not the exact reserved admin identity", async () => {
+  const fixture = fixedSlotFixture({ adminUserOverrides: { id: "usr-other" } });
+  await assert.rejects(() => verifyProductionChain({
+    origin: "https://cloud.medopl.cn",
+    authUsersJson: ownerSeed,
+    accountId: BASIC_ACCOUNT_ID,
+    slotDescriptor: fixedSlotDescriptor,
+    runId: "reserved-admin-identity",
+    fetchImpl: fixture.fetchImpl
+  }), /verification_admin_identity_invalid/);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/management/state"), false);
 });
 
 test("ordinary production verifier accepts the fixed Pro slot without resource mutations", async () => {
@@ -633,6 +722,28 @@ test("production verifier CLI rejects legacy paid flags before network access", 
 
   assert.equal(code, 1);
   assert.match(stderr, /production_verifier_read_only/);
+  assert.equal(calls, 0);
+});
+
+test("production verifier CLI requires protected reserved admin env before network access", async () => {
+  let stderr = "";
+  let calls = 0;
+  const code = await runProductionVerifierCli({
+    argv: [],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
+      OPL_VERIFY_ACCOUNT_ID: BASIC_ACCOUNT_ID,
+      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: JSON.stringify(fixedSlotDescriptor),
+      OPL_VERIFY_RUN_ID: "missing-admin-env"
+    },
+    stdout: { write: () => {} },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: async () => { calls += 1; return json({}); }
+  });
+
+  assert.equal(code, 1);
+  assert.match(stderr, /verification_admin_credentials_required/);
   assert.equal(calls, 0);
 });
 

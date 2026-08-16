@@ -948,6 +948,17 @@ func TestReviewGateEvaluatesRequiredReviewEvidence(t *testing.T) {
 	}
 }
 
+func TestReviewGateRejectsUnboundedReviewIDs(t *testing.T) {
+	store := NewMemoryStore()
+	input := ReviewGateInput{
+		ExecutionIdentity: ExecutionIdentity{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", JobID: "job-alpha"},
+		ReviewIDs:         make([]string, maxReviewGateReviewIDs+1),
+	}
+	if _, err := store.EvaluateReviewGate(context.Background(), input); !errors.Is(err, ErrInvalidReviewGateInput) {
+		t.Fatalf("over-limit review gate error=%v, want ErrInvalidReviewGateInput", err)
+	}
+}
+
 func TestReviewGateUsesRequiredVersionRegardlessOfReviewOrder(t *testing.T) {
 	scope := ExecutionIdentity{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", JobID: "job-alpha"}
 	policy := ReviewPolicy{

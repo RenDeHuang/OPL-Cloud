@@ -385,11 +385,11 @@ func TestGatewayKeySecret(t *testing.T) {
 	if data["id"] != "17" || data["value"] != "general-key-secret" {
 		t.Fatalf("reveal data = %#v", data)
 	}
-	state := requestWithSession(t, server, session, http.MethodGet, "/api/state", "")
+	keys := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys", "")
 	audits, _ := store.ListAuditEvents(context.Background(), "acct-gateway")
 	encoded, _ := json.Marshal(audits)
-	if strings.Contains(state.Body.String(), "general-key-secret") || strings.Contains(string(encoded), "general-key-secret") {
-		t.Fatalf("secret escaped dedicated response: state=%s audits=%s", state.Body.String(), encoded)
+	if strings.Contains(keys.Body.String(), "general-key-secret") || strings.Contains(string(encoded), "general-key-secret") {
+		t.Fatalf("secret escaped dedicated response: keys=%s audits=%s", keys.Body.String(), encoded)
 	}
 }
 

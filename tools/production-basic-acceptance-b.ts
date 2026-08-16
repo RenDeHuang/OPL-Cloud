@@ -10,7 +10,11 @@ import {
   walletFact
 } from "./production-verifier.ts";
 import { readBasicCanaryRuntimePodEvidence } from "./production-live-qa.ts";
-import { validateProductionBasicAcceptanceBReconcileReadback } from "./production-basic-acceptance-b-reconcile.ts";
+import {
+  SUCCESS_STATUSES,
+  readProductionBasicAcceptanceBReconcile,
+  validateProductionBasicAcceptanceBReconcileReadback
+} from "./production-basic-acceptance-b-reconcile.ts";
 
 export const PRODUCTION_BASIC_ACCEPTANCE_B_CONFIRMATION = "RUN_ONE_INDEPENDENT_FRESH_BASIC_ORDER_FOR_ACCEPTANCE_B";
 
@@ -262,6 +266,10 @@ function stableId(...parts) {
   return hash.digest("hex");
 }
 
+function acceptanceBWorkspaceRedeemCode(operationId) {
+  return `opl:${stableId("sub2api-monthly-charge-v1", "production", operationId).slice(0, 28)}`;
+}
+
 function expectedLaunchIdentities(accountId, idempotencyKey) {
   const operationId = `workspace-launch-${stableId(accountId, idempotencyKey).slice(0, 18)}`;
   return {
@@ -278,6 +286,35 @@ function canonicalJson(value) {
 
 export function productionBasicAcceptanceBApprovalDigest(approval) {
   return createHash("sha256").update(canonicalJson(approval)).digest("hex");
+}
+
+export function productionBasicAcceptanceBApprovalIdentityDigest(approval) {
+  return prepareDigest(
+    "acceptance-b-approval-v1",
+    approval.schemaVersion,
+    approval.operationMode,
+    approval.approvalId,
+    approval.expiresAt,
+    approval.confirmation,
+    approval.release.mergedMainSha,
+    approval.release.cloudImageDigest,
+    approval.release.workspaceImageDigest,
+    approval.customer.email,
+    approval.customer.accountId,
+    approval.launch.idempotencyKey,
+    approval.launch.operationId,
+    approval.launch.workspaceId,
+    approval.launch.name,
+    approval.launch.packageId,
+    approval.launch.sizeGb,
+    approval.launch.autoRenew,
+    approval.expected.nodePoolId,
+    approval.expected.resolvedInstanceType,
+    "allowed-writes",
+    ...approval.allowedWrites,
+    "forbidden-writes",
+    ...approval.forbiddenWrites
+  );
 }
 
 export function parseProductionBasicAcceptanceBApproval(value, options = {}) {
@@ -398,7 +435,7 @@ function positiveSafeInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 
-export function validateProductionBasicAcceptanceBReadback(value, approval) {
+export function validateProductionBasicAcceptanceBReadback(value, approval, { expectedDebitIdentitySha256 = "" } = {}) {
   const fail = () => { throw new Error("production_basic_acceptance_b_readback_invalid"); };
   const topLevelKeys = [
     "schemaVersion", "operationMode", "status", "approvalId", "approvalDigest", "release", "baseline", "quote", "debit",
@@ -412,7 +449,7 @@ export function validateProductionBasicAcceptanceBReadback(value, approval) {
     !exactObjectKeys(value.baseline, ["workspaceCount", "workspaceLaunchCount", "workspaceKeyCount", "workspaceReceiptCount"]) ||
     Object.values(value.baseline).some((count) => count !== 0) ||
     !exactObjectKeys(value.quote, ["packageId", "sizeGb", "priceVersion", "currency", "totalChargeUsdMicros"]) ||
-    !exactObjectKeys(value.debit, ["operationId", "count", "amountUsdMicros"]) ||
+    !exactObjectKeys(value.debit, ["operationId", "count", "amountUsdMicros", "identitySha256"]) ||
     !exactObjectKeys(value.launch, [
       "operationId", "accountId", "workspaceId", "name", "packageId", "sizeGb", "autoRenew", "priceVersion", "currency",
       "totalChargeUsdMicros", "status", "phase", "computeAllocationId", "storageId", "attachmentId", "runtimeId", "receiptId", "url"
@@ -421,7 +458,7 @@ export function validateProductionBasicAcceptanceBReadback(value, approval) {
     !exactObjectKeys(value.storage, ["id", "providerResourceId", "sizeGb", "chargeType", "periodMonths", "renewFlag"]) ||
     !exactObjectKeys(value.attachment, ["id", "status"]) ||
     !exactObjectKeys(value.runtime, ["id", "status", "ready", "url", "podImageId"]) ||
-    !exactObjectKeys(value.receipt, ["id", "type", "status", "workspaceId", "computeAllocationId", "storageId", "runtimeId", "totalChargeUsdMicros"]) ||
+    !exactObjectKeys(value.receipt, ["id", "type", "status", "workspaceId", "computeAllocationId", "storageId", "runtimeId", "totalChargeUsdMicros", "chargeReferenceSha256"]) ||
     !exactObjectKeys(value.workspaceUrl, ["url", "statusCode"])) {
     fail();
   }
@@ -438,6 +475,7 @@ export function validateProductionBasicAcceptanceBReadback(value, approval) {
   if (value.quote.packageId !== "basic" || value.quote.sizeGb !== 10 || !String(value.quote.priceVersion || "") ||
     value.quote.currency !== "USD" || !positiveSafeInteger(total) ||
     value.debit.operationId !== `${approval.launch.operationId}:charge` || value.debit.count !== 1 || value.debit.amountUsdMicros !== total ||
+    !/^[0-9a-f]{64}$/.test(String(expectedDebitIdentitySha256 || "")) || value.debit.identitySha256 !== expectedDebitIdentitySha256 ||
     value.launch.operationId !== approval.launch.operationId || value.launch.accountId !== approval.customer.accountId ||
     value.launch.workspaceId !== approval.launch.workspaceId || value.launch.name !== approval.launch.name || value.launch.packageId !== "basic" ||
     value.launch.sizeGb !== 10 || value.launch.autoRenew !== false || value.launch.priceVersion !== value.quote.priceVersion ||
@@ -457,6 +495,8 @@ export function validateProductionBasicAcceptanceBReadback(value, approval) {
     value.receipt.id !== value.launch.receiptId || value.receipt.type !== "billing.workspace_purchased.v1" || value.receipt.status !== "completed" ||
     value.receipt.workspaceId !== value.launch.workspaceId || value.receipt.computeAllocationId !== value.launch.computeAllocationId ||
     value.receipt.storageId !== value.launch.storageId || value.receipt.runtimeId !== value.launch.runtimeId || value.receipt.totalChargeUsdMicros !== total ||
+    !/^[0-9a-f]{64}$/.test(String(value.receipt.chargeReferenceSha256 || "")) ||
+    value.receipt.chargeReferenceSha256 !== createHash("sha256").update(acceptanceBWorkspaceRedeemCode(approval.launch.operationId)).digest("hex") ||
     value.workspaceUrl.url !== expectedUrl || value.workspaceUrl.statusCode !== 200) {
     fail();
   }
@@ -511,9 +551,9 @@ export function validateProductionBasicAcceptanceBBlockedReadback(value) {
   return cloneJson(value);
 }
 
-export function validateProductionBasicAcceptanceBArtifact(value, approval) {
+export function validateProductionBasicAcceptanceBArtifact(value, approval, options = {}) {
   return value?.status === "succeeded"
-    ? validateProductionBasicAcceptanceBReadback(value, approval)
+    ? validateProductionBasicAcceptanceBReadback(value, approval, options)
     : validateProductionBasicAcceptanceBBlockedReadback(value);
 }
 
@@ -526,6 +566,25 @@ function listPayload(result) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.items)) return payload.items;
   throw new Error("production_basic_acceptance_b_list_invalid");
+}
+
+async function readFabricOperations(requestOptions) {
+  const operations = [];
+  const seenCursors = new Set();
+  let cursor = "";
+  for (;;) {
+    const path = `/fabric/operations?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const page = (await requestJson({ ...requestOptions, path })).payload;
+    if (!page || !Array.isArray(page.operations) || page.nextCursor !== undefined && typeof page.nextCursor !== "string") {
+      throw new Error("production_basic_acceptance_b_operations_page_invalid");
+    }
+    operations.push(...page.operations);
+    const nextCursor = String(page.nextCursor || "");
+    if (!nextCursor) return operations;
+    if (seenCursors.has(nextCursor)) throw new Error("production_basic_acceptance_b_operations_cursor_repeated");
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
 }
 
 function availableFact(value, source, name) {
@@ -594,15 +653,16 @@ export async function readProductionBasicAcceptanceBLaunchUntilTerminal({
 }
 
 function deterministicLaunchRejection(error) {
-  const match = String(error?.message || "").match(/^request_failed:POST:\/api\/workspace-launches:(4[0-9]{2}):[a-z0-9_]+$/);
+  const match = String(error?.message || "").match(/^request_failed:POST:\/api\/workspace-launches:(4[0-9]{2}):([a-z0-9_]+)$/);
   if (!match) return null;
-  return new Error(`production_basic_acceptance_b_launch_rejected_http_${match[1]}`);
+  return new Error(`production_basic_acceptance_b_launch_rejected_http_${match[1]}_${match[2]}`);
 }
 
-export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken }) {
+export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken, prePostReadback }) {
   const existing = await readAcceptanceBLaunch(requestOptions, customerAuth, approval.launch.operationId);
   if (existing) return assertAcceptanceBLaunchIdentity(existing, approval);
-  if (!String(internalServiceToken || "")) throw new Error("production_basic_acceptance_b_config_invalid");
+  if (!String(internalServiceToken || "") || typeof prePostReadback !== "function") throw new Error("production_basic_acceptance_b_config_invalid");
+  await prePostReadback();
   try {
     const response = await requestJson({
       ...requestOptions,
@@ -625,6 +685,95 @@ export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, c
     if (!readback) throw new Error("production_basic_acceptance_b_launch_outcome_unknown");
     return assertAcceptanceBLaunchIdentity(readback, approval);
   }
+}
+
+export async function admitProductionBasicAcceptanceBFreshLaunch({
+  requestOptions,
+  adminAuth,
+  customerAuth,
+  identity,
+  approval,
+  internalServiceToken,
+  mergedSha,
+  now = new Date()
+}) {
+  const redeemCode = acceptanceBWorkspaceRedeemCode(approval.launch.operationId);
+  const debitIdentitySha256 = prepareDigest(
+    approval.customer.accountId,
+    identity.sub2apiUserId,
+    approval.launch.operationId,
+    approval.launch.workspaceId,
+    redeemCode
+  );
+  const approvalIdentitySha256 = productionBasicAcceptanceBApprovalIdentityDigest(approval);
+  const readApprovedPreparedState = async () => {
+    const prepared = await readProductionBasicAcceptanceBReconcile({
+      origin: requestOptions.origin,
+      customerEmail: approval.customer.email,
+      mergedSha,
+      adminAuth,
+      customerAuth,
+      requestTimeoutMs: requestOptions.timeoutMs,
+      fetchImpl: requestOptions.fetchImpl,
+      now
+    });
+    if (!SUCCESS_STATUSES.has(prepared.status) || prepared.approvalState !== "bound" || prepared.workspaceDebitState !== "absent" ||
+      prepared.workspaceLaunchState !== "absent" || prepared.workspaceState !== "absent" || prepared.workspaceKeyState !== "absent" ||
+      prepared.workspaceReceiptState !== "absent" || [prepared.workspaceCount, prepared.launchCount, prepared.keyCount, prepared.receiptCount].some((count) => count !== 0)) {
+      throw new Error("production_basic_acceptance_b_preflight_reconcile_invalid");
+    }
+    if (prepared.approvalIdentitySha256 !== approvalIdentitySha256) {
+      throw new Error("production_basic_acceptance_b_preflight_approval_identity_invalid");
+    }
+    if (prepared.workspaceDebitIdentitySha256 !== debitIdentitySha256) {
+      throw new Error("production_basic_acceptance_b_preflight_debit_identity_invalid");
+    }
+    return prepared;
+  };
+  const prepared = await readApprovedPreparedState();
+
+  const quoteRaw = (await requestJson({
+    ...requestOptions,
+    auth: customerAuth,
+    path: "/api/pricing/preview",
+    method: "POST",
+    body: { resourceType: "workspace", packageId: approval.launch.packageId, sizeGb: approval.launch.sizeGb }
+  })).payload;
+  if (quoteRaw?.resourceType !== "workspace" || quoteRaw?.packageId !== approval.launch.packageId || quoteRaw?.currency !== "USD" ||
+    quoteRaw?.storage?.priceSnapshot?.sizeGb !== approval.launch.sizeGb || !String(quoteRaw?.priceVersion || "")) {
+    throw new Error("production_basic_acceptance_b_quote_invalid");
+  }
+  const totalChargeUsdMicros = positiveMicros(quoteRaw.totalChargeUsdMicros, "quote");
+  const quote = {
+    packageId: approval.launch.packageId,
+    sizeGb: approval.launch.sizeGb,
+    priceVersion: quoteRaw.priceVersion,
+    currency: "USD",
+    totalChargeUsdMicros
+  };
+  const wallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+  if (BigInt(wallet.usdMicros) <= BigInt(totalChargeUsdMicros)) throw new Error("production_basic_acceptance_b_wallet_insufficient");
+  const launch = await submitProductionBasicAcceptanceBLaunch({
+    requestOptions,
+    customerAuth,
+    approval,
+    internalServiceToken,
+    prePostReadback: readApprovedPreparedState
+  });
+  return {
+    prepared,
+    baseline: {
+      workspaceCount: prepared.workspaceCount,
+      workspaceLaunchCount: prepared.launchCount,
+      workspaceKeyCount: prepared.keyCount,
+      workspaceReceiptCount: prepared.receiptCount
+    },
+    quote,
+    totalChargeUsdMicros,
+    debitIdentitySha256,
+    redeemCode,
+    launch
+  };
 }
 
 function exactSucceededOperation(operations, action, resourceId = "") {
@@ -662,13 +811,13 @@ export function productionBasicAcceptanceBStageBudgets(operations, launch) {
   });
 }
 
-function basicAcceptanceBReceipt(data, launch, totalChargeUsdMicros) {
+function basicAcceptanceBReceipt(data, launch, totalChargeUsdMicros, chargeReference) {
   const components = data?.components;
   const compute = components?.compute;
   const storage = components?.storage;
   const fulfillment = data?.fulfillment;
   if (data?.receiptId !== launch.receiptId || data?.type !== "billing.workspace_purchased.v1" || data?.status !== "completed" ||
-    data?.workspaceId !== launch.workspaceId || data?.totalUsdMicros !== totalChargeUsdMicros ||
+    data?.workspaceId !== launch.workspaceId || data?.totalUsdMicros !== totalChargeUsdMicros || data?.chargeReference !== chargeReference ||
     compute?.resourceType !== "compute" || compute?.resourceId !== launch.computeAllocationId ||
     storage?.resourceType !== "storage" || storage?.resourceId !== launch.storageId || storage?.sizeGb !== 10 ||
     fulfillment?.computeAllocationId !== launch.computeAllocationId || fulfillment?.storageId !== launch.storageId ||
@@ -683,7 +832,8 @@ function basicAcceptanceBReceipt(data, launch, totalChargeUsdMicros) {
     computeAllocationId: compute.resourceId,
     storageId: storage.resourceId,
     runtimeId: fulfillment.runtimeId,
-    totalChargeUsdMicros
+    totalChargeUsdMicros,
+    chargeReferenceSha256: createHash("sha256").update(chargeReference).digest("hex")
   };
 }
 
@@ -771,10 +921,13 @@ async function readPrepareBaseline(requestOptions, customerAuth) {
   if (keyPages.some((page, index) => page.total !== keyTotal || page.page !== index + 1)) throw new Error("production_basic_acceptance_b_baseline_not_fresh");
   const keys = { items: keyPages.flatMap((page) => page.items), total: keyTotal };
   const receipts = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=50" }), "ledger", true);
+  if (keys.items.some((key) => !["general", "workspace"].includes(key?.kind))) {
+    throw new Error("production_basic_acceptance_b_baseline_not_fresh");
+  }
   const workspaceKeys = (keys?.items || []).filter((key) => key?.kind === "workspace");
   const workspaceReceipts = (receipts?.receipts || []).filter((receipt) => receipt?.type === "billing.workspace_purchased.v1" || receipt?.workspaceId);
   if (!Array.isArray(workspacePage?.items) || workspacePage.total !== 0 || workspacePage.items.length !== 0 || launches.length !== 0 ||
-    keys.total !== 0 || keys.items.length !== 0 || workspaceKeys.length !== 0 ||
+    workspaceKeys.length !== 0 ||
     !Array.isArray(receipts?.receipts) || workspaceReceipts.length !== 0 || receipts.hasMore !== false) {
     throw new Error("production_basic_acceptance_b_baseline_not_fresh");
   }
@@ -951,6 +1104,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   const {
     origin,
     fabricOrigin,
+    fabricServiceToken,
     internalServiceToken,
     adminEmail,
     adminPassword,
@@ -971,14 +1125,15 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   } = options;
   const approval = parseProductionBasicAcceptanceBApproval(approvalJson, { approvalId, now });
   if ((!readbackOnly && mergedSha !== approval.release.mergedMainSha) || !/^[a-f0-9]{40}$/.test(String(mergedSha || "")) || !String(customerPassword || "") ||
-    !String(internalServiceToken || "") || !String(kubeconfigPath || "").startsWith("/") ||
+    !String(fabricServiceToken || "") || !String(internalServiceToken || "") || fabricServiceToken === internalServiceToken ||
+    !String(kubeconfigPath || "").startsWith("/") ||
     !/^https:\/\/workspace\.medopl\.cn\/w\//.test(canonicalWorkspaceUrl(approval.launch.workspaceId))) {
     throw new Error("production_basic_acceptance_b_config_invalid");
   }
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
   if (!String(fabricOrigin || "").startsWith("http://127.0.0.1:")) throw new Error("production_basic_acceptance_b_fabric_origin_invalid");
   const requestOptions = { fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs };
-  const fabricOptions = { fetchImpl, origin: String(fabricOrigin), timeoutMs: requestTimeoutMs, headers: { authorization: `Bearer ${internalServiceToken}` } };
+  const fabricOptions = { fetchImpl, origin: String(fabricOrigin), timeoutMs: requestTimeoutMs, headers: { authorization: `Bearer ${fabricServiceToken}` } };
 
   const adminAuth = await login({ ...requestOptions, email: adminEmail, password: adminPassword });
   if (adminAuth.user?.accountId !== "acct-admin" || adminAuth.user?.role !== "admin") throw new Error("production_basic_acceptance_b_admin_login_failed");
@@ -1009,10 +1164,12 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   let baseline;
   let quote;
   let totalChargeUsdMicros;
+  let debitIdentitySha256;
+  let redeemCode;
   let launch;
   if (readbackOnly) {
     const prepared = validateProductionBasicAcceptanceBReconcileReadback(baselineArtifact, { mergedSha: approval.release.mergedMainSha });
-    if (prepared.status !== "prepared" || [prepared.workspaceCount, prepared.launchCount, prepared.keyCount, prepared.receiptCount].some((count) => count !== 0)) {
+    if (!SUCCESS_STATUSES.has(prepared.status) || [prepared.workspaceCount, prepared.launchCount, prepared.keyCount, prepared.receiptCount].some((count) => count !== 0)) {
       throw new Error("production_basic_acceptance_b_baseline_artifact_invalid");
     }
     baseline = {
@@ -1025,37 +1182,11 @@ export async function runProductionBasicAcceptanceB(options = {}) {
     totalChargeUsdMicros = positiveMicros(launch.totalChargeUsdMicros, "quote");
     quote = { packageId: launch.packageId, sizeGb: launch.sizeGb, priceVersion: launch.priceVersion, currency: launch.currency, totalChargeUsdMicros };
   } else {
-    const workspacePage = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=20" }), "control-plane", true);
-    const launchesBefore = listPayload(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspace-launches" }));
-    const keysBefore = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/keys?page=1&pageSize=50" }), "sub2api", true);
-    const receiptsBefore = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=50" }), "ledger", true);
-    const workspaceKeysBefore = (keysBefore?.items || []).filter((key) => key?.kind === "workspace");
-    const workspaceReceiptsBefore = (receiptsBefore?.receipts || []).filter((receipt) => receipt?.type === "billing.workspace_purchased.v1");
-    baseline = {
-      workspaceCount: workspacePage?.total,
-      workspaceLaunchCount: launchesBefore.length,
-      workspaceKeyCount: workspaceKeysBefore.length,
-      workspaceReceiptCount: workspaceReceiptsBefore.length
-    };
-    if (Object.values(baseline).some((count) => count !== 0)) throw new Error("production_basic_acceptance_b_baseline_not_fresh");
-
-    const quoteRaw = (await requestJson({
-      ...requestOptions,
-      auth: customerAuth,
-      path: "/api/pricing/preview",
-      method: "POST",
-      body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
-    })).payload;
-    if (quoteRaw?.resourceType !== "workspace" || quoteRaw?.packageId !== "basic" || quoteRaw?.currency !== "USD" ||
-      quoteRaw?.storage?.priceSnapshot?.sizeGb !== 10 || !String(quoteRaw?.priceVersion || "")) {
-      throw new Error("production_basic_acceptance_b_quote_invalid");
-    }
-    totalChargeUsdMicros = positiveMicros(quoteRaw.totalChargeUsdMicros, "quote");
-    quote = { packageId: "basic", sizeGb: 10, priceVersion: quoteRaw.priceVersion, currency: "USD", totalChargeUsdMicros };
-    const wallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
-    if (BigInt(wallet.usdMicros) <= BigInt(totalChargeUsdMicros)) throw new Error("production_basic_acceptance_b_wallet_insufficient");
-
-    launch = await submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken });
+    const admitted = await admitProductionBasicAcceptanceBFreshLaunch({
+      requestOptions, adminAuth, customerAuth, identity, approval, internalServiceToken,
+      mergedSha: approval.release.mergedMainSha, now
+    });
+    ({ baseline, quote, totalChargeUsdMicros, debitIdentitySha256, redeemCode, launch } = admitted);
     for (let attempt = 1; attempt <= launchPollAttempts && (launch.status !== "succeeded" || launch.phase !== "succeeded"); attempt += 1) {
       if (attempt > 1 && launchPollDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, launchPollDelayMs));
       launch = (await requestJson({ ...requestOptions, auth: customerAuth, path: `/api/workspace-launches/${encodeURIComponent(approval.launch.operationId)}` })).payload;
@@ -1089,7 +1220,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   const computeAllocation = (await requestJson({ ...fabricOptions, path: `/fabric/compute-allocations/${encodeURIComponent(launch.computeAllocationId)}` })).payload;
   const ownership = (await requestJson({ ...fabricOptions, path: `/fabric/machine-ownerships/${encodeURIComponent(launch.computeAllocationId)}` })).payload;
   const truth = (await requestJson({ ...fabricOptions, path: `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(launch.computeAllocationId)}&storageVolumeId=${encodeURIComponent(launch.storageId)}` })).payload;
-  const operations = listPayload(await requestJson({ ...fabricOptions, path: "/fabric/operations" })).filter((operation) => operation?.workspaceId === launch.workspaceId);
+  const operations = (await readFabricOperations(fabricOptions)).filter((operation) => operation?.workspaceId === launch.workspaceId);
   const stageBudgets = productionBasicAcceptanceBStageBudgets(operations, launch);
   const cvmInstanceId = String(computeAllocation?.cvmInstanceId || computeAllocation?.instanceId || "");
   const nodeName = String(computeAllocation?.nodeName || "");
@@ -1108,10 +1239,23 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   const receiptsAfter = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=50" }), "ledger", true);
   const receiptData = (receiptsAfter?.receipts || []).find((receipt) => receipt?.receiptId === launch.receiptId);
   if ((receiptsAfter?.receipts || []).filter((receipt) => receipt?.type === "billing.workspace_purchased.v1").length !== 1 || !receiptData) throw new Error("production_basic_acceptance_b_receipt_cardinality_invalid");
-  const receipt = basicAcceptanceBReceipt(receiptData, launch, totalChargeUsdMicros);
-  const balanceHistory = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/balance-history?page=1&pageSize=50" }), "sub2api", true);
-  const matchingDebits = (balanceHistory?.items || []).filter((item) => item?.type === "balance" && item?.status === "used" && item?.valueUsdMicros === `-${totalChargeUsdMicros}`);
-  if (matchingDebits.length !== 1) throw new Error("production_basic_acceptance_b_debit_invalid");
+  redeemCode ||= acceptanceBWorkspaceRedeemCode(approval.launch.operationId);
+  debitIdentitySha256 ||= prepareDigest(approval.customer.accountId, identity.sub2apiUserId, approval.launch.operationId, approval.launch.workspaceId, redeemCode);
+  const receipt = basicAcceptanceBReceipt(receiptData, launch, totalChargeUsdMicros, redeemCode);
+  const terminalReconcile = await readProductionBasicAcceptanceBReconcile({
+    origin: requestOptions.origin,
+    customerEmail: approval.customer.email,
+    mergedSha: approval.release.mergedMainSha,
+    adminAuth,
+    customerAuth,
+    requestTimeoutMs: requestOptions.timeoutMs,
+    fetchImpl: requestOptions.fetchImpl,
+    now
+  });
+  if (terminalReconcile.approvalState !== "bound" || terminalReconcile.workspaceDebitState !== "confirmed" ||
+    terminalReconcile.workspaceDebitIdentitySha256 !== debitIdentitySha256) {
+    throw new Error("production_basic_acceptance_b_debit_invalid");
+  }
   const keysAfter = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/keys?page=1&pageSize=50" }), "sub2api", true);
   const workspaceKeysAfter = (keysAfter?.items || []).filter((key) => key?.kind === "workspace");
   const usage = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: `/api/gateway/keys/${encodeURIComponent(launch.workspaceApiKeyId)}/usage?page=1&pageSize=20` }), "sub2api", true);
@@ -1128,7 +1272,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
     release: { ...approval.release },
     baseline,
     quote,
-    debit: { operationId: `${launch.operationId}:charge`, count: 1, amountUsdMicros: totalChargeUsdMicros },
+    debit: { operationId: `${launch.operationId}:charge`, count: 1, amountUsdMicros: totalChargeUsdMicros, identitySha256: debitIdentitySha256 },
     launch: {
       operationId: launch.operationId, accountId: launch.accountId, workspaceId: launch.workspaceId, name: launch.name,
       packageId: launch.packageId, sizeGb: launch.sizeGb, autoRenew: launch.autoRenew, priceVersion: launch.priceVersion,
@@ -1161,7 +1305,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
       replacements: 0
     }
   };
-  return validateProductionBasicAcceptanceBReadback(readback, approval);
+  return validateProductionBasicAcceptanceBReadback(readback, approval, { expectedDebitIdentitySha256: debitIdentitySha256 });
 }
 
 export function blockedProductionBasicAcceptanceBArtifact(error = "production_basic_acceptance_b_failed") {
@@ -1240,6 +1384,7 @@ export async function runProductionBasicAcceptanceBCli({
     const result = await runProductionBasicAcceptanceB({
       origin: env.OPL_CONSOLE_ORIGIN,
       fabricOrigin: env.OPL_FABRIC_INTERNAL_ORIGIN,
+      fabricServiceToken: env.OPL_FABRIC_SERVICE_TOKEN,
       internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN,
       adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
       adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,

@@ -67,7 +67,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		if !app.workspaceAccessAllowed(w, workspace) {
+		if !app.workspaceAccessAllowed(w, r, workspace) {
 			return
 		}
 		unlock := app.lockEntitlementResources(
@@ -89,7 +89,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		if !app.workspaceAccessAllowed(w, workspace) {
+		if !app.workspaceAccessAllowed(w, r, workspace) {
 			return
 		}
 		switch stringValue(workspace["state"]) {
@@ -115,10 +115,15 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 	}))
 	mux.HandleFunc("POST /api/workspaces/{workspaceId}/runtime-credentials/reveal", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		workspaceID := r.PathValue("workspaceId")
-		if _, ok := app.ownedWorkspaceForCredentialCommand(w, r, workspaceID); !ok {
+		workspace, ok := app.ownedWorkspaceForCredentialCommand(w, r, workspaceID)
+		if !ok {
 			return
 		}
-		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), workspaceID)
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		runtime, err := service.RevealWorkspaceRuntimeCredentials(r.Context(), stringValue(workspace["accountId"]), workspaceID, key)
 		if err != nil {
 			writeUpstreamError(w, err)
 			return
@@ -146,7 +151,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		if !ok {
 			return
 		}
-		if app.workspaceResponse(cloneMap(workspace))["openable"] != true {
+		if response, reason := app.workspaceAccessResponse(r.Context(), cloneMap(workspace), time.Now().UTC()); reason != "" || response["openable"] != true {
 			writeError(w, http.StatusConflict, "workspace_not_running")
 			return
 		}
@@ -250,6 +255,33 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 					return
 				}
 				writeJSON(w, http.StatusOK, result.Response)
+				return
+			}
+			if workspace["autoRenew"] == false {
+				paidThrough, parseErr := time.Parse(time.RFC3339, stringValue(workspace["paidThrough"]))
+				if parseErr != nil {
+					writeError(w, http.StatusConflict, "workspace_billing_state_invalid")
+					return
+				}
+				operation, found, queryErr := app.tables.GetRuntimeOperation(r.Context(), workspaceRenewalOperationID(workspaceID, paidThrough))
+				if queryErr != nil {
+					writeError(w, http.StatusInternalServerError, "state_read_failed")
+					return
+				}
+				operations := []map[string]any(nil)
+				if found {
+					operations = append(operations, operation)
+				}
+				response, responseErr := workspaceAutoRenewResponse(workspace, operations, false, time.Now().UTC())
+				if errors.Is(responseErr, errWorkspaceReactivationRequired) {
+					writeError(w, http.StatusConflict, responseErr.Error())
+					return
+				}
+				if responseErr != nil {
+					writeError(w, http.StatusConflict, "workspace_billing_state_invalid")
+					return
+				}
+				writeJSON(w, http.StatusOK, response)
 				return
 			}
 			operations, err := queryRuntimeOperations(r.Context(), app.tables, runtimeOperationQuery{WorkspaceID: workspaceID})
@@ -424,14 +456,14 @@ func (app *controlPlaneServer) ownedWorkspaceForCredentialCommand(w http.Respons
 		writeError(w, http.StatusForbidden, "workspace_owner_required")
 		return nil, false
 	}
-	if !app.workspaceAccessAllowed(w, workspace) {
+	if !app.workspaceAccessAllowed(w, r, workspace) {
 		return nil, false
 	}
 	return workspace, true
 }
 
-func (app *controlPlaneServer) workspaceAccessAllowed(w http.ResponseWriter, workspace map[string]any) bool {
-	_, reason := app.workspaceAccessResponse(cloneMap(workspace), time.Now().UTC())
+func (app *controlPlaneServer) workspaceAccessAllowed(w http.ResponseWriter, r *http.Request, workspace map[string]any) bool {
+	_, reason := app.workspaceAccessResponse(r.Context(), cloneMap(workspace), time.Now().UTC())
 	if reason != "" {
 		writeError(w, http.StatusConflict, reason)
 		return false

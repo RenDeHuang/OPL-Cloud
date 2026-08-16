@@ -48,7 +48,7 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		if err != nil {
 			if errors.Is(err, errBillingReviewNotFound) {
 				writeError(w, http.StatusNotFound, "workspace_launch_not_found")
-			} else if errors.Is(err, errWorkspaceLaunchGrantConflict) || errors.Is(err, errWorkspaceLaunchCASConflict) || errors.Is(err, errInvalidWorkspaceLaunchOperation) || errors.Is(err, errWorkspaceLaunchLegacyMigrationBlocked) {
+			} else if errors.Is(err, errWorkspaceLaunchGrantConflict) || errors.Is(err, errWorkspaceLaunchCASConflict) || errors.Is(err, errInvalidWorkspaceLaunchOperation) {
 				writeError(w, http.StatusConflict, err.Error())
 			} else {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")
@@ -768,7 +768,7 @@ func (app *controlPlaneServer) operatorWorkspaceDTO(ctx context.Context, service
 	result["resources"] = resources
 	if liveLedger {
 		receiptID := stringValue(workspace["purchaseReceiptId"])
-		if receipt, err := service.BillingReceipt(ctx, receiptID); err == nil && receipt.ReceiptID == receiptID && receipt.AccountID == accountID && receipt.WorkspaceID == workspaceID {
+		if receipt, err := service.BillingReceiptForAccount(ctx, accountID, workspaceID, receiptID); err == nil && receipt.ReceiptID == receiptID && receipt.AccountID == accountID && receipt.WorkspaceID == workspaceID {
 			if projected, ok := projectCustomerBillingReceipt(receipt); ok {
 				result["receipt"] = sourceEnvelope("ledger", "available", projected, authoritativeSourceTimestamp(receipt.CreatedAt))
 			}
@@ -848,7 +848,7 @@ func operatorResourceReceipt(ctx context.Context, service *controlplane.Service,
 	if receiptID == "" {
 		return clients.Receipt{}, false
 	}
-	receipt, err := service.BillingReceipt(ctx, receiptID)
+	receipt, err := service.BillingReceiptForAccount(ctx, accountID, workspaceID, receiptID)
 	if err != nil || receipt.ReceiptID != receiptID || receipt.AccountID != accountID || receipt.WorkspaceID != workspaceID {
 		return clients.Receipt{}, false
 	}
@@ -1025,24 +1025,6 @@ func billingReviewRequestShapeValid(input map[string]any) bool {
 	for _, key := range []string{"accountId", "billingOperationId", "decision", "evidenceRef"} {
 		value, ok := input[key].(string)
 		if !ok || value == "" || value != strings.TrimSpace(value) {
-			return false
-		}
-	}
-	return true
-}
-
-func workspaceLaunchRecoveryShapeValid(input map[string]any) bool {
-	if len(input) != 3 && len(input) != 4 {
-		return false
-	}
-	for _, key := range []string{"accountId", "billingOperationId", "evidenceRef"} {
-		value, ok := input[key].(string)
-		if !ok || value == "" || value != strings.TrimSpace(value) {
-			return false
-		}
-	}
-	if len(input) == 4 {
-		if _, ok := input["approval"].(map[string]any); !ok {
 			return false
 		}
 	}

@@ -299,35 +299,11 @@ type failingAuditStore struct{ *memoryTableStore }
 func (s *failingAuditStore) SaveAuditEvent(context.Context, map[string]any) error {
 	return errors.New("audit write failed")
 }
-func TestConsoleStateComputePoolsReadFabricCatalog(t *testing.T) {
-	server := NewServer(newTestService(fakeLedgerClient{}, &catalogFabricClient{}))
-	session := tenantAdminSessionForTest(t, server)
-	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addAuth(req, session)
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-	pools := state["computePools"].([]any)
-	first := pools[0].(map[string]any)
-	if len(pools) != 1 || first["id"] != "pool-ultra" || first["packageId"] != "ultra" || first["provider"] != "fabric-test" {
-		t.Fatalf("state compute pools must come from Fabric catalog: %#v", pools)
-	}
-}
-
 func TestPricingPackageAvailabilityFollowsFabricComputePools(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		path string
 	}{
-		{name: "console state", path: "/api/state?accountId=acct-alpha"},
 		{name: "pricing catalog", path: "/api/pricing/catalog"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -760,12 +736,12 @@ func TestCustomerOwnerCannotSelectAnotherAccount(t *testing.T) {
 	}
 	alpha := loginForTest(t, server, "alpha@lab.example", "CorrectHorseBatteryStaple!")
 
-	readOther := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-beta", nil)
+	readOther := httptest.NewRequest(http.MethodGet, "/api/workspaces?accountId=acct-beta", nil)
 	addSessionCookies(readOther, alpha)
 	readOtherRec := httptest.NewRecorder()
 	server.ServeHTTP(readOtherRec, readOther)
-	if readOtherRec.Code != http.StatusForbidden {
-		t.Fatalf("cross-account state status = %d, want 403: %s", readOtherRec.Code, readOtherRec.Body.String())
+	if readOtherRec.Code != http.StatusOK || strings.Contains(readOtherRec.Body.String(), "acct-beta") {
+		t.Fatalf("cross-account workspace list was not bound to the session account: status=%d body=%s", readOtherRec.Code, readOtherRec.Body.String())
 	}
 
 	retiredWrite := requestWithSession(t, server, alpha, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-beta","packageId":"basic"}`)
@@ -941,16 +917,6 @@ func newTestService(ledger clients.LedgerClient, fabric clients.FabricClient) *c
 	return controlplane.NewService(ledger, fabric, &testSub2APIClient{balance: 1_000_000_000_000, charges: map[string]int64{}})
 }
 
-type failingResourceCreateFabricClient struct{ fakeFabricClient }
-
-func (*failingResourceCreateFabricClient) CreateComputeAllocation(context.Context, clients.ComputeAllocationInput, string) (clients.ComputeAllocation, error) {
-	return clients.ComputeAllocation{}, errors.New("compute create failed")
-}
-
-func (*failingResourceCreateFabricClient) CreateStorageVolume(context.Context, clients.StorageVolumeInput, string) (clients.StorageVolume, error) {
-	return clients.StorageVolume{}, errors.New("storage create failed")
-}
-
 func (fakeLedgerClient) RecordReceipt(_ context.Context, input clients.ReceiptInput, _ string) (clients.Receipt, error) {
 	return clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-from-ledger", ContinuationID: "continuation-from-ledger"}, nil
 }
@@ -981,22 +947,6 @@ type fakeBlockingReconciliationLedgerClient struct {
 
 func (fakeBlockingReconciliationLedgerClient) RecordReconciliation(_ context.Context, input clients.ReconciliationInput, _ string) (clients.ReconciliationResult, error) {
 	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "mismatch", Report: input.Report, BlockNewWorkspaces: true, Reason: "provider_bill_reconciliation_failed"}, nil
-}
-
-type flakyWorkspaceReceiptLedger struct {
-	fakeLedgerClient
-	receiptCalls int
-}
-
-func (l *flakyWorkspaceReceiptLedger) RecordReceipt(ctx context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
-	if input.Type != "workspace.created" {
-		return l.fakeLedgerClient.RecordReceipt(ctx, input, key)
-	}
-	l.receiptCalls++
-	if l.receiptCalls == 1 {
-		return clients.Receipt{}, errors.New("ledger unavailable")
-	}
-	return l.fakeLedgerClient.RecordReceipt(ctx, input, key)
 }
 
 type failingFabricClient struct {
@@ -1094,41 +1044,6 @@ func reconcileProviderFact(resourceType, resourceID, status string) clients.Prov
 	}
 }
 
-type countingWorkspaceFabricClient struct {
-	fakeFabricClient
-	mu             sync.Mutex
-	gatewayWrites  int
-	runtimeCreates int
-}
-
-func (f *countingWorkspaceFabricClient) WriteGatewaySecret(ctx context.Context, input clients.GatewaySecretWriteInput, key string) (clients.GatewaySecretWriteResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.gatewayWrites++
-	return f.fakeFabricClient.WriteGatewaySecret(ctx, input, key)
-}
-
-func (f *countingWorkspaceFabricClient) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.runtimeCreates++
-	return f.fakeFabricClient.CreateWorkspaceRuntime(ctx, input, key)
-}
-
-func (f *countingWorkspaceFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
-	return clients.StorageAttachment{
-		ID: "attachment-" + stableID(input.ComputeID, input.VolumeID)[:12], WorkspaceID: input.WorkspaceID,
-		ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "fabric",
-		ProviderAttachmentID: "deployment/runtime:pvc/storage:/data", ProviderRequestID: "attachment-request-from-fabric", MountPath: "/data",
-	}, nil
-}
-
-type provisioningComputeFabricClient struct{ fakeFabricClient }
-
-type pendingComputeFabricClient struct {
-	provisioningComputeFabricClient
-}
-
 func (f *fakeFabricClient) record(call string) {
 	if f != nil && f.calls != nil {
 		*f.calls = append(*f.calls, call)
@@ -1155,21 +1070,6 @@ func (f *fakeFabricClient) MonthlyPreflight(_ context.Context, input clients.Mon
 func (f *fakeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute")
 	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "fabric", ProviderResourceID: "resource-from-fabric", ProviderRequestID: "compute-request-from-fabric", Zone: "provider-zone", Deadline: "2099-01-01T00:00:00Z"}, nil
-}
-
-func (f *provisioningComputeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
-	f.record("fabric.compute")
-	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, PackageID: input.PackageID, Status: "provisioning", Provider: "fabric"}, nil
-}
-
-func (f *provisioningComputeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
-	f.record("fabric.compute-sync")
-	return clients.ComputeAllocation{ID: id, Status: "running", Provider: "fabric", InstanceID: "resource-alpha"}, nil
-}
-
-func (f *pendingComputeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
-	f.record("fabric.compute-sync")
-	return clients.ComputeAllocation{ID: id, Status: "provisioning", Provider: "fabric"}, nil
 }
 
 func (f *fakeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
@@ -1270,18 +1170,18 @@ func (f *fakeFabricClient) WorkspaceRuntimeStatus(_ context.Context, workspaceID
 	}, nil
 }
 
+func (f *fakeFabricClient) RevealWorkspaceRuntimeCredentials(ctx context.Context, _ string, workspaceID, _ string) (clients.WorkspaceRuntime, error) {
+	f.record("fabric.runtime-credentials")
+	calls := f.calls
+	f.calls = nil
+	runtime, err := f.WorkspaceRuntimeStatus(ctx, workspaceID)
+	f.calls = calls
+	return runtime, err
+}
+
 func (f *fakeFabricClient) Readiness(_ context.Context) (map[string]any, error) {
 	f.record("fabric.readiness")
 	return map[string]any{"provider": "fabric", "ready": true, "cloudImagesReady": true, "workspaceImagesReady": true, "immutableImagesReady": true, "missingEnv": []string{}, "missingTools": []string{}}, nil
-}
-
-func createResource(t *testing.T, server http.Handler, method string, path string, body string) map[string]any {
-	t.Helper()
-	session := operatorSessionForTest(t, server)
-	if !explicitOperatorTestPath(path) {
-		session = tenantAdminSessionForTest(t, server)
-	}
-	return createResourceWithSession(t, server, session, method, path, body)
 }
 
 func explicitOperatorTestPath(path string) bool {
@@ -1294,19 +1194,6 @@ func createResourceWithSession(t *testing.T, server http.Handler, loginRec *http
 		loginRec = reservedOperatorSessionForTest(t, server)
 	}
 	rec := requestWithSession(t, server, loginRec, method, path, body)
-	if rec.Code < 200 || rec.Code >= 300 {
-		t.Fatalf("%s %s status = %d: %s", method, path, rec.Code, rec.Body.String())
-	}
-	var payload map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode %s %s: %v", method, path, err)
-	}
-	return payload
-}
-
-func createResourceWithMutationKeyForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, method, path, body, key string) map[string]any {
-	t.Helper()
-	rec := requestWithMutationKeyForTest(t, server, session, method, path, body, key)
 	if rec.Code < 200 || rec.Code >= 300 {
 		t.Fatalf("%s %s status = %d: %s", method, path, rec.Code, rec.Body.String())
 	}
@@ -1448,7 +1335,7 @@ func TestResourceLedgerEvidencePreservesControlPlaneIdentity(t *testing.T) {
 		"status":       "succeeded",
 	}))
 
-	row := app.state("acct-alpha", nil)["resourceLedgerEvidence"].([]any)[0].(map[string]any)
+	row := app.resourceLedgerEvidenceLocked("acct-alpha")[0].(map[string]any)
 	if row["accountId"] != "acct-alpha" || row["workspaceId"] != "ws-alpha" || row["computeAllocationId"] != "compute-alpha" || row["storageId"] != "storage-alpha" || row["attachmentId"] != "attach-alpha" || row["operationId"] != "op-runtime-alpha" {
 		t.Fatalf("row missing Control Plane resource identity: %#v", row)
 	}
@@ -1637,19 +1524,23 @@ func TestOperatorLoginRouteDoesNotCreateAUserSession(t *testing.T) {
 }
 
 func TestProtectedWriteRejectsOversizedJSONBody(t *testing.T) {
-	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	session := tenantAdminSessionForTest(t, server)
-	body := `{"name":"` + strings.Repeat("x", int(maxJSONBodyBytes)+1) + `","packageId":"basic","sizeGb":10,"autoRenew":false}`
-	req := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", "oversized-body")
-	addAuth(req, session)
-	rec := httptest.NewRecorder()
+	for _, contentType := range []string{"application/json", "application/octet-stream"} {
+		t.Run(contentType, func(t *testing.T) {
+			server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+			session := tenantAdminSessionForTest(t, server)
+			body := `{"name":"` + strings.Repeat("x", int(maxJSONBodyBytes)+1) + `","packageId":"basic","sizeGb":10,"autoRenew":false}`
+			req := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", contentType)
+			req.Header.Set("Idempotency-Key", "oversized-body")
+			addAuth(req, session)
+			rec := httptest.NewRecorder()
 
-	server.ServeHTTP(rec, req)
+			server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want 413: %s", rec.Code, rec.Body.String())
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want 413: %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -1854,6 +1745,77 @@ func TestLoginSessionMeAndLogoutUseRemotePassword(t *testing.T) {
 	}
 }
 
+func TestLoginRejectsCrossSiteRequestsBeforeSessionIssuance(t *testing.T) {
+	t.Setenv("OPL_PUBLIC_URL", "https://cloud.example")
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	if _, err := createIdentityUser(server, map[string]any{
+		"email": "login-csrf@example.com", "accountId": "acct-login-csrf", "password": "CorrectHorseBatteryStaple!",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"email":"login-csrf@example.com","password":"CorrectHorseBatteryStaple!"}`
+
+	for _, test := range []struct {
+		name        string
+		contentType string
+		origin      string
+		referer     string
+		publicURL   string
+		wantStatus  int
+	}{
+		{name: "cross-site form", contentType: "text/plain", origin: "https://attacker.example", wantStatus: http.StatusUnsupportedMediaType},
+		{name: "cross-origin JSON", contentType: "application/json", origin: "https://attacker.example", wantStatus: http.StatusForbidden},
+		{name: "opaque origin JSON", contentType: "application/json", origin: "null", wantStatus: http.StatusForbidden},
+		{name: "wrong origin port", contentType: "application/json", origin: "https://cloud.example:444", wantStatus: http.StatusForbidden},
+		{name: "cross-origin referer", contentType: "application/json", referer: "https://attacker.example/login", wantStatus: http.StatusForbidden},
+		{name: "invalid configured origin", contentType: "application/json", origin: "https://cloud.example", publicURL: "://invalid", wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.publicURL != "" {
+				t.Setenv("OPL_PUBLIC_URL", test.publicURL)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", test.contentType)
+			if test.origin != "" {
+				req.Header.Set("Origin", test.origin)
+			}
+			if test.referer != "" {
+				req.Header.Set("Referer", test.referer)
+			}
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, test.wantStatus, rec.Body.String())
+			}
+			if len(rec.Result().Cookies()) != 0 || rec.Header().Get("x-opl-csrf-token") != "" {
+				t.Fatalf("rejected login issued session material: cookies=%#v csrf=%q", rec.Result().Cookies(), rec.Header().Get("x-opl-csrf-token"))
+			}
+		})
+	}
+	sessions, err := server.(*controlPlaneHTTPHandler).app.tables.ListSessions(context.Background())
+	if err != nil || len(sessions) != 0 {
+		t.Fatalf("rejected logins persisted sessions: sessions=%#v err=%v", sessions, err)
+	}
+}
+
+func TestLoginAcceptsSameOriginJSONRequest(t *testing.T) {
+	t.Setenv("OPL_PUBLIC_URL", "https://cloud.example")
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	if _, err := createIdentityUser(server, map[string]any{
+		"email": "same-origin@example.com", "accountId": "acct-same-origin", "password": "CorrectHorseBatteryStaple!",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(`{"email":"same-origin@example.com","password":"CorrectHorseBatteryStaple!"}`))
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Origin", "https://cloud.example")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || len(rec.Result().Cookies()) == 0 || rec.Header().Get("x-opl-csrf-token") == "" {
+		t.Fatalf("same-origin login status=%d cookies=%#v csrf=%q body=%s", rec.Code, rec.Result().Cookies(), rec.Header().Get("x-opl-csrf-token"), rec.Body.String())
+	}
+}
+
 func TestLoginRateLimitBlocksRepeatedFailuresAndResetsAfterSuccess(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	if _, err := createIdentityUser(server, map[string]any{
@@ -1884,6 +1846,38 @@ func TestLoginRateLimitBlocksRepeatedFailuresAndResetsAfterSuccess(t *testing.T)
 	otherIP := loginAttemptForTest(server, "owner@lab.example", "CorrectHorseBatteryStaple!", "203.0.113.11:1000")
 	if otherIP.Code != http.StatusOK {
 		t.Fatalf("rate limit must be scoped to email and IP: status=%d body=%s", otherIP.Code, otherIP.Body.String())
+	}
+}
+
+func TestLoginRateLimitStateBoundedAndExpires(t *testing.T) {
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	app := server.(*controlPlaneHTTPHandler).app
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	req.RemoteAddr = "192.0.2.9:4000"
+	for i := 0; i < maxLoginRateEntries+500; i++ {
+		app.recordLoginFailure(req, map[string]any{"email": fmt.Sprintf("attacker-%d@example.com", i)})
+	}
+	if size := len(app.loginRateLimits); size > maxLoginRateEntries {
+		t.Fatalf("login rate state exceeded bound: %d", size)
+	}
+
+	shared := strings.Repeat("a", 300)
+	app.recordLoginFailure(req, map[string]any{"email": shared + "1@example.com"})
+	app.recordLoginFailure(req, map[string]any{"email": shared + "2@example.com"})
+	truncatedKey := strings.Repeat("a", maxLoginRateKeyEmailBytes) + "|192.0.2.9"
+	if failure := app.loginRateLimits[truncatedKey]; failure.Count != 2 {
+		t.Fatalf("truncated key did not merge failures: %#v", app.loginRateLimits[truncatedKey])
+	}
+
+	app.mu.Lock()
+	for key, failure := range app.loginRateLimits {
+		failure.FirstAt = time.Now().UTC().Add(-loginFailureWindow - time.Minute)
+		app.loginRateLimits[key] = failure
+	}
+	app.mu.Unlock()
+	app.recordLoginFailure(req, map[string]any{"email": "fresh@example.com"})
+	if len(app.loginRateLimits) != 1 || app.loginRateLimits["fresh@example.com|192.0.2.9"].Count != 1 {
+		t.Fatalf("TTL sweep did not reclaim expired entries: %#v", app.loginRateLimits)
 	}
 }
 
@@ -2008,6 +2002,35 @@ func TestSupportTicketMappingPersistsExternalContext(t *testing.T) {
 	}
 }
 
+func TestSupportTicketMappingUsesServerOwnedFields(t *testing.T) {
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	session := tenantAdminSessionForTest(t, server)
+	userID := sessionUserIDForTest(t, server, session)
+	body := `{"accountId":"acct-alpha","userId":"usr-forged","externalTicketId":"ZAM-99","title":"forged metadata","status":"resolved","category":"billing","priority":"urgent"}`
+	created := createResourceWithSession(t, server, session, http.MethodPost, "/api/support/tickets", body)
+	if stringValue(created["userId"]) != userID || created["status"] != "external_open" || created["category"] != "Workspace" || created["priority"] != "normal" {
+		t.Fatalf("support mapping kept client-owned fields: %#v", created)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/support/tickets", nil)
+	addSessionCookies(req, session)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var listed map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&listed); err != nil {
+		t.Fatal(err)
+	}
+	tickets := listed["tickets"].([]any)
+	if len(tickets) != 1 || stringValue(tickets[0].(map[string]any)["userId"]) != userID ||
+		tickets[0].(map[string]any)["status"] != "external_open" || tickets[0].(map[string]any)["category"] != "Workspace" ||
+		tickets[0].(map[string]any)["priority"] != "normal" {
+		t.Fatalf("persisted mapping kept client-owned fields: %#v", tickets)
+	}
+}
+
 func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	cases := []struct {
@@ -2017,7 +2040,6 @@ func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/auth/me", ""},
 		{http.MethodGet, "/api/healthz", ""},
-		{http.MethodGet, "/api/state", ""},
 		{http.MethodGet, "/api/management/state", ""},
 		{http.MethodGet, "/api/operator/overview", ""},
 		{http.MethodGet, "/api/runtime/readiness", ""},

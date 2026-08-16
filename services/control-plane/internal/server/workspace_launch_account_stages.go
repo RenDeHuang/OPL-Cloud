@@ -124,6 +124,9 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchDebit(ctx
 	} else if reason != "sub2api_charge_missing" {
 		return errors.New(reason)
 	}
+	if err := a.preflightWorkspaceLaunchMonthly(ctx, operation); err != nil {
+		return err
+	}
 	_, err = a.service.ChargeSub2API(ctx, clients.Sub2APIChargeInput{
 		UserID: userID, Code: code, ChargeUSDMicros: operation.int64Fact("totalChargeUsdMicros"),
 		Notes: "OPL Workspace launch " + operation.stringFact("workspaceId"),

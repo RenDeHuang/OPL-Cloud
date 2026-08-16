@@ -594,6 +594,50 @@ async function manualReviewFabricGet(options, path, absentCode, unavailableCode)
   }
 }
 
+function fabricOperationPage(payload) {
+  if (!payload || !Array.isArray(payload.operations) || payload.nextCursor !== undefined && typeof payload.nextCursor !== "string") {
+    throw new Error("fabric_operations_page_invalid");
+  }
+  return { operations: payload.operations, nextCursor: String(payload.nextCursor || "") };
+}
+
+async function manualReviewFabricOperations(options) {
+  const operations = [];
+  const seenCursors = new Set();
+  let cursor = "";
+  for (;;) {
+    const path = `/fabric/operations?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const read = await manualReviewFabricGet(options, path, "fabric_operations_not_found", "fabric_operations_unavailable");
+    if (read.state !== "present") return read;
+    let page;
+    try {
+      page = fabricOperationPage(read.payload);
+    } catch {
+      return { state: "unavailable", payload: null, errorCode: "fabric_operations_unavailable" };
+    }
+    operations.push(...page.operations);
+    if (!page.nextCursor) return { state: "present", payload: operations, errorCode: "none" };
+    if (seenCursors.has(page.nextCursor)) return { state: "unavailable", payload: null, errorCode: "fabric_operations_unavailable" };
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+}
+
+async function requestFabricOperations(options) {
+  const operations = [];
+  const seenCursors = new Set();
+  let cursor = "";
+  for (;;) {
+    const path = `/fabric/operations?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const page = fabricOperationPage((await requestJson({ ...options, path })).payload);
+    operations.push(...page.operations);
+    if (!page.nextCursor) return operations;
+    if (seenCursors.has(page.nextCursor)) throw new Error("fabric_operations_cursor_repeated");
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+}
+
 function manualReviewComputeOperation(operations, target) {
   const matches = Array.isArray(operations)
     ? operations.filter((operation) => operation?.action === "create_compute_allocation" && operation?.resourceId === target.computeAllocationId)
@@ -925,7 +969,7 @@ export async function readWorkspaceComputeClaimReadback({
     fabricNamespace: manualReviewFabricNamespace(fabricNamespace),
     execFileImpl
   };
-  const operationsRead = await manualReviewFabricGet(options, "/fabric/operations", "fabric_operations_not_found", "fabric_operations_unavailable");
+  const operationsRead = await manualReviewFabricOperations(options);
   if (operationsRead.state !== "present" || !Array.isArray(operationsRead.payload)) throw new Error(operationsRead.errorCode);
   const target = workspaceComputeClaimReadbackTargetFromOperations(operationsRead.payload, normalizedAccountId, normalizedLaunchOperationId);
   const computeOperation = computeClaimReadbackOperation(operationsRead.payload, "create_compute_allocation", target.computeAllocationId, `${normalizedLaunchOperationId}:compute`);
@@ -1082,7 +1126,7 @@ export async function diagnoseManualReviewRecovery({
     "machine_ownership_not_found",
     "machine_ownership_unavailable"
   );
-  const operationsRead = await manualReviewFabricGet(options, "/fabric/operations", "fabric_operations_not_found", "fabric_operations_unavailable");
+  const operationsRead = await manualReviewFabricOperations(options);
   const providerTruthRead = await manualReviewFabricGet(
     options,
     `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(target.computeAllocationId)}&storageVolumeId=${encodeURIComponent(target.storageId)}`,
@@ -4826,7 +4870,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     ownershipNodeName = prepared.compute.nodeName;
   } else {
     const fabricHeaders = fabricOptions.headers;
-    const operations = (await requestJson({ ...fabricOptions, path: "/fabric/operations", headers: fabricHeaders })).payload;
+    const operations = await requestFabricOperations({ ...fabricOptions, headers: fabricHeaders });
     const allocation = (await requestJson({ ...fabricOptions, path: `/fabric/compute-allocations/${encodeURIComponent(launch.computeAllocationId)}`, headers: fabricHeaders })).payload;
     const ownership = (await requestJson({ ...fabricOptions, path: `/fabric/machine-ownerships/${encodeURIComponent(launch.computeAllocationId)}`, headers: fabricHeaders })).payload;
     const truth = (await requestJson({
@@ -5029,17 +5073,21 @@ async function waitFor(check, timeoutMs, error) {
   throw new Error(error);
 }
 
-function resourceIds(result) {
+export function resourceIds(result) {
   const ids = {
-    cvmInstanceId: result?.slot?.computeProviderResourceId,
-    cbsDiskId: result?.slot?.storageProviderResourceId,
-    nodePoolId: result?.slot?.nodePoolId,
-    persistentVolumeId: result?.slot?.persistentVolumeId
+    cvmInstanceId: String(result?.slot?.computeProviderResourceId || "").trim(),
+    cbsDiskId: String(result?.slot?.storageProviderResourceId || "").trim(),
+    nodePoolId: String(result?.slot?.nodePoolId || "").trim(),
+    persistentVolumeId: String(result?.slot?.persistentVolumeId || "").trim()
   };
-  if (!/^ins-/.test(ids.cvmInstanceId || "") || !/^disk-/.test(ids.cbsDiskId || "") || !/^np-/.test(ids.nodePoolId || "") || !ids.persistentVolumeId) {
+  if (!/^ins-/.test(ids.cvmInstanceId) || !/^disk-/.test(ids.cbsDiskId)) {
     throw new Error("production_live_qa_resource_ids_required");
   }
   return ids;
+}
+
+function canonicalResourceIds(ids) {
+  return { cvmInstanceId: ids.cvmInstanceId, cbsDiskId: ids.cbsDiskId };
 }
 
 async function gatewayUsageSnapshot(requestOptions, auth, keyId) {
@@ -5348,7 +5396,7 @@ export async function verifyProductionLiveQa(options = {}) {
   const after = await verifyProductionChain(verifierOptions);
   if (!after.ok || after.status !== "reused") throw new Error("production_live_qa_reusable_slot_required");
   const afterIds = resourceIds(after);
-  if (JSON.stringify(beforeIds) !== JSON.stringify(afterIds)) throw new Error("production_live_qa_resource_ids_changed");
+  if (JSON.stringify(canonicalResourceIds(beforeIds)) !== JSON.stringify(canonicalResourceIds(afterIds))) throw new Error("production_live_qa_resource_ids_changed");
   if (JSON.stringify(before.ledgerReceipt) !== JSON.stringify(after.ledgerReceipt)) throw new Error("production_live_qa_ledger_receipt_changed");
   if (JSON.stringify(before.runtimeOperations) !== JSON.stringify(after.runtimeOperations)) throw new Error("production_live_qa_runtime_operations_changed");
 

@@ -98,6 +98,22 @@ func TestFabricCapabilityKeyIsRequiredAndSeparatedInProduction(t *testing.T) {
 	}
 }
 
+func TestLedgerCapabilityKeyIsRequiredAndSeparatedInProduction(t *testing.T) {
+	values := map[string]string{"NODE_ENV": "production", "OPL_LEDGER_CAPABILITY_KEY": "ledger-capability-key-with-at-least-32-characters"}
+	key, err := ledgerCapabilityKeyFromEnv(func(name string) string { return values[name] }, "ledger-transport-token")
+	if err != nil || key != values["OPL_LEDGER_CAPABILITY_KEY"] {
+		t.Fatalf("key=%q err=%v", key, err)
+	}
+	delete(values, "OPL_LEDGER_CAPABILITY_KEY")
+	if _, err := ledgerCapabilityKeyFromEnv(func(name string) string { return values[name] }, "ledger-transport-token"); err == nil {
+		t.Fatal("missing Ledger capability key accepted")
+	}
+	values["OPL_LEDGER_CAPABILITY_KEY"] = "ledger-transport-token"
+	if _, err := ledgerCapabilityKeyFromEnv(func(name string) string { return values[name] }, "ledger-transport-token"); err == nil {
+		t.Fatal("Ledger capability key reused transport token")
+	}
+}
+
 func TestSub2APIConfigRequiredAndBoundedInProduction(t *testing.T) {
 	values := map[string]string{
 		"NODE_ENV":                       "production",

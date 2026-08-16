@@ -44,11 +44,7 @@ import type {
   CreateSupportTicketMappingRequest,
   SupportTicketMappingDTO,
   SupportTicketPageDTO,
-  UpdateGatewayKeyRequest,
-  DiagnoseWorkspaceLaunchRecoveryPlanRequest,
-  ExecuteWorkspaceLaunchRecoveryPlanRequest,
-  ValidateWorkspaceLaunchRecoveryPlanRequest,
-  WorkspaceLaunchRecoveryPlanDTO
+  UpdateGatewayKeyRequest
 } from "./dtos.ts";
 import { deleteJson, getJson, patchJson, postJson, putJson, type ApiError } from "./console-api.ts";
 
@@ -106,10 +102,6 @@ function sourcePatch<T>(path: string, body: unknown, csrfToken: string, idempote
 
 function sourceDelete<T>(path: string, csrfToken: string, idempotencyKey: string): Promise<SourceEnvelope<T>> {
   return sourceWrite<T>(() => deleteJson<unknown>(path, csrfToken, idempotencyKey));
-}
-
-export function getConsoleState(): Promise<unknown> {
-  return getJson<unknown>("/api/state");
 }
 
 export function getSupportTickets(signal?: AbortSignal): Promise<SupportTicketPageDTO> {
@@ -263,22 +255,6 @@ export function disableOperatorAccount(accountId: string, reason: string, csrfTo
 
 export function resolveBillingReview(resourceType: string, resourceId: string, input: BillingReviewResolutionRequest, csrfToken: string, idempotencyKey: string): Promise<OperationStatusDTO> {
   return postJson<unknown>(`/api/operator/billing-reviews/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/resolve`, input, csrfToken, idempotencyKey).then(decodeDto<OperationStatusDTO>);
-}
-
-export function diagnoseWorkspaceLaunchRecoveryPlan(operationId: string, input: DiagnoseWorkspaceLaunchRecoveryPlanRequest, csrfToken: string): Promise<WorkspaceLaunchRecoveryPlanDTO> {
-  return postJson<unknown>(`/api/operator/workspace-launches/${encodeURIComponent(operationId)}/recovery-plan/diagnose`, input, csrfToken).then(decodeDto<WorkspaceLaunchRecoveryPlanDTO>);
-}
-
-export function getWorkspaceLaunchRecoveryPlan(operationId: string): Promise<WorkspaceLaunchRecoveryPlanDTO> {
-  return getJson<unknown>(`/api/operator/workspace-launches/${encodeURIComponent(operationId)}/recovery-plan`).then(decodeDto<WorkspaceLaunchRecoveryPlanDTO>);
-}
-
-export function validateWorkspaceLaunchRecoveryPlan(operationId: string, input: ValidateWorkspaceLaunchRecoveryPlanRequest, csrfToken: string): Promise<WorkspaceLaunchRecoveryPlanDTO> {
-  return postJson<unknown>(`/api/operator/workspace-launches/${encodeURIComponent(operationId)}/recovery-plan/validate`, input, csrfToken).then(decodeDto<WorkspaceLaunchRecoveryPlanDTO>);
-}
-
-export function executeWorkspaceLaunchRecoveryPlan(operationId: string, input: ExecuteWorkspaceLaunchRecoveryPlanRequest, csrfToken: string, idempotencyKey: string): Promise<WorkspaceLaunchRecoveryPlanDTO> {
-  return postJson<unknown>(`/api/operator/workspace-launches/${encodeURIComponent(operationId)}/recovery-plan/execute`, input, csrfToken, idempotencyKey).then(decodeDto<WorkspaceLaunchRecoveryPlanDTO>);
 }
 
 export function createOperatorAnnouncement(input: AnnouncementDraftRequest, csrfToken: string, idempotencyKey: string): Promise<AnnouncementDTO> {

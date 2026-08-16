@@ -47,6 +47,8 @@ type EvidenceReceiptMutation struct {
 	project_id            *string
 	task_id               *string
 	job_id                *string
+	artifact_id           *string
+	review_id             *string
 	payload_json          *string
 	supersedes_receipt_id *string
 	provider_request_id   *string
@@ -453,6 +455,78 @@ func (m *EvidenceReceiptMutation) ResetJobID() {
 	m.job_id = nil
 }
 
+// SetArtifactID sets the "artifact_id" field.
+func (m *EvidenceReceiptMutation) SetArtifactID(s string) {
+	m.artifact_id = &s
+}
+
+// ArtifactID returns the value of the "artifact_id" field in the mutation.
+func (m *EvidenceReceiptMutation) ArtifactID() (r string, exists bool) {
+	v := m.artifact_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldArtifactID returns the old "artifact_id" field's value of the EvidenceReceipt entity.
+// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *EvidenceReceiptMutation) OldArtifactID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldArtifactID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldArtifactID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldArtifactID: %w", err)
+	}
+	return oldValue.ArtifactID, nil
+}
+
+// ResetArtifactID resets all changes to the "artifact_id" field.
+func (m *EvidenceReceiptMutation) ResetArtifactID() {
+	m.artifact_id = nil
+}
+
+// SetReviewID sets the "review_id" field.
+func (m *EvidenceReceiptMutation) SetReviewID(s string) {
+	m.review_id = &s
+}
+
+// ReviewID returns the value of the "review_id" field in the mutation.
+func (m *EvidenceReceiptMutation) ReviewID() (r string, exists bool) {
+	v := m.review_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldReviewID returns the old "review_id" field's value of the EvidenceReceipt entity.
+// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *EvidenceReceiptMutation) OldReviewID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldReviewID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldReviewID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldReviewID: %w", err)
+	}
+	return oldValue.ReviewID, nil
+}
+
+// ResetReviewID resets all changes to the "review_id" field.
+func (m *EvidenceReceiptMutation) ResetReviewID() {
+	m.review_id = nil
+}
+
 // SetPayloadJSON sets the "payload_json" field.
 func (m *EvidenceReceiptMutation) SetPayloadJSON(s string) {
 	m.payload_json = &s
@@ -775,7 +849,7 @@ func (m *EvidenceReceiptMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *EvidenceReceiptMutation) Fields() []string {
-	fields := make([]string, 0, 16)
+	fields := make([]string, 0, 18)
 	if m.receipt_type != nil {
 		fields = append(fields, evidencereceipt.FieldReceiptType)
 	}
@@ -799,6 +873,12 @@ func (m *EvidenceReceiptMutation) Fields() []string {
 	}
 	if m.job_id != nil {
 		fields = append(fields, evidencereceipt.FieldJobID)
+	}
+	if m.artifact_id != nil {
+		fields = append(fields, evidencereceipt.FieldArtifactID)
+	}
+	if m.review_id != nil {
+		fields = append(fields, evidencereceipt.FieldReviewID)
 	}
 	if m.payload_json != nil {
 		fields = append(fields, evidencereceipt.FieldPayloadJSON)
@@ -848,6 +928,10 @@ func (m *EvidenceReceiptMutation) Field(name string) (ent.Value, bool) {
 		return m.TaskID()
 	case evidencereceipt.FieldJobID:
 		return m.JobID()
+	case evidencereceipt.FieldArtifactID:
+		return m.ArtifactID()
+	case evidencereceipt.FieldReviewID:
+		return m.ReviewID()
 	case evidencereceipt.FieldPayloadJSON:
 		return m.PayloadJSON()
 	case evidencereceipt.FieldSupersedesReceiptID:
@@ -889,6 +973,10 @@ func (m *EvidenceReceiptMutation) OldField(ctx context.Context, name string) (en
 		return m.OldTaskID(ctx)
 	case evidencereceipt.FieldJobID:
 		return m.OldJobID(ctx)
+	case evidencereceipt.FieldArtifactID:
+		return m.OldArtifactID(ctx)
+	case evidencereceipt.FieldReviewID:
+		return m.OldReviewID(ctx)
 	case evidencereceipt.FieldPayloadJSON:
 		return m.OldPayloadJSON(ctx)
 	case evidencereceipt.FieldSupersedesReceiptID:
@@ -969,6 +1057,20 @@ func (m *EvidenceReceiptMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetJobID(v)
+		return nil
+	case evidencereceipt.FieldArtifactID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetArtifactID(v)
+		return nil
+	case evidencereceipt.FieldReviewID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetReviewID(v)
 		return nil
 	case evidencereceipt.FieldPayloadJSON:
 		v, ok := value.(string)
@@ -1098,6 +1200,12 @@ func (m *EvidenceReceiptMutation) ResetField(name string) error {
 		return nil
 	case evidencereceipt.FieldJobID:
 		m.ResetJobID()
+		return nil
+	case evidencereceipt.FieldArtifactID:
+		m.ResetArtifactID()
+		return nil
+	case evidencereceipt.FieldReviewID:
+		m.ResetReviewID()
 		return nil
 	case evidencereceipt.FieldPayloadJSON:
 		m.ResetPayloadJSON()

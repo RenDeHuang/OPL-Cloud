@@ -57,12 +57,12 @@ func TestGatewayOwnerRevealIsAudited(t *testing.T) {
 		t.Fatalf("revealed Gateway key = %#v", revealedKey)
 	}
 
-	state := requestWithSession(t, server, session, http.MethodGet, "/api/state", "")
-	if state.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", state.Code, state.Body.String())
+	keys := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys", "")
+	if keys.Code != http.StatusOK {
+		t.Fatalf("key list status = %d: %s", keys.Code, keys.Body.String())
 	}
-	if strings.Contains(state.Body.String(), "workspace-key-secret") || strings.Contains(state.Body.String(), "maskedValue") || strings.Contains(state.Body.String(), "usage5hUsdMicros") {
-		t.Fatalf("state leaked Gateway Key projection: %s", state.Body.String())
+	if strings.Contains(keys.Body.String(), "workspace-key-secret") || strings.Contains(keys.Body.String(), "maskedValue") {
+		t.Fatalf("key list leaked Gateway Key projection: %s", keys.Body.String())
 	}
 	auditEvents, err := store.ListAuditEvents(context.Background(), "acct-gateway")
 	if err != nil || !slices.ContainsFunc(auditEvents, func(event map[string]any) bool {
@@ -76,6 +76,50 @@ func TestGatewayOwnerRevealIsAudited(t *testing.T) {
 	}
 	if len(client.userKeyReadIDs) != 1 || client.userKeyReadIDs[0] != 17 {
 		t.Fatalf("Gateway used caller-supplied Key identity: %#v", client.userKeyReadIDs)
+	}
+}
+
+func TestGatewayRevealAuditGrowthAndRequestMetadataAreBounded(t *testing.T) {
+	store := NewTestEntStateStore(t, t.TempDir()+"/gateway-reveal-audit.sqlite").(*postgresEntStateStore)
+	client := &sourceTruthGatewayClient{
+		customerFactsSub2API: &customerFactsSub2API{testSub2APIClient: &testSub2APIClient{balance: 123, charges: map[string]int64{}}},
+		keys:                 []clients.Sub2APIWorkspaceKey{{ID: 17, UserID: 41, Name: "general-key", Key: "general-key-secret", Status: "active"}},
+	}
+	server, session := newGatewayOwnerTestServer(t, client, store)
+	for attempt := range 2 {
+		if attempt > 0 {
+			time.Sleep(1100 * time.Millisecond)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/gateway/keys/17/reveal", strings.NewReader("{}"))
+		req.RemoteAddr = strings.Repeat("1", 4096)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", strings.Repeat("u", 4096))
+		addAuth(req, session)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("reveal status = %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	audits, err := store.ListAuditEvents(context.Background(), "acct-gateway")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reveals := make([]map[string]any, 0, len(audits))
+	for _, event := range audits {
+		if stringValue(event["action"]) == "gateway.key_reveal" {
+			reveals = append(reveals, event)
+		}
+	}
+	if len(reveals) != 1 {
+		t.Fatalf("reveal audit rows = %d, want one coalesced row: %#v", len(reveals), reveals)
+	}
+	if ip := stringValue(reveals[0]["ipAddress"]); len(ip) > 64 {
+		t.Fatalf("audit IP length = %d, want <= 64", len(ip))
+	}
+	if userAgent := stringValue(reveals[0]["userAgent"]); len(userAgent) > 512 {
+		t.Fatalf("audit user agent length = %d, want <= 512", len(userAgent))
 	}
 }
 
@@ -139,9 +183,9 @@ func TestGatewayRevealAuditFailureDoesNotReturnKey(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "state_persist_failed") {
 		t.Fatalf("audit failure reveal = %d: %s", rec.Code, rec.Body.String())
 	}
-	state := requestWithSession(t, server, session, http.MethodGet, "/api/state", "")
+	keys := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys", "")
 	auditEvents, auditErr := store.ListAuditEvents(context.Background(), "acct-gateway")
-	joined := rec.Body.String() + state.Body.String() + logs.String()
+	joined := rec.Body.String() + keys.Body.String() + logs.String()
 	if strings.Contains(joined, "general-key-secret") || strings.Contains(joined, "gene...cret") || auditErr != nil || len(auditEvents) != 0 || len(client.keyUserIDs) != 1 {
 		t.Fatalf("audit failure leaked or persisted Key: calls=%#v audit=%#v err=%v output=%s", client.keyUserIDs, auditEvents, auditErr, joined)
 	}
@@ -185,7 +229,7 @@ func TestCustomerOwnerCannotUseEndpointsAcrossAccounts(t *testing.T) {
 	}
 }
 
-func TestCustomerStateContainsOnlySessionTenant(t *testing.T) {
+func TestCustomerWorkspaceListContainsOnlySessionTenant(t *testing.T) {
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	seedTenantMember(t, store, "acct-beta", "org-beta", "usr-beta", "beta-secret@example.com")
@@ -199,20 +243,20 @@ func TestCustomerStateContainsOnlySessionTenant(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	rec := requestWithSession(t, server, member, http.MethodGet, "/api/state", "")
+	rec := requestWithSession(t, server, member, http.MethodGet, "/api/workspaces", "")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("workspace list status = %d: %s", rec.Code, rec.Body.String())
 	}
 	for _, secret := range []string{"acct-beta", "beta-secret@example.com", "workspace-beta", "compute-beta", "storage-beta", "operation-beta"} {
 		if strings.Contains(rec.Body.String(), secret) {
-			t.Fatalf("state leaked %q: %s", secret, rec.Body.String())
+			t.Fatalf("workspace list leaked %q: %s", secret, rec.Body.String())
 		}
 	}
 	if strings.Contains(rec.Body.String(), "alpha@example.com") {
-		t.Fatalf("state leaked current user: %s", rec.Body.String())
+		t.Fatalf("workspace list leaked current user: %s", rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "billingReconciliation") || strings.Contains(rec.Body.String(), "global-secret") {
-		t.Fatalf("state leaked global reconciliation: %s", rec.Body.String())
+		t.Fatalf("workspace list leaked global reconciliation: %s", rec.Body.String())
 	}
 }
 

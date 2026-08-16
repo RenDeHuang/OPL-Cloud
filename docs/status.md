@@ -26,25 +26,74 @@ Sub2API management origin and credentials are never exposed to the browser.
 
 ## Implementation Snapshot
 
+- Control Plane's retained Ent persistence implementation is split inside the
+  existing `server` package into identity, resource, and Workspace capability
+  files. Fabric's retained Tencent provider implementation is likewise split
+  into compute, storage, and Runtime capability files. The existing receivers,
+  public interfaces, typed HTTP contracts, PostgreSQL schemas, provider
+  operations, and authority boundaries are unchanged. Focused tests plus the
+  repository's complete local PostgreSQL, capacity, and local-Docker gate pass;
+  no live Tencent mutation or Instance deployment was run. The remaining mixed
+  facades stay in the cohesion backlog and require caller-led slices rather than
+  a new cross-service framework.
+- `npm run verify:local` is the repeatable source gate for product boundaries,
+  Node tests, Console typecheck/lint/build, whitepaper rendering, all-module Go
+  compilation, database-free Go tests, and Git whitespace. The separate
+  `npm run verify:local:full` gate starts an ephemeral PostgreSQL 16 container,
+  requires every PostgreSQL, Control Plane capacity, and Fabric local-Docker
+  test to finish with zero skips, and removes the container on exit. These are
+  local source/runtime test facts only; neither command accesses production or
+  proves Instance adoption.
+- Structural over-design cleanup landed through PR `#285`: staticcheck-U1000 and
+  zero-caller dead symbols were removed from Control Plane server/app-state and
+  Fabric operator-identity/service/provider/provisioner surfaces, including two
+  unreferenced provider-port interfaces; the zero-importer
+  `services/fabric/internal/tencent` package, unreferenced
+  `tools/runtime-fact-source-eval.sh`, superseded or absorbed brand assets, and
+  Console Alert/Tooltip pass-through wrappers were deleted. The Console imports
+  Tailwind CSS through `apps-sdk.css`, so `tailwindcss` remains an explicit root
+  peer/build dependency required by `@openai/apps-sdk-ui`. The test-only
+  `memory_table_store` no longer ships in the production binary, and the
+  persistent server constructor now requires a `controlPlaneTableStore` instead
+  of a never-taken memory fallback. Sub2API, Fabric, and Ledger client role
+  interfaces (capability gating with tested negative paths) and the module-local
+  ops environment catalogs were re-checked against callers and tests and
+  retained. This is source and CI evidence only; it does not change
+  code-complete, Pilot, or production flags.
+
 - Public and login surfaces present the generic OPL Cloud product in user-task
   language, preserve the administrator-provisioned Pilot boundary, and use the
   current responsive Console implementation. This is presentation evidence,
   not evidence of a new functional capability.
+- Control Plane login now requires an `application/json` media type before
+  credential processing. Browser requests with an explicit `Origin` or
+  `Referer` are compared with the configured public web origin and rejected
+  before login, session persistence, cookie issuance, or CSRF-token issuance
+  when cross-origin or invalid. Same-origin Console JSON login remains accepted,
+  and JSON non-browser callers that send neither header remain compatible. This
+  narrow login CSRF control entered canonical source through PR `#283`
+  (`215c53d4fe4ddec938a1255b57080408d1182c67`); it does not close the other S4
+  findings or prove a deployed Console path.
 - Console calls Control Plane product APIs only and projects live Sub2API,
   Fabric, Ledger, and Control Plane facts through customer-safe DTOs.
 - Control Plane, Fabric, and Ledger are separate Go processes and PostgreSQL
   schema owners. Portable Compose creates separate service databases and roles
-  and maps three distinct service tokens. A local-Workspace Compose smoke has
-  started PostgreSQL, Ledger, and Fabric with those boundaries and proved that
-  Fabric can reach the explicitly mounted host Docker Engine; Control Plane then
-  failed closed at the required external Sub2API authentication boundary. No
-  complete installation or current production instance readback proves the full
-  boundary effective. Required CI separately exercises the Accounting path
-  through real Control Plane HTTP backed by PostgreSQL and a real Ledger HTTP
-  process backed by its own PostgreSQL database, with a typed Sub2API authority
-  fixture. The Ledger `sslmode=disable` exception is limited to an explicit
-  non-production, loopback `OPL_POSTGRES_TESTS=1` gate; it is test plumbing, not
-  production evidence.
+  and maps three distinct service tokens. A source-built portable Compose
+  isolation run started all three services against their own database identities,
+  rejected cross-owner database access and caller-token impersonation, and
+  rotated each service token without restarting PostgreSQL or unrelated
+  services. This runtime acceptance entered canonical source through PR `#260`.
+  It proves the reusable Cloud configuration at source revision; it is not a
+  clean-host release installation or evidence that an Instance adopted the
+  split. A separate local-Workspace Compose smoke started PostgreSQL, Ledger, and
+  Fabric with those boundaries and proved that Fabric can reach the explicitly
+  mounted host Docker Engine; Control Plane then failed closed at the required
+  external Sub2API authentication boundary. Required CI separately exercises the
+  Accounting path through real Control Plane HTTP backed by PostgreSQL and a real
+  Ledger HTTP process backed by its own PostgreSQL database, with a typed Sub2API
+  authority fixture. The Ledger `sslmode=disable` exception is limited to an
+  explicit non-production, loopback `OPL_POSTGRES_TESTS=1` gate; it is test
+  plumbing, not production evidence.
 - Fabric defaults to a real `local-docker` adapter and keeps Tencent/TKE behind
   explicit instance selection. CI exercises local compute, storage, attachment,
   Secret binding, Runtime, and authoritative readback. The generic provider-facts
@@ -54,9 +103,39 @@ Sub2API management origin and credentials are never exposed to the browser.
   the local-Docker adapter has compute, storage, attachment, and Runtime fact
   parity. The typed `POST /fabric/provider-facts/batch` wire remains compatible
   and fails closed on identity or readback errors. Focused tests prove this path
-  is read-only, with no provider mutation or Fabric operation write. This is
-  source and CI evidence, not a complete Console-to-Workspace installation or
-  the completion of the wider Provider Acceptance migration.
+  is read-only, with no provider mutation or Fabric operation write. Provider
+  Acceptance Phases B and C are also absorbed. Phase B moved the Control Plane
+  route to one provider-neutral facts batch and a narrow acceptance Runtime path
+  through PR `#270`. Phase C moved the Cloud Provider Acceptance CLI and
+  production live-QA comparison through PR `#282`
+  (`bb0a221b12273d4dd788003c3d44b0d14e8dee87`): canonical compute and storage
+  provider IDs remain required authority, while legacy `nodePoolId` and
+  `persistentVolumeId` values are optional response-only projections that do not
+  decide readiness or resource continuity. The Instance owner has not adopted
+  and read back this current contract. This is source and CI evidence, not a
+  complete Console-to-Workspace installation or Instance Provider Acceptance.
+- The Fabric resource catalog contract now retains only provider-neutral package,
+  storage-class, ingress, availability, and capacity boundaries. Its unused
+  `workspacePackageNodePools` provider-specific subtree was removed through
+  Catalog hard-cut PR `#295`; NodePool, SKU, bootstrap, ownership, and launch
+  interpretation remain owned by the Fabric adapter/provisioner and Instance
+  workflow. This contract cleanup does not change catalog runtime behavior or
+  establish Instance adoption.
+- Control Plane Provider Acceptance now consumes Fabric's provider-neutral
+  monthly-preflight availability plus Control Plane-owned package, size, and
+  zone facts. It no longer interprets Tencent purchase mode, renewal policy, or
+  CVM/CBS resource kinds. The isolated Console recovery-plan DTO, read adapter,
+  controller intents, and Admin review modal are removed; operator
+  reconciliation projects the server-owned action back into the same durable
+  Launch Reconciler. Instance recovery workflows and their pinned Cloud tool
+  callers remain an external cutover obligation. PR `#280`'s legacy Launch
+  migration implementation was replayed against current `main` and not
+  admitted: its test harness was Linux-only, its compute readback used retired
+  Fabric interfaces, and its partial-history response did not satisfy the
+  Control Plane next-stage boundary. No protected Instance inventory currently
+  proves an eligible schema-2 row or active consumer. Current source therefore
+  has no legacy migration route or temporary Fabric contract; a fresh
+  implementation is triggered only by owner-authoritative row evidence.
 - Fabric's unused recovery proof/claim Service, provider, and operation-store
   mutation shell is retired. Five legacy resource inputs no longer carry
   unassigned `LaunchBinding` branches, and the orphan launch-binding readback is
@@ -66,7 +145,17 @@ Sub2API management origin and credentials are never exposed to the browser.
 - Typed Tencent Workspace Launch and the existing `TagComputeMachine` port now
   share one adapter-private compute-ownership core for deterministic CVM tagging,
   Kubernetes node claim, child operations, and authoritative replay readback.
-  Provider-neutral Fabric and Control Plane boundaries are unchanged.
+  Focused tests cover the typed compute, storage, attachment, Secret, and Runtime
+  stage chain, exact CBS/static binding and Runtime/Gateway binding readback, and
+  GET-only replay. Provider-neutral Fabric and Control Plane boundaries are
+  unchanged. The ownership/readback and typed Launch slices entered canonical
+  source through PRs `#275`, `#277`, and `#278`. This is implementation evidence,
+  not live Tencent mutation or current medopl deployment evidence.
+- Tencent compute-allocation identity validation now belongs to the Tencent
+  adapter rather than generic Fabric `service.go`; targeted operator pool-head
+  readback calls that adapter-owned validator. This source ownership cut entered
+  canonical source through PR `#281`. Other Fabric cohesion work remains bounded
+  by its real callers and owning adapters.
 - Operator identity-evidence compute/storage readback and pool-head terminal
   replay no longer call the runtime operation-list path. They use narrow
   action/idempotency or approval/idempotency owner lookups, fail closed on an
@@ -79,15 +168,20 @@ Sub2API management origin and credentials are never exposed to the browser.
   stages call the typed Fabric HTTP contract and consume the same six-field
   request-hash vectors as Fabric. Activation readback uses the canonical
   `currentComputeAllocationId` and `currentAttachmentId` Workspace projection
-  fields, with retained read compatibility for older projections. A separate
-  legacy provider-acceptance surface still contains Tencent-specific client and
-  projection knowledge.
+  fields, with retained read compatibility for older projections. The separate
+  Provider Acceptance surface remains instance-oriented production tooling, but
+  its Cloud route and callers now decide readiness from provider-neutral facts
+  and canonical provider IDs rather than legacy NodePool/PV projections.
 - The zero-caller `ReapplyWorkspaceRuntime` Control Plane facade method is
   removed. This application-code cut neither rewrites nor deletes historical
   `runtime_apply` rows and does not mutate or retire Fabric resources. The
   zero-caller `server/app_state` forwarding and cache helpers are also removed.
-  The real Control Plane `Service` and capability boundaries remain; neither
-  finite deletion admits an aggregate replacement facade or broader removal.
+  The later zero-caller `PrepareWorkspace` orchestration path, its private
+  Runtime-readback merge helper, and its dedicated errors are removed as one
+  closed dead chain. `CreateWorkspaceInput` remains because Provider Acceptance
+  has a real caller. The real Control Plane `Service` and capability boundaries
+  remain; none of these finite deletions admits an aggregate replacement facade
+  or broader removal.
 - The authenticated Workspace owner can issue one durable, resumable delete
   command. Control Plane coordinates Runtime, attachment, storage, and compute
   cleanup through existing typed Fabric HTTP routes; partial or unknown results
@@ -132,27 +226,60 @@ rollback, or production path. Existing Tencent/TKE evidence applies only to
 medopl instance provenance.
 
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
-workflow, and focused distribution checks exist at source level. The workflow
-validates `compose.local-workspace.yaml`, records it in the release manifest,
-and preserves the exact four-asset GitHub Release contract. This revision builds
-and validates the multi-architecture OCI layout in a read-only job with no
-checkout credentials or `GH_TOKEN`, then hands one digest-checked Actions
-artifact to a separate publish job. Only publish receives `contents:write` and
-`packages:write`, runs no checkout, dependency install, repository code, or
-third-party Action, and is bound to the protected `cloud-release` Environment.
-Local multi-architecture OCI build and publish-command dry-run evidence does not
-prove a hosted workflow execution. Fresh GitHub owner readback still shows no
-OPL Cloud tag, Release, or GHCR package, and no clean-host installation evidence
-exists. Source and local evidence therefore do not prove a published immutable
-product or an installed application.
+workflow, and focused distribution checks exist at source level. Historically,
+eight Product Releases, `v0.1.0` through `v0.1.7`, were published between
+2026-08-13T09:50:02Z and 2026-08-15T10:49:30Z while the same Acceptance B path
+was still under development. The repository owner removed `v0.1.0` through
+`v0.1.6` from the GitHub Release, tag, and GHCR public surfaces on 2026-08-15.
+Only `v0.1.7` remains. Release workflow run `31879240411` published it from
+exact product SHA
+`a59bde68397528186a5220f73195fa1f3eda311b`. Its GHCR multi-architecture index
+digest is `sha256:e64504731f8b61c0864cf59faa647a1150e8a2a5eada34b26faf3a5487d28e8f`,
+with `linux/amd64` and `linux/arm64` manifests. The GitHub Release contains
+`compose.yaml`, `compose.local-workspace.yaml`, `opl-cloud.env.example`,
+`SHA256SUMS`, and `opl-cloud-release.json`; manifest readback matched the
+release tag, product SHA, image digest, platforms, and asset set. This proves
+publication of the portable product artifact, not installation, Instance
+qualification, or production readiness.
 
-GitHub security controls were read back on 2026-08-12 for
-`main@d2408e778e6b4ed09ce616658900521c9aeabcc0`. Private vulnerability
+Current public readback shows only Git tag and GitHub Release `v0.1.7`, and only
+the `v0.1.7` GHCR tag. GHCR retains its top multi-architecture index plus four
+required child/attestation objects. The five downloaded Release assets match
+their API digests and `SHA256SUMS`. GitHub still reports `immutable=false` and
+no tag ruleset; those settings do not override the repository owner's explicit
+cleanup authority. Later canonical `main` commits must not be presented as the
+`v0.1.7` product SHA or digest.
+
+The current pre-1.0 admission decision now requires successful
+`opl-instance-medopl` deployment and product readback for an exact candidate
+SHA/digest before a formal successor Release. The existing workflow cannot yet
+prove that order because one dispatch builds and publishes the image. A
+deployable non-Release candidate channel and exact-byte promotion remain open,
+along with clean-host installation, the complete live Console
+create/readback/open/delete path, and real external Sub2API
+authentication/balance/usage evidence.
+
+The seven successful `v0.1.1` through `v0.1.7` workflow runs spent 1,361 to
+1,963 seconds in the multi-architecture image build while their publish jobs
+took 44 to 103 seconds. The current source removes target-architecture
+emulation from the compute-heavy Node and Go build stages, cross-compiles the
+four Go binaries for the selected image platform, reuses one Fabric dependency
+build for both Fabric executables, and persists reusable BuildKit layers in the
+GitHub Actions cache. The immutable OCI artifact, protected publish job,
+checksums, attestations, and public readback remain unchanged. An uncached local
+`docker-container` Buildx run on an Arm host completed the full `linux/amd64` +
+`linux/arm64` OCI layout in 66 seconds and emitted both target manifests plus
+their attestations. This proves the optimized build path locally, not GitHub
+runner performance; no successor Release is admitted merely to benchmark it,
+so a hosted post-change Release duration is not yet available.
+
+GitHub security controls were read back on 2026-08-13 for the post-release
+canonical baseline before this documentation merge. Private vulnerability
 reporting, Dependabot alerts and security updates, secret scanning and push
 protection, Actions full-SHA pin enforcement, and branch-protection admin
-enforcement are enabled. CodeQL default setup is configured weekly for Actions,
-Go, and JavaScript/TypeScript; run `31568549176` completed successfully at that
-exact `main` SHA. The repository has zero open
+  enforcement are enabled. CodeQL default setup is configured weekly for Actions,
+  Go, and JavaScript/TypeScript; run `31674571131` completed successfully for all
+  three analyses at the current `main` SHA. The repository has zero open
 secret-scanning alerts and zero open Dependabot alerts. Secret validity checks
 remain disabled after the attempted setting change did not take effect. Actions
 allow GitHub-owned and verified creators plus the SHA-pinned reusable whitepaper
@@ -161,19 +288,25 @@ The default workflow token is read-only and cannot approve pull requests.
 `main` strictly requires the GitHub Actions `validate` and `dependency-review`
 contexts, resolves review conversations, and forbids force pushes and deletion.
 
-CodeQL success did not produce a zero-alert baseline. Fresh controller and API
-readback for `main@1fd5419081ffbc56b87ec7ee439561a44704cc32` reports that
-`SECURITY-CODEQL-TRIAGE-01` completed with `mutation_zero`: all 15 high-security-
-severity alerts were individually classified `not_actionable`, with zero
-`confirmed` and zero `needs_review`. The alerts cover
-`go/weak-sensitive-data-hashing`, `js/weak-cryptographic-algorithm`, and
-`go/allocation-size-overflow`. Alerts `#1` through `#15` remain open; no alert
-dismissal, fix, setting mutation, or code write was performed. This triage
-result therefore does not establish a fix, dismissal, zero-alert baseline, or
-product readiness. A separate sealed, risk-based static scan of revision
+CodeQL success did not produce a zero-alert baseline.
+`SECURITY-CODEQL-TRIAGE-01` completed with `mutation_zero`: the original 15
+high-security-severity alerts were individually classified `not_actionable`, with
+zero `confirmed` and zero `needs_review`; GitHub now reports alerts `#12` and
+`#13` as `fixed`. Fresh GitHub API readback for the current `main` reports 15
+alerts still open:
+`#1`-`#11` and `#14`-`#17`. Alerts `#16` and `#17` are the newly surfaced
+`go/weak-sensitive-data-hashing` comments from merged PR `#287`; static review
+matches the already triaged Go fingerprint family: SHA-256 is used for opaque
+Workspace API-key fingerprints and replay/readback consistency, not password
+storage, password verification, or authorization. They remain open in GitHub;
+this classification does not authorize dismissal or a code change. No alert
+dismissal, settings mutation, or security-only code write was performed. This
+triage result therefore does not establish a zero-alert baseline or product
+readiness. A separate sealed, risk-based static scan of revision
 `24a065d4427b53d65ba0df9cb70b1a36327fb6af` reported three medium and seven low
-findings with partial coverage and no runtime exercise. None is recorded as
-fixed by the scan, by enabling GitHub controls, or by this documentation.
+findings with partial coverage and no runtime exercise. That sealed report
+remains immutable historical evidence; later source remediation and rescans are
+recorded separately below rather than rewriting its finding dispositions.
 
 The canonical S0 baseline includes the disclosure policy, read-only Dependency
 Review job, and expanded monthly Dependabot coverage. PR `#261` merged as
@@ -181,26 +314,102 @@ Review job, and expanded monthly Dependabot coverage. PR `#261` merged as
 `dependency-review`, `validate`, and the three CodeQL language analyses before
 merge. GitHub now requires strict `validate` and `dependency-review` on `main`.
 The `cloud-release` Environment exists with protected branches as its only
-protection rule and has no Secrets or variables. No tag ruleset, immutable
-release enforcement, repository custom coding-agent profile, or coding-agent
-automation exists. These controls and checks do not prove dependency risk is
-zero or that a release has run.
+protection rule and has no Secrets or variables. The Release workflow has only
+the manual `workflow_dispatch` trigger, and both build and publish require the
+original actor and current triggering actor to equal the repository owner. It
+is create-only during ordinary publication and rejects an existing Git tag,
+GitHub Release, or GHCR release tag. PR `#334` merged this owner gate as
+`4060590fde52e9224c45968857729650806c990a`; all ten hosted checks passed and no
+new Release run was triggered. These controls prevent collaborator or
+accidental CI publication, but they do not yet provide the pre-Release candidate
+deployment path.
 
-Security currentness now includes the absorbed and owner-cleaned S1 and Gateway
-lanes. PR `#271` (`1635a949b0e9440de841e5163e7eb1980e4bd10d`) merged the split
-read-only build and publish-only release workflow; its owner cleanup is complete.
-This closes the S1 implementation lane only: no release, tag, GHCR publication,
-or immutable-product readback has run. PR `#272`
+Security currentness now includes the absorbed S1, Gateway, S2, S3, and narrow
+login-CSRF implementation lanes. PR `#271`
+(`1635a949b0e9440de841e5163e7eb1980e4bd10d`) merged the split read-only build and
+publish-only release workflow. PR `#272`
 (`1fd5419081ffbc56b87ec7ee439561a44704cc32`) merged the dead Gateway helper
-removal; its owner cleanup is complete, while the live external Gateway path and
-the broader Workspace evidence gap remain separate.
+removal. PR `#276` (`92a4cd104adf6d76540ea4c203f792a539b31655`)
+merged Local Docker trusted immutable-image admission: an unapproved repository,
+bare digest, tag-plus-digest, case-variant, or multi-`@` reference fails before
+Docker or operation-store mutation, while an approved repository or exact
+release-manifest digest remains accepted. PR `#279`
+(`f20984d999e4229fc23a74df8dd44e9e82cd7f5c`) merged separate Control Plane and
+runner transport identities plus a short-lived, HMAC-bound Control Plane
+capability over account, Workspace, resource kind/id, action, operation,
+expiration, and request-body digest. Mismatch tests fail before Fabric operation-
+store or provider mutation. These are source and test controls only: they do not
+prove a release, installation, live external Sub2API path, Instance deployment,
+or product readiness. PR `#283` adds the pre-session login request admission
+described above without changing the accepted same-origin Console or headerless
+non-browser JSON paths. The current Control Plane support API derives user,
+status, category, and priority from server/session authority; its login-rate
+state has bounded keys, capacity, and TTL eviction, and its Fabric client bounds
+success and error responses. Control Plane already bounds incoming JSON bodies;
+Fabric now applies a uniform 1 MiB JSON admission before capability,
+operation-store, or provider mutation, and Ledger applies the same bound before
+store calls on its JSON POST routes. Oversized requests return `413` while
+existing authentication and idempotency ordering remains covered. The admitted
+S4 source slices are now closed: release build inputs are pinned and verified by
+the canonical release-boundary validator. Current workflow source also emits a
+per-asset `SHA256SUMS`, creates GitHub OIDC-backed provenance attestations for
+the exact Release asset bytes, binds both the signing workflow revision and the
+separately selected product SHA, and verifies downloaded assets against the
+checksum manifest, signer workflow, release identity, and image digest. Release
+`v0.1.7` executed this path: hosted run `31879240411` completed both the
+`Attest release assets` and `Read back release` steps, and the published asset
+set includes `SHA256SUMS`. This is exact `v0.1.7` publication evidence, not
+retroactive proof for earlier Releases.
+Clean-host installation and production deployment remain `PRODUCT-RELEASE-01`
+/ Instance evidence gaps, not another S4 source lane. These controls are source,
+test, and exact `v0.1.7` publication evidence only. CodeQL triage is
+terminal at the classification layer only, with alert disposition explicitly
+unperformed as recorded above.
 
-`SECURITY-S2-CROSS-OWNER-CAPABILITY-01` has one `ACTIVE` official lifecycle
-receipt under its Cloud controller and exact executor. The receipt records active
-implementation work, not a fixed capability boundary or product readiness.
-Trusted local image admission (S3) remains an admitted lane; the S3 control is
-not implemented here. CodeQL triage is terminal at the classification layer only,
-with alert disposition explicitly unperformed as recorded above.
+The repository security scan for canonical revision `b7217daddf1520d7f442cea5b8dba2c6df636cdf`
+reported eight source findings (five high, three medium). PR `#307` absorbed
+their source remediation at `884e02c1e4242fc33ff6aea55dc4594e61c68cbc`, and PR
+`#308` absorbed the subsequently discovered compute-pool-head terminalization
+capability omission at `5fc1e5fba29837c6fb2215c427992de966b6a5e5`.
+
+Standard scan `55437d10-456a-41ae-b39c-c7e4f0cdbd81` was then sealed against
+that exact canonical revision. It did not reproduce the earlier terminalization
+finding and reported five new high-confidence source findings: one medium
+Control Plane body-limit bypass and four low findings covering Fabric Runtime
+credential disclosure, three zero-caller Fabric sync HTTP mutations, Ledger
+owner lookup before capability rejection, and unbounded Workspace renewal
+command history. PR `#309` absorbed their source remediation at canonical
+revision `d8a4df0f130a1545da0efe43dfebe16fa08e5844`.
+
+The ten occurrences still shown as unresolved in older scan
+`b07b4eaa-a94a-47fd-9023-5e7838bc657b` belong to revision
+`24a065d4427b53d65ba0df9cb70b1a36327fb6af`. Fresh source revalidation against
+the current canonical revision did not reproduce them; the UI disposition is
+historical occurrence workflow state, not current-source evidence.
+
+Sealed Standard scan `761fd61d-b7ee-41ff-afd2-34f5671b1af5` against canonical
+`d8a4df0f130a1545da0efe43dfebe16fa08e5844` reported one new low-severity,
+high-confidence finding: authenticated Fabric job heartbeat, Workspace Runtime
+status, and operation-list paths materialize unbounded shared operation history,
+while fresh heartbeat keys continually append rows. The current FG-184 source
+candidate replaces request-path full-list filtering with indexed bounded
+queries, keeps one mutable heartbeat row per job attempt, and requires
+`limit`/cursor pagination with a maximum page size of 100; all known production
+and recovery callers follow every cursor page and reject a repeated cursor.
+Focused memory-store, Fabric HTTP, caller, and PostgreSQL 16 integration tests
+pass, including point lookup, duplicate fail-closed behavior, 50 fresh heartbeat
+keys with three total job rows, and complete cursor traversal. This candidate is
+not yet canonical `main`, and the finding remains open pending absorption plus a
+fresh sealed scan of the absorbed revision. No
+production, private-network, deployment, provider mutation, or live load test
+was performed.
+
+The current `opl-instance-medopl` workflow and manifest have not yet adopted the
+full Fabric capability credential set, so source absorption does not prove a
+usable production operator path or a deployment. Its deploy workflow accepts
+an exact Cloud `product_sha` and digest-addressed TCR image, but Cloud has not
+yet supplied a deployable non-Release candidate whose exact bytes can later be
+promoted as a formal Release.
 
 This product repository holds no current instance deployment readback. The
 `opl-instance-medopl` repository now owns the medopl profile and production
@@ -209,16 +418,16 @@ Deployment, and the tracked profile remains `deployed_unverified` with no produc
 SHA, release tag, image digest, or receipt. Earlier medopl rollout and provider
 evidence is migration provenance only; current deployment, Runtime, billing,
 rollback, and receipt evidence must be read back from the Instance owner for one
-exact Cloud release.
+exact Cloud candidate before that candidate may become a formal Release.
 
 The Cloud GitHub repository still carries the legacy production authority. It
-has six Environments and 2,084 historical Deployment records; 2,079 records name
-the `production` environment, whose current configuration exposes 23 Secret names
-and 31 variables. These records include every Actions job that declared an
-environment and are not evidence of 2,079 server rollouts. The residual authority
-is migration state, not evidence that Cloud still owns medopl deployment, and it
-cannot be retired until the Instance successor and one exact deployment receipt
-are proven.
+has six non-release Environments in addition to `cloud-release`, and 2,086
+historical Deployment records; 2,079 records name the `production` environment,
+whose current configuration exposes 23 Secret names and 31 variables. These
+records include every Actions job that declared an environment and are not
+evidence of 2,079 server rollouts. The residual authority is migration state, not
+evidence that Cloud still owns medopl deployment, and it cannot be retired until
+the Instance successor and one exact deployment receipt are proven.
 
 Capacity evidence targets a 1000-provisioned-user data set. It does not claim
 1000 concurrent users, concurrent provisioning, multiple Control Plane

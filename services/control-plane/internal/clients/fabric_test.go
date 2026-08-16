@@ -79,6 +79,30 @@ func TestFabricHTTPClientSignsShortLivedOperationBoundMutationCapability(t *test
 	}
 }
 
+func TestFabricHTTPClientUsesCapabilityForRuntimeCredentialReveal(t *testing.T) {
+	const capabilityKey = "test-capability-key"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/fabric/workspace-runtimes/ws-alpha/credentials/reveal" || r.Header.Get("Idempotency-Key") != "reveal-once" || r.Header.Get(FabricCapabilityHeader) == "" {
+			t.Fatalf("unexpected reveal request: %s %s key=%q capability=%q", r.Method, r.URL.Path, r.Header.Get("Idempotency-Key"), r.Header.Get(FabricCapabilityHeader))
+		}
+		var input map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input["accountId"] != "acct-alpha" || input["workspaceId"] != "ws-alpha" {
+			t.Fatalf("reveal input=%#v err=%v", input, err)
+		}
+		_ = json.NewEncoder(w).Encode(WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: "ws-alpha", Status: "running", Ready: true, Access: WorkspaceRuntimeAccess{Password: "secret"}})
+	}))
+	defer upstream.Close()
+
+	client, ok := NewFabricHTTPClientWithCapability(upstream.URL, "internal-secret", capabilityKey, upstream.Client()).(FabricWorkspaceRuntimeCredentialClient)
+	if !ok {
+		t.Fatal("Fabric HTTP client must implement runtime credential reveal")
+	}
+	runtime, err := client.RevealWorkspaceRuntimeCredentials(context.Background(), "acct-alpha", "ws-alpha", "reveal-once")
+	if err != nil || runtime.Access.Password != "secret" {
+		t.Fatalf("runtime credentials=%#v err=%v", runtime, err)
+	}
+}
+
 func TestFabricHTTPClientWritesWorkspaceScopedGatewaySecret(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/fabric/gateway-secrets" || r.Header.Get("Idempotency-Key") != "workspace-once:gateway-secret" || r.Header.Get("Authorization") != "Bearer internal-secret" {
@@ -121,6 +145,66 @@ func TestFabricHTTPClientGatewaySecretErrorDoesNotLeakKey(t *testing.T) {
 	}, "workspace-once:gateway-secret")
 	if err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatalf("gateway secret error = %v", err)
+	}
+}
+
+func TestFabricHTTPClientBoundsResponseBody(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"padding":"` + strings.Repeat("sensitive", 1<<17) + `"}`))
+	}))
+	defer upstream.Close()
+
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client()).(*fabricHTTPClient)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, upstream.URL+"/fabric/readiness", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	err = client.doJSON(req, &result)
+	if err == nil || !strings.Contains(err.Error(), "fabric response too large") || strings.Contains(err.Error(), "sensitive") {
+		t.Fatalf("bounded response error = %v", err)
+	}
+}
+
+func TestFabricHTTPClientRejectsMultipleJSONValues(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client()).(*fabricHTTPClient)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, upstream.URL+"/fabric/readiness", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	err = client.doJSON(req, &result)
+	if err == nil || !strings.Contains(err.Error(), "multiple JSON values") {
+		t.Fatalf("multiple JSON value error = %v", err)
+	}
+}
+
+func TestFabricHTTPClientBoundsErrorBody(t *testing.T) {
+	const secret = "never-leak-after-truncation"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"` + strings.Repeat("x", 96<<10) + `","detail":"` + secret + `"}`))
+	}))
+	defer upstream.Close()
+
+	client := newFabricHTTPClientForTest(upstream.URL, "internal-secret", upstream.Client()).(*fabricHTTPClient)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, upstream.URL+"/fabric/readiness", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]any
+	err = client.doJSON(req, &result)
+	var httpErr *FabricHTTPError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("error = %v, want FabricHTTPError", err)
+	}
+	if httpErr.StatusCode != http.StatusInternalServerError || len(httpErr.Body) > maxFabricErrorBodyBytes || strings.Contains(httpErr.Body, secret) {
+		t.Fatalf("bounded error body = %#v", httpErr)
 	}
 }
 

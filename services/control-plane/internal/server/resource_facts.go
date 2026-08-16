@@ -50,17 +50,6 @@ func (app *controlPlaneServer) saveAttachmentFact(attachment any, input map[stri
 	return nil
 }
 
-func (app *controlPlaneServer) attachmentFactsLocked() controlPlaneRecordSet {
-	rows := app.attachmentRecordSet("")
-	for _, row := range rows {
-		if accountID := app.attachmentAccountID(row); accountID != "" {
-			row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), accountID)
-			row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), accountID)
-		}
-	}
-	return rows
-}
-
 func (app *controlPlaneServer) attachmentAccountID(row map[string]any) string {
 	if row == nil {
 		return ""

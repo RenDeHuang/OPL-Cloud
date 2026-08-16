@@ -14,6 +14,137 @@ import (
 	"time"
 )
 
+type readinessRecordingProvider struct {
+	testProvider
+	calls        atomic.Int32
+	entered      chan int32
+	releaseFirst chan struct{}
+	probe        func(context.Context, int32) (map[string]any, error)
+}
+
+func (p *readinessRecordingProvider) Readiness(ctx context.Context) (map[string]any, error) {
+	call := p.calls.Add(1)
+	if p.entered != nil {
+		p.entered <- call
+	}
+	if call == 1 && p.releaseFirst != nil {
+		select {
+		case <-p.releaseFirst:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if p.probe != nil {
+		return p.probe(ctx, call)
+	}
+	return map[string]any{"provider": "test", "ready": true, "generation": call}, nil
+}
+
+func TestReadinessCachesSuccessfulResultAndSingleflightsRefresh(t *testing.T) {
+	const callers = 8
+	provider := &readinessRecordingProvider{
+		entered:      make(chan int32, callers),
+		releaseFirst: make(chan struct{}),
+	}
+	service := NewService(provider)
+	now := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	start := make(chan struct{})
+	results := make(chan map[string]any, callers)
+	errors := make(chan error, callers)
+	var ready sync.WaitGroup
+	var finished sync.WaitGroup
+	ready.Add(callers)
+	finished.Add(callers)
+	for range callers {
+		go func() {
+			defer finished.Done()
+			ready.Done()
+			<-start
+			result, err := service.Readiness(context.Background())
+			results <- result
+			errors <- err
+		}()
+	}
+	ready.Wait()
+	close(start)
+	<-provider.entered
+	select {
+	case call := <-provider.entered:
+		close(provider.releaseFirst)
+		finished.Wait()
+		t.Fatalf("concurrent readiness started provider call %d before the first refresh completed", call)
+	case <-time.After(100 * time.Millisecond):
+		close(provider.releaseFirst)
+	}
+	finished.Wait()
+
+	for range callers {
+		if err := <-errors; err != nil {
+			t.Fatalf("concurrent readiness error = %v", err)
+		}
+		if result := <-results; result["generation"] != int32(1) || result["ready"] != true {
+			t.Fatalf("concurrent readiness result = %#v", result)
+		}
+	}
+	if result, err := service.Readiness(context.Background()); err != nil || result["generation"] != int32(1) || provider.calls.Load() != 1 {
+		t.Fatalf("cached readiness = %#v, err=%v, provider calls=%d", result, err, provider.calls.Load())
+	}
+
+	now = now.Add(time.Minute)
+	result, err := service.Readiness(context.Background())
+	if err != nil || result["generation"] != int32(2) || provider.calls.Load() != 2 {
+		t.Fatalf("expired readiness = %#v, err=%v, provider calls=%d", result, err, provider.calls.Load())
+	}
+}
+
+func TestReadinessDoesNotCacheErrors(t *testing.T) {
+	provider := &readinessRecordingProvider{
+		probe: func(_ context.Context, call int32) (map[string]any, error) {
+			if call == 1 {
+				return nil, errors.New("provider readiness failed")
+			}
+			return map[string]any{"provider": "test", "ready": true}, nil
+		},
+	}
+	service := NewService(provider)
+
+	if result, err := service.Readiness(context.Background()); err == nil || err.Error() != "provider readiness failed" || result != nil {
+		t.Fatalf("failed readiness = %#v, err=%v", result, err)
+	}
+	result, err := service.Readiness(context.Background())
+	if err != nil || result["ready"] != true || provider.calls.Load() != 2 {
+		t.Fatalf("retried readiness = %#v, err=%v, provider calls=%d", result, err, provider.calls.Load())
+	}
+	if _, err := service.Readiness(context.Background()); err != nil || provider.calls.Load() != 2 {
+		t.Fatalf("successful retry was not cached: err=%v provider calls=%d", err, provider.calls.Load())
+	}
+}
+
+func TestReadinessBoundsProviderCallWithTimeout(t *testing.T) {
+	provider := &readinessRecordingProvider{
+		probe: func(ctx context.Context, _ int32) (map[string]any, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	service := NewService(provider)
+	service.readinessTimeout = 20 * time.Millisecond
+
+	started := time.Now()
+	result, err := service.Readiness(context.Background())
+	if !errors.Is(err, context.DeadlineExceeded) || result != nil {
+		t.Fatalf("timed readiness = %#v, err=%v", result, err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("provider timeout took %s", elapsed)
+	}
+	if provider.calls.Load() != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls.Load())
+	}
+}
+
 func TestMonthlyPreflightIsReadOnlyAndDoesNotRecordOperation(t *testing.T) {
 	store := NewMemoryOperationStore()
 	service := NewServiceWithOperationStore(testProvider{}, store)
@@ -408,6 +539,43 @@ func TestRunnerCompletesJobAcrossServiceRestart(t *testing.T) {
 			t.Fatalf("duplicate operation id %q", operation.ID)
 		}
 		operationIDs[operation.ID] = true
+	}
+}
+
+func TestRunnerHeartbeatsUseBoundedPointQueriesAndPersistence(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	now := time.Date(2026, 8, 14, 2, 0, 0, 0, time.UTC)
+	service := NewServiceWithOperationStore(testProvider{}, store)
+	service.now = func() time.Time { return now }
+	created, err := service.CreateJob(ctx, JobInput{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", RequestID: "request-alpha", ApprovalID: "approval-alpha", IdempotencyKey: "bounded-heartbeat-job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := service.ClaimJob(ctx, created.JobID, JobClaimInput{RunnerID: "runner-alpha", IdempotencyKey: "bounded-heartbeat-claim"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewServiceWithOperationStore(testProvider{}, rejectFullOperationListStore{OperationStore: store})
+	for index := 0; index < 50; index++ {
+		now = now.Add(time.Second)
+		restarted.now = func() time.Time { return now }
+		heartbeat, heartbeatErr := restarted.HeartbeatJob(ctx, created.JobID, JobHeartbeatInput{
+			RunnerID: "runner-alpha", LeaseToken: claimed.LeaseToken, IdempotencyKey: fmt.Sprintf("heartbeat-%d", index),
+		})
+		if heartbeatErr != nil || heartbeat.Status != "running" {
+			t.Fatalf("heartbeat %d=%#v err=%v", index, heartbeat, heartbeatErr)
+		}
+	}
+	operations, err := store.List(ctx)
+	if err != nil || len(operations) != 3 {
+		t.Fatalf("operations=%#v err=%v, want create + claim + one bounded heartbeat", operations, err)
+	}
+	loadedService := NewServiceWithOperationStore(testProvider{}, rejectFullOperationListStore{OperationStore: store})
+	loadedService.now = func() time.Time { return now }
+	loaded, err := loadedService.Job(ctx, created.JobID)
+	if err != nil || loaded.Status != "running" || loaded.LeaseExpiresAt == nil || !loaded.LeaseExpiresAt.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("loaded heartbeat state=%#v err=%v", loaded, err)
 	}
 }
 
@@ -1208,6 +1376,7 @@ func TestWorkspaceRuntimeStatusBackfillsCreatedRuntimeIdentity(t *testing.T) {
 	if err != nil || created.ID != "runtime-stable" {
 		t.Fatalf("created runtime=%#v err=%v", created, err)
 	}
+	service.operations = rejectFullOperationListStore{OperationStore: service.operations}
 
 	live, err := service.WorkspaceRuntimeStatus(context.Background(), "workspace-alpha")
 	if err != nil {
@@ -1215,6 +1384,29 @@ func TestWorkspaceRuntimeStatusBackfillsCreatedRuntimeIdentity(t *testing.T) {
 	}
 	if live.ID != created.ID || live.Status != "running" || !live.Ready || live.URL != "https://workspace.medopl.cn/w/workspace-alpha/" || live.ServiceName != "runtime-live" || !reflect.DeepEqual(live.Checks, []Check{{Name: "deployment_ready", OK: true}}) {
 		t.Fatalf("live runtime=%#v created=%#v", live, created)
+	}
+	if live.Access.Password != "" || live.Access.Username != "opl" {
+		t.Fatalf("runtime status leaked credentials: %#v", live.Access)
+	}
+	credentials, err := service.WorkspaceRuntimeCredentials(context.Background(), "acct-alpha", "workspace-alpha")
+	if err != nil || credentials.Access.Password != "runtime-password-alpha" || credentials.ID != created.ID {
+		t.Fatalf("runtime credentials=%#v err=%v", credentials, err)
+	}
+	other, err := service.WorkspaceRuntimeCredentials(context.Background(), "acct-other", "workspace-alpha")
+	if err == nil || other.Access.Password != "" {
+		t.Fatalf("cross-account runtime credentials=%#v err=%v", other, err)
+	}
+}
+
+func TestWorkspaceRuntimeCredentialsRejectsUnownedRuntimeState(t *testing.T) {
+	service := runtimeTestService(liveRuntimeWithoutIDProvider{status: "provisioning"}, NewMemoryOperationStore())
+	status, err := service.WorkspaceRuntimeStatus(context.Background(), "workspace-alpha")
+	if err != nil || status.Status != "provisioning" || status.Access.Password != "" {
+		t.Fatalf("runtime status=%#v err=%v", status, err)
+	}
+	credentials, err := service.WorkspaceRuntimeCredentials(context.Background(), "acct-alpha", "workspace-alpha")
+	if err == nil || credentials.Access.Password != "" {
+		t.Fatalf("unowned runtime credentials=%#v err=%v", credentials, err)
 	}
 }
 
@@ -1343,12 +1535,25 @@ func TestWorkspaceRuntimeStatusRejectsMultipleCreatedIdentityCandidates(t *testi
 }
 
 func TestWorkspaceRuntimeStatusFailsClosedWithoutCreatedIdentityEvidence(t *testing.T) {
+	malformed := NewMemoryOperationStore()
+	malformedOperation := newOperation(
+		"create_workspace_runtime", "workspace_runtime", "workspace-alpha", "acct-alpha", "workspace-alpha",
+		"runtime-malformed", "runtime-malformed-hash", time.Date(2026, 8, 14, 5, 0, 0, 0, time.UTC),
+	)
+	malformedOperation.ID = "fop-runtime-malformed"
+	malformedOperation.Status = "succeeded"
+	malformedOperation.CreatedAt = malformedOperation.StartedAt
+	malformedOperation.RedactedProviderPayload = map[string]any{"resource": "malformed"}
+	if err := malformed.Append(context.Background(), malformedOperation); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name  string
 		store OperationStore
 	}{
 		{name: "missing", store: NewMemoryOperationStore()},
-		{name: "store unavailable", store: failingListOperationStore{OperationStore: NewMemoryOperationStore()}},
+		{name: "malformed", store: malformed},
+		{name: "store unavailable", store: failingRuntimeIdentityCandidatesStore{OperationStore: NewMemoryOperationStore()}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			service := runtimeTestService(liveRuntimeWithoutIDProvider{}, tc.store)
@@ -2727,6 +2932,7 @@ func (testProvider) WorkspaceRuntimeProviderFacts(runtime WorkspaceRuntime) Prov
 type liveRuntimeWithoutIDProvider struct {
 	testProvider
 	runtimeIDs map[string]string
+	status     string
 }
 
 type failingListOperationStore struct{ OperationStore }
@@ -2735,12 +2941,28 @@ func (failingListOperationStore) List(context.Context) ([]FabricOperation, error
 	return nil, errors.New("operation store unavailable")
 }
 
+type rejectFullOperationListStore struct{ OperationStore }
+
+func (rejectFullOperationListStore) List(context.Context) ([]FabricOperation, error) {
+	return nil, errors.New("full operation list must not be used")
+}
+
+type failingRuntimeIdentityCandidatesStore struct{ OperationStore }
+
+func (failingRuntimeIdentityCandidatesStore) WorkspaceRuntimeIdentityCandidates(context.Context, string) ([]FabricOperation, error) {
+	return nil, errors.New("runtime identity candidates unavailable")
+}
+
 func (p liveRuntimeWithoutIDProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
 	return WorkspaceRuntime{ID: p.runtimeIDs[input.IdempotencyKey], WorkspaceID: input.WorkspaceID, URL: "https://stale.invalid", Status: "unready", ServiceName: "runtime-created", ImageID: input.ImageID, Checks: []Check{{Name: "deployment_ready", OK: false}}}, nil
 }
 
-func (liveRuntimeWithoutIDProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (WorkspaceRuntime, error) {
-	return WorkspaceRuntime{WorkspaceID: workspaceID, URL: "https://workspace.medopl.cn/w/workspace-alpha/", Status: "running", ServiceName: "runtime-live", Ready: true, Checks: []Check{{Name: "deployment_ready", OK: true}}}, nil
+func (p liveRuntimeWithoutIDProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (WorkspaceRuntime, error) {
+	status := p.status
+	if status == "" {
+		status = "running"
+	}
+	return WorkspaceRuntime{WorkspaceID: workspaceID, URL: "https://workspace.medopl.cn/w/workspace-alpha/", Status: status, ServiceName: "runtime-live", Ready: status == "running", Access: RuntimeAccess{Username: "opl", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1"}, Checks: []Check{{Name: "deployment_ready", OK: status == "running"}}}, nil
 }
 
 type countingRuntimeProvider struct {

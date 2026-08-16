@@ -34,6 +34,10 @@ type FabricWorkspaceRuntimeGatewaySecretClient interface {
 	WorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretBinding, error)
 }
 
+type FabricWorkspaceRuntimeCredentialClient interface {
+	RevealWorkspaceRuntimeCredentials(context.Context, string, string, string) (WorkspaceRuntime, error)
+}
+
 type FabricProviderFactsClient interface {
 	ProviderFactsBatch(context.Context, ProviderFactsBatchInput) (ProviderFactsBatch, error)
 }
@@ -180,6 +184,7 @@ type StorageVolume struct {
 }
 
 type StorageAttachmentInput struct {
+	AccountID   string `json:"accountId"`
 	WorkspaceID string `json:"workspaceId"`
 	ComputeID   string `json:"computeId"`
 	VolumeID    string `json:"volumeId"`
@@ -424,7 +429,9 @@ func (c *fabricHTTPClient) DestroyStorageVolume(ctx context.Context, accountID, 
 
 func (c *fabricHTTPClient) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (StorageAttachment, error) {
 	var result StorageAttachment
-	err := c.post(ctx, "/fabric/storage-attachments", input, idempotencyKey, &result)
+	err := c.postMutation(ctx, "/fabric/storage-attachments", input, idempotencyKey, fabricMutationScope{
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceKind: "storage_attachment", ResourceID: input.ComputeID + ":" + input.VolumeID, Action: "create_storage_attachment",
+	}, &result)
 	return result, err
 }
 
@@ -507,6 +514,15 @@ func (c *fabricHTTPClient) WorkspaceRuntimeStatus(ctx context.Context, workspace
 	return result, err
 }
 
+func (c *fabricHTTPClient) RevealWorkspaceRuntimeCredentials(ctx context.Context, accountID, workspaceID, idempotencyKey string) (WorkspaceRuntime, error) {
+	var result WorkspaceRuntime
+	input := map[string]string{"accountId": accountID, "workspaceId": workspaceID}
+	err := c.postMutation(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(workspaceID)+"/credentials/reveal", input, idempotencyKey, fabricMutationScope{
+		AccountID: accountID, WorkspaceID: workspaceID, ResourceKind: "workspace_runtime_credential", ResourceID: workspaceID, Action: "reveal_workspace_runtime_credential",
+	}, &result)
+	return result, err
+}
+
 func (c *fabricHTTPClient) Readiness(ctx context.Context) (map[string]any, error) {
 	result := map[string]any{}
 	err := c.get(ctx, "/fabric/readiness", &result)
@@ -523,7 +539,26 @@ func (c *fabricHTTPClient) doJSON(req *http.Request, output any) error {
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return fabricHTTPResponseError(res)
 	}
-	return json.NewDecoder(res.Body).Decode(output)
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxFabricResponseBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > maxFabricResponseBytes {
+		return errors.New("fabric response too large")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(output); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return errors.New("fabric response contains multiple JSON values")
+	}
+	return nil
 }
 
 func (c *fabricHTTPClient) post(ctx context.Context, path string, input any, idempotencyKey string, output any) error {
@@ -595,6 +630,11 @@ func (c *fabricHTTPClient) get(ctx context.Context, path string, output any) err
 }
 
 func fabricHTTPResponseError(res *http.Response) error {
-	body, _ := io.ReadAll(res.Body)
+	body, _ := io.ReadAll(io.LimitReader(res.Body, maxFabricErrorBodyBytes))
 	return &FabricHTTPError{StatusCode: res.StatusCode, Body: string(body)}
 }
+
+const (
+	maxFabricResponseBytes  = 1 << 20
+	maxFabricErrorBodyBytes = 64 << 10
+)

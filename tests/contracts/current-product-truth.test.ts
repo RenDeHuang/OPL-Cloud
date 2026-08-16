@@ -165,3 +165,36 @@ test("deployment contract keeps Acceptance outside ordinary deploy", async () =>
   assert.equal(deployment.lifecycle.type, "migration_guard");
   assert.equal(deployment.deliveryEvidence, undefined);
 });
+
+test("deployment contract does not duplicate Acceptance B implementation truth", async () => {
+  const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
+  const fresh = deployment.productionBasicAcceptanceB;
+  const reconcile = deployment.productionBasicAcceptanceBAccountReconcile;
+
+  assert.equal(deployment.schemaVersion, 48);
+  assert.equal(fresh.productionParameterMatrix, undefined);
+  assert.equal(fresh.admission.prePostReadback, "get_exact_operation_before_single_post");
+  for (const field of ["workspaceDebitAuthority", "terminalDebitReceiptBinding", "generalUsage", "walletDelta"]) {
+    assert.equal(fresh.readback[field], undefined);
+  }
+  assert.equal(reconcile.readback.baseline, "zero_workspace_launch_workspace_key_and_workspace_receipt");
+  for (const field of ["successStatus", "workspaceDebitAuthority", "generalUsage", "walletDelta"]) {
+    assert.equal(reconcile.readback[field], undefined);
+  }
+  for (const field of [
+    "approvalIdentitySha256", "workspaceDebitIdentitySha256", "approvalState", "workspaceLaunchState",
+    "workspaceState", "workspaceKeyState", "workspaceReceiptState", "workspaceDebitState"
+  ]) {
+    assert.equal(reconcile.readback.redactedArtifactFields.includes(field), false);
+  }
+});
+
+test("production verification contract requires the protected reserved admin credentials", async () => {
+  const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
+  const workflow = deployment.productionVerificationWorkflow;
+
+  for (const name of ["OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD"]) {
+    assert.equal(workflow.requiredEnv.includes(name), true, `${name} must be required`);
+    assert.equal(workflow.secretEnv.includes(name), true, `${name} must be protected`);
+  }
+});

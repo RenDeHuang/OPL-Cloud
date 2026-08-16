@@ -1,5 +1,96 @@
 # Decisions
 
+## 2026-08-15: Pre-1.0 Instance Qualification Gates Product Publication
+
+During the current immature pre-1.0 phase, a formal OPL Cloud Release is the
+result of successful candidate adoption, not an input used to discover whether
+the product can deploy. Cloud must first produce a replaceable candidate bound
+to one exact canonical product SHA and image digest. `opl-instance-medopl` then
+deploys and qualifies that candidate through its protected workflow. Only after
+the required deployment and product acceptance readback succeeds may the
+repository owner explicitly publish the same SHA and image bytes as a formal
+Release.
+
+This decision responds to observed version churn. Eight Releases, `v0.1.0`
+through `v0.1.7`, were published in roughly 49 hours while successive changes
+were still closing the same Acceptance B path. They were historical debugging
+checkpoints, not eight independently qualified product handoffs. The repository
+owner subsequently removed `v0.1.0` through `v0.1.6`; only `v0.1.7` remains on
+the current GitHub Release, tag, and GHCR public surfaces.
+
+Candidate and Release identities are distinct. Candidate CI output, assets, and
+exact-SHA image tags may be replaced or discarded before qualification. A
+formal Release must promote the exact candidate SHA and digest that the Instance
+qualified; it must not rebuild different image bytes after the successful
+deployment. The current workflow still builds and publishes in one Release
+dispatch, so a deployable candidate channel plus exact-byte promotion is an
+explicit implementation gap. Until that gap is closed and the candidate has a
+successful Instance receipt, no successor to `v0.1.7` is admitted.
+
+The dependency is evidence-only and does not move authority between
+repositories. Cloud owns reusable product source, candidate/release mechanics,
+portable assets, and publication. `opl-instance-medopl` owns its environment,
+Secrets, provider state, deployment, rollback, acceptance, and receipts. Cloud
+does not dispatch or operate the Instance; the Product owner consumes its
+exact-SHA/digest receipt as the pre-1.0 publication gate.
+
+Only the repository owner may explicitly dispatch a formal Release from
+`main`. PRs, merges, CI, schedules, collaborator actions, deployment retries,
+and failed qualification do not publish a version. The create-only workflow
+prevents accidental version reuse, but it does not remove the repository
+owner's authority to repair or delete public artifacts through a separate
+explicit cleanup decision. Documentation-only, test-only, CI-performance, and
+Instance-only changes do not independently justify a Product Release.
+
+## 2026-08-15: Keep The Go/TypeScript Service Architecture And Adopt Frameworks By Evidence
+
+OPL Cloud keeps its current Go/TypeScript architecture. Control Plane, Fabric,
+and Ledger remain separate Go modules, processes, and PostgreSQL schema owners;
+Console remains a TypeScript browser application; cross-service integration
+continues through typed public HTTP contracts. The current cohesion problem is
+inside retained owner modules, not a missing application framework.
+
+Spring Modulith is not adopted. Using it would require a Java replatform while
+collapsing or duplicating process and persistence boundaries that already carry
+real authority. OPL Cloud also does not add Cordis, Dapr, Temporal, a second
+plugin registry, or a global event bus to make the architecture look more
+uniform. Framework maturity alone is not evidence that the product needs the
+framework's runtime model.
+
+The near-term architecture work is deliberately smaller: split large retained
+implementation files by their existing capability owners, preserve the public
+interfaces and behavior, and expose one repeatable local verification entry.
+Reconsider a framework only when a real caller and observed failure show a
+specific missing capability, such as durable recovery across process restarts,
+runtime plugin installation/isolation, or repeated service-infrastructure
+duplication, and a focused replacement proves measurable benefit without
+creating a second authority.
+
+## 2026-08-14: Framework Cordis Composition Stops At The Cloud API Boundary
+
+OPL Framework is adopting Cordis for in-process composition. OPL Cloud does not
+follow that change as a repository-wide or service-runtime migration. Cordis
+addresses Framework process composition, dependency injection, events, effects,
+and teardown; Cloud owns independently deployed service, persistence, provider,
+billing-coordination, and evidence authorities.
+
+The supported integration is a Framework-owned Cordis plugin that wraps a typed
+Cloud client and calls the existing public HTTP and capability contracts.
+Control Plane, Fabric, and Ledger remain Cloud authorities. Fabric provider
+adapters remain behind the native Fabric provider port, and the Instance owner
+continues to select the concrete provider profile and deployment.
+
+OPL Cloud will not add a Cordis dependency or sidecar, mirror Framework plugin
+state, or create a second plugin registry, installed lock, event log, or service
+lifecycle. Cordis plugin and composition versions do not authorize arbitrary
+mixing of Cloud service binaries or schemas; the Cloud product remains one
+intentional release unit with compatibility enforced at its typed contracts.
+
+Reconsidering Cordis inside a future Cloud process requires a new explicit
+decision backed by a real in-process caller and a verified replacement,
+isolation, diagnosis, or teardown outcome. Framework migration alone is not that
+evidence.
+
 ## 2026-08-11: Modularity And Deletion-First Work Proceed In Parallel
 
 The immediate execution portfolio gives module cohesion, physical deployment
@@ -85,6 +176,11 @@ immutable Resume authorization.
 
 ## 2026-08-11: Product Release And Instance Deployment Are Separate
 
+This decision separates repository authority; it no longer defines the
+pre-1.0 publication order. The 2026-08-15 candidate-qualification decision
+above requires the Instance to qualify an exact candidate before Cloud
+publishes that candidate as a formal Release.
+
 `one-person-lab-cloud` publishes the installable product: source, contracts,
 multi-architecture GHCR image, GitHub Release, Compose assets, and reusable
 provider adapters. Its release workflow uses no production environment and does
@@ -92,7 +188,7 @@ not deploy, diagnose, verify, or roll back a concrete installation.
 
 `opl-instance-medopl` is the only medopl.cn customization and deployment owner.
 Its `main` workflow and protected `production` environment select Tencent/TKE,
-hold Secrets, consume an immutable Cloud product SHA and image digest, and own
+hold Secrets, consume an exact Cloud product SHA and image digest, and own
 deployment, canary, rollback, and receipts. Product source is never copied into
 the Instance repository, and Instance state is never written back into Cloud.
 

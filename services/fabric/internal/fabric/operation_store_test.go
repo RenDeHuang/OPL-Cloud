@@ -3,7 +3,9 @@ package fabric
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -14,56 +16,6 @@ func TestProductionPostgresOperationStoreRejectsUnsafeTLSBeforeConnecting(t *tes
 	_, err := NewPostgresOperationStore("host=/does-not-exist dbname=opl sslmode=disable")
 	if err == nil || !strings.Contains(err.Error(), "sslmode=verify-full") {
 		t.Fatalf("unsafe PostgreSQL error = %v", err)
-	}
-}
-
-func TestMemoryOperationStoreReadsScopedLegacyLaunchHistory(t *testing.T) {
-	ctx := context.Background()
-	store := NewMemoryOperationStore()
-	now := time.Date(2026, 8, 12, 2, 0, 0, 0, time.UTC)
-	started := newOperation("create_storage_volume", "storage_volume", "storage-legacy", "acct-legacy", "ws-legacy", "launch-legacy:storage", "hash-legacy", now)
-	started.ID, started.OperationID, started.Status = "fop-legacy-started", "op-legacy-storage", "started"
-	succeeded := started
-	succeeded.ID, succeeded.Status, succeeded.FinishedAt = "fop-legacy-succeeded", "succeeded", now.Add(time.Second)
-	for _, operation := range []FabricOperation{started, succeeded} {
-		if err := store.Append(ctx, operation); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	history, err := store.LegacyLaunchOperationHistory(ctx, LegacyLaunchOperationIdentity{
-		Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: "storage-legacy",
-		AccountID: "acct-legacy", WorkspaceID: "ws-legacy",
-	})
-	if err != nil || len(history) != 2 {
-		t.Fatalf("history=%#v err=%v", history, err)
-	}
-	if history[0].OperationID != history[1].OperationID || history[0].RequestHash != history[1].RequestHash {
-		t.Fatalf("same logical history not preserved: %#v", history)
-	}
-
-	competing := started
-	competing.ID, competing.OperationID, competing.RequestHash = "fop-legacy-competing", "op-legacy-competing", "hash-competing"
-	if err := store.Append(ctx, competing); err != nil {
-		t.Fatal(err)
-	}
-	history, err = store.LegacyLaunchOperationHistory(ctx, LegacyLaunchOperationIdentity{
-		Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: "storage-legacy",
-		AccountID: "acct-legacy", WorkspaceID: "ws-legacy",
-	})
-	if err != nil || len(history) != 3 {
-		t.Fatalf("competing history=%#v err=%v", history, err)
-	}
-	if history[2].OperationID == history[0].OperationID {
-		t.Fatalf("competing logical operation was collapsed: %#v", history)
-	}
-
-	missing, err := store.LegacyLaunchOperationHistory(ctx, LegacyLaunchOperationIdentity{
-		Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: "storage-missing",
-		AccountID: "acct-legacy", WorkspaceID: "ws-legacy",
-	})
-	if err != nil || len(missing) != 0 {
-		t.Fatalf("missing history=%#v err=%v", missing, err)
 	}
 }
 
@@ -112,6 +64,76 @@ func TestMemoryOperationStoreReadsExactIdentitiesAndFailsClosedOnDuplicates(t *t
 	}
 	if _, _, err := store.ComputeClaimTerminalOperation(ctx, "approval-exact-30970000001", "approval-exact-30970000001"); !errors.Is(err, ErrOperationIdentityConflict) {
 		t.Fatalf("terminal duplicate error=%v", err)
+	}
+}
+
+func TestMemoryOperationStoreBoundsResourceQueriesAndOperationPages(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	createdAt := time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC)
+	for index := 0; index < 8; index++ {
+		operation := newOperation("unrelated", "storage_volume", fmt.Sprintf("storage-%d", index), "acct-other", "workspace-other", fmt.Sprintf("other-%d", index), "other-hash", createdAt.Add(time.Duration(index)*time.Second))
+		operation.ID = fmt.Sprintf("fop-unrelated-%02d", index)
+		operation.Status = "succeeded"
+		operation.CreatedAt = createdAt.Add(time.Duration(index) * time.Second)
+		if err := store.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	job := Job{JobID: "job-alpha", WorkspaceID: "workspace-alpha", Status: "queued", Attempt: 1, CreatedAt: createdAt, UpdatedAt: createdAt}
+	jobOperation := newOperation("create_job", "job", job.JobID, "", job.WorkspaceID, "job-create", "job-hash", createdAt.Add(20*time.Second))
+	jobOperation.ID = "fop-job-create"
+	jobOperation.Status = job.Status
+	jobOperation.CreatedAt = createdAt.Add(20 * time.Second)
+	fillOperationResource(&jobOperation, job)
+	if err := store.Append(ctx, jobOperation); err != nil {
+		t.Fatal(err)
+	}
+	claim := jobOperation
+	claim.ID = "fop-job-claim"
+	claim.Action = "claim_job"
+	claim.IdempotencyKey = "claim-once"
+	claim.RequestHash = "claim-hash"
+	claim.CreatedAt = createdAt.Add(21 * time.Second)
+	claim.Status = "running"
+	if err := store.Append(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, found, err := store.LatestResourceOperation(ctx, "job", job.JobID)
+	if err != nil || !found || latest.ID != claim.ID {
+		t.Fatalf("latest=%#v found=%v err=%v", latest, found, err)
+	}
+	replayed, found, err := store.OperationByResourceActionIdempotency(ctx, "job", job.JobID, "claim_job", "claim-once")
+	if err != nil || !found || replayed.ID != claim.ID {
+		t.Fatalf("replayed=%#v found=%v err=%v", replayed, found, err)
+	}
+
+	runtime := newOperation("create_workspace_runtime", "workspace_runtime", "workspace-alpha", "acct-alpha", "workspace-alpha", "runtime-once", "runtime-hash", createdAt.Add(30*time.Second))
+	runtime.ID = "fop-runtime-alpha"
+	runtime.Status = "succeeded"
+	runtime.CreatedAt = createdAt.Add(30 * time.Second)
+	if err := store.Append(ctx, runtime); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := store.WorkspaceRuntimeIdentityCandidates(ctx, "workspace-alpha")
+	if err != nil || len(candidates) != 1 || candidates[0].ID != runtime.ID {
+		t.Fatalf("runtime candidates=%#v err=%v", candidates, err)
+	}
+
+	page, err := store.ListPage(ctx, "", 3)
+	if err != nil || len(page.Operations) != 3 || page.NextCursor == "" {
+		t.Fatalf("first page=%#v err=%v", page, err)
+	}
+	next, err := store.ListPage(ctx, page.NextCursor, 3)
+	if err != nil || len(next.Operations) != 3 || next.Operations[0].ID == page.Operations[0].ID {
+		t.Fatalf("second page=%#v err=%v", next, err)
+	}
+	if _, err := store.ListPage(ctx, "not-a-cursor", 3); !errors.Is(err, ErrInvalidOperationPage) {
+		t.Fatalf("invalid cursor error=%v", err)
+	}
+	if _, err := store.ListPage(ctx, strings.Repeat("a", maxFabricOperationCursorSize+1), 3); !errors.Is(err, ErrInvalidOperationPage) {
+		t.Fatalf("oversized cursor error=%v", err)
 	}
 }
 
@@ -371,6 +393,239 @@ func TestPostgresOperationSchemaDropsRetiredWorkspaceRuntimeAccessTable(t *testi
 	dropAt := strings.Index(schema, "DROP TABLE IF EXISTS fabric_workspace_runtime_access")
 	if dropAt < 0 || dropAt < createAt {
 		t.Fatal("Fabric hard-cut migration must drop the retired runtime access table")
+	}
+}
+
+func TestPostgresOperationStoreMapsHistoricalCorrelationIDToOperationID(t *testing.T) {
+	for _, uniqueIdempotencyKey := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pk_only=%t", !uniqueIdempotencyKey), func(t *testing.T) {
+			databaseURL := fabricTestDatabaseURL(t)
+			db, err := sql.Open("postgres", databaseURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			createHistoricalFabricOperationsFixture(t, db, uniqueIdempotencyKey)
+
+			store, err := newTestPostgresOperationStore(databaseURL)
+			if err != nil {
+				t.Fatalf("install historical Fabric schema: %v", err)
+			}
+			defer store.client.Close()
+
+			var operationID, callerService, status string
+			var startedAt time.Time
+			if err := db.QueryRow(`
+				SELECT operation_id, caller_service, status, started_at
+				FROM fabric_operations WHERE id = 'legacy-operation-1'
+			`).Scan(&operationID, &callerService, &status, &startedAt); err != nil {
+				t.Fatal(err)
+			}
+			if operationID != "legacy-correlation-1" {
+				t.Fatalf("operation_id = %q, want preserved correlation_id", operationID)
+			}
+			if callerService != "legacy-requester" || status != "pending" {
+				t.Fatalf("historical identity/state not preserved: caller=%q status=%q", callerService, status)
+			}
+			if !startedAt.Equal(time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)) {
+				t.Fatalf("started_at = %s, want created_at", startedAt)
+			}
+
+			var inboundFKCount int
+			if err := db.QueryRow(`
+				SELECT count(*)
+				FROM pg_constraint
+				WHERE contype = 'f'
+				  AND confrelid = 'fabric_operations'::regclass
+			`).Scan(&inboundFKCount); err != nil {
+				t.Fatal(err)
+			}
+			if inboundFKCount != 4 {
+				t.Fatalf("inbound foreign keys = %d, want 4", inboundFKCount)
+			}
+
+			var legacyRefs, legacyEvidence string
+			if err := db.QueryRow(`
+				SELECT provider_refs::text, evidence_refs::text
+				FROM fabric_operations WHERE id = 'legacy-operation-1'
+			`).Scan(&legacyRefs, &legacyEvidence); err != nil {
+				t.Fatal(err)
+			}
+			if legacyRefs != `{"provider": "req-1"}` || legacyEvidence != `{"receipt": "evidence-1"}` {
+				t.Fatalf("historical references changed: provider_refs=%q evidence_refs=%q", legacyRefs, legacyEvidence)
+			}
+			assertMigrationCount(t, db, "fabric", "202607080001_fabric_operations_legacy_migration", 1)
+			assertMigrationCount(t, db, "fabric", "202607090001_ent_hard_cut", 1)
+
+			if err := store.Install(context.Background()); err != nil {
+				t.Fatalf("restart Fabric install: %v", err)
+			}
+			assertMigrationCount(t, db, "fabric", "202607080001_fabric_operations_legacy_migration", 1)
+			assertMigrationCount(t, db, "fabric", "202607090001_ent_hard_cut", 1)
+
+			var globalUnique bool
+			if err := db.QueryRow(`
+				SELECT EXISTS (
+					SELECT 1
+					FROM pg_index i
+					JOIN pg_class c ON c.oid = i.indexrelid
+					WHERE i.indrelid = 'fabric_operations'::regclass
+					  AND i.indisunique
+					  AND NOT i.indisprimary
+					  AND pg_get_indexdef(i.indexrelid) LIKE '%(idempotency_key)%'
+				)
+			`).Scan(&globalUnique); err != nil {
+				t.Fatal(err)
+			}
+			if globalUnique {
+				t.Fatal("historical global idempotency uniqueness remains")
+			}
+		})
+	}
+}
+
+func TestPostgresOperationStoreRejectsUnknownHistoricalOperationShapeBeforeHardCut(t *testing.T) {
+	testCases := []struct {
+		name   string
+		mutate string
+	}{
+		{name: "extra_column", mutate: `ALTER TABLE fabric_operations ADD COLUMN unexpected TEXT NOT NULL DEFAULT ''`},
+		{name: "wrong_type", mutate: `ALTER TABLE fabric_operations ALTER COLUMN attempts TYPE BIGINT`},
+		{name: "wrong_default", mutate: `ALTER TABLE fabric_operations ALTER COLUMN attempts SET DEFAULT 1`},
+		{name: "wrong_nullability", mutate: `ALTER TABLE fabric_operations ALTER COLUMN lease_expires_at SET NOT NULL`},
+		{name: "wrong_fk_count", mutate: `DROP TABLE idempotency_keys`},
+		{name: "wrong_fk_source", mutate: `ALTER TABLE workspaces RENAME TO unexpected_workspaces`},
+		{name: "wrong_fk_action", mutate: `ALTER TABLE workspaces DROP CONSTRAINT workspaces_operation_id_fkey; ALTER TABLE workspaces ADD CONSTRAINT workspaces_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES fabric_operations(id) ON DELETE CASCADE`},
+		{name: "extra_index", mutate: `CREATE INDEX unexpected_historical_fabric_operations_resource_idx ON fabric_operations(resource_id)`},
+		{name: "duplicate_correlation_id", mutate: `INSERT INTO fabric_operations (id, correlation_id, idempotency_key, requested_by, resource_id, resource_kind, state) VALUES ('legacy-operation-2', 'legacy-correlation-1', 'legacy-idempotency-2', 'legacy-requester-2', 'legacy-resource-2', 'legacy-resource-kind', 'pending')`},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testUnknownHistoricalOperationShape(t, testCase.mutate)
+		})
+	}
+}
+
+func testUnknownHistoricalOperationShape(t *testing.T, mutate string) {
+	t.Helper()
+	databaseURL := fabricTestDatabaseURL(t)
+	db, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	createHistoricalFabricOperationsFixture(t, db, false)
+	if _, err := db.Exec(mutate); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := newTestPostgresOperationStore(databaseURL); err == nil {
+		t.Fatal("unknown historical Fabric schema install succeeded")
+	} else if !strings.Contains(err.Error(), "202607080001_fabric_operations_legacy_migration") {
+		t.Fatalf("unknown historical Fabric schema failed after legacy migration: %v", err)
+	}
+	assertMigrationCount(t, db, "fabric", "202607080001_fabric_operations_legacy_migration", 0)
+	assertMigrationCount(t, db, "fabric", "202607090001_ent_hard_cut", 0)
+
+	var operationIDColumn bool
+	if err := db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_attribute
+			WHERE attrelid = 'fabric_operations'::regclass
+			  AND attname = 'operation_id'
+			  AND attnum > 0
+			  AND NOT attisdropped
+		)
+	`).Scan(&operationIDColumn); err != nil {
+		t.Fatal(err)
+	}
+	if operationIDColumn {
+		t.Fatal("unknown historical schema was mutated before failure")
+	}
+}
+
+func assertMigrationCount(t *testing.T, db *sql.DB, service, version string, want int) {
+	t.Helper()
+	var got int
+	if err := db.QueryRow(`
+		SELECT count(*)
+		FROM opl_schema_migrations
+		WHERE service = $1 AND version = $2
+	`, service, version).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("migration count for %s/%s = %d, want %d", service, version, got, want)
+	}
+}
+
+func TestHistoricalOperationMigrationMatchesFormalEmbeddedCopy(t *testing.T) {
+	formal, err := os.ReadFile("../../migrations/202607080001_fabric_operations_legacy_migration.sql")
+	if err != nil {
+		t.Fatalf("read formal migration: %v", err)
+	}
+	embedded, err := os.ReadFile("ent_migrations/202607080001_fabric_operations_legacy_migration.sql")
+	if err != nil {
+		t.Fatalf("read embedded migration: %v", err)
+	}
+	if !bytes.Equal(formal, embedded) {
+		t.Fatal("formal and embedded historical operation migrations differ")
+	}
+}
+
+func createHistoricalFabricOperationsFixture(t *testing.T, db *sql.DB, uniqueIdempotencyKey bool) {
+	t.Helper()
+	uniqueClause := ""
+	if uniqueIdempotencyKey {
+		uniqueClause = " UNIQUE"
+	}
+	if _, err := db.Exec(fmt.Sprintf(`
+		CREATE TABLE fabric_operations (
+			id TEXT PRIMARY KEY,
+			correlation_id TEXT NOT NULL,
+			idempotency_key TEXT NOT NULL%s,
+			requested_by TEXT NOT NULL,
+			resource_id TEXT NOT NULL,
+			resource_kind TEXT NOT NULL,
+			state TEXT NOT NULL,
+			lease_owner TEXT NOT NULL DEFAULT '',
+			lease_expires_at TIMESTAMPTZ,
+			attempts INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			provider_refs JSONB NOT NULL DEFAULT '{}'::jsonb,
+			evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)
+	`, uniqueClause)); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"workspaces", "fabric_events", "fabric_evidence_refs", "idempotency_keys"} {
+		if _, err := db.Exec(fmt.Sprintf(`
+			CREATE TABLE %s (id TEXT PRIMARY KEY, operation_id TEXT NOT NULL REFERENCES fabric_operations(id))
+		`, source)); err != nil {
+			t.Fatalf("create inbound FK source %s: %v", source, err)
+		}
+	}
+	if _, err := db.Exec(`
+		INSERT INTO fabric_operations (
+			id, correlation_id, idempotency_key, requested_by, resource_id, resource_kind,
+			state, lease_owner, lease_expires_at, attempts, last_error, provider_refs,
+			evidence_refs, created_at, updated_at
+		) VALUES (
+			'legacy-operation-1', 'legacy-correlation-1', 'legacy-idempotency-1', 'legacy-requester',
+			'legacy-resource-1', 'legacy-resource-kind', 'pending', 'legacy-lease-owner',
+			'2026-08-14T01:02:04Z', 2, 'legacy-error', '{"provider":"req-1"}',
+			'{"receipt":"evidence-1"}', '2026-08-14T01:02:03Z', '2026-08-14T01:02:05Z'
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"workspaces", "fabric_events", "fabric_evidence_refs", "idempotency_keys"} {
+		if _, err := db.Exec(`INSERT INTO `+source+` (id, operation_id) VALUES ($1, $2)`, source+"-row-1", "legacy-operation-1"); err != nil {
+			t.Fatalf("seed inbound FK source %s: %v", source, err)
+		}
 	}
 }
 

@@ -30,11 +30,3 @@ func (s *Service) EnsureWorkspaceLaunchStage(ctx context.Context, input clients.
 	}
 	return client.EnsureWorkspaceLaunchStage(ctx, input)
 }
-
-func (s *Service) ReadLegacyWorkspaceLaunchBinding(ctx context.Context, input clients.LegacyWorkspaceLaunchBindingInput) (clients.LegacyWorkspaceLaunchBindingResult, error) {
-	client, ok := s.fabric.(clients.FabricLegacyWorkspaceLaunchClient)
-	if !ok {
-		return clients.LegacyWorkspaceLaunchBindingResult{}, errors.New("fabric_legacy_workspace_launch_unavailable")
-	}
-	return client.ReadLegacyWorkspaceLaunchBinding(ctx, input)
-}

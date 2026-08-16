@@ -20,7 +20,7 @@ const (
 	testProviderAcceptanceAccount = "acct-verification-slot-basic-01"
 	testProviderAcceptanceKey     = "provider-acceptance:verification-slot-basic-01"
 	testProviderAcceptanceToken   = "provider-acceptance-secret"
-	testProviderConfirmation      = "I_UNDERSTAND_THIS_BUYS_ONE_PREPAID_CVM_AND_CBS"
+	testProviderConfirmation      = "I_UNDERSTAND_THIS_BUYS_ONE_MONTHLY_PREPAID_RESOURCE"
 )
 
 func TestProviderAcceptanceFreezesDualSlotIdentitiesAndBudget(t *testing.T) {
@@ -76,7 +76,7 @@ func (f *providerAcceptanceFabric) MonthlyPreflight(_ context.Context, input cli
 	f.preflightCalls++
 	return clients.MonthlyPreflight{
 		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
-		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+		Available: true, ChargeType: "LOCAL", PeriodMonths: 1, RenewFlag: "NOT_APPLICABLE",
 		ProviderPriceCNY: 8.8,
 	}, nil
 }
@@ -379,13 +379,6 @@ func (s *providerAcceptanceReadFailureStore) ListAttachments(ctx context.Context
 		return nil, errors.New("forced second attachment read failure")
 	}
 	return s.StateStore.ListAttachments(ctx, accountID)
-}
-
-func providerAcceptancePreflightFixture(slot providerAcceptanceSlot) clients.MonthlyPreflight {
-	return clients.MonthlyPreflight{
-		PackageID: slot.PackageID, Zone: "ap-shanghai-2", Available: true, ChargeType: "PREPAID",
-		PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", ProviderPriceCNY: 8.8,
-	}
 }
 
 func seedCompleteProviderAcceptanceResources(t *testing.T, store StateStore, slot providerAcceptanceSlot, ownerID string) {

@@ -400,7 +400,7 @@ func (s *MemoryStore) EvaluateReviewGate(_ context.Context, input ReviewGateInpu
 }
 
 func (s *MemoryStore) evaluateReviewGateLocked(input ReviewGateInput) (ReviewGateResult, error) {
-	if !validExecutionIdentity(input.ExecutionIdentity) {
+	if !validReviewGateInput(input) {
 		return ReviewGateResult{}, ErrInvalidReviewGateInput
 	}
 	var active ReviewPolicy
@@ -460,17 +460,6 @@ func (s *MemoryStore) RecordReconciliation(_ context.Context, input Reconciliati
 func (s *MemoryStore) newID(prefix string) string {
 	s.nextID++
 	return fmt.Sprintf("%s_%06d", prefix, s.nextID)
-}
-
-func cloneAnyMap(input map[string]any) map[string]any {
-	if input == nil {
-		return nil
-	}
-	output := make(map[string]any, len(input))
-	for key, value := range input {
-		output[key] = value
-	}
-	return output
 }
 
 func hashJSON(payload any) (string, error) {

@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
-	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,23 +25,29 @@ import (
 
 var ErrOperationNotFound = errors.New("fabric_operation_not_found")
 var ErrOperationIdentityConflict = errors.New("fabric_operation_identity_conflict")
+var ErrInvalidOperationPage = errors.New("invalid_fabric_operation_page")
 
-// LegacyLaunchOperationIdentity scopes a read to one persisted legacy stage.
-// It is intentionally provider-neutral and cannot be used to enumerate the
-// Fabric operation store.
-type LegacyLaunchOperationIdentity struct {
-	Action       string
-	ResourceKind string
-	ResourceID   string
-	AccountID    string
-	WorkspaceID  string
+const MaxFabricOperationPageSize = 100
+const maxFabricOperationCursorSize = 1024
+
+type FabricOperationPage struct {
+	Operations []FabricOperation `json:"operations"`
+	NextCursor string            `json:"nextCursor,omitempty"`
+}
+
+type fabricOperationCursor struct {
+	CreatedAt time.Time `json:"createdAt"`
+	ID        string    `json:"id"`
 }
 
 type OperationStore interface {
 	Append(ctx context.Context, operation FabricOperation) error
 	Get(ctx context.Context, id string) (FabricOperation, error)
-	LegacyLaunchOperationHistory(ctx context.Context, identity LegacyLaunchOperationIdentity) ([]FabricOperation, error)
 	OperationByActionIdempotency(ctx context.Context, action, idempotencyKey string) (FabricOperation, bool, error)
+	OperationByResourceActionIdempotency(ctx context.Context, resourceKind, resourceID, action, idempotencyKey string) (FabricOperation, bool, error)
+	LatestResourceOperation(ctx context.Context, resourceKind, resourceID string) (FabricOperation, bool, error)
+	WorkspaceRuntimeIdentityCandidates(ctx context.Context, workspaceID string) ([]FabricOperation, error)
+	SaveJobHeartbeat(ctx context.Context, operation FabricOperation) (FabricOperation, error)
 	ComputeClaimTerminalOperation(ctx context.Context, approvalID, idempotencyKey string) (FabricOperation, bool, error)
 	ClaimRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
 	ClaimComputePoolRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
@@ -52,6 +58,7 @@ type OperationStore interface {
 	SaveRuntime(ctx context.Context, operation FabricOperation) error
 	SaveComputeClaimRecovery(ctx context.Context, current, next FabricOperation) error
 	List(ctx context.Context) ([]FabricOperation, error)
+	ListPage(ctx context.Context, cursor string, limit int) (FabricOperationPage, error)
 	ClaimMachine(ctx context.Context, ownership MachineOwnership) (MachineOwnership, bool, error)
 	SaveMachineOwnership(ctx context.Context, ownership MachineOwnership) error
 	MachineOwnership(ctx context.Context, resourceID string) (MachineOwnership, error)
@@ -181,21 +188,6 @@ func (s *MemoryOperationStore) Get(_ context.Context, id string) (FabricOperatio
 	return FabricOperation{}, ErrOperationNotFound
 }
 
-func (s *MemoryOperationStore) LegacyLaunchOperationHistory(_ context.Context, identity LegacyLaunchOperationIdentity) ([]FabricOperation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	operations := make([]FabricOperation, 0)
-	for _, operation := range s.operation {
-		if operation.Action != identity.Action || operation.ResourceKind != identity.ResourceKind ||
-			operation.ResourceID != identity.ResourceID || operation.AccountID != identity.AccountID ||
-			operation.WorkspaceID != identity.WorkspaceID {
-			continue
-		}
-		operations = append(operations, operation)
-	}
-	return operations, nil
-}
-
 func (s *MemoryOperationStore) OperationByActionIdempotency(_ context.Context, action, idempotencyKey string) (FabricOperation, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -211,6 +203,80 @@ func (s *MemoryOperationStore) OperationByActionIdempotency(_ context.Context, a
 		match, found = operation, true
 	}
 	return match, found, nil
+}
+
+func (s *MemoryOperationStore) OperationByResourceActionIdempotency(_ context.Context, resourceKind, resourceID, action, idempotencyKey string) (FabricOperation, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var match FabricOperation
+	found := false
+	for _, operation := range s.operation {
+		if operation.ResourceKind != resourceKind || operation.ResourceID != resourceID || operation.Action != action || operation.IdempotencyKey != idempotencyKey {
+			continue
+		}
+		if found {
+			return FabricOperation{}, false, ErrOperationIdentityConflict
+		}
+		match, found = operation, true
+	}
+	return match, found, nil
+}
+
+func (s *MemoryOperationStore) LatestResourceOperation(_ context.Context, resourceKind, resourceID string) (FabricOperation, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest FabricOperation
+	found := false
+	for _, operation := range s.operation {
+		if operation.ResourceKind != resourceKind || operation.ResourceID != resourceID {
+			continue
+		}
+		if !found || operation.CreatedAt.After(latest.CreatedAt) || operation.CreatedAt.Equal(latest.CreatedAt) && operation.ID > latest.ID {
+			latest, found = operation, true
+		}
+	}
+	return latest, found, nil
+}
+
+func (s *MemoryOperationStore) WorkspaceRuntimeIdentityCandidates(_ context.Context, workspaceID string) ([]FabricOperation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	matches := make([]FabricOperation, 0, 2)
+	for _, operation := range s.operation {
+		if operation.Action == "create_workspace_runtime" && operation.ResourceKind == "workspace_runtime" && operation.Status == "succeeded" && operation.WorkspaceID == workspaceID && operation.ResourceID == workspaceID {
+			matches = append(matches, operation)
+		}
+	}
+	sortFabricOperations(matches)
+	if len(matches) > 2 {
+		matches = matches[:2]
+	}
+	return matches, nil
+}
+
+func (s *MemoryOperationStore) SaveJobHeartbeat(_ context.Context, operation FabricOperation) (FabricOperation, error) {
+	if !validJobHeartbeatOperation(operation) {
+		return FabricOperation{}, ErrOperationIdentityConflict
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.operation {
+		current := s.operation[index]
+		if current.ID != operation.ID {
+			continue
+		}
+		if !sameJobHeartbeatIdentity(current, operation) {
+			return FabricOperation{}, ErrOperationIdentityConflict
+		}
+		if !operation.StartedAt.After(current.StartedAt) {
+			return current, nil
+		}
+		operation.CreatedAt = current.CreatedAt
+		s.operation[index] = operation
+		return operation, nil
+	}
+	s.operation = append(s.operation, operation)
+	return operation, nil
 }
 
 func (s *MemoryOperationStore) ComputeClaimTerminalOperation(_ context.Context, approvalID, idempotencyKey string) (FabricOperation, bool, error) {
@@ -487,6 +553,29 @@ func (s *MemoryOperationStore) List(_ context.Context) ([]FabricOperation, error
 	return operations, nil
 }
 
+func (s *MemoryOperationStore) ListPage(_ context.Context, cursor string, limit int) (FabricOperationPage, error) {
+	position, err := decodeFabricOperationCursor(cursor)
+	if err != nil || limit <= 0 || limit > MaxFabricOperationPageSize {
+		return FabricOperationPage{}, ErrInvalidOperationPage
+	}
+	s.mu.Lock()
+	operations := make([]FabricOperation, len(s.operation))
+	copy(operations, s.operation)
+	s.mu.Unlock()
+	sortFabricOperations(operations)
+	page := make([]FabricOperation, 0, limit+1)
+	for _, operation := range operations {
+		if cursor != "" && !fabricOperationAfterCursor(operation, position) {
+			continue
+		}
+		page = append(page, operation)
+		if len(page) == limit+1 {
+			break
+		}
+	}
+	return buildFabricOperationPage(page, limit)
+}
+
 type PostgresOperationStore struct {
 	db     *sql.DB
 	client *fabricent.Client
@@ -625,35 +714,6 @@ func (s *PostgresOperationStore) Get(ctx context.Context, id string) (FabricOper
 	return fabricOperationFromEnt(row), nil
 }
 
-func (s *PostgresOperationStore) LegacyLaunchOperationHistory(ctx context.Context, identity LegacyLaunchOperationIdentity) ([]FabricOperation, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, operation_id, caller_service, action, resource_kind, resource_id, account_id, workspace_id,
-			provider, provider_request_id, idempotency_key, request_hash, redacted_provider_payload, status,
-			error_code, retryable, compute_pool_key, compute_pool_lease_owner, compute_pool_lease_expires_at,
-			started_at, finished_at, created_at
-		FROM fabric_operations
-		WHERE action = $1 AND resource_kind = $2 AND resource_id = $3 AND account_id = $4 AND
-			workspace_id = $5
-		ORDER BY created_at, id`,
-		identity.Action, identity.ResourceKind, identity.ResourceID, identity.AccountID, identity.WorkspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	operations := make([]FabricOperation, 0)
-	for rows.Next() {
-		operation, scanErr := scanPostgresFabricOperation(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		operations = append(operations, operation)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return operations, nil
-}
-
 func (s *PostgresOperationStore) OperationByActionIdempotency(ctx context.Context, action, idempotencyKey string) (FabricOperation, bool, error) {
 	rows, err := s.client.FabricOperation.Query().
 		Where(fabricoperation.Action(action), fabricoperation.IdempotencyKey(idempotencyKey)).
@@ -669,6 +729,116 @@ func (s *PostgresOperationStore) OperationByActionIdempotency(ctx context.Contex
 		return FabricOperation{}, false, ErrOperationIdentityConflict
 	}
 	return fabricOperationFromEnt(rows[0]), true, nil
+}
+
+func (s *PostgresOperationStore) OperationByResourceActionIdempotency(ctx context.Context, resourceKind, resourceID, action, idempotencyKey string) (FabricOperation, bool, error) {
+	rows, err := s.client.FabricOperation.Query().
+		Where(
+			fabricoperation.ResourceKind(resourceKind), fabricoperation.ResourceID(resourceID),
+			fabricoperation.Action(action), fabricoperation.IdempotencyKey(idempotencyKey),
+		).
+		Limit(2).
+		All(ctx)
+	if err != nil {
+		return FabricOperation{}, false, err
+	}
+	if len(rows) == 0 {
+		return FabricOperation{}, false, nil
+	}
+	if len(rows) != 1 {
+		return FabricOperation{}, false, ErrOperationIdentityConflict
+	}
+	return fabricOperationFromEnt(rows[0]), true, nil
+}
+
+func (s *PostgresOperationStore) LatestResourceOperation(ctx context.Context, resourceKind, resourceID string) (FabricOperation, bool, error) {
+	row, err := s.client.FabricOperation.Query().
+		Where(fabricoperation.ResourceKind(resourceKind), fabricoperation.ResourceID(resourceID)).
+		Order(fabricent.Desc(fabricoperation.FieldCreatedAt, fabricoperation.FieldID)).
+		First(ctx)
+	if fabricent.IsNotFound(err) {
+		return FabricOperation{}, false, nil
+	}
+	if err != nil {
+		return FabricOperation{}, false, err
+	}
+	return fabricOperationFromEnt(row), true, nil
+}
+
+func (s *PostgresOperationStore) WorkspaceRuntimeIdentityCandidates(ctx context.Context, workspaceID string) ([]FabricOperation, error) {
+	rows, err := s.client.FabricOperation.Query().
+		Where(
+			fabricoperation.Action("create_workspace_runtime"), fabricoperation.ResourceKind("workspace_runtime"),
+			fabricoperation.Status("succeeded"), fabricoperation.WorkspaceID(workspaceID), fabricoperation.ResourceID(workspaceID),
+		).
+		Order(fabricent.Asc(fabricoperation.FieldCreatedAt, fabricoperation.FieldID)).
+		Limit(2).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	operations := make([]FabricOperation, 0, len(rows))
+	for _, row := range rows {
+		operations = append(operations, fabricOperationFromEnt(row))
+	}
+	return operations, nil
+}
+
+func (s *PostgresOperationStore) SaveJobHeartbeat(ctx context.Context, operation FabricOperation) (FabricOperation, error) {
+	if !validJobHeartbeatOperation(operation) {
+		return FabricOperation{}, ErrOperationIdentityConflict
+	}
+	current, err := s.Get(ctx, operation.ID)
+	if errors.Is(err, ErrOperationNotFound) {
+		if appendErr := s.Append(ctx, operation); appendErr == nil {
+			return operation, nil
+		} else if !fabricent.IsConstraintError(appendErr) {
+			return FabricOperation{}, appendErr
+		}
+		current, err = s.Get(ctx, operation.ID)
+	}
+	if err != nil {
+		return FabricOperation{}, err
+	}
+	if !sameJobHeartbeatIdentity(current, operation) {
+		return FabricOperation{}, ErrOperationIdentityConflict
+	}
+	if !operation.StartedAt.After(current.StartedAt) {
+		return current, nil
+	}
+	payloadJSON, err := operationPayloadJSON(operation)
+	if err != nil {
+		return FabricOperation{}, err
+	}
+	updated, err := s.client.FabricOperation.Update().
+		Where(
+			fabricoperation.ID(operation.ID), fabricoperation.OperationID(operation.OperationID),
+			fabricoperation.CallerService(operation.CallerService), fabricoperation.Action(operation.Action),
+			fabricoperation.ResourceKind(operation.ResourceKind), fabricoperation.ResourceID(operation.ResourceID),
+			fabricoperation.WorkspaceID(operation.WorkspaceID), fabricoperation.IdempotencyKey(operation.IdempotencyKey),
+			fabricoperation.RequestHash(operation.RequestHash), fabricoperation.Status("running"),
+			fabricoperation.StartedAtLT(operation.StartedAt),
+		).
+		SetProviderRequestID(operation.ProviderRequestID).
+		SetRedactedProviderPayload(payloadJSON).
+		SetStartedAt(operation.StartedAt).
+		SetFinishedAt(operation.FinishedAt).
+		Save(ctx)
+	if err != nil {
+		return FabricOperation{}, err
+	}
+	if updated == 1 {
+		operation.CreatedAt = current.CreatedAt
+		return operation, nil
+	}
+	latest, err := s.Get(ctx, operation.ID)
+	if err != nil {
+		return FabricOperation{}, err
+	}
+	if !sameJobHeartbeatIdentity(latest, operation) {
+		return FabricOperation{}, ErrOperationIdentityConflict
+	}
+	return latest, nil
 }
 
 func (s *PostgresOperationStore) ComputeClaimTerminalOperation(ctx context.Context, approvalID, idempotencyKey string) (FabricOperation, bool, error) {
@@ -1316,76 +1486,6 @@ func (s *PostgresOperationStore) ConvergeRuntimeReadback(ctx context.Context, ex
 	return nil
 }
 
-func validComputeClaimRecoveryTransition(current, next FabricOperation) bool {
-	if current.Status == "failed" && next.Status == "claim_pending" ||
-		current.Status == "claim_pending" && next.Status == "claim_pending" ||
-		current.Status == "claim_pending" && next.Status == "succeeded" ||
-		current.Status == "claim_pending" && next.Status == "failed" {
-		return true
-	}
-	if current.Status != "succeeded" || next.Status != "succeeded" {
-		return false
-	}
-	currentLedger, currentPresent, currentValid := decodeComputeClaimRecoveryMutation(current)
-	nextLedger, nextPresent, nextValid := decodeComputeClaimRecoveryMutation(next)
-	validNodeTransition := !currentPresent && nextPresent && nextValid && nextLedger.State == "node_reserved" &&
-		(validLegacyNodeReservationTransition(current, next, nextLedger) || validConfirmedNodeDriftReservationTransition(current, next, nextLedger)) ||
-		currentPresent && currentValid && currentLedger.State == "node_reserved" && nextPresent && nextValid &&
-			nextLedger.State == "observed" && nextLedger.TencentMutationCount == 0 && currentLedger.Generation == nextLedger.Generation &&
-			currentLedger.AttemptDigest == nextLedger.AttemptDigest &&
-			reflect.DeepEqual(nextLedger.Evidence.CVM, ComputeClaimMutationEvidence{})
-	if !validNodeTransition {
-		return false
-	}
-	currentWithoutPayload, nextWithoutPayload := current, next
-	currentWithoutPayload.RedactedProviderPayload, nextWithoutPayload.RedactedProviderPayload = nil, nil
-	if !reflect.DeepEqual(currentWithoutPayload, nextWithoutPayload) {
-		return false
-	}
-	currentPayload, nextPayload := maps.Clone(current.RedactedProviderPayload), maps.Clone(next.RedactedProviderPayload)
-	delete(currentPayload, computeClaimRecoveryMutationPayloadKey)
-	delete(nextPayload, computeClaimRecoveryMutationPayloadKey)
-	return reflect.DeepEqual(currentPayload, nextPayload)
-}
-
-func sameComputeClaimRecoveryOperation(current, next FabricOperation) bool {
-	return current.ID == next.ID && current.Action == "create_compute_allocation" && current.Action == next.Action &&
-		current.ResourceKind == next.ResourceKind && current.ResourceID == next.ResourceID && current.AccountID == next.AccountID &&
-		current.WorkspaceID == next.WorkspaceID && current.IdempotencyKey == next.IdempotencyKey && current.RequestHash == next.RequestHash
-}
-
-func validComputeClaimRecoveryBindingTransition(current, next FabricOperation) bool {
-	currentBinding, currentPresent, currentValid := decodeComputeClaimRecoveryBinding(current)
-	nextBinding, nextPresent, nextValid := decodeComputeClaimRecoveryBinding(next)
-	if !nextPresent || !nextValid {
-		return false
-	}
-	if currentPresent {
-		return currentValid && currentBinding == nextBinding
-	}
-	if next.Status == "claim_pending" {
-		return true
-	}
-	if next.Status != "failed" {
-		return false
-	}
-	launchOperationID, ok := strings.CutSuffix(current.IdempotencyKey, ":compute")
-	return ok && nextBinding.LaunchOperationID == launchOperationID && nextBinding.IdempotencyKey == current.IdempotencyKey && nextBinding.RequestHash == current.RequestHash
-}
-
-func validComputeClaimTerminalTransition(current, next FabricOperation) bool {
-	if next.Status != "failed" {
-		return true
-	}
-	if current.Status != "claim_pending" || next.FinishedAt.IsZero() {
-		return false
-	}
-	evidence, present, valid := decodeComputeClaimTerminalEvidence(next)
-	return present && valid && evidence.FabricRecordID == current.ID && evidence.OperationID == current.OperationID && evidence.IdempotencyKey == current.IdempotencyKey &&
-		evidence.RequestHash == current.RequestHash && evidence.ComputeAllocationID == current.ResourceID && evidence.AccountID == current.AccountID && evidence.WorkspaceID == current.WorkspaceID &&
-		next.ErrorCode == evidence.ErrorCode
-}
-
 func operationPayloadJSON(operation FabricOperation) (string, error) {
 	payload := operation.RedactedProviderPayload
 	if payload == nil {
@@ -1405,6 +1505,104 @@ func (s *PostgresOperationStore) List(ctx context.Context) ([]FabricOperation, e
 		operations = append(operations, fabricOperationFromEnt(row))
 	}
 	return operations, nil
+}
+
+func (s *PostgresOperationStore) ListPage(ctx context.Context, cursor string, limit int) (FabricOperationPage, error) {
+	position, err := decodeFabricOperationCursor(cursor)
+	if err != nil || limit <= 0 || limit > MaxFabricOperationPageSize {
+		return FabricOperationPage{}, ErrInvalidOperationPage
+	}
+	query := s.client.FabricOperation.Query()
+	if cursor != "" {
+		query.Where(fabricoperation.Or(
+			fabricoperation.CreatedAtGT(position.CreatedAt),
+			fabricoperation.And(fabricoperation.CreatedAtEQ(position.CreatedAt), fabricoperation.IDGT(position.ID)),
+		))
+	}
+	rows, err := query.
+		Order(fabricent.Asc(fabricoperation.FieldCreatedAt, fabricoperation.FieldID)).
+		Limit(limit + 1).
+		All(ctx)
+	if err != nil {
+		return FabricOperationPage{}, err
+	}
+	operations := make([]FabricOperation, 0, len(rows))
+	for _, row := range rows {
+		operations = append(operations, fabricOperationFromEnt(row))
+	}
+	return buildFabricOperationPage(operations, limit)
+}
+
+func (s *Service) ListOperationsPage(ctx context.Context, cursor string, limit int) (FabricOperationPage, error) {
+	return s.operations.ListPage(ctx, cursor, limit)
+}
+
+func validJobHeartbeatOperation(operation FabricOperation) bool {
+	return operation.ID != "" && operation.OperationID != "" && operation.CallerService == "runner" &&
+		operation.Action == "heartbeat_job" && operation.ResourceKind == "job" && operation.ResourceID != "" &&
+		operation.WorkspaceID != "" && operation.IdempotencyKey != "" && operation.RequestHash != "" &&
+		operation.Status == "running" && !operation.StartedAt.IsZero() && !operation.FinishedAt.IsZero() && !operation.CreatedAt.IsZero()
+}
+
+func sameJobHeartbeatIdentity(current, next FabricOperation) bool {
+	return validJobHeartbeatOperation(current) && validJobHeartbeatOperation(next) &&
+		current.ID == next.ID && current.OperationID == next.OperationID && current.CallerService == next.CallerService &&
+		current.Action == next.Action && current.ResourceKind == next.ResourceKind && current.ResourceID == next.ResourceID &&
+		current.AccountID == next.AccountID && current.WorkspaceID == next.WorkspaceID && current.Provider == next.Provider &&
+		current.IdempotencyKey == next.IdempotencyKey && current.RequestHash == next.RequestHash
+}
+
+func sortFabricOperations(operations []FabricOperation) {
+	sort.Slice(operations, func(left, right int) bool {
+		if operations[left].CreatedAt.Equal(operations[right].CreatedAt) {
+			return operations[left].ID < operations[right].ID
+		}
+		return operations[left].CreatedAt.Before(operations[right].CreatedAt)
+	})
+}
+
+func fabricOperationAfterCursor(operation FabricOperation, cursor fabricOperationCursor) bool {
+	return operation.CreatedAt.After(cursor.CreatedAt) || operation.CreatedAt.Equal(cursor.CreatedAt) && operation.ID > cursor.ID
+}
+
+func encodeFabricOperationCursor(operation FabricOperation) (string, error) {
+	data, err := json.Marshal(fabricOperationCursor{CreatedAt: operation.CreatedAt, ID: operation.ID})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(data), nil
+}
+
+func decodeFabricOperationCursor(cursor string) (fabricOperationCursor, error) {
+	if cursor == "" {
+		return fabricOperationCursor{}, nil
+	}
+	if len(cursor) > maxFabricOperationCursorSize {
+		return fabricOperationCursor{}, ErrInvalidOperationPage
+	}
+	data, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return fabricOperationCursor{}, ErrInvalidOperationPage
+	}
+	var position fabricOperationCursor
+	if json.Unmarshal(data, &position) != nil || position.CreatedAt.IsZero() || position.ID == "" {
+		return fabricOperationCursor{}, ErrInvalidOperationPage
+	}
+	return position, nil
+}
+
+func buildFabricOperationPage(operations []FabricOperation, limit int) (FabricOperationPage, error) {
+	page := FabricOperationPage{Operations: operations}
+	if len(operations) <= limit {
+		return page, nil
+	}
+	page.Operations = operations[:limit]
+	cursor, err := encodeFabricOperationCursor(page.Operations[len(page.Operations)-1])
+	if err != nil {
+		return FabricOperationPage{}, err
+	}
+	page.NextCursor = cursor
+	return page, nil
 }
 
 func fabricOperationFromEnt(row *fabricent.FabricOperation) FabricOperation {

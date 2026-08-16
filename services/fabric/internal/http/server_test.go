@@ -13,7 +13,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -86,6 +88,15 @@ func fabricCapabilityForTest(t *testing.T, claims fabricCapabilityClaimsForTest,
 type capabilityBoundaryProvider struct {
 	testProvider
 	computeCreates atomic.Int32
+}
+
+type staticFabricMutationScopeResolver struct {
+	authorization fabric.ComputePoolHeadTerminalizationAuthorization
+	err           error
+}
+
+func (r staticFabricMutationScopeResolver) ComputePoolHeadTerminalizationAuthorization(context.Context, fabric.ComputePoolHeadTerminalizationInput) (fabric.ComputePoolHeadTerminalizationAuthorization, error) {
+	return r.authorization, r.err
 }
 
 func (p *capabilityBoundaryProvider) CreateComputeAllocation(ctx context.Context, input fabric.ComputeAllocationExecution) (fabric.ComputeAllocation, error) {
@@ -258,10 +269,265 @@ func TestFabricMutationAuthorizationDerivesRuntimeUpdateAction(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/fabric/workspace-runtimes", nil)
 	req.Header.Set("Idempotency-Key", "runtime-credential-rotate:ws-alpha:once:runtime")
 
-	scope, ok := fabricMutationScopeForRequest(req, body)
+	scope, ok := fabricMutationScopeForRequest(context.Background(), nil, req, body)
 
 	if !ok || scope.Action != "update_workspace_runtime" || scope.OperationID != "runtime-credential-rotate:ws-alpha:once:runtime" {
 		t.Fatalf("runtime update scope=%#v ok=%v", scope, ok)
+	}
+}
+
+func TestFabricProviderMutationScopesAreStrict(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		body         string
+		operationID  string
+		resourceKind string
+		resourceID   string
+		action       string
+		wantOK       bool
+	}{
+		{
+			name: "attachment create", path: "/fabric/storage-attachments",
+			body:        `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":"compute-alpha","volumeId":"volume-alpha"}`,
+			operationID: "attachment-once", resourceKind: "storage_attachment", resourceID: "compute-alpha:volume-alpha", action: "create_storage_attachment", wantOK: true,
+		},
+		{
+			name: "snapshot create", path: "/fabric/storage-snapshots",
+			body:        `{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"volume-alpha"}`,
+			operationID: "snapshot-once", resourceKind: "storage_snapshot", resourceID: "volume-alpha", action: "create_storage_snapshot", wantOK: true,
+		},
+		{
+			name: "snapshot restore", path: "/fabric/storage-snapshots/snapshot-alpha/restore",
+			body:        `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`,
+			operationID: "restore-once", resourceKind: "storage_snapshot", resourceID: "snapshot-alpha", action: "restore_storage_snapshot", wantOK: true,
+		},
+		{
+			name: "snapshot destroy", path: "/fabric/storage-snapshots/snapshot-alpha/destroy",
+			body:        `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha"}`,
+			operationID: "destroy-once", resourceKind: "storage_snapshot", resourceID: "snapshot-alpha", action: "destroy_storage_snapshot", wantOK: true,
+		},
+		{
+			name: "runtime credential reveal", path: "/fabric/workspace-runtimes/ws-alpha/credentials/reveal",
+			body:        `{"accountId":"acct-alpha","workspaceId":"ws-alpha"}`,
+			operationID: "reveal-once", resourceKind: "workspace_runtime_credential", resourceID: "ws-alpha", action: "reveal_workspace_runtime_credential", wantOK: true,
+		},
+		{
+			name: "compute pool head terminalization", path: "/fabric/compute-pool-head/terminalization",
+			body:        `{"nodePoolId":"np-basic","approvalId":"terminalize-operation","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+			operationID: "terminalize-operation", resourceKind: "compute_pool_head", resourceID: "np-basic", action: "terminalize_compute_pool_head", wantOK: true,
+		},
+		{
+			name: "terminalization approval mismatch", path: "/fabric/compute-pool-head/terminalization",
+			body:        `{"nodePoolId":"np-basic","approvalId":"another-operation","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+			operationID: "terminalize-operation",
+		},
+		{
+			name: "snapshot url body mismatch", path: "/fabric/storage-snapshots/snapshot-alpha/restore",
+			body:        `{"snapshotId":"snapshot-beta","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`,
+			operationID: "restore-once",
+		},
+		{
+			name: "attachment missing compute", path: "/fabric/storage-attachments",
+			body:        `{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"volume-alpha"}`,
+			operationID: "attachment-once",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tt.path, nil)
+			req.Header.Set("Idempotency-Key", tt.operationID)
+			resolver := fabricMutationScopeResolver(nil)
+			if tt.path == "/fabric/compute-pool-head/terminalization" {
+				resolver = staticFabricMutationScopeResolver{authorization: fabric.ComputePoolHeadTerminalizationAuthorization{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", NodePoolID: "np-basic"}}
+			}
+			scope, ok := fabricMutationScopeForRequest(context.Background(), resolver, req, []byte(tt.body))
+			if ok != tt.wantOK {
+				t.Fatalf("scope=%#v ok=%v", scope, ok)
+			}
+			if !tt.wantOK {
+				return
+			}
+			wantCaller := "control-plane"
+			if tt.path == "/fabric/compute-pool-head/terminalization" {
+				wantCaller = "operator"
+			}
+			if scope.Caller != wantCaller || scope.AccountID != "acct-alpha" || scope.WorkspaceID == "" || scope.ResourceKind != tt.resourceKind || scope.ResourceID != tt.resourceID || scope.Action != tt.action || scope.OperationID != tt.operationID {
+				t.Fatalf("scope=%#v", scope)
+			}
+		})
+	}
+	if !isFabricMutation(httptest.NewRequest(http.MethodPost, "/fabric/workspace-runtimes/ws-alpha/credentials/reveal", nil)) {
+		t.Fatal("runtime credential reveal must require capability authorization")
+	}
+}
+
+func TestFabricProviderMutationsRequireCapabilityBeforeStateChange(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "attachment create", path: "/fabric/storage-attachments", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":"compute-alpha","volumeId":"volume-alpha"}`},
+		{name: "snapshot create", path: "/fabric/storage-snapshots", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"volume-alpha"}`},
+		{name: "snapshot restore", path: "/fabric/storage-snapshots/snapshot-alpha/restore", body: `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`},
+		{name: "snapshot destroy", path: "/fabric/storage-snapshots/snapshot-alpha/destroy", body: `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha"}`},
+		{name: "runtime credential reveal", path: "/fabric/workspace-runtimes/ws-alpha/credentials/reveal", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha"}`},
+		{name: "compute pool head terminalization", path: "/fabric/compute-pool-head/terminalization", body: `{"nodePoolId":"np-basic","approvalId":"operation-alpha","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := fabric.NewMemoryOperationStore()
+			server := NewServerWithAuth(fabric.NewServiceWithOperationStore(testProvider{}, store), ServerAuthConfig{
+				ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey,
+			})
+			req := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			req.Header.Set("Authorization", "Bearer internal-secret")
+			req.Header.Set("Idempotency-Key", "operation-alpha")
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			operations, err := store.List(context.Background())
+			if err != nil || len(operations) != 0 {
+				t.Fatalf("rejected mutation changed Fabric state: operations=%#v err=%v", operations, err)
+			}
+		})
+	}
+}
+
+func TestComputePoolHeadTerminalizationRequiresPersistedOwnerCapability(t *testing.T) {
+	body := []byte(`{"nodePoolId":"np-basic","approvalId":"terminalize-operation","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
+	resolver := staticFabricMutationScopeResolver{authorization: fabric.ComputePoolHeadTerminalizationAuthorization{
+		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", NodePoolID: "np-basic",
+	}}
+	matching := fabricCapabilityClaimsForTest{
+		Version: 1, Caller: "operator", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		ResourceKind: "compute_pool_head", ResourceID: "np-basic", Action: "terminalize_compute_pool_head", OperationID: "terminalize-operation",
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	for _, test := range []struct {
+		name       string
+		claims     fabricCapabilityClaimsForTest
+		capability bool
+		want       int
+	}{
+		{name: "transport token only", want: http.StatusForbidden},
+		{name: "control plane caller", claims: func() fabricCapabilityClaimsForTest { value := matching; value.Caller = "control-plane"; return value }(), capability: true, want: http.StatusForbidden},
+		{name: "other tenant", claims: func() fabricCapabilityClaimsForTest { value := matching; value.AccountID = "acct-other"; return value }(), capability: true, want: http.StatusForbidden},
+		{name: "persisted owner", claims: matching, capability: true, want: http.StatusNoContent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			})
+			server := authorizeFabricRequests(next, resolver, ServerAuthConfig{
+				ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey, Now: time.Now,
+			})
+			req := httptest.NewRequest(http.MethodPost, "/fabric/compute-pool-head/terminalization", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer internal-secret")
+			req.Header.Set("Idempotency-Key", "terminalize-operation")
+			if test.capability {
+				req.Header.Set(fabricCapabilityHeader, fabricCapabilityForTest(t, test.claims, body))
+			}
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != test.want || called != (test.want == http.StatusNoContent) {
+				t.Fatalf("status=%d want=%d called=%v body=%s", recorder.Code, test.want, called, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestFabricProviderMutationCapabilitiesAcceptExactBodies(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		path   string
+		body   string
+		claims fabricCapabilityClaimsForTest
+	}{
+		{
+			name: "attachment create", path: "/fabric/storage-attachments",
+			body:   `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":"compute-alpha","volumeId":"volume-alpha"}`,
+			claims: fabricCapabilityClaimsForTest{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceKind: "storage_attachment", ResourceID: "compute-alpha:volume-alpha", Action: "create_storage_attachment"},
+		},
+		{
+			name: "snapshot create", path: "/fabric/storage-snapshots",
+			body:   `{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"volume-alpha"}`,
+			claims: fabricCapabilityClaimsForTest{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceKind: "storage_snapshot", ResourceID: "volume-alpha", Action: "create_storage_snapshot"},
+		},
+		{
+			name: "snapshot restore", path: "/fabric/storage-snapshots/snapshot-alpha/restore",
+			body:   `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`,
+			claims: fabricCapabilityClaimsForTest{AccountID: "acct-alpha", WorkspaceID: "ws-restored", ResourceKind: "storage_snapshot", ResourceID: "snapshot-alpha", Action: "restore_storage_snapshot"},
+		},
+		{
+			name: "snapshot destroy", path: "/fabric/storage-snapshots/snapshot-alpha/destroy",
+			body:   `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha"}`,
+			claims: fabricCapabilityClaimsForTest{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceKind: "storage_snapshot", ResourceID: "snapshot-alpha", Action: "destroy_storage_snapshot"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			})
+			server := authorizeFabricRequests(next, nil, ServerAuthConfig{
+				ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey, Now: time.Now,
+			})
+			body := []byte(test.body)
+			test.claims.Version = 1
+			test.claims.Caller = "control-plane"
+			test.claims.OperationID = "operation-alpha"
+			test.claims.ExpiresAt = time.Now().Add(time.Minute).Unix()
+			req := httptest.NewRequest(http.MethodPost, test.path, bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer internal-secret")
+			req.Header.Set("Idempotency-Key", "operation-alpha")
+			req.Header.Set(fabricCapabilityHeader, fabricCapabilityForTest(t, test.claims, body))
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNoContent || !called {
+				t.Fatalf("status=%d body=%s called=%v", rec.Code, rec.Body.String(), called)
+			}
+		})
+	}
+}
+
+func TestFabricProviderMutationSourceIdentityIsBoundBeforeOperation(t *testing.T) {
+	service := fabric.NewService(testProvider{})
+	server := newTestServer(service, "internal-secret")
+	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "identity-compute")
+	volumeBody := fmt.Sprintf(`{"id":"identity-volume","accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)
+	createVolume := testRequest(http.MethodPost, "/fabric/storage-volumes", strings.NewReader(volumeBody))
+	createVolume.Header.Set("Idempotency-Key", "identity-volume-once")
+	volumeRec := httptest.NewRecorder()
+	server.ServeHTTP(volumeRec, createVolume)
+	if volumeRec.Code != http.StatusAccepted {
+		t.Fatalf("volume status=%d body=%s", volumeRec.Code, volumeRec.Body.String())
+	}
+
+	for _, test := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "attachment account", path: "/fabric/storage-attachments", body: `{"accountId":"acct-other","workspaceId":"ws-alpha","computeId":"` + compute.ID + `","volumeId":"identity-volume"}`},
+		{name: "snapshot account", path: "/fabric/storage-snapshots", body: `{"accountId":"acct-other","workspaceId":"ws-alpha","volumeId":"identity-volume"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := testRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			req.Header.Set("Idempotency-Key", "identity-reject-once")
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -385,6 +651,38 @@ func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 			}
 		})
 	}
+}
+
+type readinessHTTPProvider struct {
+	testProvider
+	result map[string]any
+	err    error
+}
+
+func (p readinessHTTPProvider) Readiness(context.Context) (map[string]any, error) {
+	return p.result, p.err
+}
+
+func TestServerReadinessPreservesPublicResponseContract(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		want := map[string]any{"provider": "test", "ready": true, "status": "ready"}
+		server := newTestServer(fabric.NewService(readinessHTTPProvider{result: want}), "internal-secret")
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, testRequest(http.MethodGet, "/fabric/readiness", nil))
+		var got map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil || recorder.Code != http.StatusOK || !reflect.DeepEqual(got, want) {
+			t.Fatalf("status=%d readiness=%#v err=%v body=%s", recorder.Code, got, err, recorder.Body.String())
+		}
+	})
+
+	t.Run("provider error", func(t *testing.T) {
+		server := newTestServer(fabric.NewService(readinessHTTPProvider{err: errors.New("provider readiness failed")}), "internal-secret")
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, testRequest(http.MethodGet, "/fabric/readiness", nil))
+		if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), `"error":"provider readiness failed"`) {
+			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+	})
 }
 
 func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *testing.T) {
@@ -688,7 +986,8 @@ func TestServerMonthlyPreflightNeedsNoIdempotencyKeyAndRecordsNoOperation(t *tes
 	}
 	operations := httptest.NewRecorder()
 	server.ServeHTTP(operations, testRequest(http.MethodGet, "/fabric/operations", nil))
-	if operations.Code != http.StatusOK || strings.TrimSpace(operations.Body.String()) != "[]" {
+	var page fabric.FabricOperationPage
+	if operations.Code != http.StatusOK || json.NewDecoder(operations.Body).Decode(&page) != nil || len(page.Operations) != 0 || page.NextCursor != "" {
 		t.Fatalf("operations status=%d body=%s", operations.Code, operations.Body.String())
 	}
 }
@@ -867,14 +1166,14 @@ func TestStorageSnapshotHTTPCreateRestoreAndDestroy(t *testing.T) {
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("get status=%d body=%s", getRec.Code, getRec.Body.String())
 	}
-	restore := testRequest(http.MethodPost, "/fabric/storage-snapshots/"+snapshot.ID+"/restore", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"vol-restored"}`))
+	restore := testRequest(http.MethodPost, "/fabric/storage-snapshots/"+snapshot.ID+"/restore", bytes.NewBufferString(fmt.Sprintf(`{"snapshotId":%q,"accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"vol-restored"}`, snapshot.ID)))
 	restore.Header.Set("Idempotency-Key", "restore-once")
 	restoreRec := httptest.NewRecorder()
 	server.ServeHTTP(restoreRec, restore)
 	if restoreRec.Code != http.StatusAccepted {
 		t.Fatalf("restore status=%d body=%s", restoreRec.Code, restoreRec.Body.String())
 	}
-	destroy := testRequest(http.MethodPost, "/fabric/storage-snapshots/"+snapshot.ID+"/destroy", nil)
+	destroy := testRequest(http.MethodPost, "/fabric/storage-snapshots/"+snapshot.ID+"/destroy", bytes.NewBufferString(fmt.Sprintf(`{"snapshotId":%q,"accountId":"acct-alpha","workspaceId":"ws-alpha"}`, snapshot.ID)))
 	destroy.Header.Set("Idempotency-Key", "destroy-once")
 	destroyRec := httptest.NewRecorder()
 	server.ServeHTTP(destroyRec, destroy)
@@ -912,6 +1211,102 @@ func TestCreateComputeAllocationHTTPRequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestFabricHTTPRejectsOversizedJSONBeforeMutation(t *testing.T) {
+	provider := &capabilityBoundaryProvider{}
+	store := fabric.NewMemoryOperationStore()
+	server := newTestServer(fabric.NewServiceWithOperationStore(provider, store), "internal-secret")
+	prefix := `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","padding":"`
+	suffix := `"}`
+	body := []byte(prefix + strings.Repeat("x", int(maxJSONBodyBytes)-len(prefix)-len(suffix)+1) + suffix)
+	if int64(len(body)) != maxJSONBodyBytes+1 {
+		t.Fatalf("body length=%d, want %d", len(body), maxJSONBodyBytes+1)
+	}
+	req := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewReader(body))
+	req.Header.Set("Idempotency-Key", "oversized-compute")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "request_body_too_large") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 0 || provider.computeCreates.Load() != 0 {
+		t.Fatalf("oversized request changed Fabric state: operations=%#v providerCalls=%d err=%v", operations, provider.computeCreates.Load(), err)
+	}
+}
+
+func TestFabricHTTPBodyLimitAllowsExactOneMiBJSON(t *testing.T) {
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
+	prefix := `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","padding":"`
+	suffix := `"}`
+	body := []byte(prefix + strings.Repeat("x", int(maxJSONBodyBytes)-len(prefix)-len(suffix)) + suffix)
+	if int64(len(body)) != maxJSONBodyBytes {
+		t.Fatalf("body length=%d, want %d", len(body), maxJSONBodyBytes)
+	}
+	req := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewReader(body))
+	req.Header.Set("Idempotency-Key", "exact-limit-compute")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("exact-limit request rejected: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFabricHTTPBodyLimitCoversDirectJSONRoutes(t *testing.T) {
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
+	prefix := `{"schemaVersion":1,"launchOperationId":"launch-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","sizeGb":10,"workspaceImageDigest":"digest","requestHash":"`
+	suffix := `"}`
+	body := []byte(prefix + strings.Repeat("x", int(maxJSONBodyBytes)-len(prefix)-len(suffix)+1) + suffix)
+	if int64(len(body)) != maxJSONBodyBytes+1 {
+		t.Fatalf("body length=%d, want %d", len(body), maxJSONBodyBytes+1)
+	}
+	req := testRequest(http.MethodPost, "/fabric/workspace-launches/preflight", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "request_body_too_large") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFabricAuthenticatedMutationRejectsOversizedBodyBeforeCapabilityOrMutation(t *testing.T) {
+	provider := &capabilityBoundaryProvider{}
+	store := fabric.NewMemoryOperationStore()
+	server := NewServerWithAuth(fabric.NewServiceWithOperationStore(provider, store), ServerAuthConfig{
+		ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey,
+	})
+	prefix := `{"id":"compute-oversized","accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","padding":"`
+	suffix := `"}`
+	body := []byte(prefix + strings.Repeat("x", int(maxJSONBodyBytes)-len(prefix)-len(suffix)+1) + suffix)
+	if int64(len(body)) != maxJSONBodyBytes+1 {
+		t.Fatalf("body length=%d, want %d", len(body), maxJSONBodyBytes+1)
+	}
+	claims := fabricCapabilityClaimsForTest{
+		Version: 1, Caller: "control-plane", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		ResourceKind: "compute_allocation", ResourceID: "compute-oversized", Action: "create_compute_allocation", OperationID: "oversized-auth",
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	req := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer internal-secret")
+	req.Header.Set("Idempotency-Key", "oversized-auth")
+	req.Header.Set(fabricCapabilityHeader, fabricCapabilityForTest(t, claims, body))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "request_body_too_large") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 0 || provider.computeCreates.Load() != 0 {
+		t.Fatalf("oversized authenticated request changed Fabric state: operations=%#v providerCalls=%d err=%v", operations, provider.computeCreates.Load(), err)
+	}
+}
+
 func TestResourceBoundaryHTTPReturnsBadRequest(t *testing.T) {
 	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
 	for _, tc := range []struct{ name, path, body string }{
@@ -930,88 +1325,19 @@ func TestResourceBoundaryHTTPReturnsBadRequest(t *testing.T) {
 	}
 }
 
-type blockingComputeCreateHTTPProvider struct {
-	testProvider
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (p *blockingComputeCreateHTTPProvider) CreateComputeAllocation(ctx context.Context, input fabric.ComputeAllocationExecution) (fabric.ComputeAllocation, error) {
-	p.entered <- struct{}{}
-	select {
-	case <-p.release:
-		return p.testProvider.CreateComputeAllocation(ctx, input)
-	case <-ctx.Done():
-		return input.Allocation, ctx.Err()
-	}
-}
-
-func TestSyncComputeAllocationHTTPWaitsForMachineOwnership(t *testing.T) {
-	provider := &blockingComputeCreateHTTPProvider{entered: make(chan struct{}), release: make(chan struct{})}
-	defer close(provider.release)
-	service := fabric.NewService(provider)
-	server := newTestServer(service, "internal-secret")
-	create := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","nodePoolId":"np-basic"}`))
-	create.Header.Set("Idempotency-Key", "sync-http-create")
-	createRec := httptest.NewRecorder()
-	server.ServeHTTP(createRec, create)
-	if createRec.Code != http.StatusAccepted {
-		t.Fatalf("create status = %d, want %d: %s", createRec.Code, http.StatusAccepted, createRec.Body.String())
-	}
-	var created fabric.ComputeAllocation
-	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
-		t.Fatalf("decode create: %v", err)
-	}
-	<-provider.entered
-	if _, err := service.MachineOwnership(context.Background(), created.ID); !errors.Is(err, fabric.ErrMachineOwnershipNotFound) {
-		t.Fatalf("machine ownership before provider completion: %v", err)
-	}
-
-	req := testRequest(http.MethodPost, "/fabric/compute-allocations/"+created.ID+"/sync", bytes.NewBufferString(`{}`))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("sync status = %d, want %d: %s", rec.Code, http.StatusAccepted, rec.Body.String())
-	}
-	var allocation fabric.ComputeAllocation
-	if err := json.NewDecoder(rec.Body).Decode(&allocation); err != nil {
-		t.Fatalf("decode sync: %v", err)
-	}
-	if allocation.Status != "provisioning" {
-		t.Fatalf("sync before machine ownership = %#v", allocation)
-	}
-}
-
-func TestSyncStorageVolumeHTTPRefreshesProviderState(t *testing.T) {
-	service := fabric.NewService(testProvider{})
-	server := newTestServer(service, "internal-secret")
-	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "sync-storage-compute")
-	create := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(fmt.Sprintf(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)))
-	create.Header.Set("Idempotency-Key", "sync-http-storage")
-	createRec := httptest.NewRecorder()
-	server.ServeHTTP(createRec, create)
-	if createRec.Code != http.StatusAccepted {
-		t.Fatalf("create status = %d, want %d: %s", createRec.Code, http.StatusAccepted, createRec.Body.String())
-	}
-	var created fabric.StorageVolume
-	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil || created.ID == "" {
-		t.Fatalf("decode created storage: volume=%#v err=%v", created, err)
-	}
-
-	req := testRequest(http.MethodPost, "/fabric/storage-volumes/"+created.ID+"/sync", bytes.NewBufferString(`{}`))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("sync status = %d, want %d: %s", rec.Code, http.StatusAccepted, rec.Body.String())
-	}
-	var volume fabric.StorageVolume
-	if err := json.NewDecoder(rec.Body).Decode(&volume); err != nil {
-		t.Fatalf("decode sync: %v", err)
-	}
-	if volume.Status != "external_deleted" {
-		t.Fatalf("sync must return provider state, got %#v", volume)
+func TestFabricSyncHTTPRoutesAreRetired(t *testing.T) {
+	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
+	for _, path := range []string{
+		"/fabric/compute-allocations/compute-alpha/sync",
+		"/fabric/storage-volumes/storage-alpha/sync",
+		"/fabric/storage-snapshots/snapshot-alpha/sync",
+	} {
+		req := testRequest(http.MethodPost, path, bytes.NewBufferString(`{}`))
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 
@@ -1070,11 +1396,11 @@ func TestOperationsHTTPReturnsFabricAuditFacts(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("operations status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	var operations []fabric.FabricOperation
-	if err := json.NewDecoder(rec.Body).Decode(&operations); err != nil {
+	var page fabric.FabricOperationPage
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
 		t.Fatalf("decode operations: %v", err)
 	}
-	for _, operation := range operations {
+	for _, operation := range page.Operations {
 		if operation.Action == "create_storage_volume" && operation.ResourceKind == "storage_volume" && operation.Status == "succeeded" {
 			if operation.OperationID == "" || operation.ProviderRequestID != "storage-test" || operation.RequestHash == "" {
 				t.Fatalf("operation missing audit identity: %#v", operation)
@@ -1082,7 +1408,52 @@ func TestOperationsHTTPReturnsFabricAuditFacts(t *testing.T) {
 			return
 		}
 	}
-	t.Fatalf("missing storage operation in %#v", operations)
+	t.Fatalf("missing storage operation in %#v", page.Operations)
+}
+
+func TestFabricOperationsHTTPRequiresBoundedCursorPages(t *testing.T) {
+	store := fabric.NewMemoryOperationStore()
+	createdAt := time.Date(2026, 8, 14, 3, 0, 0, 0, time.UTC)
+	for index := 0; index < fabric.MaxFabricOperationPageSize+2; index++ {
+		operation := fabric.FabricOperation{
+			ID: fmt.Sprintf("fop-page-%03d", index), OperationID: fmt.Sprintf("op-page-%03d", index), CallerService: "control-plane",
+			Action: "page_test", ResourceKind: "test", ResourceID: fmt.Sprintf("resource-%03d", index), Status: "succeeded",
+			StartedAt: createdAt.Add(time.Duration(index) * time.Second), CreatedAt: createdAt.Add(time.Duration(index) * time.Second),
+		}
+		if err := store.Append(context.Background(), operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := newTestServer(fabric.NewServiceWithOperationStore(testProvider{}, store), "internal-secret")
+
+	firstRequest := testRequest(http.MethodGet, "/fabric/operations?limit=2", nil)
+	first := httptest.NewRecorder()
+	server.ServeHTTP(first, firstRequest)
+	var firstPage fabric.FabricOperationPage
+	if first.Code != http.StatusOK || json.NewDecoder(first.Body).Decode(&firstPage) != nil || len(firstPage.Operations) != 2 || firstPage.NextCursor == "" {
+		t.Fatalf("first page status=%d page=%#v body=%s", first.Code, firstPage, first.Body.String())
+	}
+
+	secondRequest := testRequest(http.MethodGet, "/fabric/operations?limit=2&cursor="+url.QueryEscape(firstPage.NextCursor), nil)
+	second := httptest.NewRecorder()
+	server.ServeHTTP(second, secondRequest)
+	var secondPage fabric.FabricOperationPage
+	if second.Code != http.StatusOK || json.NewDecoder(second.Body).Decode(&secondPage) != nil || len(secondPage.Operations) != 2 || secondPage.Operations[0].ID == firstPage.Operations[0].ID {
+		t.Fatalf("second page status=%d page=%#v body=%s", second.Code, secondPage, second.Body.String())
+	}
+
+	for _, path := range []string{
+		fmt.Sprintf("/fabric/operations?limit=%d", fabric.MaxFabricOperationPageSize+1),
+		"/fabric/operations?cursor=not-a-cursor",
+		"/fabric/operations?limit=2&limit=3",
+		"/fabric/operations?unknown=1",
+	} {
+		invalid := httptest.NewRecorder()
+		server.ServeHTTP(invalid, testRequest(http.MethodGet, path, nil))
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("invalid page %q status=%d body=%s", path, invalid.Code, invalid.Body.String())
+		}
+	}
 }
 
 func TestJobHTTPLifecycle(t *testing.T) {

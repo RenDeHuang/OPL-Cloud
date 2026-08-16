@@ -277,7 +277,11 @@ function originalLaunchFixture(computeOverrides: Record<string, unknown> = {}, {
       if (launchPostUnknown) throw new Error("post_result_unknown");
       return response(launch, 202);
     }
-    if (url.pathname === "/fabric/operations") return response([computeOperation]);
+    if (url.pathname === "/fabric/operations") {
+      return url.searchParams.get("cursor") === "compute-operation"
+        ? response({ operations: [computeOperation] })
+        : response({ operations: [], nextCursor: "compute-operation" });
+    }
     if (url.pathname === `/fabric/compute-allocations/${launch.computeAllocationId}`) return response(compute);
     if (url.pathname === `/fabric/machine-ownerships/${launch.computeAllocationId}`) return response(ownership);
     if (url.pathname === `/api/operator/workspaces/${approval.launch.workspaceId}`) return response(sourcePayload("control-plane+fabric+ledger", { resources: [{ resourceType: sourcePayload("fabric", "compute") }], receipt: { status: "not_available" } }));
@@ -406,6 +410,7 @@ test("original launch reconciles a lost POST response through the same launch GE
   assert.equal(result.writeCounts.sub2apiDebits, 1);
   assert.equal(fixture.calls.filter((call) => call.method === "POST" && call.path === "/api/workspace-launches").length, 1);
   assert.equal(fixture.calls.filter((call) => call.method === "GET" && call.path === `/api/workspace-launches/${fixture.approval.launch.operationId}`).length, 2);
+  assert.equal(fixture.calls.filter((call) => call.method === "GET" && call.path === "/fabric/operations").length, 2);
 });
 
 test("funding approval binds the existing Acceptance B deterministic wallet operation", () => {

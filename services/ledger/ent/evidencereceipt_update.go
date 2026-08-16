@@ -140,6 +140,34 @@ func (eru *EvidenceReceiptUpdate) SetNillableJobID(s *string) *EvidenceReceiptUp
 	return eru
 }
 
+// SetArtifactID sets the "artifact_id" field.
+func (eru *EvidenceReceiptUpdate) SetArtifactID(s string) *EvidenceReceiptUpdate {
+	eru.mutation.SetArtifactID(s)
+	return eru
+}
+
+// SetNillableArtifactID sets the "artifact_id" field if the given value is not nil.
+func (eru *EvidenceReceiptUpdate) SetNillableArtifactID(s *string) *EvidenceReceiptUpdate {
+	if s != nil {
+		eru.SetArtifactID(*s)
+	}
+	return eru
+}
+
+// SetReviewID sets the "review_id" field.
+func (eru *EvidenceReceiptUpdate) SetReviewID(s string) *EvidenceReceiptUpdate {
+	eru.mutation.SetReviewID(s)
+	return eru
+}
+
+// SetNillableReviewID sets the "review_id" field if the given value is not nil.
+func (eru *EvidenceReceiptUpdate) SetNillableReviewID(s *string) *EvidenceReceiptUpdate {
+	if s != nil {
+		eru.SetReviewID(*s)
+	}
+	return eru
+}
+
 // SetPayloadJSON sets the "payload_json" field.
 func (eru *EvidenceReceiptUpdate) SetPayloadJSON(s string) *EvidenceReceiptUpdate {
 	eru.mutation.SetPayloadJSON(s)
@@ -335,6 +363,12 @@ func (eru *EvidenceReceiptUpdate) sqlSave(ctx context.Context) (n int, err error
 	if value, ok := eru.mutation.JobID(); ok {
 		_spec.SetField(evidencereceipt.FieldJobID, field.TypeString, value)
 	}
+	if value, ok := eru.mutation.ArtifactID(); ok {
+		_spec.SetField(evidencereceipt.FieldArtifactID, field.TypeString, value)
+	}
+	if value, ok := eru.mutation.ReviewID(); ok {
+		_spec.SetField(evidencereceipt.FieldReviewID, field.TypeString, value)
+	}
 	if value, ok := eru.mutation.PayloadJSON(); ok {
 		_spec.SetField(evidencereceipt.FieldPayloadJSON, field.TypeString, value)
 	}
@@ -487,6 +521,34 @@ func (eruo *EvidenceReceiptUpdateOne) SetJobID(s string) *EvidenceReceiptUpdateO
 func (eruo *EvidenceReceiptUpdateOne) SetNillableJobID(s *string) *EvidenceReceiptUpdateOne {
 	if s != nil {
 		eruo.SetJobID(*s)
+	}
+	return eruo
+}
+
+// SetArtifactID sets the "artifact_id" field.
+func (eruo *EvidenceReceiptUpdateOne) SetArtifactID(s string) *EvidenceReceiptUpdateOne {
+	eruo.mutation.SetArtifactID(s)
+	return eruo
+}
+
+// SetNillableArtifactID sets the "artifact_id" field if the given value is not nil.
+func (eruo *EvidenceReceiptUpdateOne) SetNillableArtifactID(s *string) *EvidenceReceiptUpdateOne {
+	if s != nil {
+		eruo.SetArtifactID(*s)
+	}
+	return eruo
+}
+
+// SetReviewID sets the "review_id" field.
+func (eruo *EvidenceReceiptUpdateOne) SetReviewID(s string) *EvidenceReceiptUpdateOne {
+	eruo.mutation.SetReviewID(s)
+	return eruo
+}
+
+// SetNillableReviewID sets the "review_id" field if the given value is not nil.
+func (eruo *EvidenceReceiptUpdateOne) SetNillableReviewID(s *string) *EvidenceReceiptUpdateOne {
+	if s != nil {
+		eruo.SetReviewID(*s)
 	}
 	return eruo
 }
@@ -715,6 +777,12 @@ func (eruo *EvidenceReceiptUpdateOne) sqlSave(ctx context.Context) (_node *Evide
 	}
 	if value, ok := eruo.mutation.JobID(); ok {
 		_spec.SetField(evidencereceipt.FieldJobID, field.TypeString, value)
+	}
+	if value, ok := eruo.mutation.ArtifactID(); ok {
+		_spec.SetField(evidencereceipt.FieldArtifactID, field.TypeString, value)
+	}
+	if value, ok := eruo.mutation.ReviewID(); ok {
+		_spec.SetField(evidencereceipt.FieldReviewID, field.TypeString, value)
 	}
 	if value, ok := eruo.mutation.PayloadJSON(); ok {
 		_spec.SetField(evidencereceipt.FieldPayloadJSON, field.TypeString, value)

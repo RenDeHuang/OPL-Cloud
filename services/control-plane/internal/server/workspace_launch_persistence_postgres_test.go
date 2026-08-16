@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 
 	"opl-cloud/services/control-plane/internal/domain"
@@ -104,54 +103,5 @@ func TestPostgresWorkspaceLaunchClaimPersistAndActivate(t *testing.T) {
 	}
 	if len(computes) != 0 || len(storages) != 0 || len(attachments) != 0 {
 		t.Fatalf("activation copied Fabric truth: computes=%#v storages=%#v attachments=%#v", computes, storages, attachments)
-	}
-}
-
-func TestPostgresWorkspaceLaunchLegacyUpcastHasOneExactCASWinner(t *testing.T) {
-	ctx := context.Background()
-	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
-	row := schema2ManualReviewRow(t, true)
-	mustStore(t, store.SaveRuntimeOperation(ctx, row))
-	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
-	if err != nil {
-		t.Fatal(err)
-	}
-	operation.Status = "manual_review"
-	desired, err := workspaceLaunchReconcileOperationRow(operation)
-	if err != nil {
-		t.Fatal(err)
-	}
-	update := workspaceLaunchLegacyCAS{OperationID: stringValue(row["id"]), ExpectedOperationResult: stringValue(row["result"]), DesiredOperation: desired}
-
-	start := make(chan struct{})
-	errs := make(chan error, 2)
-	var ready sync.WaitGroup
-	ready.Add(2)
-	for range 2 {
-		go func() {
-			ready.Done()
-			<-start
-			errs <- store.UpcastLegacyWorkspaceLaunch(ctx, update)
-		}()
-	}
-	ready.Wait()
-	close(start)
-	first, second := <-errs, <-errs
-	winners, losers := 0, 0
-	for _, result := range []error{first, second} {
-		if result == nil {
-			winners++
-		} else if errors.Is(result, errWorkspaceLaunchCASConflict) {
-			losers++
-		} else {
-			t.Fatalf("unexpected CAS result: %v", result)
-		}
-	}
-	if winners != 1 || losers != 1 {
-		t.Fatalf("CAS winners=%d losers=%d results=[%v %v]", winners, losers, first, second)
-	}
-	persisted, found, err := store.GetRuntimeOperation(ctx, operation.ID)
-	if err != nil || !found || stringValue(persisted["result"]) != stringValue(desired["result"]) {
-		t.Fatalf("upcast readback found=%v row=%#v err=%v", found, persisted, err)
 	}
 }

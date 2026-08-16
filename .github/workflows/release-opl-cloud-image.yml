@@ -22,7 +22,7 @@ concurrency:
 jobs:
   build:
     name: Build portable product release
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -83,6 +83,8 @@ jobs:
             --label "org.opencontainers.image.source=https://github.com/$PRODUCT_REPOSITORY" \
             --label "org.opencontainers.image.revision=$PRODUCT_SHA" \
             --label "org.opencontainers.image.version=$RELEASE_TAG" \
+            --cache-from "type=gha,scope=opl-cloud-release" \
+            --cache-to "type=gha,mode=max,scope=opl-cloud-release" \
             --output "type=oci,dest=artifacts/image,tar=false,name=$IMAGE_REPOSITORY:$RELEASE_TAG" \
             .
           manifest="$(docker buildx imagetools inspect "oci-layout://$PWD/artifacts/image:$RELEASE_TAG" --format '{{json .Manifest}}')"
@@ -113,8 +115,18 @@ jobs:
             --arg sha "$PRODUCT_SHA" \
             --arg image "$IMAGE_REPOSITORY@$IMAGE_DIGEST" \
             --arg digest "$IMAGE_DIGEST" \
-            '{schemaVersion:1,product:"OPL Cloud",productRepository:$repository,releaseTag:$tag,productSha:$sha,image:{ref:$image,digest:$digest,platforms:["linux/amd64","linux/arm64"]},assets:["compose.yaml","compose.local-workspace.yaml","opl-cloud.env.example"]}' \
+            '{schemaVersion:1,product:"OPL Cloud",productRepository:$repository,releaseTag:$tag,productSha:$sha,image:{ref:$image,digest:$digest,platforms:["linux/amd64","linux/arm64"]},assets:["compose.yaml","compose.local-workspace.yaml","opl-cloud.env.example","SHA256SUMS"]}' \
             > artifacts/release/opl-cloud-release.json
+          (
+            cd artifacts/release
+            sha256sum \
+              compose.yaml \
+              compose.local-workspace.yaml \
+              opl-cloud.env.example \
+              opl-cloud-release.json \
+              > SHA256SUMS
+            sha256sum --check --strict SHA256SUMS
+          )
 
       - name: Upload immutable release artifact
         id: release_artifact
@@ -128,13 +140,16 @@ jobs:
 
   publish:
     name: Publish portable product release
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner }}
     needs: build
     runs-on: ubuntu-latest
     environment: cloud-release
     permissions:
       actions: read
+      artifact-metadata: write
+      attestations: write
       contents: write
+      id-token: write
       packages: write
     env:
       PRODUCT_REPOSITORY: ${{ github.repository }}
@@ -193,9 +208,10 @@ jobs:
           unzip -q "$artifact_zip" -d artifacts
           test -f artifacts/image/oci-layout
           test -f artifacts/image/index.json
-          for asset in compose.yaml compose.local-workspace.yaml opl-cloud.env.example opl-cloud-release.json; do
+          for asset in compose.yaml compose.local-workspace.yaml opl-cloud.env.example opl-cloud-release.json SHA256SUMS; do
             test -f "artifacts/release/$asset"
           done
+          (cd artifacts/release && sha256sum --check --strict SHA256SUMS)
           jq -e \
             --arg repository "$PRODUCT_REPOSITORY" \
             --arg tag "$RELEASE_TAG" \
@@ -206,8 +222,31 @@ jobs:
               .productRepository == $repository and .releaseTag == $tag and .productSha == $sha and
               .image.ref == $image and .image.digest == $digest and
               .image.platforms == ["linux/amd64", "linux/arm64"] and
-              .assets == ["compose.yaml", "compose.local-workspace.yaml", "opl-cloud.env.example"]
+              .assets == ["compose.yaml", "compose.local-workspace.yaml", "opl-cloud.env.example", "SHA256SUMS"]
             ' artifacts/release/opl-cloud-release.json >/dev/null
+          checksum_manifest_digest="$(sha256sum artifacts/release/SHA256SUMS | cut -d ' ' -f1)"
+          jq -n \
+            --arg repository "$PRODUCT_REPOSITORY" \
+            --arg workflowSha "$GITHUB_SHA" \
+            --arg workflowRef "$GITHUB_REF" \
+            --arg productSha "$PRODUCT_SHA" \
+            --arg releaseTag "$RELEASE_TAG" \
+            --arg image "$IMAGE_REPOSITORY@$EXPECTED_IMAGE_DIGEST" \
+            --arg checksumManifestSha256 "$checksum_manifest_digest" \
+            '{schemaVersion:1,productRepository:$repository,workflowSha:$workflowSha,workflowRef:$workflowRef,productSha:$productSha,releaseTag:$releaseTag,image:$image,checksumManifestSha256:$checksumManifestSha256}' \
+            > artifacts/release-provenance.json
+
+      - name: Attest release assets
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: |
+            artifacts/release/compose.yaml
+            artifacts/release/compose.local-workspace.yaml
+            artifacts/release/opl-cloud.env.example
+            artifacts/release/opl-cloud-release.json
+            artifacts/release/SHA256SUMS
+          predicate-type: https://github.com/gaofeng21cn/one-person-lab-cloud/attestations/opl-cloud-release/v1
+          predicate-path: artifacts/release-provenance.json
 
       - name: Log in to GHCR
         env:
@@ -264,7 +303,8 @@ jobs:
             artifacts/release/compose.yaml \
             artifacts/release/compose.local-workspace.yaml \
             artifacts/release/opl-cloud.env.example \
-            artifacts/release/opl-cloud-release.json
+            artifacts/release/opl-cloud-release.json \
+            artifacts/release/SHA256SUMS
 
       - name: Read back release
         env:
@@ -275,6 +315,40 @@ jobs:
           gh release view "$RELEASE_TAG" --repo "$PRODUCT_REPOSITORY" --json tagName,targetCommitish,assets > artifacts/release/readback.json
           jq -e --arg tag "$RELEASE_TAG" --arg sha "$PRODUCT_SHA" '
             .tagName == $tag and .targetCommitish == $sha and
-            ([.assets[].name] | sort) == (["compose.local-workspace.yaml","compose.yaml","opl-cloud-release.json","opl-cloud.env.example"] | sort)
+            ([.assets[].name] | sort) == (["SHA256SUMS","compose.local-workspace.yaml","compose.yaml","opl-cloud-release.json","opl-cloud.env.example"] | sort)
           ' artifacts/release/readback.json >/dev/null
+          mkdir -p artifacts/release-readback
+          gh release download "$RELEASE_TAG" --repo "$PRODUCT_REPOSITORY" --dir artifacts/release-readback
+          (cd artifacts/release-readback && sha256sum --check --strict SHA256SUMS)
+          checksum_manifest_digest="$(sha256sum artifacts/release-readback/SHA256SUMS | cut -d ' ' -f1)"
+          predicate_type="https://github.com/gaofeng21cn/one-person-lab-cloud/attestations/opl-cloud-release/v1"
+          for asset in compose.yaml compose.local-workspace.yaml opl-cloud.env.example opl-cloud-release.json SHA256SUMS; do
+            verification="$(gh attestation verify "artifacts/release-readback/$asset" \
+              --repo "$PRODUCT_REPOSITORY" \
+              --signer-workflow "$PRODUCT_REPOSITORY/.github/workflows/release-opl-cloud-image.yml" \
+              --source-digest "$GITHUB_SHA" \
+              --source-ref "$GITHUB_REF" \
+              --predicate-type "$predicate_type" \
+              --deny-self-hosted-runners \
+              --format json)"
+            jq -e \
+              --arg repository "$PRODUCT_REPOSITORY" \
+              --arg workflowSha "$GITHUB_SHA" \
+              --arg workflowRef "$GITHUB_REF" \
+              --arg productSha "$PRODUCT_SHA" \
+              --arg releaseTag "$RELEASE_TAG" \
+              --arg image "$IMAGE_REPOSITORY@$EXPECTED_IMAGE_DIGEST" \
+              --arg checksumManifestSha256 "$checksum_manifest_digest" '
+                map(select(
+                  .verificationResult.statement.predicate.schemaVersion == 1 and
+                  .verificationResult.statement.predicate.productRepository == $repository and
+                  .verificationResult.statement.predicate.workflowSha == $workflowSha and
+                  .verificationResult.statement.predicate.workflowRef == $workflowRef and
+                  .verificationResult.statement.predicate.productSha == $productSha and
+                  .verificationResult.statement.predicate.releaseTag == $releaseTag and
+                  .verificationResult.statement.predicate.image == $image and
+                  .verificationResult.statement.predicate.checksumManifestSha256 == $checksumManifestSha256
+                )) | length >= 1
+              ' <<< "$verification" >/dev/null
+          done
           printf 'Published %s at %s\n' "$IMAGE_REPOSITORY@$EXPECTED_IMAGE_DIGEST" "$RELEASE_TAG"
