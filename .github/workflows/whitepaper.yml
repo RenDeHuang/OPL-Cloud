@@ -1,20 +1,6 @@
 name: OPL Cloud Whitepaper
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - docs/whitepapers/**
-      - README.md
-      - README.zh-CN.md
-      - docs/README.md
-      - docs/architecture.md
-      - docs/implementation-architecture.md
-      - docs/roadmap.md
-      - assets/branding/opl-cloud-overview-v2.png
-      - contracts/whitepaper_profile.json
-      - scripts/build-opl-cloud-whitepaper.ts
-      - .github/workflows/whitepaper.yml
   workflow_dispatch:
 
 permissions:

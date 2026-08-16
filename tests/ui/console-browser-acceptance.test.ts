@@ -148,9 +148,9 @@ test("Console browser CLI rejects a non-fake network before running Browser QA",
   assert.match(stderr, /console_browser_fake_only_required/);
 });
 
-test("Pull Request CI runs fake-only Browser QA once through the Node acceptance test", async () => {
+test("browser qualification runs fake-only Browser QA once through the Node acceptance test", async () => {
   const [workflow, acceptance] = await Promise.all([
-    readFile(".github/workflows/pull-request-ci.yml", "utf8"),
+    readFile(".github/workflows/qualification.yml", "utf8"),
     readFile("tests/ui/console-browser-acceptance.test.ts", "utf8")
   ]);
   const pullRequestCI = parse(workflow);
@@ -169,8 +169,8 @@ test("Pull Request CI runs fake-only Browser QA once through the Node acceptance
   assert.match(acceptance, /console_browser_fake_only_required/);
 });
 
-test("Console browser final gate machine-checks Node and Go SKIP counts", async () => {
-  const workflow = await readFile(".github/workflows/pull-request-ci.yml", "utf8");
+test("Cloud qualification final gate machine-checks Node and Go SKIP counts", async () => {
+  const workflow = await readFile(".github/workflows/qualification.yml", "utf8");
   assert.match(workflow, /OPL_CAPACITY_TESTS:\s*["']1["']/);
   assert.match(workflow, /--test-reporter=tap/);
   assert.match(workflow, /Node SKIP result missing or nonzero/);

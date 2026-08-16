@@ -5,6 +5,7 @@ const workflowRoot = new URL(".github/workflows/", root);
 const allowedWorkflows = new Set([
   "clean-host-qualification.yml",
   "pull-request-ci.yml",
+  "qualification.yml",
   "release-opl-cloud-image.yml",
   "whitepaper.yml",
 ]);

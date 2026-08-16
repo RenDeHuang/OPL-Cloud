@@ -18,11 +18,10 @@ test("verify-local exposes one default gate across Node, builds, and every Go mo
   const names = localVerificationSteps.map((step) => step.name);
   for (const expected of [
     "product boundary",
-    "Node tests",
+    "Node source tests",
     "TypeScript typecheck",
     "TypeScript lint",
     "Console build",
-    "whitepaper build",
     "Git whitespace"
   ]) {
     assert.ok(names.includes(expected), `missing ${expected}`);
