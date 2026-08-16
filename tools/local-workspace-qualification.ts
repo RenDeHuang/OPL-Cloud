@@ -7,9 +7,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  productMatrixLaneSpecs,
   productMatrixRequiredPackages,
   productMatrixRequiredTests,
-  productMatrixStages
+  productMatrixStages,
+  productMatrixVerticalTests,
+  validateProductMatrixLanes
 } from "./verify-local.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -137,6 +140,11 @@ export function validateProductMatrixReceipt(value, sourceSha, sourceTree) {
       entry?.name !== productMatrixRequiredTests[index].name || entry?.passed !== true || entry?.skipped !== 0)) {
     throw new Error("Product matrix receipt test evidence is invalid");
   }
+  validateProductMatrixLanes(value.lanes);
+  if (!Array.isArray(value.verticalTests) || value.verticalTests.length !== productMatrixVerticalTests.length ||
+    value.verticalTests.some((entry, index) => entry?.name !== productMatrixVerticalTests[index] || entry?.passed !== true || entry?.skipped !== 0)) {
+    throw new Error("Product matrix receipt vertical evidence is invalid");
+  }
   return value;
 }
 
@@ -150,6 +158,11 @@ async function loadProductMatrixReceipt(path, sourceSha, sourceTree) {
     stages: [...productMatrixStages],
     packages: value.packages.map((entry) => entry.name),
     tests: value.tests.map((entry) => `${entry.package}:${entry.name}`),
+    lanes: value.lanes.map((lane) => ({
+      order: lane.order, cwd: lane.cwd, command: lane.command, args: [...lane.args], packages: [...lane.packages],
+      failed: lane.failed, skipped: lane.skipped
+    })),
+    verticalTests: value.verticalTests.map((entry) => entry.name),
     zeroSkip: true,
     casWinnerCount: 1,
     unknownAuthorityWriteDeltas: { ...value.unknown.authorityWriteDeltas }
@@ -174,6 +187,11 @@ export function validateLocalQualificationReceipt(value) {
   }
   if (value.qualification.authorityMode === "live" && (!digestPattern.test(String(value.productMatrix?.digest || "")) ||
     value.productMatrix?.casWinnerCount !== 1 || value.productMatrix?.stages?.join("\0") !== productMatrixStages.join("\0") ||
+    value.productMatrix?.lanes?.length !== productMatrixLaneSpecs.length ||
+    value.productMatrix?.lanes?.some((lane, index) => lane?.order !== productMatrixLaneSpecs[index].order ||
+      lane?.cwd !== productMatrixLaneSpecs[index].cwd || lane?.command !== productMatrixLaneSpecs[index].command ||
+      lane?.failed !== 0 || lane?.skipped !== 0) ||
+    value.productMatrix?.verticalTests?.join("\0") !== productMatrixVerticalTests.join("\0") ||
     !Array.isArray(value.productMatrix?.packages) || productMatrixRequiredPackages.some((name) => !value.productMatrix.packages.includes(name)) ||
     value.productMatrix?.tests?.join("\0") !== productMatrixRequiredTests.map((entry) => `${entry.package}:${entry.name}`).join("\0") ||
     ["controlPlane", "sub2api", "fabric", "ledger"].some((name) => value.productMatrix?.unknownAuthorityWriteDeltas?.[name] !== 0))) {
@@ -282,7 +300,7 @@ function runProcess(command, args, { cwd = root, env = process.env, capture = tr
   });
 }
 
-async function unusedPort() {
+export async function unusedPort() {
   const server = createServer();
   await new Promise((resolvePromise, reject) => {
     server.once("error", reject);
@@ -295,7 +313,7 @@ async function unusedPort() {
   return port;
 }
 
-function stableID(...parts) {
+export function stableID(...parts) {
   const hash = createHash("sha1");
   for (const part of parts) {
     hash.update(String(part));
@@ -376,7 +394,7 @@ export function qualificationComposeEnvironment(baseEnvironment, exactEntries) {
   return environment;
 }
 
-async function buildSourceImages(sourceSha, project, registryPort) {
+export async function buildSourceImages(sourceSha, project, registryPort) {
   const registryContainer = `${project}-registry`;
   const cloudRepository = `127.0.0.1:${registryPort}/${project}-cloud`;
   const workspaceRepository = `127.0.0.1:${registryPort}/${project}-workspace`;
@@ -425,7 +443,7 @@ function responseCookie(headers) {
   return value ? value.split(";", 1)[0] : "";
 }
 
-function createHTTP(origin) {
+export function createHTTP(origin) {
   const request = async (path, init = {}, auth = null) => {
     const headers = new Headers(init.headers || {});
     if (auth?.cookie) headers.set("cookie", auth.cookie);
@@ -469,14 +487,23 @@ export function workspaceDeletePendingReceiptEvidence(pending) {
   };
 }
 
+export function workspaceDeleteFailureEvidence(error) {
+  const message = String(error instanceof Error ? error.message : error);
+  const status = Number(message.match(/ returned ([0-9]{3}):/)?.[1] || 0);
+  const reasonCode = String(message.match(/"(?:reasonCode|error)"\s*:\s*"([a-z0-9_]+)"/i)?.[1] ||
+    (/timeout|aborted/i.test(message) ? "request_timeout" : "unknown"));
+  return { status, reasonCode };
+}
+
 export async function continueWorkspaceDelete(http, path, init, auth, expected, waitForSchedule = waitForWorkspaceDeleteSchedule) {
-  let previousReadback = 0;
-  let maxReadbacks = 0;
+  let previousReadback = Number(expected.initialReadback || 0);
+  let maxReadbacks = Number(expected.initialMaxReadbacks || 0);
   for (;;) {
     let result;
     try {
       result = await http.json(path, init, auth, [200, 202]);
-    } catch {
+    } catch (error) {
+      expected.onFailure?.(workspaceDeleteFailureEvidence(error));
       throw new Error("owner Workspace DELETE continuation failed");
     }
     if (result.response.status === 200) return result.payload;
@@ -499,7 +526,7 @@ export async function continueWorkspaceDelete(http, path, init, auth, expected, 
   }
 }
 
-async function login(http, email, password) {
+export async function login(http, email, password) {
   const result = await http.json("/api/auth/login", { method: "POST", body: { email, password } });
   const auth = { cookie: responseCookie(result.response.headers), csrf: result.response.headers.get("x-opl-csrf-token") || "" };
   if (!auth.cookie || !auth.csrf || result.payload?.user?.accountId !== "acct-admin") {
@@ -508,7 +535,7 @@ async function login(http, email, password) {
   return auth;
 }
 
-async function waitForLaunch(http, operationId, auth) {
+export async function waitForLaunch(http, operationId, auth) {
   let launch;
   for (let attempt = 0; attempt < 180; attempt += 1) {
     launch = (await http.json(`/api/workspace-launches/${encodeURIComponent(operationId)}`, {}, auth)).payload;
@@ -521,7 +548,7 @@ async function waitForLaunch(http, operationId, auth) {
   throw new Error("Workspace launch did not reach succeeded within 180 seconds");
 }
 
-async function waitForCompose(compose) {
+export async function waitForCompose(compose) {
   await compose(["up", "-d", "--wait", "--wait-timeout", "300"]);
 }
 
@@ -535,7 +562,7 @@ async function inspectComposeImage(compose, service) {
   return values[0];
 }
 
-async function verifyStores(compose) {
+export async function verifyStores(compose) {
   const query = "select datname || ':' || pg_get_userbyid(datdba) from pg_database where datname in ('opl_control_plane','opl_fabric','opl_ledger') order by datname";
   const rows = (await compose(["exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "postgres", "-Atqc", query])).stdout.trim().split(/\r?\n/);
   const expected = ["opl_control_plane:opl_control_plane", "opl_fabric:opl_fabric", "opl_ledger:opl_ledger"];
@@ -559,7 +586,7 @@ async function consoleReadback(http) {
   if (asset.response.status !== 200 || !asset.text.trim()) throw new Error("Console hashed script is unavailable");
 }
 
-async function readWorkspaceEvidence(http, auth, operationId, workspaceId, receiptId) {
+export async function readWorkspaceEvidence(http, auth, operationId, workspaceId, receiptId) {
   const launch = (await http.json(`/api/workspace-launches/${encodeURIComponent(operationId)}`, {}, auth)).payload;
   if (launch?.status !== "succeeded" || launch?.phase !== "succeeded" || launch?.workspaceId !== workspaceId || launch?.receiptId !== receiptId) {
     throw new Error("Workspace launch continuity readback is invalid");
@@ -590,7 +617,7 @@ async function exactLabelIDs(kind, accountId, workspaceId) {
   return (await runProcess("docker", args)).stdout.trim().split(/\r?\n/).filter(Boolean);
 }
 
-async function residualCounts(accountId, workspaceId) {
+export async function residualCounts(accountId, workspaceId) {
   const [containers, volumes, networks] = await Promise.all([
     exactLabelIDs("containers", accountId, workspaceId),
     exactLabelIDs("volumes", accountId, workspaceId),
@@ -614,7 +641,7 @@ async function runtimeImageReadback(accountId, workspaceId, expectedImage, expec
   return runtime[0];
 }
 
-async function authorityState(port, token) {
+export async function authorityState(port, token) {
   const response = await fetch(`http://127.0.0.1:${port}/qualification/state`, {
     headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000)
   });

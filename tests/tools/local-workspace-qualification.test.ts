@@ -16,18 +16,43 @@ import {
   redactedError,
   validateQualificationSourceIdentity,
   validateLocalQualificationReceipt,
-  validateProductMatrixReceipt
+  validateProductMatrixReceipt,
+  workspaceDeleteFailureEvidence
 } from "../../tools/local-workspace-qualification.ts";
 import { runLocalWorkspaceQualification } from "../../tools/local-workspace-qualification.ts";
 import {
+  productMatrixLaneSpecs,
   productMatrixRequiredPackages,
-  productMatrixRequiredTests
+  productMatrixRequiredTests,
+  productMatrixVerticalPackage,
+  productMatrixVerticalTests
 } from "../../tools/verify-local.ts";
 
 const sha = "a".repeat(40);
 const cloudDigest = `sha256:${"b".repeat(64)}`;
 const workspaceDigest = `sha256:${"c".repeat(64)}`;
 const workspaceReference = `ghcr.io/example/workspace@${workspaceDigest}`;
+
+function completeMatrixLanes() {
+  return productMatrixLaneSpecs.map((spec) => {
+    const packages = spec.cwd === "." ? [productMatrixVerticalPackage] :
+      productMatrixRequiredPackages.filter((name) => name === `opl-cloud/${spec.cwd}` || name.startsWith(`opl-cloud/${spec.cwd}/`));
+    const passedTests = spec.cwd === "." ?
+      productMatrixVerticalTests.map((name) => ({ package: productMatrixVerticalPackage, name })) :
+      productMatrixRequiredTests.filter((entry) => packages.includes(entry.package)).map((entry) => ({ ...entry }));
+    return {
+      order: spec.order,
+      cwd: spec.cwd,
+      command: spec.command,
+      args: spec.cwd === "." ? [...spec.argsPrefix] : [...spec.argsPrefix, ...packages],
+      packages,
+      failed: 0,
+      skipped: 0,
+      passedPackages: [...packages],
+      passedTests
+    };
+  });
+}
 
 test("owner delete continues only from exact durable compute pending evidence", async () => {
   const path = "/api/workspaces/ws-alpha";
@@ -62,6 +87,29 @@ test("owner delete continues only from exact durable compute pending evidence", 
     operationDigest: `sha256:${createHash("sha256").update(operationId).digest("hex")}`
   });
   assert.doesNotMatch(JSON.stringify(pendingEvidence), /workspace-delete-alpha|ws-alpha/);
+});
+
+test("owner delete response-loss continuation preserves the consumed read ordinal", async () => {
+  const responses = [
+    { response: { status: 202, headers: new Headers({ "retry-after": "1" }) }, payload: {
+      status: "pending", phase: "storage_destroyed", ownerStage: "compute", computeStatus: "destroying",
+      operationId: "workspace-delete-alpha", workspaceId: "ws-alpha", computeReadbacks: 2, maxComputeReadbacks: 8
+    } },
+    { response: { status: 200, headers: new Headers() }, payload: {
+      status: "deleted", operationId: "workspace-delete-alpha", workspaceId: "ws-alpha"
+    } }
+  ];
+  const waits = [];
+  const result = await continueWorkspaceDelete({ json: async () => responses.shift() }, "/api/workspaces/ws-alpha", {
+    method: "DELETE"
+  }, null, {
+    operationId: "workspace-delete-alpha", workspaceId: "ws-alpha", initialReadback: 1, initialMaxReadbacks: 8
+  }, async (milliseconds) => waits.push(milliseconds));
+  assert.equal(result.status, "deleted");
+  assert.deepEqual(waits, [1000]);
+  assert.deepEqual(workspaceDeleteFailureEvidence(new Error("The operation was aborted due to timeout")), {
+    status: 0, reasonCode: "request_timeout"
+  });
 });
 
 test("owner delete rejects pending identity, ordinal, and budget drift", async () => {
@@ -265,6 +313,11 @@ test("READY receipt binds the exact durable and accounting evidence", () => {
       stages: ["key", "debit", "ensure_compute_allocation", "storage", "attachment", "secret", "runtime", "activation", "receipt"],
       packages: [...productMatrixRequiredPackages],
       tests: productMatrixRequiredTests.map((entry) => `${entry.package}:${entry.name}`),
+      lanes: completeMatrixLanes().map((lane) => ({
+        order: lane.order, cwd: lane.cwd, command: lane.command, args: lane.args,
+        packages: lane.packages, failed: lane.failed, skipped: lane.skipped
+      })),
+      verticalTests: [...productMatrixVerticalTests],
       zeroSkip: true,
       casWinnerCount: 1,
       unknownAuthorityWriteDeltas: { controlPlane: 0, sub2api: 0, fabric: 0, ledger: 0 }
@@ -330,9 +383,12 @@ test("Product matrix receipt admission binds exact source, nine stages, CAS, and
     cas: { winnerCount: 1, loserMutationCount: 0 },
     unknown: { authorityWriteDeltas: { controlPlane: 0, sub2api: 0, fabric: 0, ledger: 0 } },
     packages: productMatrixRequiredPackages.map((name) => ({ name, passed: true, skipped: 0 })),
-    tests: productMatrixRequiredTests.map((entry) => ({ ...entry, passed: true, skipped: 0 }))
+    tests: productMatrixRequiredTests.map((entry) => ({ ...entry, passed: true, skipped: 0 })),
+    lanes: completeMatrixLanes(),
+    verticalTests: productMatrixVerticalTests.map((name) => ({ name, passed: true, skipped: 0 }))
   };
   assert.equal(validateProductMatrixReceipt(matrix, sha, "d".repeat(40)), matrix);
+  assert.throws(() => validateProductMatrixReceipt({ ...matrix, lanes: matrix.lanes.slice(1) }, sha, "d".repeat(40)), /lane|vertical/i);
   assert.throws(() => validateProductMatrixReceipt({ ...matrix, stages: [] }, sha, "d".repeat(40)), /nine-stage/);
   assert.throws(() => validateProductMatrixReceipt({ ...matrix, cas: { winnerCount: 2, loserMutationCount: 0 } }, sha, "d".repeat(40)), /CAS/);
   assert.throws(() => validateProductMatrixReceipt({

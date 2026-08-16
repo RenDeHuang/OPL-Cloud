@@ -11,9 +11,12 @@ import {
   parseVerifyLocalArgs,
   postgresImage,
   postgresVerificationSpecs,
+  productMatrixLaneSpecs,
   productMatrixRequiredPackages,
   productMatrixRequiredTests,
   productMatrixStages,
+  productMatrixVerticalPackage,
+  productMatrixVerticalTests,
   runVerification
 } from "../../tools/verify-local.ts";
 
@@ -48,14 +51,34 @@ test("verify-local exposes one default gate across Node, builds, and every Go mo
   }
 });
 
-function completeProductMatrixResults() {
-  return postgresVerificationSpecs.map((spec) => ({
+function completeProductMatrixResults({ includeVertical = true } = {}) {
+  const results = postgresVerificationSpecs.map((spec, order) => {
+    const lane = productMatrixLaneSpecs[order];
+    const packages = productMatrixRequiredPackages.filter((name) => name === `opl-cloud/${spec.cwd}` || name.startsWith(`opl-cloud/${spec.cwd}/`));
+    return {
+    order,
     cwd: spec.cwd,
+    command: lane.command,
+    args: [...lane.argsPrefix, ...packages],
+    packages,
     failed: 0,
     skipped: 0,
-    passedPackages: productMatrixRequiredPackages.filter((name) => name.includes(`/${spec.cwd}/`)),
-    passedTests: productMatrixRequiredTests.filter((entry) => entry.package.includes(`/${spec.cwd}/`)).map((entry) => ({ ...entry }))
-  }));
+    passedPackages: [...packages],
+    passedTests: productMatrixRequiredTests.filter((entry) => packages.includes(entry.package)).map((entry) => ({ ...entry }))
+  };
+  });
+  if (includeVertical) results.push({
+    order: 4,
+    cwd: ".",
+    command: "node",
+    args: [...productMatrixLaneSpecs[4].argsPrefix],
+    packages: [productMatrixVerticalPackage],
+    failed: 0,
+    skipped: 0,
+    passedPackages: [productMatrixVerticalPackage],
+    passedTests: productMatrixVerticalTests.map((name) => ({ package: productMatrixVerticalPackage, name }))
+  });
+  return results;
 }
 
 test("Product matrix receipt is derived from exact passed packages and tests", () => {
@@ -63,6 +86,11 @@ test("Product matrix receipt is derived from exact passed packages and tests", (
   const receipt = buildProductMatrixReceipt(source, source, completeProductMatrixResults(), "2026-08-16T00:00:00.000Z");
   assert.deepEqual(receipt.source, { sha: source.sha, tree: source.tree });
   assert.equal(receipt.zeroSkip, true);
+  assert.deepEqual(receipt.lanes.map((lane) => ({ order: lane.order, cwd: lane.cwd })),
+    productMatrixLaneSpecs.map((lane) => ({ order: lane.order, cwd: lane.cwd })));
+  assert.deepEqual(receipt.verticalTests.map((entry) => entry.name), productMatrixVerticalTests);
+  assert.equal(productMatrixVerticalTests.length, 7);
+  assert.equal(productMatrixVerticalTests.some((name) => name.startsWith("E4 ")), false);
   assert.deepEqual(receipt.stages.map((stage) => stage.name), productMatrixStages);
   assert.ok(receipt.stages.every((stage) => stage.passed === true && stage.skipped === 0));
   assert.deepEqual(receipt.cas, {
@@ -90,14 +118,26 @@ test("Product matrix receipt rejects dirty source drift and incomplete test evid
   assert.throws(() => buildProductMatrixReceipt({ ...source, clean: false }, source, completeProductMatrixResults()), /clean/);
   assert.throws(() => buildProductMatrixReceipt(source, { ...source, tree: "c".repeat(40) }, completeProductMatrixResults()), /changed/);
   const missingPackage = completeProductMatrixResults();
-  missingPackage[2] = { ...missingPackage[2], passedPackages: [] };
-  assert.throws(() => buildProductMatrixReceipt(source, source, missingPackage), /required package/);
+  missingPackage[2] = { ...missingPackage[2], passedPackages: missingPackage[2].passedPackages.slice(1) };
+  assert.throws(() => buildProductMatrixReceipt(source, source, missingPackage), /package/);
   const missingTest = completeProductMatrixResults();
   missingTest[2] = { ...missingTest[2], passedTests: missingTest[2].passedTests.slice(1) };
   assert.throws(() => buildProductMatrixReceipt(source, source, missingTest), /required test/);
   const skipped = completeProductMatrixResults();
   skipped[0] = { ...skipped[0], skipped: 1 };
-  assert.throws(() => buildProductMatrixReceipt(source, source, skipped), /zero skip/);
+  assert.throws(() => buildProductMatrixReceipt(source, source, skipped), /zero.?skip/i);
+});
+
+test("Product matrix receipt rejects spoofed lane cwd, order, and missing vertical evidence", () => {
+  const source = { sha: "a".repeat(40), tree: "b".repeat(40), clean: true };
+  const spoofedCwd = completeProductMatrixResults();
+  spoofedCwd[0] = { ...spoofedCwd[0], cwd: "services/fabric" };
+  assert.throws(() => buildProductMatrixReceipt(source, source, spoofedCwd), /cwd|lane/i);
+
+  const reversed = completeProductMatrixResults().reverse();
+  assert.throws(() => buildProductMatrixReceipt(source, source, reversed), /order|lane|cwd/i);
+
+  assert.throws(() => buildProductMatrixReceipt(source, source, completeProductMatrixResults({ includeVertical: false })), /vertical/i);
 });
 
 test("full local gate covers every PostgreSQL owner with the CI-only extensions", async () => {
