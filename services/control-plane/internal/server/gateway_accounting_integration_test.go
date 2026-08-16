@@ -69,6 +69,12 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 				t.Fatalf("canonical launch copied %s truth: rows=%#v err=%v", resource, rows, err)
 			}
 		}
+		terminal := api.mustRequest(t, http.MethodGet, "/api/workspace-launches/"+launchID, nil, "", http.StatusOK)
+		if stringValue(terminal["operationId"]) != operation.ID || stringValue(terminal["accountId"]) != operation.stringFact("accountId") ||
+			stringValue(terminal["workspaceId"]) != operation.stringFact("workspaceId") || stringValue(terminal["runtimeServiceName"]) != operation.stringFact("runtimeServiceName") ||
+			stringValue(terminal["receiptId"]) != operation.stringFact("receiptId") || stringValue(terminal["status"]) != "succeeded" || stringValue(terminal["stage"]) != "succeeded" {
+			t.Fatalf("terminal Workspace launch HTTP readback = %#v operation=%s", terminal, workspaceLaunchReconcileResultSummary(operation))
+		}
 		runtimeStatus := gatewayAccountingEnvelopeData(t, api.mustRequest(t, http.MethodGet, "/api/workspaces/"+operation.stringFact("workspaceId")+"/runtime-status", nil, "", http.StatusOK))
 		if stringValue(runtimeStatus["workspaceId"]) != operation.stringFact("workspaceId") || stringValue(runtimeStatus["runtimeId"]) != operation.stringFact("runtimeId") ||
 			stringValue(runtimeStatus["url"]) != operation.stringFact("url") || stringValue(runtimeStatus["serviceName"]) != operation.stringFact("runtimeServiceName") || runtimeStatus["ready"] != true {
@@ -76,6 +82,10 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 		}
 		if process.fabric.calls == nil || len(*process.fabric.calls) != 1 || (*process.fabric.calls)[0] != "fabric.runtime-status" {
 			t.Fatalf("terminal Fabric runtime calls = %#v", process.fabric.calls)
+		}
+		assertGatewayAccountingCanonicalWorkspaceOpen(t, api, operation)
+		if len(*process.fabric.calls) != 1 {
+			t.Fatalf("canonical Workspace open used legacy or extra Fabric reads: %#v", *process.fabric.calls)
 		}
 
 		beforeReplay := fixture.writeCounts()
@@ -473,6 +483,12 @@ type gatewayAccountingFaultTransport struct {
 	fixture *gatewayAccountingSub2API
 }
 
+type gatewayAccountingRoundTripper func(*http.Request) (*http.Response, error)
+
+func (roundTrip gatewayAccountingRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return roundTrip(request)
+}
+
 func (t *gatewayAccountingFaultTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
@@ -566,7 +582,7 @@ func (f *gatewayAccountingFabric) EnsureWorkspaceLaunchStage(_ context.Context, 
 		resources.GatewaySecretRef, resources.GatewaySecretVersion = "secret-"+suffix, "v1"
 		resources.GatewaySecretFingerprint, resources.SecretBindingRef = workspaceLaunchCredentialFingerprint(input.GatewayCredential.Value), "secret-binding-"+suffix
 	case "runtime":
-		resources.RuntimeID, resources.RuntimeServiceName = "runtime-"+suffix, "workspace-runtime-"+suffix
+		resources.RuntimeID, resources.RuntimeServiceName = "runtime-"+suffix, "opl-runtime-"+suffix
 		resources.RuntimeUsername, resources.RuntimeURL = "opl", "https://workspace.local/"+input.Binding.WorkspaceID
 		resources.RuntimeCredentialStatus, resources.RuntimeCredentialVersion = "configured", "v1"
 		resources.RuntimeCredentialSecretRef, resources.RuntimeBindingRef = "runtime-credential-"+suffix, "runtime-binding-"+suffix
@@ -763,6 +779,53 @@ func assertGatewayAccountingReadback(t *testing.T, api *gatewayAccountingAPI, su
 	projectedReceipt, ok := projectedReceipts[0].(map[string]any)
 	if !ok || stringValue(projectedReceipt["receiptId"]) != receipt.ReceiptID || stringValue(projectedReceipt["workspaceId"]) != workspaceID || stringValue(projectedReceipt["chargeReference"]) != code {
 		t.Fatalf("Control Plane purchase receipt projection = %#v", projectedReceipt)
+	}
+}
+
+func assertGatewayAccountingCanonicalWorkspaceOpen(t *testing.T, api *gatewayAccountingAPI, operation workspaceLaunchReconcileOperation) {
+	t.Helper()
+	originalTransport := http.DefaultTransport
+	upstreamCalls := 0
+	upstreamMismatch := ""
+	http.DefaultTransport = gatewayAccountingRoundTripper(func(request *http.Request) (*http.Response, error) {
+		upstreamCalls++
+		if request.URL.Host != operation.stringFact("runtimeServiceName")+":3000" || request.URL.Path != "/" || request.Host != operation.stringFact("runtimeServiceName")+":3000" {
+			upstreamMismatch = fmt.Sprintf("Workspace open upstream request = %s host=%q", request.URL.String(), request.Host)
+		}
+		for _, header := range []string{"Authorization", "Cookie", "X-OPL-CSRF", "X-OPL-CSRF-Token"} {
+			if value := request.Header.Get(header); value != "" {
+				upstreamMismatch = fmt.Sprintf("Workspace open forwarded %s=%q", header, value)
+			}
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"text/plain"}, "Set-Cookie": []string{"upstream=forbidden"}},
+			Body:       io.NopCloser(strings.NewReader("workspace-open")),
+			Request:    request,
+		}, nil
+	})
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, api.baseURL+"/w/"+operation.stringFact("workspaceId")+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer platform-session")
+	request.Header.Set("X-OPL-CSRF", api.csrf)
+	response, err := api.client.Do(request)
+	if err != nil {
+		t.Fatalf("canonical Workspace open: %v", err)
+	}
+	defer response.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 1024))
+	if readErr != nil || response.StatusCode != http.StatusOK || string(body) != "workspace-open" || upstreamCalls != 1 || upstreamMismatch != "" {
+		t.Fatalf("canonical Workspace open status=%d body=%q calls=%d mismatch=%q err=%v", response.StatusCode, body, upstreamCalls, upstreamMismatch, readErr)
+	}
+	for _, cookie := range response.Cookies() {
+		if cookie.Name == "upstream" {
+			t.Fatalf("Workspace open forwarded upstream cookie: %#v", cookie)
+		}
 	}
 }
 
