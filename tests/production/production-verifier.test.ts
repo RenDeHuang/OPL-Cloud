@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import test, { after } from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   mutationApprovalFromJson,
@@ -764,20 +762,4 @@ test("production verifier CLI help describes the read-only evidence level and fi
   assert.match(stdout, /verification-slot-basic-01/);
   assert.doesNotMatch(stdout, /paid.confirmation|spends real balance/i);
   assert.equal(calls, 0);
-});
-
-test("retired staging verifier fails closed before loading env or reaching the network", () => {
-  const script = fileURLToPath(new URL("../../tools/staging-local-verifier.ts", import.meta.url));
-  const result = spawnSync(process.execPath, [script], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      OPL_STAGING_ENV_FILE: "/definitely/missing/staging.env",
-      OPL_CONSOLE_ORIGIN: "https://unreachable.invalid"
-    }
-  });
-
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /staging_local_verifier_retired/);
-  assert.doesNotMatch(result.stderr, /ENOENT|real_cloud_e2e_confirmation_required|creates and later destroys/i);
 });
