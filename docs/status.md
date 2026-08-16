@@ -66,10 +66,22 @@ Sub2API management origin and credentials are never exposed to the browser.
   schema owner through PR `#341`; moved three retained deployment tools to
   tool-local `node:util.parseArgs` through PR `#342`; and consolidated stable
   Qualification checkout, Node, PostgreSQL, and Go-test YAML through PR `#343`.
-  The implementation changes remove 98 more lines than they add, and
-  `npm run verify:local` passes on canonical `main` after absorption. No
-  release, deployment, database/resource migration, or production action was
-  performed.
+  The same deletion-first pass then retired the 1,767-line aggregate deployment
+  migration contract through PR `#345`, made the Ledger contract the single
+  Workspace monthly-receipt schema owner through PR `#346`, removed the
+  caller-zero Control Plane Artifact/Review/Continuation Ledger client adapter
+  through PR `#347`, and removed 312 lines of superseded Console declarations
+  through PR `#348`. Desktop 1280px and mobile 390px Console comparisons were
+  pixel-identical after the CSS cleanup. Across PRs `#340`-`#343` and
+  `#345`-`#348`, the implementation and contract patches remove 2,412 more
+  lines than they add. `npm run verify:local` and every required PR check pass
+  after canonical absorption.
+- Two further native-replacement candidates were rejected instead of merged.
+  Converting the next two CLI parsers to `node:util.parseArgs` added 54 net
+  lines, while using `http.ServeFile` only for uncompressed assets retained the
+  custom gzip path and added 27 net lines. Both task branches were returned to
+  tree-equivalence with fresh `main` and lifecycle-closed. No release,
+  deployment, database/resource migration, or production action was performed.
 
 - Public and login surfaces present the generic OPL Cloud product in user-task
   language, preserve the administrator-provisioned Pilot boundary, and use the
