@@ -1393,6 +1393,66 @@ func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	}
 }
 
+func TestPostgresWorkspaceRuntimeIdentityCandidatesCanonicalRestart(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	first, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 8, 16, 4, 0, 0, 0, time.UTC)
+	canonicalParent, canonicalChild, _ := canonicalRuntimeOperationGraph(t, "workspace-canonical-pg", "canonical-pg", now)
+	duplicateFirstParent, duplicateFirstChild, _ := canonicalRuntimeOperationGraph(t, "workspace-duplicate-pg", "duplicate-first-pg", now.Add(time.Minute))
+	duplicateSecondParent, duplicateSecondChild, _ := canonicalRuntimeOperationGraph(t, "workspace-duplicate-pg", "duplicate-second-pg", now.Add(2*time.Minute))
+	driftParent, driftChild, _ := canonicalRuntimeOperationGraph(t, "workspace-drift-pg", "drift-pg", now.Add(3*time.Minute))
+	driftBinding := driftChild.RedactedProviderPayload[providerMutationBindingPayloadKey].(persistedProviderMutationBinding)
+	driftBinding.Digest += "-drift"
+	driftChild.RedactedProviderPayload[providerMutationBindingPayloadKey] = driftBinding
+	legacy := legacyWorkspaceRuntimeOperation("workspace-legacy-pg", "legacy-pg", now.Add(-time.Minute))
+	for _, operation := range []FabricOperation{
+		legacy, canonicalParent, canonicalChild, duplicateFirstParent, duplicateFirstChild,
+		duplicateSecondParent, duplicateSecondChild, driftParent, driftChild,
+	} {
+		if err := first.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := first.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.client.Close()
+	for _, test := range []struct {
+		name        string
+		workspaceID string
+		wantID      string
+		wantCount   int
+		wantErr     error
+	}{
+		{name: "legacy", workspaceID: legacy.WorkspaceID, wantID: legacy.ID, wantCount: 1},
+		{name: "canonical restart", workspaceID: canonicalParent.WorkspaceID, wantID: canonicalChild.ID, wantCount: 1},
+		{name: "duplicate canonical", workspaceID: duplicateFirstParent.WorkspaceID, wantCount: 2},
+		{name: "canonical binding drift", workspaceID: driftParent.WorkspaceID, wantErr: ErrLaunchStageBindingConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidates, err := restarted.WorkspaceRuntimeIdentityCandidates(ctx, test.workspaceID)
+			if test.wantErr != nil {
+				if !errors.Is(err, test.wantErr) {
+					t.Fatalf("candidates=%#v err=%v", candidates, err)
+				}
+				return
+			}
+			if err != nil || len(candidates) != test.wantCount || test.wantID != "" && candidates[0].ID != test.wantID {
+				t.Fatalf("candidates=%#v err=%v", candidates, err)
+			}
+		})
+	}
+}
+
 func fabricTestDatabaseURL(t *testing.T) string {
 	t.Helper()
 	databaseURL := os.Getenv("FABRIC_TEST_DATABASE_URL")

@@ -977,6 +977,30 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if err := waitForLocalRuntime(ctx, runtime.Resources.RuntimeURL); err != nil {
 		t.Fatal(err)
 	}
+	status, err := service.WorkspaceRuntimeStatus(ctx, workspaceID)
+	if err != nil || status.ID != runtime.Resources.RuntimeID || status.OperationID != runtimeInput.Binding.FabricOperationID || !status.Ready {
+		t.Fatalf("canonical runtime status=%#v err=%v", status, err)
+	}
+	observation := service.ObserveWorkspaceRuntime(ctx, workspaceID)
+	if observation.State != WorkspaceOwnerObservationReady || observation.Runtime == nil || observation.Runtime.ID != status.ID {
+		t.Fatalf("canonical runtime observation=%#v", observation)
+	}
+	credentials, err := service.WorkspaceRuntimeCredentials(ctx, accountID, workspaceID)
+	if err != nil || credentials.ID != status.ID || credentials.OperationID != status.OperationID {
+		t.Fatalf("canonical runtime credentials=%#v err=%v", credentials, err)
+	}
+	if _, err := service.WorkspaceRuntimeCredentials(ctx, accountID+"-other", workspaceID); err == nil {
+		t.Fatal("cross-account canonical runtime credentials succeeded")
+	}
+	facts, err := service.ProviderFactsBatch(ctx, ProviderFactsBatchInput{Items: []ProviderFactInput{{
+		AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "runtime", ResourceID: status.ID,
+	}}})
+	if err != nil || len(facts.Items) != 1 || !facts.Items[0].Available || facts.Items[0].ResourceID != status.ID {
+		t.Fatalf("canonical runtime provider facts=%#v err=%v", facts, err)
+	}
+	if runner.runtimeCreateCalls != 1 {
+		t.Fatalf("canonical readback repeated Docker create: %d", runner.runtimeCreateCalls)
+	}
 
 	for action, operationID := range mutationIDs {
 		operation, err := store.Get(ctx, operationID)
@@ -993,6 +1017,9 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	}
 	if _, err := provider.WorkspaceRuntimeGatewaySecret(ctx, workspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
 		t.Fatalf("destroyed Secret readback err=%v", err)
+	}
+	if observation := service.ObserveWorkspaceRuntime(ctx, workspaceID); observation.State != WorkspaceOwnerObservationAbsent {
+		t.Fatalf("destroyed runtime observation=%#v", observation)
 	}
 }
 

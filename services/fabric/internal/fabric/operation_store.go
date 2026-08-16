@@ -241,10 +241,98 @@ func (s *MemoryOperationStore) LatestResourceOperation(_ context.Context, resour
 func (s *MemoryOperationStore) WorkspaceRuntimeIdentityCandidates(_ context.Context, workspaceID string) ([]FabricOperation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return workspaceRuntimeIdentityCandidatesFromOperations(s.operation, workspaceID)
+}
+
+type canonicalWorkspaceRuntimeParent struct {
+	operation FabricOperation
+	binding   WorkspaceLaunchStageBinding
+	record    workspaceLaunchStageRecord
+}
+
+func workspaceRuntimeIdentityCandidatesFromOperations(operations []FabricOperation, workspaceID string) ([]FabricOperation, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, ErrLaunchStageBindingConflict
+	}
+	byID := make(map[string]FabricOperation, len(operations))
+	parents := map[string]canonicalWorkspaceRuntimeParent{}
+	children := make([]FabricOperation, 0, 2)
 	matches := make([]FabricOperation, 0, 2)
-	for _, operation := range s.operation {
-		if operation.Action == "create_workspace_runtime" && operation.ResourceKind == "workspace_runtime" && operation.Status == "succeeded" && operation.WorkspaceID == workspaceID && operation.ResourceID == workspaceID {
+	for _, operation := range operations {
+		if operation.ID == "" {
+			if operation.WorkspaceID == workspaceID && (operation.Action == "create_workspace_runtime" || operation.Action == "ensure_runtime" || operation.ResourceKind == "workspace_runtime" || operation.ResourceKind == "workspace_launch_stage") {
+				return nil, ErrLaunchStageBindingConflict
+			}
+			continue
+		}
+		if _, exists := byID[operation.ID]; exists {
+			return nil, ErrLaunchStageBindingConflict
+		}
+		byID[operation.ID] = operation
+		if operation.WorkspaceID != workspaceID {
+			continue
+		}
+		if operation.Action == "create_workspace_runtime" && operation.ResourceKind == "workspace_runtime" && operation.Status == "succeeded" && operation.ResourceID == workspaceID {
 			matches = append(matches, operation)
+		}
+		if operation.Action == "ensure_runtime" || operation.ResourceKind == "workspace_launch_stage" {
+			binding, bindingOK := decodeLaunchStageBinding(operation)
+			if !bindingOK {
+				if operation.Action == "ensure_runtime" {
+					return nil, ErrLaunchStageBindingConflict
+				}
+				continue
+			}
+			if binding.Stage != "runtime" {
+				continue
+			}
+			record, recordOK := decodeWorkspaceLaunchStageRecord(operation)
+			if !recordOK || operation.Status != "succeeded" || operation.Action != "ensure_runtime" ||
+				operation.ResourceKind != "workspace_launch_stage" || operation.ID != binding.FabricOperationID ||
+				operation.OperationID != binding.FabricOperationID || operation.ResourceID != binding.FabricOperationID ||
+				binding.WorkspaceID != workspaceID || operation.Provider == "" || operation.Provider != record.ProviderProfileRef ||
+				record.RequestResources.RuntimeBindingRef != binding.ExpectedResourceBinding ||
+				!workspaceLaunchResourcesContain(record.Resources, record.RequestResources) ||
+				record.Resources.RuntimeBindingRef != operation.ID || record.Resources.RuntimeID == "" ||
+				record.Resources.RuntimeServiceName == "" || record.Resources.RuntimeURL == "" {
+				return nil, ErrLaunchStageBindingConflict
+			}
+			parents[operation.ID] = canonicalWorkspaceRuntimeParent{operation: operation, binding: binding, record: record}
+		}
+		if operation.ResourceKind == "workspace_runtime" {
+			if _, canonical := operation.RedactedProviderPayload[providerMutationBindingPayloadKey]; canonical {
+				children = append(children, operation)
+			}
+		}
+	}
+
+	childCounts := map[string]int{}
+	for _, child := range children {
+		binding, ok := decodeProviderMutationBinding(child)
+		if !ok || binding.ResourceKind != "workspace_runtime" || binding.Parent.Stage != "runtime" || binding.Parent.Action != "ensure_runtime" ||
+			binding.Parent.WorkspaceID != workspaceID || child.Status != "succeeded" ||
+			binding.FabricOperationID != providerMutationOperationID(binding.Parent, binding.Action, binding.ResourceKind, binding.ResourceID, binding.ExpectedResourceBinding) {
+			return nil, ErrLaunchStageBindingConflict
+		}
+		parent, ok := parents[binding.Parent.FabricOperationID]
+		if !ok || parent.binding != binding.Parent || child.Provider == "" || child.Provider != parent.operation.Provider {
+			return nil, ErrLaunchStageBindingConflict
+		}
+		var runtime WorkspaceRuntime
+		if !decodeOperationResource(child, &runtime) || runtime.ID == "" || runtime.ID != binding.ResourceID ||
+			runtime.ID != parent.record.Resources.RuntimeID || runtime.WorkspaceID != workspaceID ||
+			runtime.OperationID != parent.operation.ID || runtime.ServiceName == "" ||
+			runtime.ServiceName != binding.ExpectedResourceBinding || runtime.ServiceName != parent.record.Resources.RuntimeServiceName ||
+			runtime.URL == "" || runtime.URL != parent.record.Resources.RuntimeURL {
+			return nil, ErrLaunchStageBindingConflict
+		}
+		childCounts[parent.operation.ID]++
+		matches = append(matches, child)
+	}
+	for parentID := range parents {
+		if childCounts[parentID] == 0 {
+			return nil, ErrLaunchStageBindingConflict
 		}
 	}
 	sortFabricOperations(matches)
@@ -877,11 +965,14 @@ func (s *PostgresOperationStore) LatestResourceOperation(ctx context.Context, re
 func (s *PostgresOperationStore) WorkspaceRuntimeIdentityCandidates(ctx context.Context, workspaceID string) ([]FabricOperation, error) {
 	rows, err := s.client.FabricOperation.Query().
 		Where(
-			fabricoperation.Action("create_workspace_runtime"), fabricoperation.ResourceKind("workspace_runtime"),
-			fabricoperation.Status("succeeded"), fabricoperation.WorkspaceID(workspaceID), fabricoperation.ResourceID(workspaceID),
+			fabricoperation.WorkspaceID(workspaceID),
+			fabricoperation.Or(
+				fabricoperation.ResourceKind("workspace_runtime"),
+				fabricoperation.ResourceKind("workspace_launch_stage"),
+				fabricoperation.Action("ensure_runtime"),
+			),
 		).
 		Order(fabricent.Asc(fabricoperation.FieldCreatedAt, fabricoperation.FieldID)).
-		Limit(2).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -890,7 +981,7 @@ func (s *PostgresOperationStore) WorkspaceRuntimeIdentityCandidates(ctx context.
 	for _, row := range rows {
 		operations = append(operations, fabricOperationFromEnt(row))
 	}
-	return operations, nil
+	return workspaceRuntimeIdentityCandidatesFromOperations(operations, workspaceID)
 }
 
 func (s *PostgresOperationStore) SaveJobHeartbeat(ctx context.Context, operation FabricOperation) (FabricOperation, error) {

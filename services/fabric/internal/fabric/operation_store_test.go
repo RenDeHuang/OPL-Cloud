@@ -12,6 +12,288 @@ import (
 	"time"
 )
 
+func canonicalRuntimeOperationGraph(t *testing.T, workspaceID, suffix string, now time.Time) (FabricOperation, FabricOperation, WorkspaceRuntime) {
+	t.Helper()
+	parentBinding := testWorkspaceLaunchBinding("runtime", "ensure_runtime", "launch-"+suffix+":runtime")
+	parentBinding.LaunchOperationID = "launch-" + suffix
+	parentBinding.WorkspaceID = workspaceID
+	parentBinding.IdempotencyKey = parentBinding.LaunchOperationID + ":runtime"
+	parentBinding.RequestHash = hashInput(map[string]string{"launch": parentBinding.LaunchOperationID, "stage": parentBinding.Stage})
+	runtime := WorkspaceRuntime{
+		ID: "rt_" + suffix, OperationID: parentBinding.FabricOperationID, WorkspaceID: workspaceID,
+		URL: "https://workspace.example/w/" + workspaceID + "/", ServiceName: "runtime-" + suffix,
+		Status: "running", Ready: true, Access: RuntimeAccess{Username: "opl", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: gatewaySecretName(workspaceID)},
+	}
+	parent := newOperation(parentBinding.Action, "workspace_launch_stage", parentBinding.FabricOperationID, parentBinding.AccountID, workspaceID, parentBinding.IdempotencyKey, parentBinding.RequestHash, now)
+	parent.ID, parent.OperationID, parent.Provider = parentBinding.FabricOperationID, parentBinding.FabricOperationID, "test-provider"
+	parent.Status, parent.CreatedAt, parent.FinishedAt = "succeeded", now, now
+	if err := bindLaunchStageOperation(&parent, &parentBinding); err != nil {
+		t.Fatal(err)
+	}
+	setWorkspaceLaunchStageRecord(&parent, workspaceLaunchStageRecord{
+		SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: parent.Provider, PreflightBindingRef: "preflight-" + suffix,
+		Resources: WorkspaceLaunchResources{
+			RuntimeID: runtime.ID, RuntimeServiceName: runtime.ServiceName, RuntimeURL: runtime.URL,
+			RuntimeUsername: runtime.Access.Username, RuntimeCredentialStatus: runtime.Access.CredentialStatus,
+			RuntimeCredentialVersion: runtime.Access.CredentialVersion, RuntimeCredentialSecretRef: runtime.Access.SecretRef,
+			RuntimeBindingRef: parentBinding.FabricOperationID,
+		},
+	})
+	binding := providerMutationBinding{
+		SchemaVersion: 1, Parent: parentBinding, Action: "provider_runtime_apply", ResourceKind: "workspace_runtime",
+		ResourceID: runtime.ID, ExpectedResourceBinding: runtime.ServiceName,
+	}
+	binding.FabricOperationID = providerMutationOperationID(parentBinding, binding.Action, binding.ResourceKind, binding.ResourceID, binding.ExpectedResourceBinding)
+	child := newOperation(binding.Action, binding.ResourceKind, binding.ResourceID, parentBinding.AccountID, workspaceID, binding.FabricOperationID, hashInput(binding), now.Add(time.Second))
+	child.ID, child.OperationID, child.Provider = binding.FabricOperationID, binding.FabricOperationID, parent.Provider
+	child.Status, child.CreatedAt, child.FinishedAt = "succeeded", now.Add(time.Second), now.Add(time.Second)
+	child.RedactedProviderPayload = map[string]any{
+		providerMutationBindingPayloadKey: persistedProviderMutationBinding{Binding: binding, Digest: hashInput(binding)},
+	}
+	fillOperationResource(&child, runtime)
+	return parent, child, runtime
+}
+
+func TestMemoryWorkspaceRuntimeIdentityCandidatesSupportCanonicalLaunchGraph(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	parent, child, expected := canonicalRuntimeOperationGraph(t, "workspace-alpha", "canonical", time.Date(2026, 8, 16, 1, 0, 0, 0, time.UTC))
+	for _, operation := range []FabricOperation{parent, child} {
+		if err := store.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	candidates, err := store.WorkspaceRuntimeIdentityCandidates(ctx, expected.WorkspaceID)
+	if err != nil || len(candidates) != 1 || candidates[0].ID != child.ID {
+		t.Fatalf("canonical candidates=%#v err=%v", candidates, err)
+	}
+
+	service := runtimeTestService(liveRuntimeWithoutIDProvider{}, store)
+	status, err := service.WorkspaceRuntimeStatus(ctx, expected.WorkspaceID)
+	if err != nil || status.ID != expected.ID || status.OperationID != expected.OperationID || !status.Ready {
+		t.Fatalf("canonical runtime status=%#v err=%v", status, err)
+	}
+	observation := service.ObserveWorkspaceRuntime(ctx, expected.WorkspaceID)
+	if observation.State != WorkspaceOwnerObservationReady || observation.Runtime == nil || observation.Runtime.ID != expected.ID {
+		t.Fatalf("canonical runtime observation=%#v", observation)
+	}
+	credentials, err := service.WorkspaceRuntimeCredentials(ctx, parent.AccountID, expected.WorkspaceID)
+	if err != nil || credentials.ID != expected.ID || credentials.Access.Password == "" {
+		t.Fatalf("canonical runtime credentials=%#v err=%v", credentials, err)
+	}
+	batch, err := service.ProviderFactsBatch(ctx, ProviderFactsBatchInput{Items: []ProviderFactInput{{
+		AccountID: parent.AccountID, WorkspaceID: expected.WorkspaceID, ResourceType: "runtime", ResourceID: expected.ID,
+	}}})
+	if err != nil || len(batch.Items) != 1 || !batch.Items[0].Available || batch.Items[0].Facts.ProviderID != status.ServiceName || batch.Items[0].Facts.Status != status.Status {
+		t.Fatalf("canonical runtime provider facts=%#v err=%v", batch, err)
+	}
+}
+
+func legacyWorkspaceRuntimeOperation(workspaceID, suffix string, now time.Time) FabricOperation {
+	runtime := WorkspaceRuntime{ID: "legacy-" + suffix, OperationID: "legacy-operation-" + suffix, WorkspaceID: workspaceID, ServiceName: "legacy-service-" + suffix, Status: "running", Ready: true}
+	operation := newOperation("create_workspace_runtime", "workspace_runtime", workspaceID, "acct-alpha", workspaceID, runtime.OperationID, "legacy-hash-"+suffix, now)
+	operation.ID, operation.Status, operation.CreatedAt, operation.FinishedAt = "legacy-"+suffix, "succeeded", now, now
+	fillOperationResource(&operation, runtime)
+	return operation
+}
+
+func TestMemoryWorkspaceRuntimeIdentityCandidatesFailClosedOnCanonicalDrift(t *testing.T) {
+	now := time.Date(2026, 8, 16, 2, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		mutate func(*FabricOperation, *FabricOperation, WorkspaceRuntime)
+	}{
+		{name: "parent status", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) { parent.Status = "started" }},
+		{name: "parent action", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) { parent.Action = "ensure_storage" }},
+		{name: "parent resource kind", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) { parent.ResourceKind = "storage_volume" }},
+		{name: "parent id", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) { parent.ID += "-drift" }},
+		{name: "parent resource id", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) { parent.ResourceID += "-drift" }},
+		{name: "parent operation id", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) { parent.OperationID += "-drift" }},
+		{name: "parent account", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) { parent.AccountID += "-drift" }},
+		{name: "parent workspace", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) { parent.WorkspaceID += "-drift" }},
+		{name: "parent idempotency", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) { parent.IdempotencyKey += "-drift" }},
+		{name: "parent provider", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) { parent.Provider += "-drift" }},
+		{name: "parent binding digest", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) {
+			persisted := parent.RedactedProviderPayload[launchStageBindingPayloadKey].(persistedLaunchStageBinding)
+			persisted.Digest += "-drift"
+			parent.RedactedProviderPayload[launchStageBindingPayloadKey] = persisted
+		}},
+		{name: "parent binding schema", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) {
+			persisted := parent.RedactedProviderPayload[launchStageBindingPayloadKey].(persistedLaunchStageBinding)
+			persisted.Binding.SchemaVersion++
+			persisted.Digest = hashInput(persisted.Binding)
+			parent.RedactedProviderPayload[launchStageBindingPayloadKey] = persisted
+		}},
+		{name: "parent binding stage", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) {
+			persisted := parent.RedactedProviderPayload[launchStageBindingPayloadKey].(persistedLaunchStageBinding)
+			persisted.Binding.Stage, persisted.Binding.Action = "storage", "ensure_storage"
+			persisted.Digest = hashInput(persisted.Binding)
+			parent.RedactedProviderPayload[launchStageBindingPayloadKey] = persisted
+		}},
+		{name: "parent record digest", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) {
+			persisted := parent.RedactedProviderPayload[workspaceLaunchStageRecordPayloadKey].(persistedWorkspaceLaunchStageRecord)
+			persisted.Digest += "-drift"
+			parent.RedactedProviderPayload[workspaceLaunchStageRecordPayloadKey] = persisted
+		}},
+		{name: "parent record schema", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) {
+			record, _ := decodeWorkspaceLaunchStageRecord(*parent)
+			record.SchemaVersion = 99
+			setWorkspaceLaunchStageRecord(parent, record)
+		}},
+		{name: "parent runtime id", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) {
+			record, _ := decodeWorkspaceLaunchStageRecord(*parent)
+			record.Resources.RuntimeID += "-drift"
+			setWorkspaceLaunchStageRecord(parent, record)
+		}},
+		{name: "parent runtime binding", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) {
+			record, _ := decodeWorkspaceLaunchStageRecord(*parent)
+			record.Resources.RuntimeBindingRef += "-drift"
+			setWorkspaceLaunchStageRecord(parent, record)
+		}},
+		{name: "parent runtime service", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) {
+			record, _ := decodeWorkspaceLaunchStageRecord(*parent)
+			record.Resources.RuntimeServiceName += "-drift"
+			setWorkspaceLaunchStageRecord(parent, record)
+		}},
+		{name: "parent runtime url", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) {
+			record, _ := decodeWorkspaceLaunchStageRecord(*parent)
+			record.Resources.RuntimeURL += "drift/"
+			setWorkspaceLaunchStageRecord(parent, record)
+		}},
+		{name: "child status", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.Status = "failed" }},
+		{name: "child resource kind", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.ResourceKind = "storage_volume" }},
+		{name: "child id", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.ID += "-drift" }},
+		{name: "child resource id", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.ResourceID += "-drift" }},
+		{name: "child operation id", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.OperationID += "-drift" }},
+		{name: "child account", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.AccountID += "-drift" }},
+		{name: "child workspace", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.WorkspaceID += "-drift" }},
+		{name: "child idempotency", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.IdempotencyKey += "-drift" }},
+		{name: "child provider", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.Provider += "-drift" }},
+		{name: "child binding digest", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) {
+			persisted := child.RedactedProviderPayload[providerMutationBindingPayloadKey].(persistedProviderMutationBinding)
+			persisted.Digest += "-drift"
+			child.RedactedProviderPayload[providerMutationBindingPayloadKey] = persisted
+		}},
+		{name: "child binding schema", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) {
+			persisted := child.RedactedProviderPayload[providerMutationBindingPayloadKey].(persistedProviderMutationBinding)
+			persisted.Binding.SchemaVersion++
+			persisted.Digest = hashInput(persisted.Binding)
+			child.RedactedProviderPayload[providerMutationBindingPayloadKey] = persisted
+		}},
+		{name: "child binding parent", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) {
+			persisted := child.RedactedProviderPayload[providerMutationBindingPayloadKey].(persistedProviderMutationBinding)
+			persisted.Binding.Parent.LaunchOperationID += "-drift"
+			persisted.Digest = hashInput(persisted.Binding)
+			child.RequestHash = hashInput(persisted.Binding)
+			child.RedactedProviderPayload[providerMutationBindingPayloadKey] = persisted
+		}},
+		{name: "child deterministic id", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) {
+			persisted := child.RedactedProviderPayload[providerMutationBindingPayloadKey].(persistedProviderMutationBinding)
+			persisted.Binding.FabricOperationID += "-drift"
+			persisted.Digest = hashInput(persisted.Binding)
+			child.ID, child.OperationID, child.IdempotencyKey = persisted.Binding.FabricOperationID, persisted.Binding.FabricOperationID, persisted.Binding.FabricOperationID
+			child.RequestHash = hashInput(persisted.Binding)
+			child.RedactedProviderPayload[providerMutationBindingPayloadKey] = persisted
+		}},
+		{name: "decoded runtime id", mutate: func(_, child *FabricOperation, runtime WorkspaceRuntime) {
+			runtime.ID += "-drift"
+			fillOperationResource(child, runtime)
+		}},
+		{name: "decoded runtime workspace", mutate: func(_, child *FabricOperation, runtime WorkspaceRuntime) {
+			runtime.WorkspaceID += "-drift"
+			fillOperationResource(child, runtime)
+		}},
+		{name: "decoded runtime operation", mutate: func(_, child *FabricOperation, runtime WorkspaceRuntime) {
+			runtime.OperationID += "-drift"
+			fillOperationResource(child, runtime)
+		}},
+		{name: "decoded runtime service", mutate: func(_, child *FabricOperation, runtime WorkspaceRuntime) {
+			runtime.ServiceName += "-drift"
+			fillOperationResource(child, runtime)
+		}},
+		{name: "decoded runtime url", mutate: func(_, child *FabricOperation, runtime WorkspaceRuntime) {
+			runtime.URL += "drift/"
+			fillOperationResource(child, runtime)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := NewMemoryOperationStore()
+			parent, child, runtime := canonicalRuntimeOperationGraph(t, "workspace-alpha", "drift", now)
+			test.mutate(&parent, &child, runtime)
+			for _, operation := range []FabricOperation{legacyWorkspaceRuntimeOperation("workspace-alpha", "fallback", now.Add(-time.Second)), parent, child} {
+				if err := store.Append(ctx, operation); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := store.WorkspaceRuntimeIdentityCandidates(ctx, "workspace-alpha"); !errors.Is(err, ErrLaunchStageBindingConflict) {
+				t.Fatalf("canonical drift error=%v", err)
+			}
+			service := runtimeTestService(liveRuntimeWithoutIDProvider{}, store)
+			if observation := service.ObserveWorkspaceRuntime(ctx, "workspace-alpha"); observation.State != WorkspaceOwnerObservationConflict {
+				t.Fatalf("canonical drift observation=%#v", observation)
+			}
+		})
+	}
+}
+
+func TestMemoryWorkspaceRuntimeIdentityCandidatesPreserveDuplicatesAndStartingChildIdentity(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)
+	t.Run("starting child resource remains an identity candidate", func(t *testing.T) {
+		store := NewMemoryOperationStore()
+		parent, child, runtime := canonicalRuntimeOperationGraph(t, "workspace-alpha", "starting", now)
+		runtime.Ready = false
+		runtime.Status = "unready"
+		fillOperationResource(&child, runtime)
+		for _, operation := range []FabricOperation{parent, child} {
+			if err := store.Append(ctx, operation); err != nil {
+				t.Fatal(err)
+			}
+		}
+		candidates, err := store.WorkspaceRuntimeIdentityCandidates(ctx, runtime.WorkspaceID)
+		if err != nil || len(candidates) != 1 || candidates[0].ID != child.ID {
+			t.Fatalf("starting child candidates=%#v err=%v", candidates, err)
+		}
+	})
+	for _, test := range []struct {
+		name string
+		seed func(*testing.T, *MemoryOperationStore)
+	}{
+		{name: "legacy and canonical", seed: func(t *testing.T, store *MemoryOperationStore) {
+			parent, child, _ := canonicalRuntimeOperationGraph(t, "workspace-alpha", "canonical", now)
+			for _, operation := range []FabricOperation{legacyWorkspaceRuntimeOperation("workspace-alpha", "legacy", now.Add(-time.Second)), parent, child} {
+				if err := store.Append(ctx, operation); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}},
+		{name: "two canonical parents", seed: func(t *testing.T, store *MemoryOperationStore) {
+			firstParent, firstChild, _ := canonicalRuntimeOperationGraph(t, "workspace-alpha", "first", now)
+			secondParent, secondChild, _ := canonicalRuntimeOperationGraph(t, "workspace-alpha", "second", now.Add(time.Minute))
+			for _, operation := range []FabricOperation{firstParent, firstChild, secondParent, secondChild} {
+				if err := store.Append(ctx, operation); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewMemoryOperationStore()
+			test.seed(t, store)
+			candidates, err := store.WorkspaceRuntimeIdentityCandidates(ctx, "workspace-alpha")
+			if err != nil || len(candidates) != 2 {
+				t.Fatalf("duplicate candidates=%#v err=%v", candidates, err)
+			}
+			service := runtimeTestService(liveRuntimeWithoutIDProvider{}, store)
+			if _, err := service.WorkspaceRuntimeStatus(ctx, "workspace-alpha"); !errors.Is(err, ErrLaunchStageBindingConflict) {
+				t.Fatalf("duplicate runtime status error=%v", err)
+			}
+		})
+	}
+}
+
 func TestProductionPostgresOperationStoreRejectsUnsafeTLSBeforeConnecting(t *testing.T) {
 	_, err := NewPostgresOperationStore("host=/does-not-exist dbname=opl sslmode=disable")
 	if err == nil || !strings.Contains(err.Error(), "sslmode=verify-full") {
