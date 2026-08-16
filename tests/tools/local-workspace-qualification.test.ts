@@ -25,6 +25,7 @@ import {
   stableID,
   validateQualificationSourceIdentity,
   validateJ0ReadyReceipt,
+  validateLocalJ1AccountingReadback,
   validateLocalQualificationReceipt,
   validateProductMatrixReceipt,
   workspaceDeleteFailureEvidence
@@ -521,6 +522,52 @@ test("live authority adjustment readback counts the exact code through the final
   assert.deepEqual(duplicate.requestedPages, [1, 2, 3]);
 });
 
+test("Local J1 accounting allows unrelated history and rejects duplicate operation evidence", () => {
+  const operationId = "workspace-launch-current";
+  const workspaceId = "ws-current";
+  const receiptId = "receipt-current";
+  const runtimeId = "runtime-current";
+  const keyId = "700";
+  const debitCode = "opl:current-debit";
+  const amountUsdMicros = "52580000";
+  const currentKey = { id: keyId, kind: "workspace", status: "active" };
+  const historicalKey = { id: "699", kind: "workspace", status: "active" };
+  const currentReceipt = {
+    receiptId, operationId, workspaceId, type: "billing.workspace_purchased.v1", status: "completed",
+    chargeReference: debitCode, totalUsdMicros: amountUsdMicros,
+    fulfillment: { runtimeId, workspaceApiKeyId: keyId }
+  };
+  const historicalReceipt = {
+    ...currentReceipt,
+    receiptId: "receipt-historical",
+    operationId: "workspace-launch-historical",
+    workspaceId: "ws-historical",
+    chargeReference: "opl:historical-debit",
+    fulfillment: { runtimeId: "runtime-historical", workspaceApiKeyId: "699" }
+  };
+  const input = {
+    operationId, workspaceId, receiptId, runtimeId, keyId, sub2apiUserId: "41", debitCode, amountUsdMicros,
+    beforeMicros: "1000000000", afterMicros: "947420001",
+    baselineKeys: [historicalKey], baselineReceipts: [historicalReceipt],
+    keys: [historicalKey, currentKey], receipts: [historicalReceipt, currentReceipt],
+    key: currentKey, keyUsage: { totalRequests: 0 }, usage: { totalRequests: 0 },
+    history: { items: [{ valueUsdMicros: "-1000000", status: "used" }] },
+    debit: { count: 1, code: debitCode, userId: "41", amountUsdMicros },
+    evidence: {
+      launch: { operationId, workspaceId, receiptId },
+      runtime: { runtimeId },
+      receipt: currentReceipt
+    }
+  };
+
+  assert.deepEqual(validateLocalJ1AccountingReadback(input), { walletExactDeltaObserved: false });
+  assert.throws(() => validateLocalJ1AccountingReadback({ ...input, keys: [...input.keys, currentKey] }), /key cardinality/);
+  assert.throws(() => validateLocalJ1AccountingReadback({ ...input, receipts: [...input.receipts, currentReceipt] }), /receipt cardinality/);
+  assert.throws(() => validateLocalJ1AccountingReadback({ ...input, debit: { ...input.debit, count: 2 } }), /debit cardinality/);
+  assert.throws(() => validateLocalJ1AccountingReadback({ ...input, baselineKeys: [...input.baselineKeys, currentKey] }), /predates/);
+  assert.throws(() => validateLocalJ1AccountingReadback({ ...input, baselineReceipts: [...input.baselineReceipts, currentReceipt] }), /predates/);
+});
+
 test("READY receipt binds the exact durable and accounting evidence", () => {
   const fixtureReceipt = {
     schemaVersion: 1,
@@ -768,6 +815,12 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
   const debitCode = "opl:j1-debit";
   const amountUsdMicros = "52580000";
   const workspaceURL = `http://workspace.test/w/${workspaceId}/`;
+  const historicalKey = { id: "699", kind: "workspace", status: "active" };
+  const historicalReceipt = {
+    receiptId: "receipt-historical", operationId: "workspace-launch-historical", workspaceId: "ws-historical",
+    type: "billing.workspace_purchased.v1", status: "completed", chargeReference: "opl:historical-debit",
+    totalUsdMicros: "52580000", fulfillment: { runtimeId: "runtime-historical", workspaceApiKeyId: "699" }
+  };
   const requests = [];
   const counts = { mappingPosts: 0, workspacePosts: 0, keyCreates: 0, debits: 0, refunds: 0, deletes: 0, restarts: 0 };
   let launchReads = 0;
@@ -805,7 +858,10 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
     if (method === "GET" && url.pathname === "/api/auth/me") return send(response, 200, envelope("sub2api", { accountId, email: accountEmail, role: "owner", status: "active", sub2apiUserId: "41" }));
     if (method === "GET" && url.pathname === "/api/gateway/wallet") return send(response, 200, envelope("sub2api", { userId: "41", currency: "USD", usdMicros: counts.debits ? "947420000" : "1000000000", status: "active" }));
     if (method === "GET" && url.pathname === "/api/gateway/usage-summary") return send(response, 200, envelope("sub2api", { totalRequests: 0 }));
-    if (method === "GET" && url.pathname === "/api/gateway/keys") return send(response, 200, envelope("sub2api", { items: counts.keyCreates ? [{ id: keyId, kind: "workspace", status: "active" }] : [], total: counts.keyCreates ? 1 : 0, page: 1, pageSize: 50 }));
+    if (method === "GET" && url.pathname === "/api/gateway/keys") {
+      const items = counts.keyCreates ? [historicalKey, { id: keyId, kind: "workspace", status: "active" }] : [historicalKey];
+      return send(response, 200, envelope("sub2api", { items, total: items.length, page: 1, pageSize: 100, pages: 1 }));
+    }
     if (method === "POST" && url.pathname === "/api/pricing/preview") return send(response, 200, { resourceType: "workspace", packageId: "basic", currency: "USD", totalChargeUsdMicros: Number(amountUsdMicros) });
     if (method === "POST" && url.pathname === "/api/workspace-launches") {
       counts.workspacePosts += 1; counts.keyCreates += 1; counts.debits += 1;
@@ -818,7 +874,10 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
     if (method === "GET" && url.pathname === "/api/workspaces") return send(response, 200, envelope("control-plane", { items: [{ id: workspaceId, url: workspaceURL }], total: 1, page: 1, pageSize: 20 }));
     if (method === "GET" && url.pathname === `/api/workspaces/${workspaceId}/runtime-status`) return send(response, 200, envelope("fabric", { workspaceId, runtimeId, ready: true, status: "running", url: workspaceURL }));
     if (method === "GET" && url.pathname === `/api/billing/receipts/${receiptId}`) return send(response, 200, envelope("ledger", { receiptId, accountId, operationId, workspaceId, type: "billing.workspace_purchased.v1", status: "completed", chargeReference: debitCode, totalUsdMicros: amountUsdMicros, fulfillment: { runtimeId, workspaceApiKeyId: keyId } }));
-    if (method === "GET" && url.pathname === "/api/billing/receipts") return send(response, 200, envelope("ledger", { receipts: counts.debits ? [{ receiptId, accountId, operationId, workspaceId, type: "billing.workspace_purchased.v1", status: "completed", chargeReference: debitCode, totalUsdMicros: amountUsdMicros, fulfillment: { runtimeId, workspaceApiKeyId: keyId } }] : [], hasMore: false }));
+    if (method === "GET" && url.pathname === "/api/billing/receipts") {
+      const currentReceipt = { receiptId, accountId, operationId, workspaceId, type: "billing.workspace_purchased.v1", status: "completed", chargeReference: debitCode, totalUsdMicros: amountUsdMicros, fulfillment: { runtimeId, workspaceApiKeyId: keyId } };
+      return send(response, 200, envelope("ledger", { receipts: counts.debits ? [historicalReceipt, currentReceipt] : [historicalReceipt], hasMore: false, nextCursor: "" }));
+    }
     if (method === "GET" && url.pathname === `/api/gateway/keys/${keyId}`) return send(response, 200, envelope("sub2api", { id: keyId, kind: "workspace", status: "active" }));
     if (method === "GET" && url.pathname === `/api/gateway/keys/${keyId}/usage-summary`) return send(response, 200, envelope("sub2api", { totalRequests: 0 }));
     if (method === "GET" && url.pathname === "/api/gateway/balance-history") return send(response, 200, envelope("sub2api", { items: [{ valueUsdMicros: `-${amountUsdMicros}`, status: "used" }], total: 1, page: 1, pageSize: 20, pages: 1 }));

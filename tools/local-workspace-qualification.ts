@@ -776,6 +776,85 @@ export async function readWorkspaceEvidence(http, auth, operationId, workspaceId
   return { launch, workspace, runtime, receipt };
 }
 
+async function readAllGatewayKeys(http, auth) {
+  const items = [];
+  let expectedTotal = null;
+  let expectedPages = null;
+  for (let pageNumber = 1; ; pageNumber += 1) {
+    const page = sourceData((await http.json(`/api/gateway/keys?page=${pageNumber}&pageSize=100`, {}, auth)).payload, "sub2api");
+    if (!Array.isArray(page?.items) || !Number.isSafeInteger(page?.total) || page.total < 0 || page.page !== pageNumber || page.pageSize !== 100 ||
+      !Number.isSafeInteger(page.pages) || page.pages !== Math.max(1, Math.ceil(page.total / page.pageSize)) ||
+      expectedTotal !== null && (page.total !== expectedTotal || page.pages !== expectedPages)) {
+      throw new Error("local qualification key inventory is invalid");
+    }
+    expectedTotal ??= page.total;
+    expectedPages ??= page.pages;
+    items.push(...page.items);
+    if (pageNumber === page.pages) break;
+  }
+  if (items.length !== expectedTotal) throw new Error("local qualification key inventory is invalid");
+  return items;
+}
+
+async function readAllBillingReceipts(http, auth) {
+  const receipts = [];
+  const cursors = new Set();
+  let cursor = "";
+  for (;;) {
+    const query = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : "?limit=100";
+    const page = sourceData((await http.json(`/api/billing/receipts${query}`, {}, auth)).payload, "ledger");
+    if (!Array.isArray(page?.receipts) || typeof page.hasMore !== "boolean") {
+      throw new Error("local qualification receipt inventory is invalid");
+    }
+    receipts.push(...page.receipts);
+    if (!page.hasMore) break;
+    const nextCursor = String(page.nextCursor || "");
+    if (!nextCursor || cursors.has(nextCursor)) throw new Error("local qualification receipt inventory is invalid");
+    cursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  return receipts;
+}
+
+export function validateLocalJ1AccountingReadback(input) {
+  const {
+    operationId, workspaceId, receiptId, runtimeId, keyId, sub2apiUserId, debitCode, amountUsdMicros,
+    beforeMicros, afterMicros, baselineKeys, baselineReceipts, keys, receipts, key, keyUsage, usage, history, debit, evidence
+  } = input;
+  if (![baselineKeys, baselineReceipts, keys, receipts].every(Array.isArray) || !Array.isArray(history?.items)) {
+    throw new Error("local qualification accounting inventory is invalid");
+  }
+  if (baselineKeys.some((candidate) => String(candidate?.id || "") === keyId)) {
+    throw new Error("local qualification exact workspace key predates this operation");
+  }
+  if (baselineReceipts.some((candidate) => candidate?.type === "billing.workspace_purchased.v1" &&
+    (candidate?.receiptId === receiptId || candidate?.workspaceId === workspaceId))) {
+    throw new Error("local qualification exact purchase receipt predates this operation");
+  }
+
+  const exactKeys = keys.filter((candidate) => String(candidate?.id || "") === keyId);
+  if (exactKeys.length !== 1 || key?.id !== keyId || key?.kind !== "workspace" || key?.status !== "active" || exactKeys[0]?.kind !== "workspace" || exactKeys[0]?.status !== "active") {
+    throw new Error("local qualification exact workspace key cardinality is invalid");
+  }
+  const workspacePurchaseReceipts = receipts.filter((candidate) =>
+    candidate?.type === "billing.workspace_purchased.v1" && candidate?.workspaceId === workspaceId);
+  if (workspacePurchaseReceipts.length !== 1 || workspacePurchaseReceipts[0]?.receiptId !== receiptId) {
+    throw new Error("local qualification exact purchase receipt cardinality is invalid");
+  }
+  if (debit?.count !== 1 || debit?.code !== debitCode || String(debit?.userId) !== sub2apiUserId || String(debit?.amountUsdMicros) !== amountUsdMicros) {
+    throw new Error("local qualification exact debit cardinality is invalid");
+  }
+  if (typeof usage?.totalRequests !== "number" || typeof keyUsage?.totalRequests !== "number" ||
+    !/^\d+$/.test(afterMicros) ||
+    evidence?.launch?.operationId !== operationId || evidence?.launch?.workspaceId !== workspaceId || evidence?.launch?.receiptId !== receiptId ||
+    evidence?.runtime?.runtimeId !== runtimeId || evidence?.receipt?.receiptId !== receiptId || evidence?.receipt?.workspaceId !== workspaceId ||
+    evidence?.receipt?.chargeReference !== debitCode || String(evidence?.receipt?.totalUsdMicros) !== amountUsdMicros ||
+    evidence?.receipt?.fulfillment?.runtimeId !== runtimeId || String(evidence?.receipt?.fulfillment?.workspaceApiKeyId || "") !== keyId) {
+    throw new Error("local qualification operation accounting binding is invalid");
+  }
+  return { walletExactDeltaObserved: /^\d+$/.test(beforeMicros) && BigInt(beforeMicros) - BigInt(amountUsdMicros) === BigInt(afterMicros) };
+}
+
 export async function provisionLocalQualificationAccount(http, adminAuth, { email, password, idempotencyKey }) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const accountId = `acct-${stableID("account", normalizedEmail).slice(0, 18)}`;
@@ -838,12 +917,10 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
     if (!/^[1-9][0-9]*$/.test(beforeMicros) || typeof usageBefore?.totalRequests !== "number") {
       throw new Error("qualification Wallet or Usage baseline is invalid");
     }
-    const baselineKeys = sourceData((await http.json("/api/gateway/keys?page=1&pageSize=50", {}, auth)).payload, "sub2api");
-    const baselineReceipts = sourceData((await http.json("/api/billing/receipts?limit=50", {}, auth)).payload, "ledger");
-    if ((baselineKeys?.items || []).some((candidate) => candidate?.kind === "workspace") ||
-      (baselineReceipts?.receipts || []).some((candidate) => candidate?.type === "billing.workspace_purchased.v1" || candidate?.workspaceId)) {
-      throw new Error("qualification account baseline is not fresh");
-    }
+    const [baselineKeys, baselineReceipts] = await Promise.all([
+      readAllGatewayKeys(http, auth),
+      readAllBillingReceipts(http, auth)
+    ]);
     onStage("pricing_preview");
     const pricing = (await http.json("/api/pricing/preview", {
       method: "POST", body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
@@ -871,30 +948,23 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
     if (!opened.response.ok || !opened.text.includes("OPL Workspace READY")) throw new Error("Workspace Runtime open failed");
 
     onStage("accounting_readback");
-    const [usage, walletAfter, keysPage, historyPage, receiptsPage, debit] = await Promise.all([
+    const [usage, walletAfter, keys, historyPage, receipts, debit] = await Promise.all([
       http.json("/api/gateway/usage-summary?period=month", {}, auth).then((result) => sourceData(result.payload, "sub2api")),
       http.json("/api/gateway/wallet", {}, auth).then((result) => sourceData(result.payload, "sub2api")),
-      http.json("/api/gateway/keys?page=1&pageSize=50", {}, auth).then((result) => sourceData(result.payload, "sub2api")),
+      readAllGatewayKeys(http, auth),
       http.json("/api/gateway/balance-history?page=1&pageSize=20", {}, auth).then((result) => sourceData(result.payload, "sub2api")),
-      http.json("/api/billing/receipts?limit=50", {}, auth).then((result) => sourceData(result.payload, "ledger")),
+      readAllBillingReceipts(http, auth),
       readDebit({ accountId: provision.accountId, sub2apiUserId, code: evidence.receipt.chargeReference, amountUsdMicros })
     ]);
     const keyId = String(launch.workspaceApiKeyId || "");
     const key = sourceData((await http.json(`/api/gateway/keys/${encodeURIComponent(keyId)}`, {}, auth)).payload, "sub2api");
     const keyUsage = sourceData((await http.json(`/api/gateway/keys/${encodeURIComponent(keyId)}/usage-summary?period=month`, {}, auth)).payload, "sub2api");
-    const allWorkspaceKeys = (keysPage?.items || []).filter((candidate) => candidate?.kind === "workspace");
-    const workspaceKeys = allWorkspaceKeys.filter((candidate) => String(candidate?.id || "") === keyId);
-    const purchaseReceipts = (receiptsPage?.receipts || []).filter((candidate) => candidate?.type === "billing.workspace_purchased.v1");
-    const debitHistory = (historyPage?.items || []).filter((candidate) => String(candidate?.valueUsdMicros || "") === `-${amountUsdMicros}` && candidate?.status === "used");
     const afterMicros = String(walletAfter?.usdMicros || "");
-    if (typeof usage?.totalRequests !== "number" || key?.id !== keyId || key?.kind !== "workspace" || key?.status !== "active" ||
-      typeof keyUsage?.totalRequests !== "number" || allWorkspaceKeys.length !== 1 || workspaceKeys.length !== 1 || purchaseReceipts.length !== 1 || purchaseReceipts[0]?.receiptId !== receiptId || debitHistory.length !== 1 ||
-      debit?.count !== 1 || debit?.code !== evidence.receipt.chargeReference || String(debit?.userId) !== sub2apiUserId || String(debit?.amountUsdMicros) !== amountUsdMicros ||
-      !/^\d+$/.test(afterMicros) || BigInt(beforeMicros) - BigInt(amountUsdMicros) !== BigInt(afterMicros) ||
-      evidence.receipt.chargeReference !== debit.code || String(evidence.receipt.totalUsdMicros) !== amountUsdMicros ||
-      evidence.receipt.fulfillment?.runtimeId !== evidence.runtime.runtimeId || String(evidence.receipt.fulfillment?.workspaceApiKeyId || "") !== keyId) {
-      throw new Error("local qualification accounting readback is invalid");
-    }
+    const accounting = validateLocalJ1AccountingReadback({
+      operationId, workspaceId, receiptId, runtimeId: evidence.runtime.runtimeId, keyId, sub2apiUserId,
+      debitCode: evidence.receipt.chargeReference, amountUsdMicros, beforeMicros, afterMicros,
+      baselineKeys, baselineReceipts, keys, receipts, key, keyUsage, usage, history: historyPage, debit, evidence
+    });
 
     onStage("qualification_cleanup");
     cleanupEvidence = await cleanup({ accountId: provision.accountId, workspaceId });
@@ -910,7 +980,7 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
         runtimeId: evidence.runtime.runtimeId, keyId, debitCode: debit.code, purchaseReceiptId: receiptId
       },
       debit: { count: 1, accountId: provision.accountId, operationId, workspaceId, code: debit.code, userId: sub2apiUserId, amountUsdMicros },
-      wallet: { beforeUsdMicros: beforeMicros, afterUsdMicros: afterMicros },
+      wallet: { beforeUsdMicros: beforeMicros, afterUsdMicros: afterMicros, exactDeltaObserved: accounting.walletExactDeltaObserved },
       receipt: {
         count: 1, id: receiptId, accountId: provision.accountId, operationId, workspaceId,
         runtimeId: evidence.runtime.runtimeId, keyId, chargeReference: evidence.receipt.chargeReference,
