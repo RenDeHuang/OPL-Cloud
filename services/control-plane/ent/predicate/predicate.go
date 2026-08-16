@@ -63,8 +63,5 @@ type User func(*sql.Selector)
 // Workspace is the predicate function for workspace builders.
 type Workspace func(*sql.Selector)
 
-// WorkspaceBackup is the predicate function for workspacebackup builders.
-type WorkspaceBackup func(*sql.Selector)
-
 // WorkspaceSyncEvent is the predicate function for workspacesyncevent builders.
 type WorkspaceSyncEvent func(*sql.Selector)

@@ -236,18 +236,6 @@ func (f WorkspaceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, e
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.WorkspaceMutation", m)
 }
 
-// The WorkspaceBackupFunc type is an adapter to allow the use of ordinary
-// function as WorkspaceBackup mutator.
-type WorkspaceBackupFunc func(context.Context, *ent.WorkspaceBackupMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f WorkspaceBackupFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.WorkspaceBackupMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.WorkspaceBackupMutation", m)
-}
-
 // The WorkspaceSyncEventFunc type is an adapter to allow the use of ordinary
 // function as WorkspaceSyncEvent mutator.
 type WorkspaceSyncEventFunc func(context.Context, *ent.WorkspaceSyncEventMutation) (ent.Value, error)

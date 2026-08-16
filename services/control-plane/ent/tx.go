@@ -50,8 +50,6 @@ type Tx struct {
 	User *UserClient
 	// Workspace is the client for interacting with the Workspace builders.
 	Workspace *WorkspaceClient
-	// WorkspaceBackup is the client for interacting with the WorkspaceBackup builders.
-	WorkspaceBackup *WorkspaceBackupClient
 	// WorkspaceSyncEvent is the client for interacting with the WorkspaceSyncEvent builders.
 	WorkspaceSyncEvent *WorkspaceSyncEventClient
 
@@ -204,7 +202,6 @@ func (tx *Tx) init() {
 	tx.SupportTicketMapping = NewSupportTicketMappingClient(tx.config)
 	tx.User = NewUserClient(tx.config)
 	tx.Workspace = NewWorkspaceClient(tx.config)
-	tx.WorkspaceBackup = NewWorkspaceBackupClient(tx.config)
 	tx.WorkspaceSyncEvent = NewWorkspaceSyncEventClient(tx.config)
 }
 

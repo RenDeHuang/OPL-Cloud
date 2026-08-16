@@ -475,39 +475,6 @@ var (
 			},
 		},
 	}
-	// WorkspaceBackupsColumns holds the columns for the "workspace_backups" table.
-	WorkspaceBackupsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "workspace_id", Type: field.TypeString},
-		{Name: "storage_id", Type: field.TypeString},
-		{Name: "snapshot_id", Type: field.TypeString},
-		{Name: "status", Type: field.TypeString},
-		{Name: "idempotency_key", Type: field.TypeString},
-		{Name: "request_hash", Type: field.TypeString},
-		{Name: "manifest_json", Type: field.TypeString, Default: "{}"},
-		{Name: "restored_storage_id", Type: field.TypeString, Default: ""},
-	}
-	// WorkspaceBackupsTable holds the schema information for the "workspace_backups" table.
-	WorkspaceBackupsTable = &schema.Table{
-		Name:       "workspace_backups",
-		Columns:    WorkspaceBackupsColumns,
-		PrimaryKey: []*schema.Column{WorkspaceBackupsColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "workspacebackup_workspace_id_created_at",
-				Unique:  false,
-				Columns: []*schema.Column{WorkspaceBackupsColumns[4], WorkspaceBackupsColumns[1]},
-			},
-			{
-				Name:    "workspacebackup_idempotency_key",
-				Unique:  true,
-				Columns: []*schema.Column{WorkspaceBackupsColumns[8]},
-			},
-		},
-	}
 	// ControlPlaneWorkspaceSyncEventsColumns holds the columns for the "control_plane_workspace_sync_events" table.
 	ControlPlaneWorkspaceSyncEventsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -581,7 +548,6 @@ var (
 		ControlPlaneSupportTicketMappingsTable,
 		ControlPlaneUsersTable,
 		ControlPlaneWorkspacesTable,
-		WorkspaceBackupsTable,
 		ControlPlaneWorkspaceSyncEventsTable,
 	}
 )

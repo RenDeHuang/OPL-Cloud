@@ -213,9 +213,10 @@ Sub2API management origin and credentials are never exposed to the browser.
   remain unconfirmed, and success requires authoritative Workspace-list
   readback. This is source and CI evidence, not a complete live installation.
 - ContentTransfer application runtime/API/Ent schema, Archive application models,
-  and `ExecutionRequest` application code are retired; historical migrations,
-  tables, and data were not dropped. Snapshot/Restore remains an extension
-  surface pending owner-authoritative resource disposition.
+  `ExecutionRequest` application code, and Control Plane `WorkspaceBackup` Ent
+  model are retired; historical migrations, tables, and data were not dropped.
+  Snapshot/Restore remains an extension surface pending owner-authoritative
+  resource disposition.
 - The Control Plane Session credential vault is process-local and single
   replica. Horizontal scaling is not supported until a secure shared vault and
   distributed wallet-mutation serialization boundary exist.

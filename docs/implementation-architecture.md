@@ -157,7 +157,7 @@ These are current implementation facts, not deletion authorization:
 
 | Cluster | Current implementation fact |
 | --- | --- |
-| Control Plane persistence | Archive and `ExecutionRequest` application models are deleted while historical SQL/tables remain; Organization/Membership are one-to-one compatibility storage |
+| Control Plane persistence | Archive, `ExecutionRequest`, and `WorkspaceBackup` application/Ent models are deleted while historical SQL/tables remain; Organization/Membership are one-to-one compatibility storage |
 | Control Plane instance extension | The normal Launch/Resume path is provider-neutral. Instance-owned Provider Acceptance consumes one provider-neutral facts batch and a narrow Runtime path; it requires canonical compute/storage provider IDs and treats legacy node-pool and persistent-volume values as optional response-only projections. Instance deployment and production acceptance remain external |
 | Fabric optional verticals | ContentTransfer runtime/API/schema surfaces are retired while historical migrations and data remain; Snapshot/Restore still has provider/service/store/route/test surfaces but no current in-repo product caller and remains excluded from the Pilot |
 | Fabric launch residue | Recovery proof/claim Service/provider/store mutation shells, unassigned legacy `LaunchBinding` branches, and the duplicate Tencent compute-ownership implementation are retired. Typed Tencent Launch has exact stage-chain readback/replay coverage; other operation-list consumers and the remaining mixed Fabric facade still require caller-led cohesion work |

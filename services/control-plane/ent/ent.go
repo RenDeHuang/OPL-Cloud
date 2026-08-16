@@ -25,7 +25,6 @@ import (
 	"opl-cloud/services/control-plane/ent/supportticketmapping"
 	"opl-cloud/services/control-plane/ent/user"
 	"opl-cloud/services/control-plane/ent/workspace"
-	"opl-cloud/services/control-plane/ent/workspacebackup"
 	"opl-cloud/services/control-plane/ent/workspacesyncevent"
 	"reflect"
 	"sync"
@@ -112,7 +111,6 @@ func checkColumn(table, column string) error {
 			supportticketmapping.Table:    supportticketmapping.ValidColumn,
 			user.Table:                    user.ValidColumn,
 			workspace.Table:               workspace.ValidColumn,
-			workspacebackup.Table:         workspacebackup.ValidColumn,
 			workspacesyncevent.Table:      workspacesyncevent.ValidColumn,
 		})
 	})
