@@ -455,24 +455,47 @@ function createHTTP(origin) {
   return { request, json };
 }
 
-export async function continueWorkspaceDelete(http, path, init, auth, expected) {
+function waitForWorkspaceDeleteSchedule(milliseconds) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+export function workspaceDeletePendingReceiptEvidence(pending) {
+  return {
+    phase: pending.phase,
+    ownerStage: pending.ownerStage,
+    ordinal: Number(pending.computeReadbacks),
+    max: Number(pending.maxComputeReadbacks),
+    operationDigest: `sha256:${createHash("sha256").update(String(pending.operationId)).digest("hex")}`
+  };
+}
+
+export async function continueWorkspaceDelete(http, path, init, auth, expected, waitForSchedule = waitForWorkspaceDeleteSchedule) {
   let previousReadback = 0;
   let maxReadbacks = 0;
   for (;;) {
-    const result = await http.json(path, init, auth, [200, 202]);
+    let result;
+    try {
+      result = await http.json(path, init, auth, [200, 202]);
+    } catch {
+      throw new Error("owner Workspace DELETE continuation failed");
+    }
     if (result.response.status === 200) return result.payload;
 
     const pending = result.payload;
     const readback = Number(pending?.computeReadbacks);
     const maximum = Number(pending?.maxComputeReadbacks);
+    const retryAfterRaw = result.response.headers?.get("retry-after");
+    const retryAfter = retryAfterRaw === "1" ? 1 : Number.NaN;
     if (pending?.status !== "pending" || pending?.phase !== "storage_destroyed" || pending?.ownerStage !== "compute" ||
       pending?.computeStatus !== "destroying" || pending?.operationId !== expected.operationId || pending?.workspaceId !== expected.workspaceId ||
       !Number.isSafeInteger(readback) || !Number.isSafeInteger(maximum) || readback !== previousReadback + 1 ||
-      maximum !== 8 || maxReadbacks !== 0 && maximum !== maxReadbacks || readback >= maximum) {
+      maximum !== 8 || maxReadbacks !== 0 && maximum !== maxReadbacks || readback >= maximum || retryAfter !== 1) {
       throw new Error("owner Workspace DELETE pending evidence is invalid");
     }
+    expected.onPending?.(workspaceDeletePendingReceiptEvidence(pending));
     previousReadback = readback;
     maxReadbacks = maximum;
+    await waitForSchedule(retryAfter * 1000);
   }
 }
 
@@ -750,6 +773,7 @@ export async function runLocalWorkspaceQualification(options) {
   let auth = null;
   let finalReceipt;
   let failure;
+  let ownerDeletePending = null;
   let residuals = { containers: null, volumes: null, networks: null };
   const composePrefix = ["compose", "--project-name", project, "--env-file", envFile];
   const qualificationCompose = options.authorityMode === "fixture" ? "deploy/portable/compose.local-qualification.yaml" : "deploy/portable/compose.local-qualification-live.yaml";
@@ -912,7 +936,10 @@ export async function runLocalWorkspaceQualification(options) {
     const expectedDeleteOperationId = `workspace-delete-${stableID("workspace.delete.v1", workspaceId).slice(0, 18)}`;
     const deletion = await continueWorkspaceDelete(http, `/api/workspaces/${encodeURIComponent(workspaceId)}`, {
       method: "DELETE", headers: { "idempotency-key": `local-qualification-delete:${workspaceId}` }, body: {}
-    }, restartedAuth, { operationId: expectedDeleteOperationId, workspaceId });
+    }, restartedAuth, {
+      operationId: expectedDeleteOperationId, workspaceId,
+      onPending: (pending) => { ownerDeletePending = pending; }
+    });
     if (deletion?.status !== "deleted" || deletion?.accountId !== accountId || String(deletion?.sub2apiUserId) !== String(sub2apiUserId) ||
       deletion?.launchOperationId !== operationId || deletion?.operationId !== expectedDeleteOperationId || deletion?.refundOperationId !== expectedDeleteOperationId ||
       deletion?.workspaceId !== workspaceId || deletion?.runtimeId !== evidence.runtime.runtimeId || String(deletion?.workspaceApiKeyId) !== String(launch.workspaceApiKeyId) ||
@@ -1047,6 +1074,7 @@ export async function runLocalWorkspaceQualification(options) {
       errorCode: "local_workspace_qualification_failed",
       error: redactedError(failure),
       residuals,
+      ...(ownerDeletePending ? { ownerDeletePending } : {}),
       deferred: [...deferredCloudGates]
     };
     await writeJSONAtomic(options.receiptPath, notReady);

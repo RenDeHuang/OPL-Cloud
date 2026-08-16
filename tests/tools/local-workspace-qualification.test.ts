@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,11 +35,13 @@ test("owner delete continues only from exact durable compute pending evidence", 
   const auth = { cookie: "session=test", csrf: "csrf-test" };
   const operationId = "workspace-delete-alpha";
   const responses = [
-    { response: { status: 202 }, payload: { status: "pending", phase: "storage_destroyed", ownerStage: "compute", computeStatus: "destroying", operationId, workspaceId: "ws-alpha", computeReadbacks: 1, maxComputeReadbacks: 8 } },
-    { response: { status: 202 }, payload: { status: "pending", phase: "storage_destroyed", ownerStage: "compute", computeStatus: "destroying", operationId, workspaceId: "ws-alpha", computeReadbacks: 2, maxComputeReadbacks: 8 } },
-    { response: { status: 200 }, payload: { status: "deleted", operationId, workspaceId: "ws-alpha" } }
+    { response: { status: 202, headers: new Headers({ "retry-after": "1" }) }, payload: { status: "pending", phase: "storage_destroyed", ownerStage: "compute", computeStatus: "destroying", operationId, workspaceId: "ws-alpha", computeReadbacks: 1, maxComputeReadbacks: 8 } },
+    { response: { status: 202, headers: new Headers({ "retry-after": "1" }) }, payload: { status: "pending", phase: "storage_destroyed", ownerStage: "compute", computeStatus: "destroying", operationId, workspaceId: "ws-alpha", computeReadbacks: 2, maxComputeReadbacks: 8 } },
+    { response: { status: 200, headers: new Headers() }, payload: { status: "deleted", operationId, workspaceId: "ws-alpha" } }
   ];
   const calls = [];
+  const waits = [];
+  const pendingEvidence = [];
   const http = {
     json: async (...args) => {
       calls.push(args);
@@ -46,10 +49,19 @@ test("owner delete continues only from exact durable compute pending evidence", 
     }
   };
 
-  const deletion = await continueWorkspaceDelete(http, path, init, auth, { operationId, workspaceId: "ws-alpha" });
+  const deletion = await continueWorkspaceDelete(http, path, init, auth, {
+    operationId, workspaceId: "ws-alpha", onPending: (pending) => pendingEvidence.push(pending)
+  }, async (milliseconds) => waits.push(milliseconds));
   assert.equal(deletion.status, "deleted");
   assert.equal(calls.length, 3);
+  assert.deepEqual(waits, [1000, 1000]);
   for (const call of calls) assert.deepEqual(call, [path, init, auth, [200, 202]]);
+  assert.equal(pendingEvidence.length, 2);
+  assert.deepEqual(pendingEvidence.at(-1), {
+    phase: "storage_destroyed", ownerStage: "compute", ordinal: 2, max: 8,
+    operationDigest: `sha256:${createHash("sha256").update(operationId).digest("hex")}`
+  });
+  assert.doesNotMatch(JSON.stringify(pendingEvidence), /workspace-delete-alpha|ws-alpha/);
 });
 
 test("owner delete rejects pending identity, ordinal, and budget drift", async () => {
@@ -65,6 +77,35 @@ test("owner delete rejects pending identity, ordinal, and budget drift", async (
       operationId: "workspace-delete-alpha", workspaceId: "ws-alpha"
     }), /pending evidence/, name);
   }
+});
+
+test("owner delete failure keeps only redacted last pending evidence", async () => {
+  const operationId = "workspace-delete-secret-alpha";
+  const pending = {
+    status: "pending", phase: "storage_destroyed", ownerStage: "compute", computeStatus: "destroying",
+    operationId, workspaceId: "ws-secret-alpha", computeReadbacks: 1, maxComputeReadbacks: 8
+  };
+  const evidence = [];
+  let calls = 0;
+  const http = {
+    json: async (_path, _init, _auth, statuses) => {
+      if (statuses.includes(202)) {
+        calls += 1;
+        if (calls === 1) return { response: { status: 202, headers: new Headers({ "retry-after": "1" }) }, payload: pending };
+        throw new Error(`HTTP 502 operation=${operationId} workspace=${pending.workspaceId}`);
+      }
+      throw new Error("unexpected status set");
+    }
+  };
+  await assert.rejects(() => continueWorkspaceDelete(http, "/api/workspaces/ws-secret-alpha", { method: "DELETE" }, null, {
+    operationId, workspaceId: pending.workspaceId, onPending: (value) => evidence.push(value)
+  }, async () => {}), /continuation failed/);
+  assert.equal(evidence.length, 1);
+  assert.deepEqual(evidence[0], {
+    phase: "storage_destroyed", ownerStage: "compute", ordinal: 1, max: 8,
+    operationDigest: `sha256:${createHash("sha256").update(operationId).digest("hex")}`
+  });
+  assert.doesNotMatch(JSON.stringify(evidence), /workspace-delete-secret-alpha|ws-secret-alpha/);
 });
 
 test("qualification compose uses the runner-owned exact environment", () => {

@@ -19,6 +19,8 @@ const workspaceDeleteReplayLease = 30 * time.Second
 
 const workspaceDeleteComputeReadbackBudget = 8
 
+const workspaceDeleteComputeReadbackInterval = time.Second
+
 var (
 	errWorkspaceDeleteCASConflict = errors.New("workspace_delete_cas_conflict")
 	errWorkspaceDeleteUnconfirmed = errors.New("workspace_delete_unconfirmed")
@@ -26,43 +28,44 @@ var (
 )
 
 type workspaceDeleteOperation struct {
-	OperationID         string                             `json:"operationId"`
-	RequestHash         string                             `json:"requestHash"`
-	AccountID           string                             `json:"accountId"`
-	OwnerUserID         string                             `json:"ownerUserId"`
-	Sub2APIUserID       int64                              `json:"sub2apiUserId"`
-	WorkspaceID         string                             `json:"workspaceId"`
-	LaunchOperationID   string                             `json:"launchOperationId"`
-	RuntimeID           string                             `json:"runtimeId"`
-	ComputeID           string                             `json:"computeId"`
-	StorageID           string                             `json:"storageId"`
-	AttachmentID        string                             `json:"attachmentId"`
-	WorkspaceAPIKeyID   int64                              `json:"workspaceApiKeyId"`
-	GatewaySecretRef    string                             `json:"gatewaySecretRef"`
-	GatewayFingerprint  string                             `json:"gatewayFingerprint"`
-	DebitCode           string                             `json:"debitCode"`
-	PurchaseReceiptID   string                             `json:"purchaseReceiptId"`
-	PurchaseReceipt     clients.ReceiptInput               `json:"purchaseReceipt"`
-	RefundCode          string                             `json:"refundCode"`
-	RefundReceiptID     string                             `json:"refundReceiptId,omitempty"`
-	TotalUSDMicros      int64                              `json:"totalUsdMicros"`
-	Phase               string                             `json:"phase"`
-	Status              string                             `json:"status"`
-	RuntimeStatus       string                             `json:"runtimeStatus,omitempty"`
-	SecretStatus        string                             `json:"secretStatus,omitempty"`
-	AttachmentStatus    string                             `json:"attachmentStatus,omitempty"`
-	StorageStatus       string                             `json:"storageStatus,omitempty"`
-	ComputeStatus       string                             `json:"computeStatus,omitempty"`
-	ComputeReadbacks    int                                `json:"computeReadbacks,omitempty"`
-	MaxComputeReadbacks int                                `json:"maxComputeReadbacks,omitempty"`
-	KeyStatus           string                             `json:"keyStatus,omitempty"`
-	KeyDeleteAttempted  bool                               `json:"keyDeleteAttempted,omitempty"`
-	RefundAttempted     bool                               `json:"refundAttempted,omitempty"`
-	KeyDeleteReplay     workspaceDeleteReplayAuthorization `json:"keyDeleteReplay,omitempty"`
-	RefundReplay        workspaceDeleteReplayAuthorization `json:"refundReplay,omitempty"`
-	RefundConfirmation  map[string]any                     `json:"refundConfirmation,omitempty"`
-	LastErrorCode       string                             `json:"lastErrorCode,omitempty"`
-	CreatedAt           string                             `json:"createdAt"`
+	OperationID              string                             `json:"operationId"`
+	RequestHash              string                             `json:"requestHash"`
+	AccountID                string                             `json:"accountId"`
+	OwnerUserID              string                             `json:"ownerUserId"`
+	Sub2APIUserID            int64                              `json:"sub2apiUserId"`
+	WorkspaceID              string                             `json:"workspaceId"`
+	LaunchOperationID        string                             `json:"launchOperationId"`
+	RuntimeID                string                             `json:"runtimeId"`
+	ComputeID                string                             `json:"computeId"`
+	StorageID                string                             `json:"storageId"`
+	AttachmentID             string                             `json:"attachmentId"`
+	WorkspaceAPIKeyID        int64                              `json:"workspaceApiKeyId"`
+	GatewaySecretRef         string                             `json:"gatewaySecretRef"`
+	GatewayFingerprint       string                             `json:"gatewayFingerprint"`
+	DebitCode                string                             `json:"debitCode"`
+	PurchaseReceiptID        string                             `json:"purchaseReceiptId"`
+	PurchaseReceipt          clients.ReceiptInput               `json:"purchaseReceipt"`
+	RefundCode               string                             `json:"refundCode"`
+	RefundReceiptID          string                             `json:"refundReceiptId,omitempty"`
+	TotalUSDMicros           int64                              `json:"totalUsdMicros"`
+	Phase                    string                             `json:"phase"`
+	Status                   string                             `json:"status"`
+	RuntimeStatus            string                             `json:"runtimeStatus,omitempty"`
+	SecretStatus             string                             `json:"secretStatus,omitempty"`
+	AttachmentStatus         string                             `json:"attachmentStatus,omitempty"`
+	StorageStatus            string                             `json:"storageStatus,omitempty"`
+	ComputeStatus            string                             `json:"computeStatus,omitempty"`
+	ComputeReadbacks         int                                `json:"computeReadbacks,omitempty"`
+	MaxComputeReadbacks      int                                `json:"maxComputeReadbacks,omitempty"`
+	ComputeReadbackNotBefore string                             `json:"computeReadbackNotBefore,omitempty"`
+	KeyStatus                string                             `json:"keyStatus,omitempty"`
+	KeyDeleteAttempted       bool                               `json:"keyDeleteAttempted,omitempty"`
+	RefundAttempted          bool                               `json:"refundAttempted,omitempty"`
+	KeyDeleteReplay          workspaceDeleteReplayAuthorization `json:"keyDeleteReplay,omitempty"`
+	RefundReplay             workspaceDeleteReplayAuthorization `json:"refundReplay,omitempty"`
+	RefundConfirmation       map[string]any                     `json:"refundConfirmation,omitempty"`
+	LastErrorCode            string                             `json:"lastErrorCode,omitempty"`
+	CreatedAt                string                             `json:"createdAt"`
 }
 
 type workspaceDeleteReplayAuthorization struct {
@@ -163,6 +166,9 @@ func (app *controlPlaneServer) deleteWorkspace(w http.ResponseWriter, r *http.Re
 	operation, err = app.runWorkspaceDelete(r.Context(), service, credential, authorizationID, operation)
 	if err != nil {
 		if errors.Is(err, errWorkspaceDeletePending) {
+			if retryAfter := workspaceDeleteComputeRetryAfter(operation, time.Now().UTC()); retryAfter > 0 {
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+			}
 			writeJSON(w, http.StatusAccepted, workspaceDeletePendingResponse(operation))
 			return
 		}
@@ -308,15 +314,19 @@ func validWorkspaceDeleteIdentity(operation workspaceDeleteOperation) bool {
 
 func validWorkspaceDeleteComputeReadbackState(operation workspaceDeleteOperation) bool {
 	if operation.ComputeReadbacks == 0 && operation.MaxComputeReadbacks == 0 {
-		return true
+		return operation.ComputeReadbackNotBefore == ""
 	}
 	if operation.MaxComputeReadbacks != workspaceDeleteComputeReadbackBudget || operation.ComputeReadbacks <= 0 || operation.ComputeReadbacks > operation.MaxComputeReadbacks || operation.ComputeStatus == "" {
 		return false
 	}
 	if operation.ComputeStatus == "destroying" {
-		return operation.Phase == "storage_destroyed"
+		_, err := time.Parse(time.RFC3339Nano, operation.ComputeReadbackNotBefore)
+		return operation.Phase == "storage_destroyed" && err == nil
 	}
 	if !workspaceDeleteComputeTerminal(operation.ComputeStatus) {
+		return false
+	}
+	if operation.ComputeReadbackNotBefore != "" {
 		return false
 	}
 	switch operation.Phase {
@@ -426,12 +436,21 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 		case "storage_destroyed":
 			var compute clients.ComputeAllocation
 			var err error
+			readNow := time.Now().UTC()
 			if operation.ComputeStatus == "destroying" {
+				notBefore, parseErr := time.Parse(time.RFC3339Nano, operation.ComputeReadbackNotBefore)
+				if parseErr != nil {
+					return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_compute_readback_schedule_invalid")
+				}
+				if readNow.Before(notBefore) {
+					return operation, errWorkspaceDeletePending
+				}
 				if operation.MaxComputeReadbacks != workspaceDeleteComputeReadbackBudget || operation.ComputeReadbacks >= operation.MaxComputeReadbacks {
 					return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_compute_absence_unconfirmed")
 				}
 				claimed := operation
 				claimed.ComputeReadbacks++
+				claimed.ComputeReadbackNotBefore = readNow.Add(workspaceDeleteComputeReadbackInterval).Format(time.RFC3339Nano)
 				if err := app.persistWorkspaceDelete(ctx, operation, claimed, false, false); err != nil {
 					return operation, err
 				}
@@ -447,6 +466,7 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 				}
 				claimed := operation
 				claimed.ComputeStatus, claimed.MaxComputeReadbacks, claimed.ComputeReadbacks = "destroying", workspaceDeleteComputeReadbackBudget, 1
+				claimed.ComputeReadbackNotBefore = readNow.Add(workspaceDeleteComputeReadbackInterval).Format(time.RFC3339Nano)
 				if err := app.persistWorkspaceDelete(ctx, operation, claimed, false, false); err != nil {
 					return operation, err
 				}
@@ -466,7 +486,7 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 				return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_compute_absence_unconfirmed")
 			}
 			next := operation
-			next.Phase, next.Status, next.ComputeStatus, next.LastErrorCode = "compute_destroyed", "running", compute.Status, ""
+			next.Phase, next.Status, next.ComputeStatus, next.ComputeReadbackNotBefore, next.LastErrorCode = "compute_destroyed", "running", compute.Status, "", ""
 			if err := app.persistWorkspaceDelete(ctx, operation, next, false, false); err != nil {
 				return operation, err
 			}
@@ -926,4 +946,17 @@ func workspaceDeletePendingResponse(operation workspaceDeleteOperation) map[stri
 		"phase": operation.Phase, "ownerStage": "compute", "computeStatus": operation.ComputeStatus,
 		"computeReadbacks": operation.ComputeReadbacks, "maxComputeReadbacks": operation.MaxComputeReadbacks,
 	}
+}
+
+func workspaceDeleteComputeRetryAfter(operation workspaceDeleteOperation, now time.Time) int {
+	notBefore, err := time.Parse(time.RFC3339Nano, operation.ComputeReadbackNotBefore)
+	if err != nil || !notBefore.After(now) {
+		return 0
+	}
+	remaining := notBefore.Sub(now)
+	seconds := int((remaining + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }

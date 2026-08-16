@@ -26,6 +26,7 @@ type workspaceDeleteFabric struct {
 	unknownStage        string
 	storageStatus       string
 	computeReads        []string
+	computeTerminal     <-chan struct{}
 	destroyed           bool
 	runtimeResponseLost bool
 	observeState        string
@@ -201,7 +202,14 @@ func (f *workspaceDeleteFabric) ReadComputeAllocation(_ context.Context, compute
 	}
 	f.mu.Lock()
 	status := "destroyed"
-	if len(f.computeReads) > 0 {
+	if f.computeTerminal != nil {
+		select {
+		case <-f.computeTerminal:
+			status = "destroyed"
+		default:
+			status = "destroying"
+		}
+	} else if len(f.computeReads) > 0 {
 		status = f.computeReads[0]
 		f.computeReads = f.computeReads[1:]
 	}
@@ -665,6 +673,7 @@ func TestWorkspaceDeleteComputePendingKeepsSameOperationAndOneMutation(t *testin
 	fabric.mu.Lock()
 	fabric.computeReads = []string{"destroyed"}
 	fabric.mu.Unlock()
+	expireWorkspaceDeleteComputeReadback(t, fixture.store)
 
 	second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, mutationKey)
 	if second.Code != http.StatusOK {
@@ -684,6 +693,57 @@ func TestWorkspaceDeleteComputePendingKeepsSameOperationAndOneMutation(t *testin
 	}
 }
 
+func TestWorkspaceDeleteComputePendingWaitsForServerScheduleWithoutConsumingRead(t *testing.T) {
+	workerTerminal := make(chan struct{})
+	fabric := &workspaceDeleteFabric{computeTerminal: workerTerminal}
+	fixture, _, _ := newWorkspaceDeleteCompletionFixtureWith(t, newMemoryTableStore(), fabric)
+	const mutationKey = "delete-compute-scheduled-read"
+
+	first := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, mutationKey)
+	if first.Code != http.StatusAccepted || first.Header().Get("Retry-After") != "1" {
+		t.Fatalf("initial pending status=%d retry-after=%q body=%s", first.Code, first.Header().Get("Retry-After"), first.Body.String())
+	}
+	second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, mutationKey)
+	if second.Code != http.StatusAccepted {
+		t.Fatalf("early continuation status=%d body=%s", second.Code, second.Body.String())
+	}
+	var pending map[string]any
+	if json.Unmarshal(second.Body.Bytes(), &pending) != nil || int64(numberField(pending, "computeReadbacks", 0)) != 1 {
+		t.Fatalf("early continuation consumed read slot: %#v", pending)
+	}
+	computeMutations, computeReads := 0, 0
+	for _, call := range fabric.recordedCalls() {
+		if strings.HasPrefix(call, "compute:") {
+			computeMutations++
+		}
+		if strings.HasPrefix(call, "compute-read:") {
+			computeReads++
+		}
+	}
+	if computeMutations != 1 || computeReads != 1 {
+		t.Fatalf("early continuation mutations=%d reads=%d calls=%#v", computeMutations, computeReads, fabric.recordedCalls())
+	}
+
+	close(workerTerminal)
+	expireWorkspaceDeleteComputeReadback(t, fixture.store)
+	terminal := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, mutationKey)
+	if terminal.Code != http.StatusOK {
+		t.Fatalf("scheduled terminal status=%d body=%s", terminal.Code, terminal.Body.String())
+	}
+	computeMutations, computeReads = 0, 0
+	for _, call := range fabric.recordedCalls() {
+		if strings.HasPrefix(call, "compute:") {
+			computeMutations++
+		}
+		if strings.HasPrefix(call, "compute-read:") {
+			computeReads++
+		}
+	}
+	if computeMutations != 1 || computeReads != 2 {
+		t.Fatalf("terminal mutations=%d reads=%d calls=%#v", computeMutations, computeReads, fabric.recordedCalls())
+	}
+}
+
 func TestWorkspaceDeleteComputePendingBudgetAndFailureMatrix(t *testing.T) {
 	t.Run("permanent pending exhausts exact read budget", func(t *testing.T) {
 		reads := make([]string, workspaceDeleteComputeReadbackBudget)
@@ -693,6 +753,9 @@ func TestWorkspaceDeleteComputePendingBudgetAndFailureMatrix(t *testing.T) {
 		fabric := &workspaceDeleteFabric{computeReads: reads}
 		fixture, _, _ := newWorkspaceDeleteCompletionFixtureWith(t, newMemoryTableStore(), fabric)
 		for readback := 1; readback <= workspaceDeleteComputeReadbackBudget; readback++ {
+			if readback > 1 {
+				expireWorkspaceDeleteComputeReadback(t, fixture.store)
+			}
 			response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-compute-permanent-pending")
 			if readback < workspaceDeleteComputeReadbackBudget && response.Code != http.StatusAccepted {
 				t.Fatalf("pending readback %d status=%d body=%s", readback, response.Code, response.Body.String())
@@ -737,6 +800,7 @@ func TestWorkspaceDeleteComputePendingBudgetAndFailureMatrix(t *testing.T) {
 				t.Fatalf("initial pending status=%d body=%s", first.Code, first.Body.String())
 			}
 			test.configure(fabric)
+			expireWorkspaceDeleteComputeReadback(t, fixture.store)
 			second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-compute-fail-closed")
 			if second.Code != http.StatusBadGateway {
 				t.Fatalf("fail-closed status=%d body=%s", second.Code, second.Body.String())
@@ -1275,6 +1339,7 @@ func TestPostgresWorkspaceDeleteComputePendingSurvivesRestart(t *testing.T) {
 	fabric.mu.Lock()
 	fabric.computeReads = []string{"destroyed"}
 	fabric.mu.Unlock()
+	expireWorkspaceDeleteComputeReadback(t, restarted)
 	service := controlplane.NewService(ledger, fabric, sub2API)
 	restartedServer, err := NewPersistentServer(service, restarted)
 	if err != nil {
@@ -1296,6 +1361,25 @@ func TestPostgresWorkspaceDeleteComputePendingSurvivesRestart(t *testing.T) {
 	}
 	if computeMutations != 1 || computeReads != 2 {
 		t.Fatalf("restarted compute mutations=%d reads=%d calls=%#v", computeMutations, computeReads, fabric.recordedCalls())
+	}
+}
+
+func expireWorkspaceDeleteComputeReadback(t *testing.T, store controlPlaneTableStore) {
+	t.Helper()
+	row, found, err := store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
+	if err != nil || !found {
+		t.Fatalf("pending operation found=%v err=%v", found, err)
+	}
+	operation, err := decodeWorkspaceDeleteOperation(row)
+	if err != nil {
+		t.Fatalf("pending operation decode: %v", err)
+	}
+	currentResult := stringValue(row["result"])
+	operation.ComputeReadbackNotBefore = time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano)
+	if err := store.ApplyWorkspaceDelete(context.Background(), workspaceDeleteStoreMutation{
+		ExpectedResult: currentResult, DesiredOperation: workspaceDeleteOperationRow(operation),
+	}); err != nil {
+		t.Fatalf("expire compute readback schedule: %v", err)
 	}
 }
 
