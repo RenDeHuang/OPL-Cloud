@@ -42,6 +42,18 @@ type ProductionE2ERecord func(*sql.Selector)
 // ProjectTaskSyncHead is the predicate function for projecttasksynchead builders.
 type ProjectTaskSyncHead func(*sql.Selector)
 
+// RemoteDeviceCredential is the predicate function for remotedevicecredential builders.
+type RemoteDeviceCredential func(*sql.Selector)
+
+// RemoteInvitation is the predicate function for remoteinvitation builders.
+type RemoteInvitation func(*sql.Selector)
+
+// RemotePairing is the predicate function for remotepairing builders.
+type RemotePairing func(*sql.Selector)
+
+// RemoteSeatCapacity is the predicate function for remoteseatcapacity builders.
+type RemoteSeatCapacity func(*sql.Selector)
+
 // RuntimeOperation is the predicate function for runtimeoperation builders.
 type RuntimeOperation func(*sql.Selector)
 

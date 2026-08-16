@@ -19,6 +19,10 @@ import (
 	"opl-cloud/services/control-plane/ent/predicate"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/projecttasksynchead"
+	"opl-cloud/services/control-plane/ent/remotedevicecredential"
+	"opl-cloud/services/control-plane/ent/remoteinvitation"
+	"opl-cloud/services/control-plane/ent/remotepairing"
+	"opl-cloud/services/control-plane/ent/remoteseatcapacity"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/session"
 	"opl-cloud/services/control-plane/ent/storageattachment"
@@ -55,6 +59,10 @@ const (
 	TypeOrganization            = "Organization"
 	TypeProductionE2ERecord     = "ProductionE2ERecord"
 	TypeProjectTaskSyncHead     = "ProjectTaskSyncHead"
+	TypeRemoteDeviceCredential  = "RemoteDeviceCredential"
+	TypeRemoteInvitation        = "RemoteInvitation"
+	TypeRemotePairing           = "RemotePairing"
+	TypeRemoteSeatCapacity      = "RemoteSeatCapacity"
 	TypeRuntimeOperation        = "RuntimeOperation"
 	TypeSession                 = "Session"
 	TypeStorageAttachment       = "StorageAttachment"
@@ -10305,6 +10313,4388 @@ func (m *ProjectTaskSyncHeadMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *ProjectTaskSyncHeadMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown ProjectTaskSyncHead edge %s", name)
+}
+
+// RemoteDeviceCredentialMutation represents an operation that mutates the RemoteDeviceCredential nodes in the graph.
+type RemoteDeviceCredentialMutation struct {
+	config
+	op                     Op
+	typ                    string
+	id                     *string
+	created_at             *time.Time
+	updated_at             *time.Time
+	pairing_id             *string
+	device_id              *string
+	role                   *string
+	credential_hash        *string
+	status                 *string
+	provider_user_id       *string
+	issued_at              *string
+	revoked_at             *string
+	issued_idempotency_key *string
+	clearedFields          map[string]struct{}
+	done                   bool
+	oldValue               func(context.Context) (*RemoteDeviceCredential, error)
+	predicates             []predicate.RemoteDeviceCredential
+}
+
+var _ ent.Mutation = (*RemoteDeviceCredentialMutation)(nil)
+
+// remotedevicecredentialOption allows management of the mutation configuration using functional options.
+type remotedevicecredentialOption func(*RemoteDeviceCredentialMutation)
+
+// newRemoteDeviceCredentialMutation creates new mutation for the RemoteDeviceCredential entity.
+func newRemoteDeviceCredentialMutation(c config, op Op, opts ...remotedevicecredentialOption) *RemoteDeviceCredentialMutation {
+	m := &RemoteDeviceCredentialMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeRemoteDeviceCredential,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withRemoteDeviceCredentialID sets the ID field of the mutation.
+func withRemoteDeviceCredentialID(id string) remotedevicecredentialOption {
+	return func(m *RemoteDeviceCredentialMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *RemoteDeviceCredential
+		)
+		m.oldValue = func(ctx context.Context) (*RemoteDeviceCredential, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().RemoteDeviceCredential.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withRemoteDeviceCredential sets the old RemoteDeviceCredential of the mutation.
+func withRemoteDeviceCredential(node *RemoteDeviceCredential) remotedevicecredentialOption {
+	return func(m *RemoteDeviceCredentialMutation) {
+		m.oldValue = func(context.Context) (*RemoteDeviceCredential, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m RemoteDeviceCredentialMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m RemoteDeviceCredentialMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of RemoteDeviceCredential entities.
+func (m *RemoteDeviceCredentialMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *RemoteDeviceCredentialMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *RemoteDeviceCredentialMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().RemoteDeviceCredential.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *RemoteDeviceCredentialMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *RemoteDeviceCredentialMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *RemoteDeviceCredentialMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *RemoteDeviceCredentialMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetPairingID sets the "pairing_id" field.
+func (m *RemoteDeviceCredentialMutation) SetPairingID(s string) {
+	m.pairing_id = &s
+}
+
+// PairingID returns the value of the "pairing_id" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) PairingID() (r string, exists bool) {
+	v := m.pairing_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPairingID returns the old "pairing_id" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldPairingID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPairingID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPairingID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPairingID: %w", err)
+	}
+	return oldValue.PairingID, nil
+}
+
+// ResetPairingID resets all changes to the "pairing_id" field.
+func (m *RemoteDeviceCredentialMutation) ResetPairingID() {
+	m.pairing_id = nil
+}
+
+// SetDeviceID sets the "device_id" field.
+func (m *RemoteDeviceCredentialMutation) SetDeviceID(s string) {
+	m.device_id = &s
+}
+
+// DeviceID returns the value of the "device_id" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) DeviceID() (r string, exists bool) {
+	v := m.device_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDeviceID returns the old "device_id" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldDeviceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDeviceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDeviceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDeviceID: %w", err)
+	}
+	return oldValue.DeviceID, nil
+}
+
+// ResetDeviceID resets all changes to the "device_id" field.
+func (m *RemoteDeviceCredentialMutation) ResetDeviceID() {
+	m.device_id = nil
+}
+
+// SetRole sets the "role" field.
+func (m *RemoteDeviceCredentialMutation) SetRole(s string) {
+	m.role = &s
+}
+
+// Role returns the value of the "role" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) Role() (r string, exists bool) {
+	v := m.role
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRole returns the old "role" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldRole(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRole is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRole requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRole: %w", err)
+	}
+	return oldValue.Role, nil
+}
+
+// ResetRole resets all changes to the "role" field.
+func (m *RemoteDeviceCredentialMutation) ResetRole() {
+	m.role = nil
+}
+
+// SetCredentialHash sets the "credential_hash" field.
+func (m *RemoteDeviceCredentialMutation) SetCredentialHash(s string) {
+	m.credential_hash = &s
+}
+
+// CredentialHash returns the value of the "credential_hash" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) CredentialHash() (r string, exists bool) {
+	v := m.credential_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCredentialHash returns the old "credential_hash" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldCredentialHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCredentialHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCredentialHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCredentialHash: %w", err)
+	}
+	return oldValue.CredentialHash, nil
+}
+
+// ResetCredentialHash resets all changes to the "credential_hash" field.
+func (m *RemoteDeviceCredentialMutation) ResetCredentialHash() {
+	m.credential_hash = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *RemoteDeviceCredentialMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *RemoteDeviceCredentialMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetProviderUserID sets the "provider_user_id" field.
+func (m *RemoteDeviceCredentialMutation) SetProviderUserID(s string) {
+	m.provider_user_id = &s
+}
+
+// ProviderUserID returns the value of the "provider_user_id" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) ProviderUserID() (r string, exists bool) {
+	v := m.provider_user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProviderUserID returns the old "provider_user_id" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldProviderUserID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProviderUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProviderUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProviderUserID: %w", err)
+	}
+	return oldValue.ProviderUserID, nil
+}
+
+// ResetProviderUserID resets all changes to the "provider_user_id" field.
+func (m *RemoteDeviceCredentialMutation) ResetProviderUserID() {
+	m.provider_user_id = nil
+}
+
+// SetIssuedAt sets the "issued_at" field.
+func (m *RemoteDeviceCredentialMutation) SetIssuedAt(s string) {
+	m.issued_at = &s
+}
+
+// IssuedAt returns the value of the "issued_at" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) IssuedAt() (r string, exists bool) {
+	v := m.issued_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIssuedAt returns the old "issued_at" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldIssuedAt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIssuedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIssuedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIssuedAt: %w", err)
+	}
+	return oldValue.IssuedAt, nil
+}
+
+// ResetIssuedAt resets all changes to the "issued_at" field.
+func (m *RemoteDeviceCredentialMutation) ResetIssuedAt() {
+	m.issued_at = nil
+}
+
+// SetRevokedAt sets the "revoked_at" field.
+func (m *RemoteDeviceCredentialMutation) SetRevokedAt(s string) {
+	m.revoked_at = &s
+}
+
+// RevokedAt returns the value of the "revoked_at" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) RevokedAt() (r string, exists bool) {
+	v := m.revoked_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRevokedAt returns the old "revoked_at" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldRevokedAt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRevokedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRevokedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRevokedAt: %w", err)
+	}
+	return oldValue.RevokedAt, nil
+}
+
+// ResetRevokedAt resets all changes to the "revoked_at" field.
+func (m *RemoteDeviceCredentialMutation) ResetRevokedAt() {
+	m.revoked_at = nil
+}
+
+// SetIssuedIdempotencyKey sets the "issued_idempotency_key" field.
+func (m *RemoteDeviceCredentialMutation) SetIssuedIdempotencyKey(s string) {
+	m.issued_idempotency_key = &s
+}
+
+// IssuedIdempotencyKey returns the value of the "issued_idempotency_key" field in the mutation.
+func (m *RemoteDeviceCredentialMutation) IssuedIdempotencyKey() (r string, exists bool) {
+	v := m.issued_idempotency_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIssuedIdempotencyKey returns the old "issued_idempotency_key" field's value of the RemoteDeviceCredential entity.
+// If the RemoteDeviceCredential object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteDeviceCredentialMutation) OldIssuedIdempotencyKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIssuedIdempotencyKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIssuedIdempotencyKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIssuedIdempotencyKey: %w", err)
+	}
+	return oldValue.IssuedIdempotencyKey, nil
+}
+
+// ResetIssuedIdempotencyKey resets all changes to the "issued_idempotency_key" field.
+func (m *RemoteDeviceCredentialMutation) ResetIssuedIdempotencyKey() {
+	m.issued_idempotency_key = nil
+}
+
+// Where appends a list predicates to the RemoteDeviceCredentialMutation builder.
+func (m *RemoteDeviceCredentialMutation) Where(ps ...predicate.RemoteDeviceCredential) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the RemoteDeviceCredentialMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *RemoteDeviceCredentialMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.RemoteDeviceCredential, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *RemoteDeviceCredentialMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *RemoteDeviceCredentialMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (RemoteDeviceCredential).
+func (m *RemoteDeviceCredentialMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *RemoteDeviceCredentialMutation) Fields() []string {
+	fields := make([]string, 0, 11)
+	if m.created_at != nil {
+		fields = append(fields, remotedevicecredential.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, remotedevicecredential.FieldUpdatedAt)
+	}
+	if m.pairing_id != nil {
+		fields = append(fields, remotedevicecredential.FieldPairingID)
+	}
+	if m.device_id != nil {
+		fields = append(fields, remotedevicecredential.FieldDeviceID)
+	}
+	if m.role != nil {
+		fields = append(fields, remotedevicecredential.FieldRole)
+	}
+	if m.credential_hash != nil {
+		fields = append(fields, remotedevicecredential.FieldCredentialHash)
+	}
+	if m.status != nil {
+		fields = append(fields, remotedevicecredential.FieldStatus)
+	}
+	if m.provider_user_id != nil {
+		fields = append(fields, remotedevicecredential.FieldProviderUserID)
+	}
+	if m.issued_at != nil {
+		fields = append(fields, remotedevicecredential.FieldIssuedAt)
+	}
+	if m.revoked_at != nil {
+		fields = append(fields, remotedevicecredential.FieldRevokedAt)
+	}
+	if m.issued_idempotency_key != nil {
+		fields = append(fields, remotedevicecredential.FieldIssuedIdempotencyKey)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *RemoteDeviceCredentialMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case remotedevicecredential.FieldCreatedAt:
+		return m.CreatedAt()
+	case remotedevicecredential.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case remotedevicecredential.FieldPairingID:
+		return m.PairingID()
+	case remotedevicecredential.FieldDeviceID:
+		return m.DeviceID()
+	case remotedevicecredential.FieldRole:
+		return m.Role()
+	case remotedevicecredential.FieldCredentialHash:
+		return m.CredentialHash()
+	case remotedevicecredential.FieldStatus:
+		return m.Status()
+	case remotedevicecredential.FieldProviderUserID:
+		return m.ProviderUserID()
+	case remotedevicecredential.FieldIssuedAt:
+		return m.IssuedAt()
+	case remotedevicecredential.FieldRevokedAt:
+		return m.RevokedAt()
+	case remotedevicecredential.FieldIssuedIdempotencyKey:
+		return m.IssuedIdempotencyKey()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *RemoteDeviceCredentialMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case remotedevicecredential.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case remotedevicecredential.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case remotedevicecredential.FieldPairingID:
+		return m.OldPairingID(ctx)
+	case remotedevicecredential.FieldDeviceID:
+		return m.OldDeviceID(ctx)
+	case remotedevicecredential.FieldRole:
+		return m.OldRole(ctx)
+	case remotedevicecredential.FieldCredentialHash:
+		return m.OldCredentialHash(ctx)
+	case remotedevicecredential.FieldStatus:
+		return m.OldStatus(ctx)
+	case remotedevicecredential.FieldProviderUserID:
+		return m.OldProviderUserID(ctx)
+	case remotedevicecredential.FieldIssuedAt:
+		return m.OldIssuedAt(ctx)
+	case remotedevicecredential.FieldRevokedAt:
+		return m.OldRevokedAt(ctx)
+	case remotedevicecredential.FieldIssuedIdempotencyKey:
+		return m.OldIssuedIdempotencyKey(ctx)
+	}
+	return nil, fmt.Errorf("unknown RemoteDeviceCredential field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *RemoteDeviceCredentialMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case remotedevicecredential.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case remotedevicecredential.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case remotedevicecredential.FieldPairingID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPairingID(v)
+		return nil
+	case remotedevicecredential.FieldDeviceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDeviceID(v)
+		return nil
+	case remotedevicecredential.FieldRole:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRole(v)
+		return nil
+	case remotedevicecredential.FieldCredentialHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCredentialHash(v)
+		return nil
+	case remotedevicecredential.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case remotedevicecredential.FieldProviderUserID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProviderUserID(v)
+		return nil
+	case remotedevicecredential.FieldIssuedAt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIssuedAt(v)
+		return nil
+	case remotedevicecredential.FieldRevokedAt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRevokedAt(v)
+		return nil
+	case remotedevicecredential.FieldIssuedIdempotencyKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIssuedIdempotencyKey(v)
+		return nil
+	}
+	return fmt.Errorf("unknown RemoteDeviceCredential field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *RemoteDeviceCredentialMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *RemoteDeviceCredentialMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *RemoteDeviceCredentialMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown RemoteDeviceCredential numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *RemoteDeviceCredentialMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *RemoteDeviceCredentialMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *RemoteDeviceCredentialMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown RemoteDeviceCredential nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *RemoteDeviceCredentialMutation) ResetField(name string) error {
+	switch name {
+	case remotedevicecredential.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case remotedevicecredential.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case remotedevicecredential.FieldPairingID:
+		m.ResetPairingID()
+		return nil
+	case remotedevicecredential.FieldDeviceID:
+		m.ResetDeviceID()
+		return nil
+	case remotedevicecredential.FieldRole:
+		m.ResetRole()
+		return nil
+	case remotedevicecredential.FieldCredentialHash:
+		m.ResetCredentialHash()
+		return nil
+	case remotedevicecredential.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case remotedevicecredential.FieldProviderUserID:
+		m.ResetProviderUserID()
+		return nil
+	case remotedevicecredential.FieldIssuedAt:
+		m.ResetIssuedAt()
+		return nil
+	case remotedevicecredential.FieldRevokedAt:
+		m.ResetRevokedAt()
+		return nil
+	case remotedevicecredential.FieldIssuedIdempotencyKey:
+		m.ResetIssuedIdempotencyKey()
+		return nil
+	}
+	return fmt.Errorf("unknown RemoteDeviceCredential field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *RemoteDeviceCredentialMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *RemoteDeviceCredentialMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *RemoteDeviceCredentialMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *RemoteDeviceCredentialMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *RemoteDeviceCredentialMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *RemoteDeviceCredentialMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *RemoteDeviceCredentialMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown RemoteDeviceCredential unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *RemoteDeviceCredentialMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown RemoteDeviceCredential edge %s", name)
+}
+
+// RemoteInvitationMutation represents an operation that mutates the RemoteInvitation nodes in the graph.
+type RemoteInvitationMutation struct {
+	config
+	op                 Op
+	typ                string
+	id                 *string
+	created_at         *time.Time
+	updated_at         *time.Time
+	label              *string
+	secret_hash        *string
+	secret_salt        *string
+	expires_at         *string
+	status             *string
+	consumed_at        *string
+	created_by_user_id *string
+	idempotency_key    *string
+	clearedFields      map[string]struct{}
+	done               bool
+	oldValue           func(context.Context) (*RemoteInvitation, error)
+	predicates         []predicate.RemoteInvitation
+}
+
+var _ ent.Mutation = (*RemoteInvitationMutation)(nil)
+
+// remoteinvitationOption allows management of the mutation configuration using functional options.
+type remoteinvitationOption func(*RemoteInvitationMutation)
+
+// newRemoteInvitationMutation creates new mutation for the RemoteInvitation entity.
+func newRemoteInvitationMutation(c config, op Op, opts ...remoteinvitationOption) *RemoteInvitationMutation {
+	m := &RemoteInvitationMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeRemoteInvitation,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withRemoteInvitationID sets the ID field of the mutation.
+func withRemoteInvitationID(id string) remoteinvitationOption {
+	return func(m *RemoteInvitationMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *RemoteInvitation
+		)
+		m.oldValue = func(ctx context.Context) (*RemoteInvitation, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().RemoteInvitation.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withRemoteInvitation sets the old RemoteInvitation of the mutation.
+func withRemoteInvitation(node *RemoteInvitation) remoteinvitationOption {
+	return func(m *RemoteInvitationMutation) {
+		m.oldValue = func(context.Context) (*RemoteInvitation, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m RemoteInvitationMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m RemoteInvitationMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of RemoteInvitation entities.
+func (m *RemoteInvitationMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *RemoteInvitationMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *RemoteInvitationMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().RemoteInvitation.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *RemoteInvitationMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *RemoteInvitationMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the RemoteInvitation entity.
+// If the RemoteInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteInvitationMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *RemoteInvitationMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *RemoteInvitationMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *RemoteInvitationMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the RemoteInvitation entity.
+// If the RemoteInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteInvitationMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *RemoteInvitationMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetLabel sets the "label" field.
+func (m *RemoteInvitationMutation) SetLabel(s string) {
+	m.label = &s
+}
+
+// Label returns the value of the "label" field in the mutation.
+func (m *RemoteInvitationMutation) Label() (r string, exists bool) {
+	v := m.label
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLabel returns the old "label" field's value of the RemoteInvitation entity.
+// If the RemoteInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteInvitationMutation) OldLabel(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLabel is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLabel requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLabel: %w", err)
+	}
+	return oldValue.Label, nil
+}
+
+// ResetLabel resets all changes to the "label" field.
+func (m *RemoteInvitationMutation) ResetLabel() {
+	m.label = nil
+}
+
+// SetSecretHash sets the "secret_hash" field.
+func (m *RemoteInvitationMutation) SetSecretHash(s string) {
+	m.secret_hash = &s
+}
+
+// SecretHash returns the value of the "secret_hash" field in the mutation.
+func (m *RemoteInvitationMutation) SecretHash() (r string, exists bool) {
+	v := m.secret_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSecretHash returns the old "secret_hash" field's value of the RemoteInvitation entity.
+// If the RemoteInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteInvitationMutation) OldSecretHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSecretHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSecretHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSecretHash: %w", err)
+	}
+	return oldValue.SecretHash, nil
+}
+
+// ResetSecretHash resets all changes to the "secret_hash" field.
+func (m *RemoteInvitationMutation) ResetSecretHash() {
+	m.secret_hash = nil
+}
+
+// SetSecretSalt sets the "secret_salt" field.
+func (m *RemoteInvitationMutation) SetSecretSalt(s string) {
+	m.secret_salt = &s
+}
+
+// SecretSalt returns the value of the "secret_salt" field in the mutation.
+func (m *RemoteInvitationMutation) SecretSalt() (r string, exists bool) {
+	v := m.secret_salt
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSecretSalt returns the old "secret_salt" field's value of the RemoteInvitation entity.
+// If the RemoteInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteInvitationMutation) OldSecretSalt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSecretSalt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSecretSalt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSecretSalt: %w", err)
+	}
+	return oldValue.SecretSalt, nil
+}
+
+// ResetSecretSalt resets all changes to the "secret_salt" field.
+func (m *RemoteInvitationMutation) ResetSecretSalt() {
+	m.secret_salt = nil
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (m *RemoteInvitationMutation) SetExpiresAt(s string) {
+	m.expires_at = &s
+}
+
+// ExpiresAt returns the value of the "expires_at" field in the mutation.
+func (m *RemoteInvitationMutation) ExpiresAt() (r string, exists bool) {
+	v := m.expires_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldExpiresAt returns the old "expires_at" field's value of the RemoteInvitation entity.
+// If the RemoteInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteInvitationMutation) OldExpiresAt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldExpiresAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldExpiresAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldExpiresAt: %w", err)
+	}
+	return oldValue.ExpiresAt, nil
+}
+
+// ResetExpiresAt resets all changes to the "expires_at" field.
+func (m *RemoteInvitationMutation) ResetExpiresAt() {
+	m.expires_at = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *RemoteInvitationMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *RemoteInvitationMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the RemoteInvitation entity.
+// If the RemoteInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteInvitationMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *RemoteInvitationMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetConsumedAt sets the "consumed_at" field.
+func (m *RemoteInvitationMutation) SetConsumedAt(s string) {
+	m.consumed_at = &s
+}
+
+// ConsumedAt returns the value of the "consumed_at" field in the mutation.
+func (m *RemoteInvitationMutation) ConsumedAt() (r string, exists bool) {
+	v := m.consumed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConsumedAt returns the old "consumed_at" field's value of the RemoteInvitation entity.
+// If the RemoteInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteInvitationMutation) OldConsumedAt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConsumedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConsumedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConsumedAt: %w", err)
+	}
+	return oldValue.ConsumedAt, nil
+}
+
+// ResetConsumedAt resets all changes to the "consumed_at" field.
+func (m *RemoteInvitationMutation) ResetConsumedAt() {
+	m.consumed_at = nil
+}
+
+// SetCreatedByUserID sets the "created_by_user_id" field.
+func (m *RemoteInvitationMutation) SetCreatedByUserID(s string) {
+	m.created_by_user_id = &s
+}
+
+// CreatedByUserID returns the value of the "created_by_user_id" field in the mutation.
+func (m *RemoteInvitationMutation) CreatedByUserID() (r string, exists bool) {
+	v := m.created_by_user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedByUserID returns the old "created_by_user_id" field's value of the RemoteInvitation entity.
+// If the RemoteInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteInvitationMutation) OldCreatedByUserID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedByUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedByUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedByUserID: %w", err)
+	}
+	return oldValue.CreatedByUserID, nil
+}
+
+// ResetCreatedByUserID resets all changes to the "created_by_user_id" field.
+func (m *RemoteInvitationMutation) ResetCreatedByUserID() {
+	m.created_by_user_id = nil
+}
+
+// SetIdempotencyKey sets the "idempotency_key" field.
+func (m *RemoteInvitationMutation) SetIdempotencyKey(s string) {
+	m.idempotency_key = &s
+}
+
+// IdempotencyKey returns the value of the "idempotency_key" field in the mutation.
+func (m *RemoteInvitationMutation) IdempotencyKey() (r string, exists bool) {
+	v := m.idempotency_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIdempotencyKey returns the old "idempotency_key" field's value of the RemoteInvitation entity.
+// If the RemoteInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteInvitationMutation) OldIdempotencyKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIdempotencyKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIdempotencyKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIdempotencyKey: %w", err)
+	}
+	return oldValue.IdempotencyKey, nil
+}
+
+// ResetIdempotencyKey resets all changes to the "idempotency_key" field.
+func (m *RemoteInvitationMutation) ResetIdempotencyKey() {
+	m.idempotency_key = nil
+}
+
+// Where appends a list predicates to the RemoteInvitationMutation builder.
+func (m *RemoteInvitationMutation) Where(ps ...predicate.RemoteInvitation) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the RemoteInvitationMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *RemoteInvitationMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.RemoteInvitation, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *RemoteInvitationMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *RemoteInvitationMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (RemoteInvitation).
+func (m *RemoteInvitationMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *RemoteInvitationMutation) Fields() []string {
+	fields := make([]string, 0, 10)
+	if m.created_at != nil {
+		fields = append(fields, remoteinvitation.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, remoteinvitation.FieldUpdatedAt)
+	}
+	if m.label != nil {
+		fields = append(fields, remoteinvitation.FieldLabel)
+	}
+	if m.secret_hash != nil {
+		fields = append(fields, remoteinvitation.FieldSecretHash)
+	}
+	if m.secret_salt != nil {
+		fields = append(fields, remoteinvitation.FieldSecretSalt)
+	}
+	if m.expires_at != nil {
+		fields = append(fields, remoteinvitation.FieldExpiresAt)
+	}
+	if m.status != nil {
+		fields = append(fields, remoteinvitation.FieldStatus)
+	}
+	if m.consumed_at != nil {
+		fields = append(fields, remoteinvitation.FieldConsumedAt)
+	}
+	if m.created_by_user_id != nil {
+		fields = append(fields, remoteinvitation.FieldCreatedByUserID)
+	}
+	if m.idempotency_key != nil {
+		fields = append(fields, remoteinvitation.FieldIdempotencyKey)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *RemoteInvitationMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case remoteinvitation.FieldCreatedAt:
+		return m.CreatedAt()
+	case remoteinvitation.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case remoteinvitation.FieldLabel:
+		return m.Label()
+	case remoteinvitation.FieldSecretHash:
+		return m.SecretHash()
+	case remoteinvitation.FieldSecretSalt:
+		return m.SecretSalt()
+	case remoteinvitation.FieldExpiresAt:
+		return m.ExpiresAt()
+	case remoteinvitation.FieldStatus:
+		return m.Status()
+	case remoteinvitation.FieldConsumedAt:
+		return m.ConsumedAt()
+	case remoteinvitation.FieldCreatedByUserID:
+		return m.CreatedByUserID()
+	case remoteinvitation.FieldIdempotencyKey:
+		return m.IdempotencyKey()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *RemoteInvitationMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case remoteinvitation.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case remoteinvitation.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case remoteinvitation.FieldLabel:
+		return m.OldLabel(ctx)
+	case remoteinvitation.FieldSecretHash:
+		return m.OldSecretHash(ctx)
+	case remoteinvitation.FieldSecretSalt:
+		return m.OldSecretSalt(ctx)
+	case remoteinvitation.FieldExpiresAt:
+		return m.OldExpiresAt(ctx)
+	case remoteinvitation.FieldStatus:
+		return m.OldStatus(ctx)
+	case remoteinvitation.FieldConsumedAt:
+		return m.OldConsumedAt(ctx)
+	case remoteinvitation.FieldCreatedByUserID:
+		return m.OldCreatedByUserID(ctx)
+	case remoteinvitation.FieldIdempotencyKey:
+		return m.OldIdempotencyKey(ctx)
+	}
+	return nil, fmt.Errorf("unknown RemoteInvitation field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *RemoteInvitationMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case remoteinvitation.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case remoteinvitation.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case remoteinvitation.FieldLabel:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLabel(v)
+		return nil
+	case remoteinvitation.FieldSecretHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSecretHash(v)
+		return nil
+	case remoteinvitation.FieldSecretSalt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSecretSalt(v)
+		return nil
+	case remoteinvitation.FieldExpiresAt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetExpiresAt(v)
+		return nil
+	case remoteinvitation.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case remoteinvitation.FieldConsumedAt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConsumedAt(v)
+		return nil
+	case remoteinvitation.FieldCreatedByUserID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedByUserID(v)
+		return nil
+	case remoteinvitation.FieldIdempotencyKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIdempotencyKey(v)
+		return nil
+	}
+	return fmt.Errorf("unknown RemoteInvitation field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *RemoteInvitationMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *RemoteInvitationMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *RemoteInvitationMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown RemoteInvitation numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *RemoteInvitationMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *RemoteInvitationMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *RemoteInvitationMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown RemoteInvitation nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *RemoteInvitationMutation) ResetField(name string) error {
+	switch name {
+	case remoteinvitation.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case remoteinvitation.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case remoteinvitation.FieldLabel:
+		m.ResetLabel()
+		return nil
+	case remoteinvitation.FieldSecretHash:
+		m.ResetSecretHash()
+		return nil
+	case remoteinvitation.FieldSecretSalt:
+		m.ResetSecretSalt()
+		return nil
+	case remoteinvitation.FieldExpiresAt:
+		m.ResetExpiresAt()
+		return nil
+	case remoteinvitation.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case remoteinvitation.FieldConsumedAt:
+		m.ResetConsumedAt()
+		return nil
+	case remoteinvitation.FieldCreatedByUserID:
+		m.ResetCreatedByUserID()
+		return nil
+	case remoteinvitation.FieldIdempotencyKey:
+		m.ResetIdempotencyKey()
+		return nil
+	}
+	return fmt.Errorf("unknown RemoteInvitation field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *RemoteInvitationMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *RemoteInvitationMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *RemoteInvitationMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *RemoteInvitationMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *RemoteInvitationMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *RemoteInvitationMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *RemoteInvitationMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown RemoteInvitation unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *RemoteInvitationMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown RemoteInvitation edge %s", name)
+}
+
+// RemotePairingMutation represents an operation that mutates the RemotePairing nodes in the graph.
+type RemotePairingMutation struct {
+	config
+	op                       Op
+	typ                      string
+	id                       *string
+	created_at               *time.Time
+	updated_at               *time.Time
+	invitation_id            *string
+	claim_secret_hash        *string
+	claim_secret_salt        *string
+	manual_code_hash         *string
+	manual_code_salt         *string
+	manual_attempts          *int
+	addmanual_attempts       *int
+	state                    *string
+	expires_at               *string
+	reservation_expires_at   *string
+	desktop_device_id        *string
+	desktop_device_label     *string
+	ios_device_id            *string
+	ios_device_label         *string
+	desktop_public_key       *string
+	ios_public_key           *string
+	sas                      *string
+	desktop_provider_user_id *string
+	ios_provider_user_id     *string
+	desktop_provider_absent  *bool
+	ios_provider_absent      *bool
+	confirmed_at             *string
+	revoked_at               *string
+	seat_released            *bool
+	create_idempotency_key   *string
+	create_request_hash      *string
+	claim_idempotency_key    *string
+	claim_request_hash       *string
+	revocation_receipt_id    *string
+	revocation_receipt_hash  *string
+	revocation_receipt_salt  *string
+	clearedFields            map[string]struct{}
+	done                     bool
+	oldValue                 func(context.Context) (*RemotePairing, error)
+	predicates               []predicate.RemotePairing
+}
+
+var _ ent.Mutation = (*RemotePairingMutation)(nil)
+
+// remotepairingOption allows management of the mutation configuration using functional options.
+type remotepairingOption func(*RemotePairingMutation)
+
+// newRemotePairingMutation creates new mutation for the RemotePairing entity.
+func newRemotePairingMutation(c config, op Op, opts ...remotepairingOption) *RemotePairingMutation {
+	m := &RemotePairingMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeRemotePairing,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withRemotePairingID sets the ID field of the mutation.
+func withRemotePairingID(id string) remotepairingOption {
+	return func(m *RemotePairingMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *RemotePairing
+		)
+		m.oldValue = func(ctx context.Context) (*RemotePairing, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().RemotePairing.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withRemotePairing sets the old RemotePairing of the mutation.
+func withRemotePairing(node *RemotePairing) remotepairingOption {
+	return func(m *RemotePairingMutation) {
+		m.oldValue = func(context.Context) (*RemotePairing, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m RemotePairingMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m RemotePairingMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of RemotePairing entities.
+func (m *RemotePairingMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *RemotePairingMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *RemotePairingMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().RemotePairing.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *RemotePairingMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *RemotePairingMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *RemotePairingMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *RemotePairingMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *RemotePairingMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *RemotePairingMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetInvitationID sets the "invitation_id" field.
+func (m *RemotePairingMutation) SetInvitationID(s string) {
+	m.invitation_id = &s
+}
+
+// InvitationID returns the value of the "invitation_id" field in the mutation.
+func (m *RemotePairingMutation) InvitationID() (r string, exists bool) {
+	v := m.invitation_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInvitationID returns the old "invitation_id" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldInvitationID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInvitationID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInvitationID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInvitationID: %w", err)
+	}
+	return oldValue.InvitationID, nil
+}
+
+// ResetInvitationID resets all changes to the "invitation_id" field.
+func (m *RemotePairingMutation) ResetInvitationID() {
+	m.invitation_id = nil
+}
+
+// SetClaimSecretHash sets the "claim_secret_hash" field.
+func (m *RemotePairingMutation) SetClaimSecretHash(s string) {
+	m.claim_secret_hash = &s
+}
+
+// ClaimSecretHash returns the value of the "claim_secret_hash" field in the mutation.
+func (m *RemotePairingMutation) ClaimSecretHash() (r string, exists bool) {
+	v := m.claim_secret_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldClaimSecretHash returns the old "claim_secret_hash" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldClaimSecretHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldClaimSecretHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldClaimSecretHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldClaimSecretHash: %w", err)
+	}
+	return oldValue.ClaimSecretHash, nil
+}
+
+// ResetClaimSecretHash resets all changes to the "claim_secret_hash" field.
+func (m *RemotePairingMutation) ResetClaimSecretHash() {
+	m.claim_secret_hash = nil
+}
+
+// SetClaimSecretSalt sets the "claim_secret_salt" field.
+func (m *RemotePairingMutation) SetClaimSecretSalt(s string) {
+	m.claim_secret_salt = &s
+}
+
+// ClaimSecretSalt returns the value of the "claim_secret_salt" field in the mutation.
+func (m *RemotePairingMutation) ClaimSecretSalt() (r string, exists bool) {
+	v := m.claim_secret_salt
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldClaimSecretSalt returns the old "claim_secret_salt" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldClaimSecretSalt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldClaimSecretSalt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldClaimSecretSalt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldClaimSecretSalt: %w", err)
+	}
+	return oldValue.ClaimSecretSalt, nil
+}
+
+// ResetClaimSecretSalt resets all changes to the "claim_secret_salt" field.
+func (m *RemotePairingMutation) ResetClaimSecretSalt() {
+	m.claim_secret_salt = nil
+}
+
+// SetManualCodeHash sets the "manual_code_hash" field.
+func (m *RemotePairingMutation) SetManualCodeHash(s string) {
+	m.manual_code_hash = &s
+}
+
+// ManualCodeHash returns the value of the "manual_code_hash" field in the mutation.
+func (m *RemotePairingMutation) ManualCodeHash() (r string, exists bool) {
+	v := m.manual_code_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldManualCodeHash returns the old "manual_code_hash" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldManualCodeHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldManualCodeHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldManualCodeHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldManualCodeHash: %w", err)
+	}
+	return oldValue.ManualCodeHash, nil
+}
+
+// ResetManualCodeHash resets all changes to the "manual_code_hash" field.
+func (m *RemotePairingMutation) ResetManualCodeHash() {
+	m.manual_code_hash = nil
+}
+
+// SetManualCodeSalt sets the "manual_code_salt" field.
+func (m *RemotePairingMutation) SetManualCodeSalt(s string) {
+	m.manual_code_salt = &s
+}
+
+// ManualCodeSalt returns the value of the "manual_code_salt" field in the mutation.
+func (m *RemotePairingMutation) ManualCodeSalt() (r string, exists bool) {
+	v := m.manual_code_salt
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldManualCodeSalt returns the old "manual_code_salt" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldManualCodeSalt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldManualCodeSalt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldManualCodeSalt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldManualCodeSalt: %w", err)
+	}
+	return oldValue.ManualCodeSalt, nil
+}
+
+// ResetManualCodeSalt resets all changes to the "manual_code_salt" field.
+func (m *RemotePairingMutation) ResetManualCodeSalt() {
+	m.manual_code_salt = nil
+}
+
+// SetManualAttempts sets the "manual_attempts" field.
+func (m *RemotePairingMutation) SetManualAttempts(i int) {
+	m.manual_attempts = &i
+	m.addmanual_attempts = nil
+}
+
+// ManualAttempts returns the value of the "manual_attempts" field in the mutation.
+func (m *RemotePairingMutation) ManualAttempts() (r int, exists bool) {
+	v := m.manual_attempts
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldManualAttempts returns the old "manual_attempts" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldManualAttempts(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldManualAttempts is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldManualAttempts requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldManualAttempts: %w", err)
+	}
+	return oldValue.ManualAttempts, nil
+}
+
+// AddManualAttempts adds i to the "manual_attempts" field.
+func (m *RemotePairingMutation) AddManualAttempts(i int) {
+	if m.addmanual_attempts != nil {
+		*m.addmanual_attempts += i
+	} else {
+		m.addmanual_attempts = &i
+	}
+}
+
+// AddedManualAttempts returns the value that was added to the "manual_attempts" field in this mutation.
+func (m *RemotePairingMutation) AddedManualAttempts() (r int, exists bool) {
+	v := m.addmanual_attempts
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetManualAttempts resets all changes to the "manual_attempts" field.
+func (m *RemotePairingMutation) ResetManualAttempts() {
+	m.manual_attempts = nil
+	m.addmanual_attempts = nil
+}
+
+// SetState sets the "state" field.
+func (m *RemotePairingMutation) SetState(s string) {
+	m.state = &s
+}
+
+// State returns the value of the "state" field in the mutation.
+func (m *RemotePairingMutation) State() (r string, exists bool) {
+	v := m.state
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldState returns the old "state" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldState(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldState is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldState requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldState: %w", err)
+	}
+	return oldValue.State, nil
+}
+
+// ResetState resets all changes to the "state" field.
+func (m *RemotePairingMutation) ResetState() {
+	m.state = nil
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (m *RemotePairingMutation) SetExpiresAt(s string) {
+	m.expires_at = &s
+}
+
+// ExpiresAt returns the value of the "expires_at" field in the mutation.
+func (m *RemotePairingMutation) ExpiresAt() (r string, exists bool) {
+	v := m.expires_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldExpiresAt returns the old "expires_at" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldExpiresAt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldExpiresAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldExpiresAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldExpiresAt: %w", err)
+	}
+	return oldValue.ExpiresAt, nil
+}
+
+// ResetExpiresAt resets all changes to the "expires_at" field.
+func (m *RemotePairingMutation) ResetExpiresAt() {
+	m.expires_at = nil
+}
+
+// SetReservationExpiresAt sets the "reservation_expires_at" field.
+func (m *RemotePairingMutation) SetReservationExpiresAt(s string) {
+	m.reservation_expires_at = &s
+}
+
+// ReservationExpiresAt returns the value of the "reservation_expires_at" field in the mutation.
+func (m *RemotePairingMutation) ReservationExpiresAt() (r string, exists bool) {
+	v := m.reservation_expires_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldReservationExpiresAt returns the old "reservation_expires_at" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldReservationExpiresAt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldReservationExpiresAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldReservationExpiresAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldReservationExpiresAt: %w", err)
+	}
+	return oldValue.ReservationExpiresAt, nil
+}
+
+// ResetReservationExpiresAt resets all changes to the "reservation_expires_at" field.
+func (m *RemotePairingMutation) ResetReservationExpiresAt() {
+	m.reservation_expires_at = nil
+}
+
+// SetDesktopDeviceID sets the "desktop_device_id" field.
+func (m *RemotePairingMutation) SetDesktopDeviceID(s string) {
+	m.desktop_device_id = &s
+}
+
+// DesktopDeviceID returns the value of the "desktop_device_id" field in the mutation.
+func (m *RemotePairingMutation) DesktopDeviceID() (r string, exists bool) {
+	v := m.desktop_device_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDesktopDeviceID returns the old "desktop_device_id" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldDesktopDeviceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDesktopDeviceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDesktopDeviceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDesktopDeviceID: %w", err)
+	}
+	return oldValue.DesktopDeviceID, nil
+}
+
+// ResetDesktopDeviceID resets all changes to the "desktop_device_id" field.
+func (m *RemotePairingMutation) ResetDesktopDeviceID() {
+	m.desktop_device_id = nil
+}
+
+// SetDesktopDeviceLabel sets the "desktop_device_label" field.
+func (m *RemotePairingMutation) SetDesktopDeviceLabel(s string) {
+	m.desktop_device_label = &s
+}
+
+// DesktopDeviceLabel returns the value of the "desktop_device_label" field in the mutation.
+func (m *RemotePairingMutation) DesktopDeviceLabel() (r string, exists bool) {
+	v := m.desktop_device_label
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDesktopDeviceLabel returns the old "desktop_device_label" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldDesktopDeviceLabel(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDesktopDeviceLabel is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDesktopDeviceLabel requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDesktopDeviceLabel: %w", err)
+	}
+	return oldValue.DesktopDeviceLabel, nil
+}
+
+// ResetDesktopDeviceLabel resets all changes to the "desktop_device_label" field.
+func (m *RemotePairingMutation) ResetDesktopDeviceLabel() {
+	m.desktop_device_label = nil
+}
+
+// SetIosDeviceID sets the "ios_device_id" field.
+func (m *RemotePairingMutation) SetIosDeviceID(s string) {
+	m.ios_device_id = &s
+}
+
+// IosDeviceID returns the value of the "ios_device_id" field in the mutation.
+func (m *RemotePairingMutation) IosDeviceID() (r string, exists bool) {
+	v := m.ios_device_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIosDeviceID returns the old "ios_device_id" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldIosDeviceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIosDeviceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIosDeviceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIosDeviceID: %w", err)
+	}
+	return oldValue.IosDeviceID, nil
+}
+
+// ResetIosDeviceID resets all changes to the "ios_device_id" field.
+func (m *RemotePairingMutation) ResetIosDeviceID() {
+	m.ios_device_id = nil
+}
+
+// SetIosDeviceLabel sets the "ios_device_label" field.
+func (m *RemotePairingMutation) SetIosDeviceLabel(s string) {
+	m.ios_device_label = &s
+}
+
+// IosDeviceLabel returns the value of the "ios_device_label" field in the mutation.
+func (m *RemotePairingMutation) IosDeviceLabel() (r string, exists bool) {
+	v := m.ios_device_label
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIosDeviceLabel returns the old "ios_device_label" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldIosDeviceLabel(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIosDeviceLabel is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIosDeviceLabel requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIosDeviceLabel: %w", err)
+	}
+	return oldValue.IosDeviceLabel, nil
+}
+
+// ResetIosDeviceLabel resets all changes to the "ios_device_label" field.
+func (m *RemotePairingMutation) ResetIosDeviceLabel() {
+	m.ios_device_label = nil
+}
+
+// SetDesktopPublicKey sets the "desktop_public_key" field.
+func (m *RemotePairingMutation) SetDesktopPublicKey(s string) {
+	m.desktop_public_key = &s
+}
+
+// DesktopPublicKey returns the value of the "desktop_public_key" field in the mutation.
+func (m *RemotePairingMutation) DesktopPublicKey() (r string, exists bool) {
+	v := m.desktop_public_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDesktopPublicKey returns the old "desktop_public_key" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldDesktopPublicKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDesktopPublicKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDesktopPublicKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDesktopPublicKey: %w", err)
+	}
+	return oldValue.DesktopPublicKey, nil
+}
+
+// ResetDesktopPublicKey resets all changes to the "desktop_public_key" field.
+func (m *RemotePairingMutation) ResetDesktopPublicKey() {
+	m.desktop_public_key = nil
+}
+
+// SetIosPublicKey sets the "ios_public_key" field.
+func (m *RemotePairingMutation) SetIosPublicKey(s string) {
+	m.ios_public_key = &s
+}
+
+// IosPublicKey returns the value of the "ios_public_key" field in the mutation.
+func (m *RemotePairingMutation) IosPublicKey() (r string, exists bool) {
+	v := m.ios_public_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIosPublicKey returns the old "ios_public_key" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldIosPublicKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIosPublicKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIosPublicKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIosPublicKey: %w", err)
+	}
+	return oldValue.IosPublicKey, nil
+}
+
+// ResetIosPublicKey resets all changes to the "ios_public_key" field.
+func (m *RemotePairingMutation) ResetIosPublicKey() {
+	m.ios_public_key = nil
+}
+
+// SetSas sets the "sas" field.
+func (m *RemotePairingMutation) SetSas(s string) {
+	m.sas = &s
+}
+
+// Sas returns the value of the "sas" field in the mutation.
+func (m *RemotePairingMutation) Sas() (r string, exists bool) {
+	v := m.sas
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSas returns the old "sas" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldSas(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSas is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSas requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSas: %w", err)
+	}
+	return oldValue.Sas, nil
+}
+
+// ResetSas resets all changes to the "sas" field.
+func (m *RemotePairingMutation) ResetSas() {
+	m.sas = nil
+}
+
+// SetDesktopProviderUserID sets the "desktop_provider_user_id" field.
+func (m *RemotePairingMutation) SetDesktopProviderUserID(s string) {
+	m.desktop_provider_user_id = &s
+}
+
+// DesktopProviderUserID returns the value of the "desktop_provider_user_id" field in the mutation.
+func (m *RemotePairingMutation) DesktopProviderUserID() (r string, exists bool) {
+	v := m.desktop_provider_user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDesktopProviderUserID returns the old "desktop_provider_user_id" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldDesktopProviderUserID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDesktopProviderUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDesktopProviderUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDesktopProviderUserID: %w", err)
+	}
+	return oldValue.DesktopProviderUserID, nil
+}
+
+// ResetDesktopProviderUserID resets all changes to the "desktop_provider_user_id" field.
+func (m *RemotePairingMutation) ResetDesktopProviderUserID() {
+	m.desktop_provider_user_id = nil
+}
+
+// SetIosProviderUserID sets the "ios_provider_user_id" field.
+func (m *RemotePairingMutation) SetIosProviderUserID(s string) {
+	m.ios_provider_user_id = &s
+}
+
+// IosProviderUserID returns the value of the "ios_provider_user_id" field in the mutation.
+func (m *RemotePairingMutation) IosProviderUserID() (r string, exists bool) {
+	v := m.ios_provider_user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIosProviderUserID returns the old "ios_provider_user_id" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldIosProviderUserID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIosProviderUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIosProviderUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIosProviderUserID: %w", err)
+	}
+	return oldValue.IosProviderUserID, nil
+}
+
+// ResetIosProviderUserID resets all changes to the "ios_provider_user_id" field.
+func (m *RemotePairingMutation) ResetIosProviderUserID() {
+	m.ios_provider_user_id = nil
+}
+
+// SetDesktopProviderAbsent sets the "desktop_provider_absent" field.
+func (m *RemotePairingMutation) SetDesktopProviderAbsent(b bool) {
+	m.desktop_provider_absent = &b
+}
+
+// DesktopProviderAbsent returns the value of the "desktop_provider_absent" field in the mutation.
+func (m *RemotePairingMutation) DesktopProviderAbsent() (r bool, exists bool) {
+	v := m.desktop_provider_absent
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDesktopProviderAbsent returns the old "desktop_provider_absent" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldDesktopProviderAbsent(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDesktopProviderAbsent is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDesktopProviderAbsent requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDesktopProviderAbsent: %w", err)
+	}
+	return oldValue.DesktopProviderAbsent, nil
+}
+
+// ResetDesktopProviderAbsent resets all changes to the "desktop_provider_absent" field.
+func (m *RemotePairingMutation) ResetDesktopProviderAbsent() {
+	m.desktop_provider_absent = nil
+}
+
+// SetIosProviderAbsent sets the "ios_provider_absent" field.
+func (m *RemotePairingMutation) SetIosProviderAbsent(b bool) {
+	m.ios_provider_absent = &b
+}
+
+// IosProviderAbsent returns the value of the "ios_provider_absent" field in the mutation.
+func (m *RemotePairingMutation) IosProviderAbsent() (r bool, exists bool) {
+	v := m.ios_provider_absent
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIosProviderAbsent returns the old "ios_provider_absent" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldIosProviderAbsent(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIosProviderAbsent is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIosProviderAbsent requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIosProviderAbsent: %w", err)
+	}
+	return oldValue.IosProviderAbsent, nil
+}
+
+// ResetIosProviderAbsent resets all changes to the "ios_provider_absent" field.
+func (m *RemotePairingMutation) ResetIosProviderAbsent() {
+	m.ios_provider_absent = nil
+}
+
+// SetConfirmedAt sets the "confirmed_at" field.
+func (m *RemotePairingMutation) SetConfirmedAt(s string) {
+	m.confirmed_at = &s
+}
+
+// ConfirmedAt returns the value of the "confirmed_at" field in the mutation.
+func (m *RemotePairingMutation) ConfirmedAt() (r string, exists bool) {
+	v := m.confirmed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConfirmedAt returns the old "confirmed_at" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldConfirmedAt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConfirmedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConfirmedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConfirmedAt: %w", err)
+	}
+	return oldValue.ConfirmedAt, nil
+}
+
+// ResetConfirmedAt resets all changes to the "confirmed_at" field.
+func (m *RemotePairingMutation) ResetConfirmedAt() {
+	m.confirmed_at = nil
+}
+
+// SetRevokedAt sets the "revoked_at" field.
+func (m *RemotePairingMutation) SetRevokedAt(s string) {
+	m.revoked_at = &s
+}
+
+// RevokedAt returns the value of the "revoked_at" field in the mutation.
+func (m *RemotePairingMutation) RevokedAt() (r string, exists bool) {
+	v := m.revoked_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRevokedAt returns the old "revoked_at" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldRevokedAt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRevokedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRevokedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRevokedAt: %w", err)
+	}
+	return oldValue.RevokedAt, nil
+}
+
+// ResetRevokedAt resets all changes to the "revoked_at" field.
+func (m *RemotePairingMutation) ResetRevokedAt() {
+	m.revoked_at = nil
+}
+
+// SetSeatReleased sets the "seat_released" field.
+func (m *RemotePairingMutation) SetSeatReleased(b bool) {
+	m.seat_released = &b
+}
+
+// SeatReleased returns the value of the "seat_released" field in the mutation.
+func (m *RemotePairingMutation) SeatReleased() (r bool, exists bool) {
+	v := m.seat_released
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSeatReleased returns the old "seat_released" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldSeatReleased(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSeatReleased is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSeatReleased requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSeatReleased: %w", err)
+	}
+	return oldValue.SeatReleased, nil
+}
+
+// ResetSeatReleased resets all changes to the "seat_released" field.
+func (m *RemotePairingMutation) ResetSeatReleased() {
+	m.seat_released = nil
+}
+
+// SetCreateIdempotencyKey sets the "create_idempotency_key" field.
+func (m *RemotePairingMutation) SetCreateIdempotencyKey(s string) {
+	m.create_idempotency_key = &s
+}
+
+// CreateIdempotencyKey returns the value of the "create_idempotency_key" field in the mutation.
+func (m *RemotePairingMutation) CreateIdempotencyKey() (r string, exists bool) {
+	v := m.create_idempotency_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreateIdempotencyKey returns the old "create_idempotency_key" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldCreateIdempotencyKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreateIdempotencyKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreateIdempotencyKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreateIdempotencyKey: %w", err)
+	}
+	return oldValue.CreateIdempotencyKey, nil
+}
+
+// ResetCreateIdempotencyKey resets all changes to the "create_idempotency_key" field.
+func (m *RemotePairingMutation) ResetCreateIdempotencyKey() {
+	m.create_idempotency_key = nil
+}
+
+// SetCreateRequestHash sets the "create_request_hash" field.
+func (m *RemotePairingMutation) SetCreateRequestHash(s string) {
+	m.create_request_hash = &s
+}
+
+// CreateRequestHash returns the value of the "create_request_hash" field in the mutation.
+func (m *RemotePairingMutation) CreateRequestHash() (r string, exists bool) {
+	v := m.create_request_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreateRequestHash returns the old "create_request_hash" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldCreateRequestHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreateRequestHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreateRequestHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreateRequestHash: %w", err)
+	}
+	return oldValue.CreateRequestHash, nil
+}
+
+// ResetCreateRequestHash resets all changes to the "create_request_hash" field.
+func (m *RemotePairingMutation) ResetCreateRequestHash() {
+	m.create_request_hash = nil
+}
+
+// SetClaimIdempotencyKey sets the "claim_idempotency_key" field.
+func (m *RemotePairingMutation) SetClaimIdempotencyKey(s string) {
+	m.claim_idempotency_key = &s
+}
+
+// ClaimIdempotencyKey returns the value of the "claim_idempotency_key" field in the mutation.
+func (m *RemotePairingMutation) ClaimIdempotencyKey() (r string, exists bool) {
+	v := m.claim_idempotency_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldClaimIdempotencyKey returns the old "claim_idempotency_key" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldClaimIdempotencyKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldClaimIdempotencyKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldClaimIdempotencyKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldClaimIdempotencyKey: %w", err)
+	}
+	return oldValue.ClaimIdempotencyKey, nil
+}
+
+// ResetClaimIdempotencyKey resets all changes to the "claim_idempotency_key" field.
+func (m *RemotePairingMutation) ResetClaimIdempotencyKey() {
+	m.claim_idempotency_key = nil
+}
+
+// SetClaimRequestHash sets the "claim_request_hash" field.
+func (m *RemotePairingMutation) SetClaimRequestHash(s string) {
+	m.claim_request_hash = &s
+}
+
+// ClaimRequestHash returns the value of the "claim_request_hash" field in the mutation.
+func (m *RemotePairingMutation) ClaimRequestHash() (r string, exists bool) {
+	v := m.claim_request_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldClaimRequestHash returns the old "claim_request_hash" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldClaimRequestHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldClaimRequestHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldClaimRequestHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldClaimRequestHash: %w", err)
+	}
+	return oldValue.ClaimRequestHash, nil
+}
+
+// ResetClaimRequestHash resets all changes to the "claim_request_hash" field.
+func (m *RemotePairingMutation) ResetClaimRequestHash() {
+	m.claim_request_hash = nil
+}
+
+// SetRevocationReceiptID sets the "revocation_receipt_id" field.
+func (m *RemotePairingMutation) SetRevocationReceiptID(s string) {
+	m.revocation_receipt_id = &s
+}
+
+// RevocationReceiptID returns the value of the "revocation_receipt_id" field in the mutation.
+func (m *RemotePairingMutation) RevocationReceiptID() (r string, exists bool) {
+	v := m.revocation_receipt_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRevocationReceiptID returns the old "revocation_receipt_id" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldRevocationReceiptID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRevocationReceiptID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRevocationReceiptID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRevocationReceiptID: %w", err)
+	}
+	return oldValue.RevocationReceiptID, nil
+}
+
+// ResetRevocationReceiptID resets all changes to the "revocation_receipt_id" field.
+func (m *RemotePairingMutation) ResetRevocationReceiptID() {
+	m.revocation_receipt_id = nil
+}
+
+// SetRevocationReceiptHash sets the "revocation_receipt_hash" field.
+func (m *RemotePairingMutation) SetRevocationReceiptHash(s string) {
+	m.revocation_receipt_hash = &s
+}
+
+// RevocationReceiptHash returns the value of the "revocation_receipt_hash" field in the mutation.
+func (m *RemotePairingMutation) RevocationReceiptHash() (r string, exists bool) {
+	v := m.revocation_receipt_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRevocationReceiptHash returns the old "revocation_receipt_hash" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldRevocationReceiptHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRevocationReceiptHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRevocationReceiptHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRevocationReceiptHash: %w", err)
+	}
+	return oldValue.RevocationReceiptHash, nil
+}
+
+// ResetRevocationReceiptHash resets all changes to the "revocation_receipt_hash" field.
+func (m *RemotePairingMutation) ResetRevocationReceiptHash() {
+	m.revocation_receipt_hash = nil
+}
+
+// SetRevocationReceiptSalt sets the "revocation_receipt_salt" field.
+func (m *RemotePairingMutation) SetRevocationReceiptSalt(s string) {
+	m.revocation_receipt_salt = &s
+}
+
+// RevocationReceiptSalt returns the value of the "revocation_receipt_salt" field in the mutation.
+func (m *RemotePairingMutation) RevocationReceiptSalt() (r string, exists bool) {
+	v := m.revocation_receipt_salt
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRevocationReceiptSalt returns the old "revocation_receipt_salt" field's value of the RemotePairing entity.
+// If the RemotePairing object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemotePairingMutation) OldRevocationReceiptSalt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRevocationReceiptSalt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRevocationReceiptSalt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRevocationReceiptSalt: %w", err)
+	}
+	return oldValue.RevocationReceiptSalt, nil
+}
+
+// ResetRevocationReceiptSalt resets all changes to the "revocation_receipt_salt" field.
+func (m *RemotePairingMutation) ResetRevocationReceiptSalt() {
+	m.revocation_receipt_salt = nil
+}
+
+// Where appends a list predicates to the RemotePairingMutation builder.
+func (m *RemotePairingMutation) Where(ps ...predicate.RemotePairing) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the RemotePairingMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *RemotePairingMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.RemotePairing, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *RemotePairingMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *RemotePairingMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (RemotePairing).
+func (m *RemotePairingMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *RemotePairingMutation) Fields() []string {
+	fields := make([]string, 0, 32)
+	if m.created_at != nil {
+		fields = append(fields, remotepairing.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, remotepairing.FieldUpdatedAt)
+	}
+	if m.invitation_id != nil {
+		fields = append(fields, remotepairing.FieldInvitationID)
+	}
+	if m.claim_secret_hash != nil {
+		fields = append(fields, remotepairing.FieldClaimSecretHash)
+	}
+	if m.claim_secret_salt != nil {
+		fields = append(fields, remotepairing.FieldClaimSecretSalt)
+	}
+	if m.manual_code_hash != nil {
+		fields = append(fields, remotepairing.FieldManualCodeHash)
+	}
+	if m.manual_code_salt != nil {
+		fields = append(fields, remotepairing.FieldManualCodeSalt)
+	}
+	if m.manual_attempts != nil {
+		fields = append(fields, remotepairing.FieldManualAttempts)
+	}
+	if m.state != nil {
+		fields = append(fields, remotepairing.FieldState)
+	}
+	if m.expires_at != nil {
+		fields = append(fields, remotepairing.FieldExpiresAt)
+	}
+	if m.reservation_expires_at != nil {
+		fields = append(fields, remotepairing.FieldReservationExpiresAt)
+	}
+	if m.desktop_device_id != nil {
+		fields = append(fields, remotepairing.FieldDesktopDeviceID)
+	}
+	if m.desktop_device_label != nil {
+		fields = append(fields, remotepairing.FieldDesktopDeviceLabel)
+	}
+	if m.ios_device_id != nil {
+		fields = append(fields, remotepairing.FieldIosDeviceID)
+	}
+	if m.ios_device_label != nil {
+		fields = append(fields, remotepairing.FieldIosDeviceLabel)
+	}
+	if m.desktop_public_key != nil {
+		fields = append(fields, remotepairing.FieldDesktopPublicKey)
+	}
+	if m.ios_public_key != nil {
+		fields = append(fields, remotepairing.FieldIosPublicKey)
+	}
+	if m.sas != nil {
+		fields = append(fields, remotepairing.FieldSas)
+	}
+	if m.desktop_provider_user_id != nil {
+		fields = append(fields, remotepairing.FieldDesktopProviderUserID)
+	}
+	if m.ios_provider_user_id != nil {
+		fields = append(fields, remotepairing.FieldIosProviderUserID)
+	}
+	if m.desktop_provider_absent != nil {
+		fields = append(fields, remotepairing.FieldDesktopProviderAbsent)
+	}
+	if m.ios_provider_absent != nil {
+		fields = append(fields, remotepairing.FieldIosProviderAbsent)
+	}
+	if m.confirmed_at != nil {
+		fields = append(fields, remotepairing.FieldConfirmedAt)
+	}
+	if m.revoked_at != nil {
+		fields = append(fields, remotepairing.FieldRevokedAt)
+	}
+	if m.seat_released != nil {
+		fields = append(fields, remotepairing.FieldSeatReleased)
+	}
+	if m.create_idempotency_key != nil {
+		fields = append(fields, remotepairing.FieldCreateIdempotencyKey)
+	}
+	if m.create_request_hash != nil {
+		fields = append(fields, remotepairing.FieldCreateRequestHash)
+	}
+	if m.claim_idempotency_key != nil {
+		fields = append(fields, remotepairing.FieldClaimIdempotencyKey)
+	}
+	if m.claim_request_hash != nil {
+		fields = append(fields, remotepairing.FieldClaimRequestHash)
+	}
+	if m.revocation_receipt_id != nil {
+		fields = append(fields, remotepairing.FieldRevocationReceiptID)
+	}
+	if m.revocation_receipt_hash != nil {
+		fields = append(fields, remotepairing.FieldRevocationReceiptHash)
+	}
+	if m.revocation_receipt_salt != nil {
+		fields = append(fields, remotepairing.FieldRevocationReceiptSalt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *RemotePairingMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case remotepairing.FieldCreatedAt:
+		return m.CreatedAt()
+	case remotepairing.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case remotepairing.FieldInvitationID:
+		return m.InvitationID()
+	case remotepairing.FieldClaimSecretHash:
+		return m.ClaimSecretHash()
+	case remotepairing.FieldClaimSecretSalt:
+		return m.ClaimSecretSalt()
+	case remotepairing.FieldManualCodeHash:
+		return m.ManualCodeHash()
+	case remotepairing.FieldManualCodeSalt:
+		return m.ManualCodeSalt()
+	case remotepairing.FieldManualAttempts:
+		return m.ManualAttempts()
+	case remotepairing.FieldState:
+		return m.State()
+	case remotepairing.FieldExpiresAt:
+		return m.ExpiresAt()
+	case remotepairing.FieldReservationExpiresAt:
+		return m.ReservationExpiresAt()
+	case remotepairing.FieldDesktopDeviceID:
+		return m.DesktopDeviceID()
+	case remotepairing.FieldDesktopDeviceLabel:
+		return m.DesktopDeviceLabel()
+	case remotepairing.FieldIosDeviceID:
+		return m.IosDeviceID()
+	case remotepairing.FieldIosDeviceLabel:
+		return m.IosDeviceLabel()
+	case remotepairing.FieldDesktopPublicKey:
+		return m.DesktopPublicKey()
+	case remotepairing.FieldIosPublicKey:
+		return m.IosPublicKey()
+	case remotepairing.FieldSas:
+		return m.Sas()
+	case remotepairing.FieldDesktopProviderUserID:
+		return m.DesktopProviderUserID()
+	case remotepairing.FieldIosProviderUserID:
+		return m.IosProviderUserID()
+	case remotepairing.FieldDesktopProviderAbsent:
+		return m.DesktopProviderAbsent()
+	case remotepairing.FieldIosProviderAbsent:
+		return m.IosProviderAbsent()
+	case remotepairing.FieldConfirmedAt:
+		return m.ConfirmedAt()
+	case remotepairing.FieldRevokedAt:
+		return m.RevokedAt()
+	case remotepairing.FieldSeatReleased:
+		return m.SeatReleased()
+	case remotepairing.FieldCreateIdempotencyKey:
+		return m.CreateIdempotencyKey()
+	case remotepairing.FieldCreateRequestHash:
+		return m.CreateRequestHash()
+	case remotepairing.FieldClaimIdempotencyKey:
+		return m.ClaimIdempotencyKey()
+	case remotepairing.FieldClaimRequestHash:
+		return m.ClaimRequestHash()
+	case remotepairing.FieldRevocationReceiptID:
+		return m.RevocationReceiptID()
+	case remotepairing.FieldRevocationReceiptHash:
+		return m.RevocationReceiptHash()
+	case remotepairing.FieldRevocationReceiptSalt:
+		return m.RevocationReceiptSalt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *RemotePairingMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case remotepairing.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case remotepairing.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case remotepairing.FieldInvitationID:
+		return m.OldInvitationID(ctx)
+	case remotepairing.FieldClaimSecretHash:
+		return m.OldClaimSecretHash(ctx)
+	case remotepairing.FieldClaimSecretSalt:
+		return m.OldClaimSecretSalt(ctx)
+	case remotepairing.FieldManualCodeHash:
+		return m.OldManualCodeHash(ctx)
+	case remotepairing.FieldManualCodeSalt:
+		return m.OldManualCodeSalt(ctx)
+	case remotepairing.FieldManualAttempts:
+		return m.OldManualAttempts(ctx)
+	case remotepairing.FieldState:
+		return m.OldState(ctx)
+	case remotepairing.FieldExpiresAt:
+		return m.OldExpiresAt(ctx)
+	case remotepairing.FieldReservationExpiresAt:
+		return m.OldReservationExpiresAt(ctx)
+	case remotepairing.FieldDesktopDeviceID:
+		return m.OldDesktopDeviceID(ctx)
+	case remotepairing.FieldDesktopDeviceLabel:
+		return m.OldDesktopDeviceLabel(ctx)
+	case remotepairing.FieldIosDeviceID:
+		return m.OldIosDeviceID(ctx)
+	case remotepairing.FieldIosDeviceLabel:
+		return m.OldIosDeviceLabel(ctx)
+	case remotepairing.FieldDesktopPublicKey:
+		return m.OldDesktopPublicKey(ctx)
+	case remotepairing.FieldIosPublicKey:
+		return m.OldIosPublicKey(ctx)
+	case remotepairing.FieldSas:
+		return m.OldSas(ctx)
+	case remotepairing.FieldDesktopProviderUserID:
+		return m.OldDesktopProviderUserID(ctx)
+	case remotepairing.FieldIosProviderUserID:
+		return m.OldIosProviderUserID(ctx)
+	case remotepairing.FieldDesktopProviderAbsent:
+		return m.OldDesktopProviderAbsent(ctx)
+	case remotepairing.FieldIosProviderAbsent:
+		return m.OldIosProviderAbsent(ctx)
+	case remotepairing.FieldConfirmedAt:
+		return m.OldConfirmedAt(ctx)
+	case remotepairing.FieldRevokedAt:
+		return m.OldRevokedAt(ctx)
+	case remotepairing.FieldSeatReleased:
+		return m.OldSeatReleased(ctx)
+	case remotepairing.FieldCreateIdempotencyKey:
+		return m.OldCreateIdempotencyKey(ctx)
+	case remotepairing.FieldCreateRequestHash:
+		return m.OldCreateRequestHash(ctx)
+	case remotepairing.FieldClaimIdempotencyKey:
+		return m.OldClaimIdempotencyKey(ctx)
+	case remotepairing.FieldClaimRequestHash:
+		return m.OldClaimRequestHash(ctx)
+	case remotepairing.FieldRevocationReceiptID:
+		return m.OldRevocationReceiptID(ctx)
+	case remotepairing.FieldRevocationReceiptHash:
+		return m.OldRevocationReceiptHash(ctx)
+	case remotepairing.FieldRevocationReceiptSalt:
+		return m.OldRevocationReceiptSalt(ctx)
+	}
+	return nil, fmt.Errorf("unknown RemotePairing field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *RemotePairingMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case remotepairing.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case remotepairing.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case remotepairing.FieldInvitationID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInvitationID(v)
+		return nil
+	case remotepairing.FieldClaimSecretHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetClaimSecretHash(v)
+		return nil
+	case remotepairing.FieldClaimSecretSalt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetClaimSecretSalt(v)
+		return nil
+	case remotepairing.FieldManualCodeHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetManualCodeHash(v)
+		return nil
+	case remotepairing.FieldManualCodeSalt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetManualCodeSalt(v)
+		return nil
+	case remotepairing.FieldManualAttempts:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetManualAttempts(v)
+		return nil
+	case remotepairing.FieldState:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetState(v)
+		return nil
+	case remotepairing.FieldExpiresAt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetExpiresAt(v)
+		return nil
+	case remotepairing.FieldReservationExpiresAt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetReservationExpiresAt(v)
+		return nil
+	case remotepairing.FieldDesktopDeviceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDesktopDeviceID(v)
+		return nil
+	case remotepairing.FieldDesktopDeviceLabel:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDesktopDeviceLabel(v)
+		return nil
+	case remotepairing.FieldIosDeviceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIosDeviceID(v)
+		return nil
+	case remotepairing.FieldIosDeviceLabel:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIosDeviceLabel(v)
+		return nil
+	case remotepairing.FieldDesktopPublicKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDesktopPublicKey(v)
+		return nil
+	case remotepairing.FieldIosPublicKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIosPublicKey(v)
+		return nil
+	case remotepairing.FieldSas:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSas(v)
+		return nil
+	case remotepairing.FieldDesktopProviderUserID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDesktopProviderUserID(v)
+		return nil
+	case remotepairing.FieldIosProviderUserID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIosProviderUserID(v)
+		return nil
+	case remotepairing.FieldDesktopProviderAbsent:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDesktopProviderAbsent(v)
+		return nil
+	case remotepairing.FieldIosProviderAbsent:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIosProviderAbsent(v)
+		return nil
+	case remotepairing.FieldConfirmedAt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConfirmedAt(v)
+		return nil
+	case remotepairing.FieldRevokedAt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRevokedAt(v)
+		return nil
+	case remotepairing.FieldSeatReleased:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSeatReleased(v)
+		return nil
+	case remotepairing.FieldCreateIdempotencyKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreateIdempotencyKey(v)
+		return nil
+	case remotepairing.FieldCreateRequestHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreateRequestHash(v)
+		return nil
+	case remotepairing.FieldClaimIdempotencyKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetClaimIdempotencyKey(v)
+		return nil
+	case remotepairing.FieldClaimRequestHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetClaimRequestHash(v)
+		return nil
+	case remotepairing.FieldRevocationReceiptID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRevocationReceiptID(v)
+		return nil
+	case remotepairing.FieldRevocationReceiptHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRevocationReceiptHash(v)
+		return nil
+	case remotepairing.FieldRevocationReceiptSalt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRevocationReceiptSalt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown RemotePairing field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *RemotePairingMutation) AddedFields() []string {
+	var fields []string
+	if m.addmanual_attempts != nil {
+		fields = append(fields, remotepairing.FieldManualAttempts)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *RemotePairingMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case remotepairing.FieldManualAttempts:
+		return m.AddedManualAttempts()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *RemotePairingMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case remotepairing.FieldManualAttempts:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddManualAttempts(v)
+		return nil
+	}
+	return fmt.Errorf("unknown RemotePairing numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *RemotePairingMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *RemotePairingMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *RemotePairingMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown RemotePairing nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *RemotePairingMutation) ResetField(name string) error {
+	switch name {
+	case remotepairing.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case remotepairing.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case remotepairing.FieldInvitationID:
+		m.ResetInvitationID()
+		return nil
+	case remotepairing.FieldClaimSecretHash:
+		m.ResetClaimSecretHash()
+		return nil
+	case remotepairing.FieldClaimSecretSalt:
+		m.ResetClaimSecretSalt()
+		return nil
+	case remotepairing.FieldManualCodeHash:
+		m.ResetManualCodeHash()
+		return nil
+	case remotepairing.FieldManualCodeSalt:
+		m.ResetManualCodeSalt()
+		return nil
+	case remotepairing.FieldManualAttempts:
+		m.ResetManualAttempts()
+		return nil
+	case remotepairing.FieldState:
+		m.ResetState()
+		return nil
+	case remotepairing.FieldExpiresAt:
+		m.ResetExpiresAt()
+		return nil
+	case remotepairing.FieldReservationExpiresAt:
+		m.ResetReservationExpiresAt()
+		return nil
+	case remotepairing.FieldDesktopDeviceID:
+		m.ResetDesktopDeviceID()
+		return nil
+	case remotepairing.FieldDesktopDeviceLabel:
+		m.ResetDesktopDeviceLabel()
+		return nil
+	case remotepairing.FieldIosDeviceID:
+		m.ResetIosDeviceID()
+		return nil
+	case remotepairing.FieldIosDeviceLabel:
+		m.ResetIosDeviceLabel()
+		return nil
+	case remotepairing.FieldDesktopPublicKey:
+		m.ResetDesktopPublicKey()
+		return nil
+	case remotepairing.FieldIosPublicKey:
+		m.ResetIosPublicKey()
+		return nil
+	case remotepairing.FieldSas:
+		m.ResetSas()
+		return nil
+	case remotepairing.FieldDesktopProviderUserID:
+		m.ResetDesktopProviderUserID()
+		return nil
+	case remotepairing.FieldIosProviderUserID:
+		m.ResetIosProviderUserID()
+		return nil
+	case remotepairing.FieldDesktopProviderAbsent:
+		m.ResetDesktopProviderAbsent()
+		return nil
+	case remotepairing.FieldIosProviderAbsent:
+		m.ResetIosProviderAbsent()
+		return nil
+	case remotepairing.FieldConfirmedAt:
+		m.ResetConfirmedAt()
+		return nil
+	case remotepairing.FieldRevokedAt:
+		m.ResetRevokedAt()
+		return nil
+	case remotepairing.FieldSeatReleased:
+		m.ResetSeatReleased()
+		return nil
+	case remotepairing.FieldCreateIdempotencyKey:
+		m.ResetCreateIdempotencyKey()
+		return nil
+	case remotepairing.FieldCreateRequestHash:
+		m.ResetCreateRequestHash()
+		return nil
+	case remotepairing.FieldClaimIdempotencyKey:
+		m.ResetClaimIdempotencyKey()
+		return nil
+	case remotepairing.FieldClaimRequestHash:
+		m.ResetClaimRequestHash()
+		return nil
+	case remotepairing.FieldRevocationReceiptID:
+		m.ResetRevocationReceiptID()
+		return nil
+	case remotepairing.FieldRevocationReceiptHash:
+		m.ResetRevocationReceiptHash()
+		return nil
+	case remotepairing.FieldRevocationReceiptSalt:
+		m.ResetRevocationReceiptSalt()
+		return nil
+	}
+	return fmt.Errorf("unknown RemotePairing field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *RemotePairingMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *RemotePairingMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *RemotePairingMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *RemotePairingMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *RemotePairingMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *RemotePairingMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *RemotePairingMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown RemotePairing unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *RemotePairingMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown RemotePairing edge %s", name)
+}
+
+// RemoteSeatCapacityMutation represents an operation that mutates the RemoteSeatCapacity nodes in the graph.
+type RemoteSeatCapacityMutation struct {
+	config
+	op                   Op
+	typ                  string
+	id                   *string
+	created_at           *time.Time
+	updated_at           *time.Time
+	seat_count           *int
+	addseat_count        *int
+	seat_limit           *int
+	addseat_limit        *int
+	warning_threshold    *int
+	addwarning_threshold *int
+	clearedFields        map[string]struct{}
+	done                 bool
+	oldValue             func(context.Context) (*RemoteSeatCapacity, error)
+	predicates           []predicate.RemoteSeatCapacity
+}
+
+var _ ent.Mutation = (*RemoteSeatCapacityMutation)(nil)
+
+// remoteseatcapacityOption allows management of the mutation configuration using functional options.
+type remoteseatcapacityOption func(*RemoteSeatCapacityMutation)
+
+// newRemoteSeatCapacityMutation creates new mutation for the RemoteSeatCapacity entity.
+func newRemoteSeatCapacityMutation(c config, op Op, opts ...remoteseatcapacityOption) *RemoteSeatCapacityMutation {
+	m := &RemoteSeatCapacityMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeRemoteSeatCapacity,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withRemoteSeatCapacityID sets the ID field of the mutation.
+func withRemoteSeatCapacityID(id string) remoteseatcapacityOption {
+	return func(m *RemoteSeatCapacityMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *RemoteSeatCapacity
+		)
+		m.oldValue = func(ctx context.Context) (*RemoteSeatCapacity, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().RemoteSeatCapacity.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withRemoteSeatCapacity sets the old RemoteSeatCapacity of the mutation.
+func withRemoteSeatCapacity(node *RemoteSeatCapacity) remoteseatcapacityOption {
+	return func(m *RemoteSeatCapacityMutation) {
+		m.oldValue = func(context.Context) (*RemoteSeatCapacity, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m RemoteSeatCapacityMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m RemoteSeatCapacityMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of RemoteSeatCapacity entities.
+func (m *RemoteSeatCapacityMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *RemoteSeatCapacityMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *RemoteSeatCapacityMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().RemoteSeatCapacity.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *RemoteSeatCapacityMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *RemoteSeatCapacityMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the RemoteSeatCapacity entity.
+// If the RemoteSeatCapacity object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteSeatCapacityMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *RemoteSeatCapacityMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *RemoteSeatCapacityMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *RemoteSeatCapacityMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the RemoteSeatCapacity entity.
+// If the RemoteSeatCapacity object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteSeatCapacityMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *RemoteSeatCapacityMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetSeatCount sets the "seat_count" field.
+func (m *RemoteSeatCapacityMutation) SetSeatCount(i int) {
+	m.seat_count = &i
+	m.addseat_count = nil
+}
+
+// SeatCount returns the value of the "seat_count" field in the mutation.
+func (m *RemoteSeatCapacityMutation) SeatCount() (r int, exists bool) {
+	v := m.seat_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSeatCount returns the old "seat_count" field's value of the RemoteSeatCapacity entity.
+// If the RemoteSeatCapacity object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteSeatCapacityMutation) OldSeatCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSeatCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSeatCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSeatCount: %w", err)
+	}
+	return oldValue.SeatCount, nil
+}
+
+// AddSeatCount adds i to the "seat_count" field.
+func (m *RemoteSeatCapacityMutation) AddSeatCount(i int) {
+	if m.addseat_count != nil {
+		*m.addseat_count += i
+	} else {
+		m.addseat_count = &i
+	}
+}
+
+// AddedSeatCount returns the value that was added to the "seat_count" field in this mutation.
+func (m *RemoteSeatCapacityMutation) AddedSeatCount() (r int, exists bool) {
+	v := m.addseat_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSeatCount resets all changes to the "seat_count" field.
+func (m *RemoteSeatCapacityMutation) ResetSeatCount() {
+	m.seat_count = nil
+	m.addseat_count = nil
+}
+
+// SetSeatLimit sets the "seat_limit" field.
+func (m *RemoteSeatCapacityMutation) SetSeatLimit(i int) {
+	m.seat_limit = &i
+	m.addseat_limit = nil
+}
+
+// SeatLimit returns the value of the "seat_limit" field in the mutation.
+func (m *RemoteSeatCapacityMutation) SeatLimit() (r int, exists bool) {
+	v := m.seat_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSeatLimit returns the old "seat_limit" field's value of the RemoteSeatCapacity entity.
+// If the RemoteSeatCapacity object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteSeatCapacityMutation) OldSeatLimit(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSeatLimit is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSeatLimit requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSeatLimit: %w", err)
+	}
+	return oldValue.SeatLimit, nil
+}
+
+// AddSeatLimit adds i to the "seat_limit" field.
+func (m *RemoteSeatCapacityMutation) AddSeatLimit(i int) {
+	if m.addseat_limit != nil {
+		*m.addseat_limit += i
+	} else {
+		m.addseat_limit = &i
+	}
+}
+
+// AddedSeatLimit returns the value that was added to the "seat_limit" field in this mutation.
+func (m *RemoteSeatCapacityMutation) AddedSeatLimit() (r int, exists bool) {
+	v := m.addseat_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSeatLimit resets all changes to the "seat_limit" field.
+func (m *RemoteSeatCapacityMutation) ResetSeatLimit() {
+	m.seat_limit = nil
+	m.addseat_limit = nil
+}
+
+// SetWarningThreshold sets the "warning_threshold" field.
+func (m *RemoteSeatCapacityMutation) SetWarningThreshold(i int) {
+	m.warning_threshold = &i
+	m.addwarning_threshold = nil
+}
+
+// WarningThreshold returns the value of the "warning_threshold" field in the mutation.
+func (m *RemoteSeatCapacityMutation) WarningThreshold() (r int, exists bool) {
+	v := m.warning_threshold
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWarningThreshold returns the old "warning_threshold" field's value of the RemoteSeatCapacity entity.
+// If the RemoteSeatCapacity object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteSeatCapacityMutation) OldWarningThreshold(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWarningThreshold is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWarningThreshold requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWarningThreshold: %w", err)
+	}
+	return oldValue.WarningThreshold, nil
+}
+
+// AddWarningThreshold adds i to the "warning_threshold" field.
+func (m *RemoteSeatCapacityMutation) AddWarningThreshold(i int) {
+	if m.addwarning_threshold != nil {
+		*m.addwarning_threshold += i
+	} else {
+		m.addwarning_threshold = &i
+	}
+}
+
+// AddedWarningThreshold returns the value that was added to the "warning_threshold" field in this mutation.
+func (m *RemoteSeatCapacityMutation) AddedWarningThreshold() (r int, exists bool) {
+	v := m.addwarning_threshold
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetWarningThreshold resets all changes to the "warning_threshold" field.
+func (m *RemoteSeatCapacityMutation) ResetWarningThreshold() {
+	m.warning_threshold = nil
+	m.addwarning_threshold = nil
+}
+
+// Where appends a list predicates to the RemoteSeatCapacityMutation builder.
+func (m *RemoteSeatCapacityMutation) Where(ps ...predicate.RemoteSeatCapacity) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the RemoteSeatCapacityMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *RemoteSeatCapacityMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.RemoteSeatCapacity, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *RemoteSeatCapacityMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *RemoteSeatCapacityMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (RemoteSeatCapacity).
+func (m *RemoteSeatCapacityMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *RemoteSeatCapacityMutation) Fields() []string {
+	fields := make([]string, 0, 5)
+	if m.created_at != nil {
+		fields = append(fields, remoteseatcapacity.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, remoteseatcapacity.FieldUpdatedAt)
+	}
+	if m.seat_count != nil {
+		fields = append(fields, remoteseatcapacity.FieldSeatCount)
+	}
+	if m.seat_limit != nil {
+		fields = append(fields, remoteseatcapacity.FieldSeatLimit)
+	}
+	if m.warning_threshold != nil {
+		fields = append(fields, remoteseatcapacity.FieldWarningThreshold)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *RemoteSeatCapacityMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case remoteseatcapacity.FieldCreatedAt:
+		return m.CreatedAt()
+	case remoteseatcapacity.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case remoteseatcapacity.FieldSeatCount:
+		return m.SeatCount()
+	case remoteseatcapacity.FieldSeatLimit:
+		return m.SeatLimit()
+	case remoteseatcapacity.FieldWarningThreshold:
+		return m.WarningThreshold()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *RemoteSeatCapacityMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case remoteseatcapacity.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case remoteseatcapacity.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case remoteseatcapacity.FieldSeatCount:
+		return m.OldSeatCount(ctx)
+	case remoteseatcapacity.FieldSeatLimit:
+		return m.OldSeatLimit(ctx)
+	case remoteseatcapacity.FieldWarningThreshold:
+		return m.OldWarningThreshold(ctx)
+	}
+	return nil, fmt.Errorf("unknown RemoteSeatCapacity field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *RemoteSeatCapacityMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case remoteseatcapacity.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case remoteseatcapacity.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case remoteseatcapacity.FieldSeatCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSeatCount(v)
+		return nil
+	case remoteseatcapacity.FieldSeatLimit:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSeatLimit(v)
+		return nil
+	case remoteseatcapacity.FieldWarningThreshold:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWarningThreshold(v)
+		return nil
+	}
+	return fmt.Errorf("unknown RemoteSeatCapacity field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *RemoteSeatCapacityMutation) AddedFields() []string {
+	var fields []string
+	if m.addseat_count != nil {
+		fields = append(fields, remoteseatcapacity.FieldSeatCount)
+	}
+	if m.addseat_limit != nil {
+		fields = append(fields, remoteseatcapacity.FieldSeatLimit)
+	}
+	if m.addwarning_threshold != nil {
+		fields = append(fields, remoteseatcapacity.FieldWarningThreshold)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *RemoteSeatCapacityMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case remoteseatcapacity.FieldSeatCount:
+		return m.AddedSeatCount()
+	case remoteseatcapacity.FieldSeatLimit:
+		return m.AddedSeatLimit()
+	case remoteseatcapacity.FieldWarningThreshold:
+		return m.AddedWarningThreshold()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *RemoteSeatCapacityMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case remoteseatcapacity.FieldSeatCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSeatCount(v)
+		return nil
+	case remoteseatcapacity.FieldSeatLimit:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSeatLimit(v)
+		return nil
+	case remoteseatcapacity.FieldWarningThreshold:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddWarningThreshold(v)
+		return nil
+	}
+	return fmt.Errorf("unknown RemoteSeatCapacity numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *RemoteSeatCapacityMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *RemoteSeatCapacityMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *RemoteSeatCapacityMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown RemoteSeatCapacity nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *RemoteSeatCapacityMutation) ResetField(name string) error {
+	switch name {
+	case remoteseatcapacity.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case remoteseatcapacity.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case remoteseatcapacity.FieldSeatCount:
+		m.ResetSeatCount()
+		return nil
+	case remoteseatcapacity.FieldSeatLimit:
+		m.ResetSeatLimit()
+		return nil
+	case remoteseatcapacity.FieldWarningThreshold:
+		m.ResetWarningThreshold()
+		return nil
+	}
+	return fmt.Errorf("unknown RemoteSeatCapacity field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *RemoteSeatCapacityMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *RemoteSeatCapacityMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *RemoteSeatCapacityMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *RemoteSeatCapacityMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *RemoteSeatCapacityMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *RemoteSeatCapacityMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *RemoteSeatCapacityMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown RemoteSeatCapacity unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *RemoteSeatCapacityMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown RemoteSeatCapacity edge %s", name)
 }
 
 // RuntimeOperationMutation represents an operation that mutates the RuntimeOperation nodes in the graph.

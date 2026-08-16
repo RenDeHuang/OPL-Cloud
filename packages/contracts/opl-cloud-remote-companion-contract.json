@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "owner": "services/control-plane",
+  "purpose": "Define the Cloud-owned remote companion broker HTTP, pairing, credential, capacity, and provider-reclaim security boundary.",
+  "state": "current",
+  "machineBoundary": "Remote companion broker route identity, protocol version, secret handling, seat reservation, provider credential issuance, and revocation readback.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same Cloud remote companion boundary."
+  },
+  "http": {
+    "basePath": "/v1/remote-companion",
+    "protocolVersion": "opl_remote_transport.v1",
+    "wireCase": "snake_case",
+    "mutationIdempotencyHeader": "Idempotency-Key",
+    "mutatingRequestRequirement": "Every broker POST body contains exactly the current protocol_version and rejects an unsupported or missing value.",
+    "responseRequirement": "Broker responses use route-specific snake_case field names; protocol_version is required except for operator_create_invitation, whose response is limited to invitation_code and expires_at; provider secrets, pair master keys, task content, and workspace paths are never returned.",
+    "endpoints": [
+      {"id": "operator_create_invitation", "method": "POST", "path": "/v1/remote-companion/invitations", "idempotencyRequired": true},
+      {"id": "desktop_create_pairing", "method": "POST", "path": "/v1/remote-companion/pairings", "idempotencyRequired": true},
+      {"id": "ios_claim_pairing", "method": "POST", "path": "/v1/remote-companion/pairings/claim", "idempotencyRequired": true},
+      {"id": "read_pairing", "method": "GET", "path": "/v1/remote-companion/pairings/{pairing_id}", "idempotencyRequired": false},
+      {"id": "desktop_confirm_pairing", "method": "POST", "path": "/v1/remote-companion/pairings/{pairing_id}/confirm", "idempotencyRequired": true},
+      {"id": "refresh_provider_credentials", "method": "POST", "path": "/v1/remote-companion/pairings/{pairing_id}/credentials", "idempotencyRequired": true},
+      {"id": "revoke_pair", "method": "DELETE", "path": "/v1/remote-companion/pairings/{pairing_id}", "idempotencyRequired": true},
+      {"id": "read_revocation", "method": "GET", "path": "/v1/remote-companion/revocations/{revocation_receipt_id}", "idempotencyRequired": false}
+    ],
+    "errorEnvelope": ["protocol_version", "error_code", "retryable", "request_id"]
+  },
+  "pairing": {
+    "invitation": {
+      "singleUse": true,
+      "secretPersistence": "server_keyed_hmac_sha256_with_random_salt",
+      "plaintextReturnedOnlyAtCreation": true
+    },
+    "claim": {
+      "claimSecretPersistence": "server_keyed_hmac_sha256_with_random_salt",
+      "manualCodeLength": 12,
+      "manualCodeAlphabet": "crockford_base32_without_lookalikes",
+      "manualCodeMaxAttempts": 5,
+      "attemptLimitEffect": "atomically_invalidate_pairing_and_release_reserved_seat"
+    },
+    "confirmation": {
+      "requiredCredentialRole": "desktop",
+      "requestField": "authentication_string",
+      "comparison": "constant_time_exact_match_against_pairing_authentication_string",
+      "providerProvisioning": "only_after_confirmation"
+    },
+    "authenticationString": {
+      "serialization": "name_equals_utf8_byte_count_colon_value_fields_pair_id_desktop_public_key_ios_public_key_joined_by_ascii_pipe",
+      "digest": "sha256",
+      "derivation": "unsigned_big_endian_first_4_digest_bytes_modulo_1000000",
+      "display": "zero_padded_6_digits_grouped_as_3_space_3",
+      "testVector": "867 604"
+    }
+  },
+  "capacity": {
+    "seatDefinition": "one_pair_specific_desktop_user_id_plus_one_pair_specific_ios_user_id",
+    "activeSeatLimit": 40,
+    "warningThreshold": 35,
+    "reservationTtlMinutes": 5,
+    "reservationAndInvitationConsumption": "one_database_transaction_with_atomic_upper_bound",
+    "providerIdentityCreationAtLimit": false
+  },
+  "credentials": {
+    "storedValue": "sha256_hash_only",
+    "providerIdentity": "pair_specific_desktop_and_ios_user_ids",
+    "usersigIssuer": "Cloud broker with server-only Tencent secret",
+    "usersigTtlMinutes": 60,
+    "providerSecretInClient": false,
+    "unconfiguredProviderBehavior": "provider_not_configured_without_synthetic_signature"
+  },
+  "revocation": {
+    "states": [
+      "revoking",
+      "provider_reclaim_pending",
+      "revoked"
+    ],
+    "reclaimOrder": [
+      "kick_provider_sessions",
+      "delete_provider_user",
+      "read_provider_absence"
+    ],
+    "seatReleaseCondition": "both provider users have authoritative absence readback",
+    "partialRetry": "provider_reclaim_pending remains readable and the revoke credential may retry only the incomplete provider reclaim",
+    "receiptFields": [
+      "pairing_id",
+      "state",
+      "revocation_receipt_id",
+      "revocation_receipt_token",
+      "desktop_provider_absent",
+      "ios_provider_absent",
+      "seat_released",
+      "revoked_at"
+    ],
+    "terminalCredentialEffect": "revoke stored device credentials and deny future broker authentication",
+    "readbackPath": "GET /v1/remote-companion/revocations/{revocation_receipt_id}",
+    "receiptTokenPersistence": "server_keyed_hmac_sha256_with_random_salt_only"
+  },
+  "provider": {
+    "activeProvider": "tencent_cloud_im",
+    "automaticFallback": false,
+    "accountCheckStates": {
+      "Imported": "present",
+      "NotImported": "absent"
+    },
+    "usersigFormat": "Tencent TLS v2 JSON compressed with zlib then Tencent URL-safe base64 substitutions",
+    "realSecretRequired": true
+  }
+}
