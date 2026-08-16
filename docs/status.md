@@ -430,12 +430,12 @@ fresh sealed scan of the absorbed revision. No
 production, private-network, deployment, provider mutation, or live load test
 was performed.
 
-The current `opl-instance-medopl` workflow and manifest have not yet adopted the
-full Fabric capability credential set, so source absorption does not prove a
-usable production operator path or a deployment. Its deploy workflow accepts
-an exact Cloud `product_sha` and digest-addressed TCR image, but Cloud has not
-yet supplied a deployable non-Release candidate whose exact bytes can later be
-promoted as a formal Release.
+Fresh Instance source and receipt evidence now prove a bounded first deployment,
+but not full product acceptance. Instance `main` now owns and executes the
+medopl production, acceptance, recovery, diagnostic, render, and rollout tools;
+the current workflow and manifest still do not prove the full Fabric capability
+credential set or a deployable non-Release candidate channel whose exact bytes
+can later be promoted as a formal Cloud Release.
 
 The `opl-instance-medopl` repository now owns the medopl profile, production
 workflow source, instance-specific production/acceptance/recovery tools, and
@@ -470,12 +470,12 @@ owned by the current Console implementation under an evolvable experience
 guide. The machine Console UI contract and superseded package/shared-execution
 machine contracts are retired.
 
-The aggregate launch freeze is retired. Focused billing, Control Plane Launch,
-Fabric binding, and Ledger evidence contracts now own its retained hard facts and
-are exercised by real caller tests. The aggregate deployment contract remains a
-migration guard until workflow-family owners retain authorization, identity,
-Secret, immutable-image, mutation-bound, readback, and rollback gates. The open
-sequence and acceptance conditions live only in [the roadmap](./roadmap.md).
+The aggregate launch and deployment guards are retired. Focused billing, Control
+Plane Launch, Fabric binding, Ledger evidence, portable distribution, and
+Instance deployment owners retain their hard facts. The remaining Instance
+acceptance and Cloud external-settings cleanup are operational gaps, not a reason
+to recreate an aggregate machine contract; their acceptance conditions live only
+in [the roadmap](./roadmap.md).
 
 ## Evidence Interpretation
 
