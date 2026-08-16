@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 )
 
 const providerMutationBindingPayloadKey = "providerMutationBinding"
 const providerMutationStatePayloadKey = "providerMutationState"
+const providerMutationReplayEpochPayloadKey = "providerMutationReplayEpoch"
+
+const providerMutationReplayLease = 30 * time.Second
 
 type providerMutationJournalContextKey struct{}
 
@@ -19,6 +23,7 @@ type providerMutationJournal struct {
 	parentOperation FabricOperation
 	provider        string
 	now             func() time.Time
+	readOnly        bool
 }
 
 type providerMutationBinding struct {
@@ -35,6 +40,25 @@ type providerMutationAttempt struct {
 	journal   *providerMutationJournal
 	operation FabricOperation
 	Fresh     bool
+	Replay    bool
+}
+
+type providerMutationReplayEpoch struct {
+	SchemaVersion           int    `json:"schemaVersion"`
+	ReplayID                string `json:"replayId"`
+	ParentFabricOperationID string `json:"parentFabricOperationId"`
+	ChildOperationID        string `json:"childOperationId"`
+	IdempotencyKey          string `json:"idempotencyKey"`
+	State                   string `json:"state"`
+	LeaseGeneration         int    `json:"leaseGeneration"`
+	LeaseExpiresAt          string `json:"leaseExpiresAt"`
+	DispatchStartedAt       string `json:"dispatchStartedAt,omitempty"`
+	CompletedAt             string `json:"completedAt,omitempty"`
+}
+
+type providerMutationReplayStore interface {
+	SaveProviderMutationReplayEpoch(context.Context, FabricOperation, FabricOperation) error
+	ConvergeProviderMutationReplay(context.Context, FabricOperation, FabricOperation) error
 }
 
 type persistedProviderMutationBinding struct {
@@ -53,12 +77,20 @@ func providerMutationJournalFromContext(ctx context.Context) *providerMutationJo
 }
 
 func (s *Service) providerMutationContext(ctx context.Context, operation FabricOperation) context.Context {
+	return s.providerOperationContext(ctx, operation, false)
+}
+
+func (s *Service) providerReadContext(ctx context.Context, operation FabricOperation) context.Context {
+	return s.providerOperationContext(ctx, operation, true)
+}
+
+func (s *Service) providerOperationContext(ctx context.Context, operation FabricOperation, readOnly bool) context.Context {
 	binding, ok := decodeLaunchStageBinding(operation)
 	if !ok {
 		return ctx
 	}
 	return context.WithValue(ctx, providerMutationJournalContextKey{}, &providerMutationJournal{
-		operations: s.operations, parent: binding, parentOperation: operation, provider: s.provider.Descriptor().Name, now: s.now,
+		operations: s.operations, parent: binding, parentOperation: operation, provider: s.provider.Descriptor().Name, now: s.now, readOnly: readOnly,
 	})
 }
 
@@ -74,6 +106,9 @@ func beginProviderMutationWithState(ctx context.Context, action, resourceKind, r
 	journal := providerMutationJournalFromContext(ctx)
 	if journal == nil {
 		return nil, nil
+	}
+	if journal.readOnly {
+		return nil, fmt.Errorf("provider_mutation_forbidden_in_read")
 	}
 	if action == "" || resourceKind == "" || resourceID == "" {
 		return nil, fmt.Errorf("provider_mutation_binding_invalid")
@@ -154,6 +189,66 @@ func decodeProviderMutationBinding(operation FabricOperation) (providerMutationB
 	return binding, true
 }
 
+func providerMutationReplayID(operation FabricOperation, binding providerMutationBinding) string {
+	return "replay_" + stableSuffix(binding.Parent.FabricOperationID, operation.ID, operation.IdempotencyKey)[:24]
+}
+
+func decodeProviderMutationReplayEpoch(operation FabricOperation) (providerMutationReplayEpoch, bool) {
+	value, ok := operation.RedactedProviderPayload[providerMutationReplayEpochPayloadKey]
+	if !ok {
+		return providerMutationReplayEpoch{}, false
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return providerMutationReplayEpoch{}, false
+	}
+	var epoch providerMutationReplayEpoch
+	binding, bindingOK := decodeProviderMutationBinding(operation)
+	if json.Unmarshal(body, &epoch) != nil || !bindingOK || epoch.SchemaVersion != 1 || epoch.ReplayID != providerMutationReplayID(operation, binding) ||
+		epoch.ParentFabricOperationID != binding.Parent.FabricOperationID || epoch.ChildOperationID != operation.ID ||
+		epoch.IdempotencyKey != operation.IdempotencyKey || epoch.LeaseGeneration <= 0 {
+		return providerMutationReplayEpoch{}, false
+	}
+	if _, err := time.Parse(time.RFC3339Nano, epoch.LeaseExpiresAt); err != nil {
+		return providerMutationReplayEpoch{}, false
+	}
+	switch epoch.State {
+	case "leased":
+		if epoch.CompletedAt != "" {
+			return providerMutationReplayEpoch{}, false
+		}
+		if epoch.DispatchStartedAt != "" {
+			if _, err := time.Parse(time.RFC3339Nano, epoch.DispatchStartedAt); err != nil {
+				return providerMutationReplayEpoch{}, false
+			}
+		}
+	case "awaiting_readback":
+		if epoch.DispatchStartedAt == "" || epoch.CompletedAt != "" {
+			return providerMutationReplayEpoch{}, false
+		}
+		if _, err := time.Parse(time.RFC3339Nano, epoch.DispatchStartedAt); err != nil {
+			return providerMutationReplayEpoch{}, false
+		}
+	case "succeeded":
+		if epoch.CompletedAt == "" {
+			return providerMutationReplayEpoch{}, false
+		}
+		if _, err := time.Parse(time.RFC3339Nano, epoch.CompletedAt); err != nil {
+			return providerMutationReplayEpoch{}, false
+		}
+	case "blocked":
+		if epoch.DispatchStartedAt != "" || epoch.CompletedAt == "" {
+			return providerMutationReplayEpoch{}, false
+		}
+		if _, err := time.Parse(time.RFC3339Nano, epoch.CompletedAt); err != nil {
+			return providerMutationReplayEpoch{}, false
+		}
+	default:
+		return providerMutationReplayEpoch{}, false
+	}
+	return epoch, true
+}
+
 func (a *providerMutationAttempt) resource(target any) bool {
 	return a != nil && decodeOperationResource(a.operation, target)
 }
@@ -185,14 +280,57 @@ func (a *providerMutationAttempt) complete(ctx context.Context, providerRequestI
 	if a == nil || (!a.Fresh && a.operation.Status == "succeeded") {
 		return nil
 	}
+	if !a.Replay && mutationErr == nil {
+		if epoch, ok := decodeProviderMutationReplayEpoch(a.operation); ok && epoch.State != "succeeded" {
+			a.Replay = true
+		}
+	}
 	next := a.operation
 	next.ProviderRequestID = providerRequestID
 	next.FinishedAt = a.journal.now()
 	fillOperationResource(&next, resource)
+	if a.Replay {
+		epoch, ok := decodeProviderMutationReplayEpoch(a.operation)
+		if !ok {
+			return ErrLaunchStageBindingConflict
+		}
+		store, ok := a.journal.operations.(providerMutationReplayStore)
+		if !ok {
+			return ErrRuntimeOperationNotCurrent
+		}
+		if mutationErr != nil {
+			if epoch.State == "leased" {
+				if epoch.DispatchStartedAt == "" {
+					epoch.State = "blocked"
+					epoch.CompletedAt = a.journal.now().UTC().Format(time.RFC3339Nano)
+				} else {
+					epoch.State = "awaiting_readback"
+				}
+				next = a.operation
+				next.RedactedProviderPayload = maps.Clone(a.operation.RedactedProviderPayload)
+				next.RedactedProviderPayload[providerMutationReplayEpochPayloadKey] = epoch
+				return store.SaveProviderMutationReplayEpoch(ctx, a.operation, next)
+			}
+			return nil
+		}
+		epoch.State = "succeeded"
+		epoch.CompletedAt = a.journal.now().UTC().Format(time.RFC3339Nano)
+		next.RedactedProviderPayload = maps.Clone(next.RedactedProviderPayload)
+		next.RedactedProviderPayload[providerMutationReplayEpochPayloadKey] = epoch
+		next.Status, next.ErrorCode = "succeeded", ""
+		return store.ConvergeProviderMutationReplay(ctx, a.operation, next)
+	}
 	if mutationErr == nil {
 		next.Status = "succeeded"
 	} else {
 		next.Status, next.ErrorCode = "failed", errorCode(mutationErr)
+	}
+	if !a.Fresh && a.operation.Status == "started" && mutationErr == nil {
+		converger, ok := a.journal.operations.(runtimeReadbackConverger)
+		if !ok {
+			return ErrRuntimeOperationNotCurrent
+		}
+		return converger.ConvergeRuntimeReadback(ctx, a.operation, next)
 	}
 	if !a.Fresh && a.operation.Status == "failed" {
 		if mutationErr != nil {
@@ -205,4 +343,77 @@ func (a *providerMutationAttempt) complete(ctx context.Context, providerRequestI
 		return converger.ConvergeRuntimeReadback(ctx, a.operation, next)
 	}
 	return a.journal.operations.SaveRuntime(ctx, next)
+}
+
+func (a *providerMutationAttempt) claimReplay(ctx context.Context) (bool, error) {
+	if a == nil || a.journal == nil || a.Fresh || a.operation.Status != "started" && a.operation.Status != "failed" {
+		return false, nil
+	}
+	store, ok := a.journal.operations.(providerMutationReplayStore)
+	if !ok {
+		return false, ErrRuntimeOperationNotCurrent
+	}
+	now := a.journal.now().UTC()
+	binding, validBinding := decodeProviderMutationBinding(a.operation)
+	if !validBinding || binding.Parent.FabricOperationID == "" {
+		return false, ErrLaunchStageBindingConflict
+	}
+	generation := 1
+	dispatchStartedAt := ""
+	if _, exists := a.operation.RedactedProviderPayload[providerMutationReplayEpochPayloadKey]; exists {
+		epoch, valid := decodeProviderMutationReplayEpoch(a.operation)
+		if !valid || epoch.State == "succeeded" || epoch.State == "blocked" {
+			return false, ErrLaunchStageBindingConflict
+		}
+		lease, leaseErr := time.Parse(time.RFC3339Nano, epoch.LeaseExpiresAt)
+		if leaseErr != nil {
+			return false, ErrLaunchStageBindingConflict
+		}
+		if lease.After(now) {
+			return false, nil
+		}
+		generation = epoch.LeaseGeneration + 1
+		dispatchStartedAt = epoch.DispatchStartedAt
+	}
+	next := a.operation
+	next.RedactedProviderPayload = maps.Clone(a.operation.RedactedProviderPayload)
+	next.RedactedProviderPayload[providerMutationReplayEpochPayloadKey] = providerMutationReplayEpoch{
+		SchemaVersion: 1, ReplayID: providerMutationReplayID(next, binding), ParentFabricOperationID: binding.Parent.FabricOperationID,
+		ChildOperationID: next.ID, IdempotencyKey: next.IdempotencyKey, State: "leased", LeaseGeneration: generation,
+		LeaseExpiresAt: now.Add(providerMutationReplayLease).Format(time.RFC3339Nano), DispatchStartedAt: dispatchStartedAt,
+	}
+	if err := store.SaveProviderMutationReplayEpoch(ctx, a.operation, next); err != nil {
+		return false, err
+	}
+	a.operation, a.Replay = next, true
+	return true, nil
+}
+
+func (a *providerMutationAttempt) markReplayDispatch(ctx context.Context) error {
+	if a == nil || a.Fresh {
+		return nil
+	}
+	if !a.Replay {
+		return ErrRuntimeOperationNotCurrent
+	}
+	epoch, ok := decodeProviderMutationReplayEpoch(a.operation)
+	if !ok || epoch.State != "leased" {
+		return ErrLaunchStageBindingConflict
+	}
+	store, ok := a.journal.operations.(providerMutationReplayStore)
+	if !ok {
+		return ErrRuntimeOperationNotCurrent
+	}
+	next := a.operation
+	next.RedactedProviderPayload = maps.Clone(a.operation.RedactedProviderPayload)
+	epoch.State = "awaiting_readback"
+	if epoch.DispatchStartedAt == "" {
+		epoch.DispatchStartedAt = a.journal.now().UTC().Format(time.RFC3339Nano)
+	}
+	next.RedactedProviderPayload[providerMutationReplayEpochPayloadKey] = epoch
+	if err := store.SaveProviderMutationReplayEpoch(ctx, a.operation, next); err != nil {
+		return err
+	}
+	a.operation = next
+	return nil
 }

@@ -39,6 +39,26 @@ type runtimeHealthSummaryHTTPProvider struct {
 	calls int
 }
 
+type workspaceOwnerObservationHTTPProvider struct {
+	testProvider
+	runtime       fabric.WorkspaceRuntime
+	runtimeErr    error
+	secretBinding fabric.WorkspaceRuntimeGatewaySecretBinding
+	secretErr     error
+}
+
+func (p workspaceOwnerObservationHTTPProvider) WorkspaceRuntimeStatus(_ context.Context, _ string) (fabric.WorkspaceRuntime, error) {
+	return p.runtime, p.runtimeErr
+}
+
+func (p workspaceOwnerObservationHTTPProvider) WorkspaceRuntimeGatewaySecret(_ context.Context, _ string) (fabric.WorkspaceRuntimeGatewaySecretBinding, error) {
+	return p.secretBinding, p.secretErr
+}
+
+func (p workspaceOwnerObservationHTTPProvider) BindWorkspaceRuntimeGatewaySecret(_ context.Context, input fabric.WorkspaceRuntimeGatewaySecretInput) (fabric.WorkspaceRuntimeGatewaySecretBinding, error) {
+	return fabric.WorkspaceRuntimeGatewaySecretBinding{WorkspaceID: input.WorkspaceID, WorkspaceAPIKeyID: input.WorkspaceAPIKeyID, SecretRef: input.SecretRef, Fingerprint: input.Fingerprint, Bound: true}, nil
+}
+
 const testFabricCapabilityKey = "test-fabric-capability-key-not-a-transport-token"
 
 func newTestServer(service *fabric.Service, token string) http.Handler {
@@ -737,6 +757,63 @@ func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *te
 	}
 }
 
+func TestWorkspaceLaunchEnsureCapabilityUsesFabricOperationOwnerIdentity(t *testing.T) {
+	store := fabric.NewMemoryOperationStore()
+	service := fabric.NewServiceWithOperationStore(workspaceLaunchHTTPProvider{}, store)
+	imageDigest := "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	launchRequestHash := strings.Repeat("b", 64)
+	preflight, err := service.PreflightWorkspaceLaunch(context.Background(), fabric.WorkspaceLaunchPreflightInput{
+		SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest, RequestHash: launchRequestHash,
+	})
+	if err != nil || !preflight.Available {
+		t.Fatalf("preflight=%#v err=%v", preflight, err)
+	}
+	input := fabric.WorkspaceLaunchStageInput{
+		Binding: fabric.WorkspaceLaunchStageBinding{
+			SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+			Stage: "ensure_compute_allocation", Action: "ensure_compute_allocation", FabricOperationID: "launch-alpha:ensure_compute_allocation",
+			IdempotencyKey: "launch-alpha:ensure_compute_allocation",
+			RequestHash:    "ddb1c0c5195c4e04c1d23230a493da582a2ca56af528a7abcf67d781f81c3fe1",
+		},
+		ProviderProfileRef: "tencent-tke", PreflightBindingRef: preflight.BindingRef,
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest,
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServerWithAuth(service, ServerAuthConfig{
+		ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey,
+	})
+	claims := fabricCapabilityClaimsForTest{
+		Version: 1, Caller: "control-plane", AccountID: input.Binding.AccountID, WorkspaceID: input.Binding.WorkspaceID,
+		ResourceKind: "workspace_launch_stage", ResourceID: input.Binding.FabricOperationID, Action: input.Binding.Action,
+		OperationID: input.Binding.IdempotencyKey, ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	request := testRequest(http.MethodPost, "/fabric/workspace-launches/stages/ensure", bytes.NewReader(body))
+	request.Header.Set("Idempotency-Key", input.Binding.IdempotencyKey)
+	request.Header.Set("X-OPL-Fabric-Capability", fabricCapabilityForTest(t, claims, body))
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		operations, listErr := store.List(context.Background())
+		t.Fatalf("ensure status=%d body=%s ownerRecords=%d listErr=%v", response.Code, response.Body.String(), len(operations), listErr)
+	}
+	operations, err := store.List(context.Background())
+	var stageOperations []fabric.FabricOperation
+	for _, operation := range operations {
+		if operation.ID == input.Binding.FabricOperationID {
+			stageOperations = append(stageOperations, operation)
+		}
+	}
+	if err != nil || len(stageOperations) != 1 || stageOperations[0].ResourceID != input.Binding.FabricOperationID {
+		t.Fatalf("owner records=%#v err=%v", operations, err)
+	}
+}
+
 type workspaceLaunchHTTPProvider struct {
 	testProvider
 }
@@ -949,6 +1026,86 @@ func TestServerDestroysWorkspaceRuntime(t *testing.T) {
 
 	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"status":"destroyed"`) || !strings.Contains(rec.Body.String(), `"workspaceId":"workspace-alpha"`) {
 		t.Fatalf("destroy status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServerReturnsTypedWorkspaceOwnerObservations(t *testing.T) {
+	provider := workspaceOwnerObservationHTTPProvider{
+		runtime: fabric.WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: "workspace-alpha", Status: "destroying"},
+		secretBinding: fabric.WorkspaceRuntimeGatewaySecretBinding{
+			WorkspaceID: "workspace-alpha", WorkspaceAPIKeyID: 19, SecretRef: "opl-gateway-a0ba8c07d0462e6b", Fingerprint: "sha256:alpha", Bound: true,
+		},
+	}
+	server := newTestServer(fabric.NewService(provider), "internal-secret")
+	for _, testCase := range []struct {
+		path      string
+		wantState string
+		decode    func(*json.Decoder) (string, int, string)
+	}{
+		{
+			path: "/fabric/workspace-runtimes/workspace-alpha/observation", wantState: fabric.WorkspaceOwnerObservationPending,
+			decode: func(decoder *json.Decoder) (string, int, string) {
+				var observation fabric.WorkspaceRuntimeObservation
+				if err := decoder.Decode(&observation); err != nil || observation.Runtime == nil || observation.Runtime.ID != "runtime-alpha" {
+					t.Fatalf("runtime observation=%#v err=%v", observation, err)
+				}
+				return observation.State, observation.SchemaVersion, observation.WorkspaceID
+			},
+		},
+		{
+			path: "/fabric/workspace-runtimes/workspace-alpha/gateway-secret/observation", wantState: fabric.WorkspaceOwnerObservationReady,
+			decode: func(decoder *json.Decoder) (string, int, string) {
+				var observation fabric.WorkspaceRuntimeGatewaySecretObservation
+				if err := decoder.Decode(&observation); err != nil || observation.Binding == nil || observation.Binding.WorkspaceAPIKeyID != 19 {
+					t.Fatalf("secret observation=%#v err=%v", observation, err)
+				}
+				return observation.State, observation.SchemaVersion, observation.WorkspaceID
+			},
+		},
+	} {
+		t.Run(testCase.path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, testRequest(http.MethodGet, testCase.path, nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			state, version, workspaceID := testCase.decode(json.NewDecoder(recorder.Body))
+			if state != testCase.wantState || version != fabric.WorkspaceOwnerObservationSchemaVersion || workspaceID != "workspace-alpha" {
+				t.Fatalf("state=%q version=%d workspaceId=%q", state, version, workspaceID)
+			}
+		})
+	}
+}
+
+func TestServerWorkspaceOwnerObservationPreservesAbsentConflictAndError(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "absent", err: fabric.ErrWorkspaceLaunchResourceAbsent, want: fabric.WorkspaceOwnerObservationAbsent},
+		{name: "conflict", err: fabric.ErrLaunchStageBindingConflict, want: fabric.WorkspaceOwnerObservationConflict},
+		{name: "error", err: errors.New("provider unavailable"), want: fabric.WorkspaceOwnerObservationError},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := newTestServer(fabric.NewService(workspaceOwnerObservationHTTPProvider{runtimeErr: testCase.err, secretErr: testCase.err}), "internal-secret")
+			for _, endpoint := range []string{"runtime", "secret"} {
+				t.Run(endpoint, func(t *testing.T) {
+					path := "/fabric/workspace-runtimes/workspace-alpha/observation"
+					if endpoint == "secret" {
+						path = "/fabric/workspace-runtimes/workspace-alpha/gateway-secret/observation"
+					}
+					recorder := httptest.NewRecorder()
+					server.ServeHTTP(recorder, testRequest(http.MethodGet, path, nil))
+					var observation struct {
+						State string `json:"state"`
+					}
+					if recorder.Code != http.StatusOK || json.NewDecoder(recorder.Body).Decode(&observation) != nil || observation.State != testCase.want {
+						t.Fatalf("status=%d observation=%#v body=%s", recorder.Code, observation, recorder.Body.String())
+					}
+				})
+			}
+		})
 	}
 }
 

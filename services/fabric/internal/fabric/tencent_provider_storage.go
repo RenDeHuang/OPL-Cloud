@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -30,6 +31,22 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 	if cbsAttempt != nil && !cbsAttempt.Fresh {
 		_ = cbsAttempt.resource(&volume)
 		volume, err = p.ReadCBSVolume(ctx, input, volume)
+		if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+			claimed, claimErr := cbsAttempt.claimReplay(ctx)
+			if claimErr != nil || !claimed {
+				return volume, firstNonNil(claimErr, ErrWorkspaceLaunchPending)
+			}
+			volume, err = p.ReadCBSVolume(ctx, input, volume)
+			if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+				if err = cbsAttempt.markReplayDispatch(ctx); err != nil {
+					return volume, err
+				}
+				volume, err = p.CreateCBSVolume(ctx, input)
+				if err == nil {
+					volume, err = p.ReadCBSVolume(ctx, input, volume)
+				}
+			}
+		}
 	} else {
 		volume, err = p.CreateCBSVolume(ctx, input)
 		if err == nil {
@@ -51,6 +68,19 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 	if staticAttempt != nil && !staticAttempt.Fresh {
 		_ = staticAttempt.resource(&volume)
 		volume, err = p.ReadStaticStorageBinding(ctx, volume)
+		if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+			claimed, claimErr := staticAttempt.claimReplay(ctx)
+			if claimErr != nil || !claimed {
+				return volume, firstNonNil(claimErr, ErrWorkspaceLaunchPending)
+			}
+			volume, err = p.ReadStaticStorageBinding(ctx, volume)
+			if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+				if err = staticAttempt.markReplayDispatch(ctx); err != nil {
+					return volume, err
+				}
+				volume, err = p.ApplyStaticStorageBinding(ctx, volume)
+			}
+		}
 	} else {
 		volume, err = p.ApplyStaticStorageBinding(ctx, volume)
 	}
@@ -140,11 +170,14 @@ func (p *TencentProvider) ReadCBSVolume(ctx context.Context, input StorageVolume
 			Tags:    oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID),
 			Storage: provisionerStorage{ID: input.ID, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType},
 		})
-		if discoverErr != nil || !discovery.OK || discovery.MutationCount != 0 || discovery.StorageState != "storage_existing_exact" ||
-			!strings.HasPrefix(discovery.StorageVolumeID, "disk-") {
-			if discoverErr != nil {
-				return persisted, discoverErr
-			}
+		if discoverErr != nil {
+			return persisted, discoverErr
+		}
+		if discovery.OK && discovery.MutationCount == 0 && discovery.StorageState == "storage_not_started" && discovery.Status == "absent" &&
+			discovery.StorageVolumeID == "" {
+			return persisted, ErrWorkspaceLaunchResourceAbsent
+		}
+		if !discovery.OK || discovery.MutationCount != 0 || discovery.StorageState != "storage_existing_exact" || !strings.HasPrefix(discovery.StorageVolumeID, "disk-") {
 			return persisted, fmt.Errorf("storage_cbs_readback_identity_required")
 		}
 		persisted.ProviderResourceID = discovery.StorageVolumeID
@@ -208,7 +241,10 @@ func (p *TencentProvider) ReadStaticStorageBinding(ctx context.Context, volume S
 			pvc, pvcMatches = resource, pvcMatches+1
 		}
 	}
-	if pvMatches != 1 || pvcMatches != 1 {
+	if len(items) == 0 && pvMatches == 0 && pvcMatches == 0 {
+		return volume, ErrWorkspaceLaunchResourceAbsent
+	}
+	if len(items) != 2 || pvMatches != 1 || pvcMatches != 1 {
 		return volume, fmt.Errorf("storage_static_binding_unverified")
 	}
 	expectedTags := volume.CostTags

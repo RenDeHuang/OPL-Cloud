@@ -509,6 +509,10 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
 		writeResult(w, runtime, err)
 	})
+	mux.HandleFunc("GET /fabric/workspace-runtimes/{workspaceId}/observation", func(w http.ResponseWriter, r *http.Request) {
+		observation := service.ObserveWorkspaceRuntime(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
+		writeJSON(w, http.StatusOK, observation)
+	})
 	mux.HandleFunc("POST /fabric/workspace-runtimes/{workspaceId}/credentials/reveal", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			AccountID   string `json:"accountId"`
@@ -547,6 +551,10 @@ func newFabricMux(service *fabric.Service) http.Handler {
 	mux.HandleFunc("GET /fabric/workspace-runtimes/{workspaceId}/gateway-secret", func(w http.ResponseWriter, r *http.Request) {
 		binding, err := service.WorkspaceRuntimeGatewaySecret(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
 		writeResult(w, binding, err)
+	})
+	mux.HandleFunc("GET /fabric/workspace-runtimes/{workspaceId}/gateway-secret/observation", func(w http.ResponseWriter, r *http.Request) {
+		observation := service.ObserveWorkspaceRuntimeGatewaySecret(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
+		writeJSON(w, http.StatusOK, observation)
 	})
 	mux.HandleFunc("POST /fabric/gateway-secrets", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.GatewaySecretInput
@@ -735,7 +743,7 @@ func fabricMutationScopeForRequest(ctx context.Context, resolver fabricMutationS
 			return strings.TrimSpace(result)
 		}
 		scope.AccountID, scope.WorkspaceID = bindingValue("accountId"), bindingValue("workspaceId")
-		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_launch_stage", bindingValue("expectedResourceBinding"), bindingValue("action")
+		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_launch_stage", bindingValue("fabricOperationId"), bindingValue("action")
 		scope.OperationID = bindingValue("idempotencyKey")
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "compute-allocations" && parts[2] != "":
 		scope.ResourceKind, scope.ResourceID = "compute_allocation", parts[2]

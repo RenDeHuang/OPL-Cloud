@@ -226,10 +226,14 @@ func projectCustomerBillingReceipt(receipt clients.Receipt) (map[string]any, boo
 		}
 		if receipt.Type == "billing.workspace_refunded.v1" {
 			refund, ok := requiredNonNegativeInteger(receipt.Cost, "refundUsdMicros")
-			if !ok || refund != total {
+			refundCode, validRefundCode := receipt.Cost["sub2apiRefundCode"].(string)
+			if !ok || refund != total || !validRefundCode || strings.TrimSpace(refundCode) == "" || strings.TrimSpace(receipt.RequestID) == "" || strings.TrimSpace(receipt.AccountID) == "" {
 				return nil, false
 			}
 			body["refundUsdMicros"] = refund
+			body["refundCode"] = refundCode
+			body["operationId"] = receipt.RequestID
+			body["accountId"] = receipt.AccountID
 		}
 	case "billing.resource_purchased.v1", "billing.resource_renewed.v1", "billing.resource_expired.v1", "billing.resource_refunded.v1", "billing.charge_review_required.v1", "billing.reconciliation.v1":
 		charge, ok := requiredNonNegativeInteger(receipt.Cost, "chargeUsdMicros")

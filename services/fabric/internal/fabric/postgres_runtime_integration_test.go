@@ -1248,6 +1248,111 @@ func TestPostgresOperationStoreBoundsJobHistoryAndOperationPages(t *testing.T) {
 	}
 }
 
+func TestPostgresProviderMutationReplayEpochSurvivesRestartAndCAS(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	now := time.Date(2026, 8, 15, 8, 0, 0, 0, time.UTC)
+	parent := testWorkspaceLaunchBinding("storage", "ensure_storage", "launch-postgres-replay:storage")
+	parent.LaunchOperationID = "launch-postgres-replay"
+	parent.IdempotencyKey = "launch-postgres-replay:storage"
+	parent.RequestHash = hashInput(map[string]string{"launch": parent.LaunchOperationID, "stage": parent.Stage})
+	operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, now)
+	operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+	if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+		t.Fatal(err)
+	}
+	firstService := NewServiceWithOperationStore(testProvider{}, firstStore)
+	firstService.now = func() time.Time { return now }
+	firstCtx := firstService.providerMutationContext(ctx, operation)
+	fresh, err := beginProviderMutation(firstCtx, "provider_storage_create", "storage_volume", "vol-postgres-replay", "volume/vol-postgres-replay")
+	if err != nil || fresh == nil || !fresh.Fresh {
+		t.Fatalf("fresh=%#v err=%v", fresh, err)
+	}
+
+	secondService := NewServiceWithOperationStore(testProvider{}, secondStore)
+	secondService.now = func() time.Time { return now }
+	secondCtx := secondService.providerMutationContext(ctx, operation)
+	firstAttempt, err := beginProviderMutation(firstCtx, "provider_storage_create", "storage_volume", "vol-postgres-replay", "volume/vol-postgres-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondAttempt, err := beginProviderMutation(secondCtx, "provider_storage_create", "storage_volume", "vol-postgres-replay", "volume/vol-postgres-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type claimResult struct {
+		attempt *providerMutationAttempt
+		claimed bool
+		err     error
+	}
+	results := make(chan claimResult, 2)
+	var wg sync.WaitGroup
+	for _, attempt := range []*providerMutationAttempt{firstAttempt, secondAttempt} {
+		wg.Add(1)
+		go func(candidate *providerMutationAttempt) {
+			defer wg.Done()
+			claimed, claimErr := candidate.claimReplay(ctx)
+			results <- claimResult{attempt: candidate, claimed: claimed, err: claimErr}
+		}(attempt)
+	}
+	wg.Wait()
+	close(results)
+	var winner *providerMutationAttempt
+	conflicts := 0
+	for result := range results {
+		switch {
+		case result.claimed && result.err == nil:
+			winner = result.attempt
+		case !result.claimed && errors.Is(result.err, ErrRuntimeOperationNotCurrent):
+			conflicts++
+		default:
+			t.Fatalf("claim result=%#v", result)
+		}
+	}
+	if winner == nil || conflicts != 1 {
+		t.Fatalf("winner=%#v conflicts=%d", winner, conflicts)
+	}
+	persisted, err := secondStore.Get(ctx, fresh.operation.ID)
+	epoch, epochOK := decodeProviderMutationReplayEpoch(persisted)
+	if err != nil || !epochOK || epoch.State != "leased" || epoch.LeaseGeneration != 1 || epoch.ReplayID == "" {
+		t.Fatalf("persisted epoch=%#v/%v operation=%#v err=%v", epoch, epochOK, persisted, err)
+	}
+	if err := winner.markReplayDispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Second)
+	volume := StorageVolume{ID: "vol-postgres-replay", AccountID: parent.AccountID, WorkspaceID: parent.WorkspaceID, ProviderRequestID: "provider-postgres-replay"}
+	if err := winner.complete(ctx, volume.ProviderRequestID, volume, nil); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := secondStore.Get(ctx, fresh.operation.ID)
+	epoch, epochOK = decodeProviderMutationReplayEpoch(terminal)
+	binding, bindingOK := decodeProviderMutationBinding(terminal)
+	if err != nil || terminal.Status != "succeeded" || terminal.ResourceID != volume.ID || !epochOK || epoch.State != "succeeded" ||
+		!bindingOK || binding.Parent != parent {
+		t.Fatalf("terminal=%#v epoch=%#v/%v binding=%#v/%v err=%v", terminal, epoch, epochOK, binding, bindingOK, err)
+	}
+	restarted, err := beginProviderMutation(secondCtx, "provider_storage_create", "storage_volume", "vol-postgres-replay", "volume/vol-postgres-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, claimErr := restarted.claimReplay(ctx); claimed || claimErr != nil {
+		t.Fatalf("terminal child reclaimed=%v err=%v", claimed, claimErr)
+	}
+}
+
 func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	first, err := newTestPostgresOperationStore(databaseURL)
@@ -1285,6 +1390,101 @@ func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	}
 	if table.Valid {
 		t.Fatal("second Fabric startup repeated embedded DDL")
+	}
+}
+
+func TestPostgresWorkspaceRuntimeIdentityCandidatesCanonicalRestart(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	first, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 8, 16, 4, 0, 0, 0, time.UTC)
+	canonicalParent, canonicalChild, _ := canonicalRuntimeOperationGraph(t, "workspace-canonical-pg", "canonical-pg", now)
+	duplicateFirstParent, duplicateFirstChild, _ := canonicalRuntimeOperationGraph(t, "workspace-duplicate-pg", "duplicate-first-pg", now.Add(time.Minute))
+	duplicateSecondParent, duplicateSecondChild, _ := canonicalRuntimeOperationGraph(t, "workspace-duplicate-pg", "duplicate-second-pg", now.Add(2*time.Minute))
+	driftParent, driftChild, _ := canonicalRuntimeOperationGraph(t, "workspace-drift-pg", "drift-pg", now.Add(3*time.Minute))
+	driftBinding := driftChild.RedactedProviderPayload[providerMutationBindingPayloadKey].(persistedProviderMutationBinding)
+	driftBinding.Digest += "-drift"
+	driftChild.RedactedProviderPayload[providerMutationBindingPayloadKey] = driftBinding
+	legacy := legacyWorkspaceRuntimeOperation("workspace-legacy-pg", "legacy-pg", now.Add(-time.Minute))
+	for _, operation := range []FabricOperation{
+		legacy, canonicalParent, canonicalChild, duplicateFirstParent, duplicateFirstChild,
+		duplicateSecondParent, duplicateSecondChild, driftParent, driftChild,
+	} {
+		if err := first.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := first.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.client.Close()
+	for _, test := range []struct {
+		name        string
+		workspaceID string
+		wantID      string
+		wantCount   int
+		wantErr     error
+	}{
+		{name: "legacy", workspaceID: legacy.WorkspaceID, wantID: legacy.ID, wantCount: 1},
+		{name: "canonical restart", workspaceID: canonicalParent.WorkspaceID, wantID: canonicalChild.ID, wantCount: 1},
+		{name: "duplicate canonical", workspaceID: duplicateFirstParent.WorkspaceID, wantCount: 2},
+		{name: "canonical binding drift", workspaceID: driftParent.WorkspaceID, wantErr: ErrLaunchStageBindingConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidates, err := restarted.WorkspaceRuntimeIdentityCandidates(ctx, test.workspaceID)
+			if test.wantErr != nil {
+				if !errors.Is(err, test.wantErr) {
+					t.Fatalf("candidates=%#v err=%v", candidates, err)
+				}
+				return
+			}
+			if err != nil || len(candidates) != test.wantCount || test.wantID != "" && candidates[0].ID != test.wantID {
+				t.Fatalf("candidates=%#v err=%v", candidates, err)
+			}
+		})
+	}
+}
+
+func TestPostgresServiceReplaysCanonicalLaunchAttachmentFromParentAfterRestart(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx := context.Background()
+	first, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &countingCanonicalDetachProvider{}
+	fixture := canonicalAttachmentReplayFixtureFor(t, provider.Descriptor().Name, "canonical-attachment-pg")
+	for _, operation := range fixture.operations {
+		if err := first.Append(ctx, operation); err != nil {
+			_ = first.client.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := first.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restartedStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restartedStore.client.Close()
+	restarted := NewServiceWithOperationStore(provider, restartedStore)
+	facts, err := restarted.ProviderFactsBatch(ctx, ProviderFactsBatchInput{Items: []ProviderFactInput{{
+		AccountID: fixture.binding.AccountID, WorkspaceID: fixture.binding.WorkspaceID, ResourceType: "attachment", ResourceID: fixture.attachment.ID,
+	}}})
+	if err != nil || len(facts.Items) != 1 || !facts.Items[0].Available {
+		t.Fatalf("PostgreSQL canonical attachment facts=%#v err=%v", facts, err)
+	}
+	if detached, err := restarted.DetachStorageAttachment(ctx, fixture.attachment.ID); err != nil || detached.Status != "detached" || provider.detachCalls.Load() != 1 {
+		t.Fatalf("PostgreSQL canonical attachment detach=%#v err=%v providerCalls=%d", detached, err, provider.detachCalls.Load())
 	}
 }
 

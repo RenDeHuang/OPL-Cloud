@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -27,10 +26,6 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchFabricStage
 	}
 	result, err := a.service.ReadWorkspaceLaunchStage(ctx, input)
 	if err != nil {
-		var upstream *clients.FabricHTTPError
-		if errors.As(err, &upstream) && upstream.StatusCode == 404 {
-			return workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, nil
-		}
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, err
 	}
 	return workspaceLaunchFabricObservation(operation, input, result)
@@ -99,12 +94,12 @@ func workspaceLaunchFabricObservation(operation workspaceLaunchReconcileOperatio
 		!workspaceLaunchResourcesPreserveIdentity(input.Resources, result.Resources) {
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, nil
 	}
-	switch result.State {
-	case workspaceLaunchStageAbsent:
+	switch {
+	case result.State == workspaceLaunchStageAbsent && (result.Reason == "no_stage_record" || result.Reason == "started_no_resource" || result.Reason == "failed_no_resource"):
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, nil
-	case workspaceLaunchStagePending:
+	case result.State == workspaceLaunchStagePending && result.Reason == "provider_provisioning":
 		return workspaceLaunchStageObservation{State: workspaceLaunchStagePending}, nil
-	case workspaceLaunchStageReady:
+	case result.State == workspaceLaunchStageReady && result.Reason == "none":
 		facts, err := workspaceLaunchFabricStageFacts(operation.Stage, result.Resources, operation)
 		if err != nil {
 			return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, nil
@@ -113,6 +108,8 @@ func workspaceLaunchFabricObservation(operation workspaceLaunchReconcileOperatio
 			return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, nil
 		}
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: facts}, nil
+	case result.State == workspaceLaunchStageUnknown && (result.Reason == "failed_no_resource_unproven" || result.Reason == "resource_absence_status_conflict"):
+		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, nil
 	default:
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, nil
 	}

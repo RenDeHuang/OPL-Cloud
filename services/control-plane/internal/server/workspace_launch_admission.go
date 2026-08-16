@@ -1,9 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -14,14 +18,15 @@ import (
 )
 
 const (
-	controlledBasicPilotEnabledEnv     = "OPL_CONTROLLED_BASIC_PILOT_ENABLED"
-	controlledBasicPilotAccountsEnv    = "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS"
-	controlledBasicPilotMaxInFlightEnv = "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT"
-	controlledBasicPilotDefaultLimit   = 1
-	productionAcceptanceBApprovalEnv   = "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON"
-	productionAcceptanceBCapability    = "x-opl-acceptance-b-capability"
-	productionAcceptanceBApprovalID    = "x-opl-acceptance-b-approval-id"
-	productionAcceptanceBConfirmation  = "RUN_ONE_INDEPENDENT_FRESH_BASIC_ORDER_FOR_ACCEPTANCE_B"
+	controlledBasicPilotEnabledEnv                 = "OPL_CONTROLLED_BASIC_PILOT_ENABLED"
+	controlledBasicPilotAccountsEnv                = "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS"
+	controlledBasicPilotMaxInFlightEnv             = "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT"
+	controlledBasicPilotDefaultLimit               = 1
+	productionAcceptanceBApprovalEnv               = "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON"
+	productionAcceptanceBResumeExistingApprovalEnv = "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_RESUME_EXISTING_APPROVAL_JSON"
+	productionAcceptanceBCapability                = "x-opl-acceptance-b-capability"
+	productionAcceptanceBApprovalID                = "x-opl-acceptance-b-approval-id"
+	productionAcceptanceBConfirmation              = "RUN_ONE_INDEPENDENT_FRESH_BASIC_ORDER_FOR_ACCEPTANCE_B"
 )
 
 var productionAcceptanceBAllowedWrites = []string{
@@ -32,6 +37,7 @@ var productionAcceptanceBAllowedWrites = []string{
 
 var productionAcceptanceBApprovalIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$`)
 var productionAcceptanceBReleaseSHAPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
+var productionAcceptanceBIdentityDigestPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 var productionAcceptanceBForbiddenWrites = []string{
 	"provision_account", "adjust_wallet", "submit_second_workspace_launch", "create_second_cvm", "create_second_cbs",
@@ -68,6 +74,62 @@ type productionAcceptanceBApproval struct {
 	} `json:"expected"`
 	AllowedWrites   []string `json:"allowedWrites"`
 	ForbiddenWrites []string `json:"forbiddenWrites"`
+}
+
+type workspaceLaunchAcceptanceBIdentityDigestSet struct {
+	AccountIdentitySHA256   string `json:"accountIdentitySha256"`
+	OperationIdentitySHA256 string `json:"operationIdentitySha256"`
+	WorkspaceIdentitySHA256 string `json:"workspaceIdentitySha256"`
+	KeyIdentitySHA256       string `json:"keyIdentitySha256"`
+	DebitIdentitySHA256     string `json:"debitIdentitySha256"`
+	QuoteIdentitySHA256     string `json:"quoteIdentitySha256"`
+	ProviderIdentitySHA256  string `json:"providerIdentitySha256"`
+}
+
+type productionAcceptanceBResumeExistingApproval struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	OperationMode string `json:"operationMode"`
+	ApprovalID    string `json:"approvalId"`
+	ExpiresAt     string `json:"expiresAt"`
+	Release       struct {
+		CanonicalCloudSHA        string `json:"canonicalCloudSha"`
+		CanonicalCloudTree       string `json:"canonicalCloudTree"`
+		DeployedCloudImageDigest string `json:"deployedCloudImageDigest"`
+	} `json:"release"`
+	Authorization struct {
+		AuthorizationID         string `json:"authorizationId"`
+		OperationID             string `json:"operationId"`
+		LaunchVersion           int    `json:"launchVersion"`
+		AuthorizedStage         string `json:"authorizedStage"`
+		ReasonSHA256            string `json:"reasonSha256"`
+		MutationBudget          int    `json:"mutationBudget"`
+		IdempotentReplayBudget  int    `json:"idempotentReplayBudget"`
+		AuthoritativeReadBudget int    `json:"authoritativeReadBudget"`
+	} `json:"authorization"`
+	Reconciliation struct {
+		OperationStatus         string `json:"operationStatus"`
+		AuthoritativeStageState string `json:"authoritativeStageState"`
+		Attempt                 struct {
+			Attempted            int    `json:"attempted"`
+			Confirmed            int    `json:"confirmed"`
+			Unknown              int    `json:"unknown"`
+			Max                  int    `json:"max"`
+			Status               string `json:"status"`
+			IdempotencyKeySHA256 string `json:"idempotencyKeySha256"`
+		} `json:"attempt"`
+	} `json:"reconciliation"`
+	IdentityDigests workspaceLaunchAcceptanceBIdentityDigestSet `json:"identityDigests"`
+}
+
+type workspaceLaunchAcceptanceBResumeExistingBinding struct {
+	SchemaVersion            int                                         `json:"schemaVersion"`
+	ApprovalID               string                                      `json:"approvalId"`
+	ApprovalSHA256           string                                      `json:"approvalSha256"`
+	CanonicalCloudSHA        string                                      `json:"canonicalCloudSha"`
+	CanonicalCloudTree       string                                      `json:"canonicalCloudTree"`
+	DeployedCloudImageDigest string                                      `json:"deployedCloudImageDigest"`
+	AuthoritativeState       string                                      `json:"authoritativeState"`
+	IdentityDigests          workspaceLaunchAcceptanceBIdentityDigestSet `json:"identityDigests"`
 }
 
 type controlledBasicPilotAdmission struct {
@@ -157,6 +219,231 @@ func parseProductionAcceptanceBApproval() (productionAcceptanceBApproval, bool) 
 		return productionAcceptanceBApproval{}, false
 	}
 	return approval, true
+}
+
+func parseProductionAcceptanceBResumeExistingApproval() (productionAcceptanceBResumeExistingApproval, bool) {
+	raw := strings.TrimSpace(os.Getenv(productionAcceptanceBResumeExistingApprovalEnv))
+	if raw == "" {
+		return productionAcceptanceBResumeExistingApproval{}, false
+	}
+	var envelope map[string]any
+	var approval productionAcceptanceBResumeExistingApproval
+	if !jsonObjectKeysUnique([]byte(raw)) || json.Unmarshal([]byte(raw), &envelope) != nil || !exactWorkspaceComputeClaimKeys(envelope, []string{
+		"schemaVersion", "operationMode", "approvalId", "expiresAt", "release", "authorization", "reconciliation", "identityDigests",
+	}) || !exactNestedAcceptanceBResumeExistingApprovalKeys(envelope) || json.Unmarshal([]byte(raw), &approval) != nil {
+		return productionAcceptanceBResumeExistingApproval{}, false
+	}
+	return approval, true
+}
+
+func jsonObjectKeysUnique(raw []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var readValue func() bool
+	readValue = func() bool {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return true
+		}
+		switch delim {
+		case '{':
+			seen := map[string]struct{}{}
+			for decoder.More() {
+				keyToken, keyErr := decoder.Token()
+				key, keyOK := keyToken.(string)
+				if keyErr != nil || !keyOK {
+					return false
+				}
+				if _, duplicate := seen[key]; duplicate {
+					return false
+				}
+				seen[key] = struct{}{}
+				if !readValue() {
+					return false
+				}
+			}
+			closing, closingErr := decoder.Token()
+			return closingErr == nil && closing == json.Delim('}')
+		case '[':
+			for decoder.More() {
+				if !readValue() {
+					return false
+				}
+			}
+			closing, closingErr := decoder.Token()
+			return closingErr == nil && closing == json.Delim(']')
+		default:
+			return false
+		}
+	}
+	if !readValue() {
+		return false
+	}
+	_, err := decoder.Token()
+	return err == io.EOF
+}
+
+func exactNestedAcceptanceBResumeExistingApprovalKeys(envelope map[string]any) bool {
+	wants := map[string][]string{
+		"release":         {"canonicalCloudSha", "canonicalCloudTree", "deployedCloudImageDigest"},
+		"authorization":   {"authorizationId", "operationId", "launchVersion", "authorizedStage", "reasonSha256", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"},
+		"reconciliation":  {"operationStatus", "authoritativeStageState", "attempt"},
+		"identityDigests": {"accountIdentitySha256", "operationIdentitySha256", "workspaceIdentitySha256", "keyIdentitySha256", "debitIdentitySha256", "quoteIdentitySha256", "providerIdentitySha256"},
+	}
+	for field, want := range wants {
+		value, ok := envelope[field].(map[string]any)
+		if !ok || !exactWorkspaceComputeClaimKeys(value, want) {
+			return false
+		}
+	}
+	reconciliation := envelope["reconciliation"].(map[string]any)
+	attempt, ok := reconciliation["attempt"].(map[string]any)
+	return ok && exactWorkspaceComputeClaimKeys(attempt, []string{"attempted", "confirmed", "unknown", "max", "status", "idempotencyKeySha256"})
+}
+
+func workspaceLaunchAcceptanceBIdentityDigests(operation workspaceLaunchReconcileOperation) workspaceLaunchAcceptanceBIdentityDigestSet {
+	return workspaceLaunchAcceptanceBIdentityDigestSet{
+		AccountIdentitySHA256: acceptanceBDigestParts(
+			operation.stringFact("accountId"), operation.stringFact("ownerUserId"), strconv.FormatInt(operation.int64Fact("sub2apiUserId"), 10),
+		),
+		OperationIdentitySHA256: acceptanceBDigestParts(operation.ID, operation.stringFact("requestHash"), operation.CreatedAt),
+		WorkspaceIdentitySHA256: acceptanceBDigestParts(
+			operation.stringFact("workspaceId"), operation.stringFact("name"), operation.stringFact("packageId"),
+			strconv.Itoa(operation.intFact("sizeGb")), strconv.FormatBool(operation.boolFact("autoRenew")), operation.stringFact("workspaceImageDigest"),
+		),
+		KeyIdentitySHA256: acceptanceBDigestParts(
+			strconv.FormatInt(operation.int64Fact("sub2apiUserId"), 10), strconv.FormatInt(operation.int64Fact("workspaceKeyGroupId"), 10),
+			strconv.FormatInt(operation.int64Fact("workspaceApiKeyId"), 10), operation.stringFact("workspaceKeyStatus"), operation.stringFact("workspaceKeyFingerprint"),
+		),
+		DebitIdentitySHA256: acceptanceBDigestParts(
+			operation.stringFact("accountId"), strconv.FormatInt(operation.int64Fact("sub2apiUserId"), 10), operation.ID,
+			operation.stringFact("workspaceId"), operation.stringFact("sub2apiRedeemCode"), strconv.FormatInt(operation.int64Fact("totalChargeUsdMicros"), 10),
+		),
+		QuoteIdentitySHA256: acceptanceBDigestParts(
+			operation.stringFact("priceVersion"), pricingCurrency, strconv.FormatInt(operation.int64Fact("totalChargeUsdMicros"), 10),
+		),
+		ProviderIdentitySHA256: acceptanceBDigestParts(
+			operation.stringFact("providerProfileRef"), operation.stringFact("preflightBindingRef"), operation.stringFact("workspaceImageDigest"),
+			operation.stringFact("computeAllocationId"), operation.stringFact("computeBindingRef"), operation.stringFact("storageId"), operation.stringFact("storageBindingRef"),
+			operation.stringFact("attachmentId"), operation.stringFact("attachmentBindingRef"), operation.stringFact("gatewaySecretRef"), operation.stringFact("secretBindingRef"),
+			operation.stringFact("runtimeId"), operation.stringFact("runtimeBindingRef"),
+		),
+	}
+}
+
+func validWorkspaceLaunchAcceptanceBIdentityDigests(value workspaceLaunchAcceptanceBIdentityDigestSet) bool {
+	return productionAcceptanceBIdentityDigestPattern.MatchString(value.AccountIdentitySHA256) &&
+		productionAcceptanceBIdentityDigestPattern.MatchString(value.OperationIdentitySHA256) &&
+		productionAcceptanceBIdentityDigestPattern.MatchString(value.WorkspaceIdentitySHA256) &&
+		productionAcceptanceBIdentityDigestPattern.MatchString(value.KeyIdentitySHA256) &&
+		productionAcceptanceBIdentityDigestPattern.MatchString(value.DebitIdentitySHA256) &&
+		productionAcceptanceBIdentityDigestPattern.MatchString(value.QuoteIdentitySHA256) &&
+		productionAcceptanceBIdentityDigestPattern.MatchString(value.ProviderIdentitySHA256)
+}
+
+func productionAcceptanceBResumeExistingApprovalDigest(approval productionAcceptanceBResumeExistingApproval) string {
+	payload, err := json.Marshal(approval)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("sha256:%x", digest[:])
+}
+
+func productionAcceptanceBResumeExistingApproved(
+	header http.Header,
+	approval productionAcceptanceBResumeExistingApproval,
+	authorization workspaceLaunchResumeAuthorization,
+	operation workspaceLaunchReconcileOperation,
+	observation workspaceLaunchStageObservation,
+	now time.Time,
+) (workspaceLaunchAcceptanceBResumeExistingBinding, bool) {
+	expiresAt, expiryErr := time.Parse(time.RFC3339, approval.ExpiresAt)
+	headerValue := func(name string) string {
+		values := header.Values(name)
+		if len(values) != 1 {
+			return ""
+		}
+		return strings.TrimSpace(values[0])
+	}
+	attempt, attemptFound := operation.Attempts[authorization.AuthorizedStage]
+	identityDigests := workspaceLaunchAcceptanceBIdentityDigests(operation)
+	approvalAttempt := approval.Reconciliation.Attempt
+	approved := expiryErr == nil && now.Before(expiresAt) && approval.SchemaVersion == 1 && approval.OperationMode == "acceptance_b_resume_existing" &&
+		productionAcceptanceBApprovalIDPattern.MatchString(approval.ApprovalID) && headerValue(productionAcceptanceBApprovalID) == approval.ApprovalID &&
+		secureHeaderMatches(headerValue(productionAcceptanceBCapability), strings.TrimSpace(os.Getenv("OPL_INTERNAL_SERVICE_TOKEN"))) &&
+		approval.Release.CanonicalCloudSHA == strings.TrimSpace(os.Getenv("OPL_RELEASE_SHA")) && productionAcceptanceBReleaseSHAPattern.MatchString(approval.Release.CanonicalCloudSHA) &&
+		productionAcceptanceBReleaseSHAPattern.MatchString(approval.Release.CanonicalCloudTree) &&
+		approval.Release.DeployedCloudImageDigest == deployedImageDigest(os.Getenv("OPL_CLOUD_IMAGE")) &&
+		approval.Authorization.AuthorizationID == authorization.AuthorizationID && approval.Authorization.OperationID == operation.ID &&
+		approval.Authorization.LaunchVersion == authorization.LaunchVersion && approval.Authorization.AuthorizedStage == authorization.AuthorizedStage &&
+		approval.Authorization.ReasonSHA256 == acceptanceBDigestParts(authorization.Reason) &&
+		approval.Authorization.MutationBudget == authorization.MutationBudget && approval.Authorization.IdempotentReplayBudget == authorization.IdempotentReplayBudget &&
+		approval.Authorization.AuthoritativeReadBudget == authorization.AuthoritativeReadBudget &&
+		operation.Status == "manual_review" && operation.Stage == authorization.AuthorizedStage && operation.Version == authorization.LaunchVersion && attemptFound &&
+		approval.Reconciliation.OperationStatus == operation.Status && approval.Reconciliation.AuthoritativeStageState == observation.State &&
+		observation.State != workspaceLaunchStageUnknown && (observation.State == workspaceLaunchStageReady || observation.State == workspaceLaunchStageAbsent || observation.State == workspaceLaunchStagePending) &&
+		approvalAttempt.Attempted == attempt.Attempted && approvalAttempt.Confirmed == attempt.Confirmed && approvalAttempt.Unknown == attempt.Unknown &&
+		approvalAttempt.Max == attempt.Max && approvalAttempt.Status == attempt.Status &&
+		approvalAttempt.IdempotencyKeySHA256 == acceptanceBDigestParts(attempt.IdempotencyKey) &&
+		approval.IdentityDigests == identityDigests && validWorkspaceLaunchAcceptanceBIdentityDigests(approval.IdentityDigests)
+	if !approved {
+		return workspaceLaunchAcceptanceBResumeExistingBinding{}, false
+	}
+	return workspaceLaunchAcceptanceBResumeExistingBinding{
+		SchemaVersion: 1, ApprovalID: approval.ApprovalID, ApprovalSHA256: productionAcceptanceBResumeExistingApprovalDigest(approval),
+		CanonicalCloudSHA: approval.Release.CanonicalCloudSHA, CanonicalCloudTree: approval.Release.CanonicalCloudTree,
+		DeployedCloudImageDigest: approval.Release.DeployedCloudImageDigest, AuthoritativeState: observation.State, IdentityDigests: identityDigests,
+	}, true
+}
+
+func productionAcceptanceBResumeExistingRequestMode(header http.Header) (bool, bool) {
+	approvalIDs := header.Values(productionAcceptanceBApprovalID)
+	capabilities := header.Values(productionAcceptanceBCapability)
+	requested := len(approvalIDs) > 0 || len(capabilities) > 0
+	return requested, !requested || len(approvalIDs) == 1 && len(capabilities) == 1 &&
+		strings.TrimSpace(approvalIDs[0]) != "" && strings.TrimSpace(capabilities[0]) != ""
+}
+
+func productionAcceptanceBResumeExistingReplayApproved(
+	header http.Header,
+	approval productionAcceptanceBResumeExistingApproval,
+	authorization workspaceLaunchResumeAuthorization,
+	operationID string,
+	existing workspaceLaunchResumeAuthorization,
+	consumed bool,
+) bool {
+	if existing.AcceptanceBResumeExisting == nil || existing.AuthorizationID != authorization.AuthorizationID || existing.LaunchVersion != authorization.LaunchVersion ||
+		existing.AuthorizedStage != authorization.AuthorizedStage || existing.Reason != authorization.Reason || existing.MutationBudget != authorization.MutationBudget ||
+		existing.IdempotentReplayBudget != authorization.IdempotentReplayBudget || existing.AuthoritativeReadBudget != authorization.AuthoritativeReadBudget {
+		return false
+	}
+	headerValue := func(name string) string {
+		values := header.Values(name)
+		if len(values) != 1 {
+			return ""
+		}
+		return strings.TrimSpace(values[0])
+	}
+	binding := existing.AcceptanceBResumeExisting
+	releaseCurrent := approval.Release.CanonicalCloudSHA == strings.TrimSpace(os.Getenv("OPL_RELEASE_SHA")) &&
+		approval.Release.DeployedCloudImageDigest == deployedImageDigest(os.Getenv("OPL_CLOUD_IMAGE"))
+	expiresAt, expiryErr := time.Parse(time.RFC3339, approval.ExpiresAt)
+	return approval.SchemaVersion == 1 && approval.OperationMode == "acceptance_b_resume_existing" && approval.ApprovalID == binding.ApprovalID &&
+		headerValue(productionAcceptanceBApprovalID) == approval.ApprovalID &&
+		secureHeaderMatches(headerValue(productionAcceptanceBCapability), strings.TrimSpace(os.Getenv("OPL_INTERNAL_SERVICE_TOKEN"))) &&
+		approval.Authorization.AuthorizationID == authorization.AuthorizationID && approval.Authorization.OperationID == operationID &&
+		approval.Authorization.LaunchVersion == authorization.LaunchVersion && approval.Authorization.AuthorizedStage == authorization.AuthorizedStage &&
+		approval.Authorization.ReasonSHA256 == acceptanceBDigestParts(authorization.Reason) &&
+		approval.Authorization.MutationBudget == authorization.MutationBudget && approval.Authorization.IdempotentReplayBudget == authorization.IdempotentReplayBudget &&
+		approval.Authorization.AuthoritativeReadBudget == authorization.AuthoritativeReadBudget &&
+		approval.Release.CanonicalCloudSHA == binding.CanonicalCloudSHA && approval.Release.CanonicalCloudTree == binding.CanonicalCloudTree &&
+		approval.Release.DeployedCloudImageDigest == binding.DeployedCloudImageDigest && approval.IdentityDigests == binding.IdentityDigests &&
+		productionAcceptanceBResumeExistingApprovalDigest(approval) == binding.ApprovalSHA256 &&
+		(consumed || expiryErr == nil && time.Now().Before(expiresAt) && releaseCurrent)
 }
 
 func exactNestedAcceptanceBApprovalKeys(envelope map[string]any) bool {

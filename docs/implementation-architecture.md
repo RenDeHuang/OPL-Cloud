@@ -309,6 +309,32 @@ suffixes or provider tags. Both owners consume the same focused golden vectors,
 and the normal Launch/Resume caller is integrated. This closes the typed boundary
 slice but not the full Console-to-local-Workspace P0 vertical.
 
+The current recovery row keeps `Max=1` and does not reset `Attempted`. An
+operator may CAS-persist one exact-idempotency replay budget plus a finite typed
+continuation-read budget; the server binds the starting readback count. Fabric
+reports only `ready/none`, `pending/provider_provisioning`, the three explicit
+absent reasons, or the two explicit unknown reasons. Adapters perform owner
+read, child replay CAS, owner read again, then reuse the exact original key only
+for still-absent resources. Budget exhaustion records `unknown/manual_review`.
+Schema-v3 rows missing the new fields decode with zero authorization and cannot
+read or mutate until explicitly reviewed.
+
+Fresh post-mutation typed `pending` uses a distinct system continuation record,
+not the operator Resume record. The mutation's mandatory owner read persists
+`PendingReadbacks=1`, a zero-mutation/zero-replay authorization, and an exact
+account/Launch/Workspace/stage/idempotency/attempt/version binding in one CAS.
+At most two subsequent reads are allowed. Before each GET, Control Plane claims
+and increments the exact ordinal by CAS; a loser stops before GET, and a crashed
+claim is never refunded or reissued. Ready consumes the authorization and
+advances, pending may claim only a remaining slot, and unknown/conflict/error or
+exact exhaustion records `unknown/manual_review`. A schema-v3 row without the
+new authorization and claim maps is explicitly zero-budget.
+
+Fabric's child transport claim is a local replay epoch, not Control Plane
+operator authorization and not a second business attempt budget. It binds the
+parent operation, exact child identity, original idempotency key, and lease
+generation only to serialize dispatch and crash recovery inside Fabric.
+
 Control Plane uses its own Fabric transport identity for these mutations and
 signs a short-lived capability binding account, Workspace, resource kind/id,
 action, operation identity, expiry, and request-body digest. Fabric derives the
@@ -374,6 +400,25 @@ repurchase. Ledger receipt failure retries only the receipt. Source and focused
 tests implement this behavior; live Sub2API and Tencent evidence remains pending,
 and the repository remains `code-complete=false`.
 
+Activation readback is the Control Plane `GetWorkspace(workspaceId)` point-read
+projection matched to the original launch and Fabric bindings; the removed
+`POST /fabric/workspace-activation-truth` route is not authority. The terminal
+purchase receipt uses `RequestID=launchOperationId` and
+`Idempotency-Key=<launchOperationId>:purchase-receipt`, with exact Workspace,
+debit code, user, total, component, and downstream resource identities.
+
+Workspace DELETE is a separate durable Control Plane owner operation. Before
+cleanup, it reads the exact Ledger purchase Receipt and exact Sub2API debit
+history entry. It then consumes Fabric's typed Runtime and Gateway Secret
+observations (`ready/absent/pending/conflict/error`) and advances only through
+the same-operation chain `runtime + Secret absence -> attachment -> storage ->
+compute -> Sub2API Key absence -> exact Sub2API business refund -> Ledger refund
+Receipt -> Control Plane Workspace absence`. The operation binds the same
+account, Workspace, Runtime, Key, debit code, purchase Receipt, and refund
+Receipt throughout. Refund response loss performs exact-code GET only; Receipt
+failure retries only the Receipt. No Local Docker runner, Fabric adapter, or
+operator wallet adjustment owns Key deletion or the business refund.
+
 Each Workspace operation owns renewal intent and one combined monthly debit.
 Compute and storage rows are provider/compatibility facts, not independent
 customer renewal controls. At unpaid expiry, access is denied and auto-renew is
@@ -401,11 +446,13 @@ persisted Workspace state becomes `running`.
 
 Fabric runs the Workspace image in `cloud` deployment mode with `password`
 authentication. Fabric derives the runtime password and session secret from a
-stable per-Workspace credential seed and stores them in a Kubernetes Secret.
+stable per-Workspace credential seed. Tencent/TKE stores them in a Kubernetes
+Secret; `local-docker` stores immutable versions under a protected host-owned
+root and mounts only the selected version read-only into the Runtime.
 Control Plane resolves the target Workspace's persisted `workspaceApiKeyId` and
 hands the Key transiently to Fabric. Fabric writes or rotates a deterministic
-Workspace-scoped Kubernetes Secret bound to account, Workspace, Key ID, and
-fingerprint, and records only its ref, version, and fingerprint. Existing
+Workspace-scoped secret bound to account, Workspace, Key ID, and fingerprint,
+and records only its ref, version, and fingerprint. Existing
 account-scoped Secrets remain read-compatible until that Workspace's first Key
 rotation; ordinary reads never infer scope from Workspace count or Key name.
 Ordinary runtime status is non-secret. Dedicated owner-only POST commands reveal

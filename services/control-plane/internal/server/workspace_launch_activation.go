@@ -75,11 +75,22 @@ func workspaceLaunchActivationRow(operation workspaceLaunchReconcileOperation) (
 func workspaceLaunchProjectionMatches(operation workspaceLaunchReconcileOperation, workspace map[string]any) bool {
 	return firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) == operation.stringFact("accountId") &&
 		stringValue(workspace["ownerUserId"]) == operation.stringFact("ownerUserId") && stringValue(workspace["id"]) == operation.stringFact("workspaceId") &&
+		stringValue(workspace["name"]) == operation.stringFact("name") && stringValue(workspace["packageId"]) == operation.stringFact("packageId") &&
+		stringValue(workspace["url"]) == operation.stringFact("url") &&
 		firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])) == operation.stringFact("computeAllocationId") &&
 		stringValue(workspace["storageId"]) == operation.stringFact("storageId") &&
 		firstNonEmpty(stringValue(workspace["currentAttachmentId"]), stringValue(workspace["attachmentId"])) == operation.stringFact("attachmentId") &&
 		stringValue(workspace["runtimeId"]) == operation.stringFact("runtimeId") &&
 		stringValue(nested(workspace, "runtime", "serviceName")) == operation.stringFact("runtimeServiceName") &&
+		int64(numberField(workspace, "workspaceApiKeyId", 0)) == operation.int64Fact("workspaceApiKeyId") &&
+		stringValue(nested(workspace, "access", "username")) == operation.stringFact("runtimeUsername") &&
+		stringValue(nested(workspace, "access", "credentialStatus")) == operation.stringFact("credentialStatus") &&
+		stringValue(nested(workspace, "access", "credentialVersion")) == operation.stringFact("credentialVersion") &&
+		stringValue(nested(workspace, "access", "secretRef")) == operation.stringFact("credentialSecretRef") &&
+		stringValue(workspace["priceVersion"]) == operation.stringFact("priceVersion") &&
+		int64(numberField(workspace, "totalUsdMicros", 0)) == operation.int64Fact("totalChargeUsdMicros") &&
+		stringValue(workspace["periodStart"]) == operation.stringFact("periodStart") && stringValue(workspace["paidThrough"]) == operation.stringFact("paidThrough") &&
+		int(numberField(workspace, "billingAnchorDay", 0)) == operation.intFact("billingAnchorDay") && int(numberField(workspace, "storageGb", 0)) == operation.intFact("sizeGb") &&
 		firstNonEmpty(stringValue(workspace["state"]), stringValue(workspace["status"])) == "running"
 }
 

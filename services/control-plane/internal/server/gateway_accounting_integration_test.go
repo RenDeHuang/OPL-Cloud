@@ -59,6 +59,34 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 		if operation.Status != "succeeded" || operation.Stage != "succeeded" {
 			t.Fatalf("launch terminal state = %s/%s", operation.Status, operation.Stage)
 		}
+		for resource, read := range map[string]func(context.Context, string) ([]map[string]any, error){
+			"compute":    process.store.ListComputes,
+			"storage":    process.store.ListStorages,
+			"attachment": process.store.ListAttachments,
+		} {
+			rows, err := read(context.Background(), operation.stringFact("accountId"))
+			if err != nil || len(rows) != 0 {
+				t.Fatalf("canonical launch copied %s truth: rows=%#v err=%v", resource, rows, err)
+			}
+		}
+		terminal := api.mustRequest(t, http.MethodGet, "/api/workspace-launches/"+launchID, nil, "", http.StatusOK)
+		if stringValue(terminal["operationId"]) != operation.ID || stringValue(terminal["accountId"]) != operation.stringFact("accountId") ||
+			stringValue(terminal["workspaceId"]) != operation.stringFact("workspaceId") || stringValue(terminal["runtimeServiceName"]) != operation.stringFact("runtimeServiceName") ||
+			stringValue(terminal["receiptId"]) != operation.stringFact("receiptId") || stringValue(terminal["status"]) != "succeeded" || stringValue(terminal["stage"]) != "succeeded" {
+			t.Fatalf("terminal Workspace launch HTTP readback = %#v operation=%s", terminal, workspaceLaunchReconcileResultSummary(operation))
+		}
+		runtimeStatus := gatewayAccountingEnvelopeData(t, api.mustRequest(t, http.MethodGet, "/api/workspaces/"+operation.stringFact("workspaceId")+"/runtime-status", nil, "", http.StatusOK))
+		if stringValue(runtimeStatus["workspaceId"]) != operation.stringFact("workspaceId") || stringValue(runtimeStatus["runtimeId"]) != operation.stringFact("runtimeId") ||
+			stringValue(runtimeStatus["url"]) != operation.stringFact("url") || stringValue(runtimeStatus["serviceName"]) != operation.stringFact("runtimeServiceName") || runtimeStatus["ready"] != true {
+			t.Fatalf("terminal Fabric runtime readback = %#v operation=%s", runtimeStatus, workspaceLaunchReconcileResultSummary(operation))
+		}
+		if process.fabric.calls == nil || len(*process.fabric.calls) != 1 || (*process.fabric.calls)[0] != "fabric.runtime-status" {
+			t.Fatalf("terminal Fabric runtime calls = %#v", process.fabric.calls)
+		}
+		assertGatewayAccountingCanonicalWorkspaceOpen(t, api, operation)
+		if len(*process.fabric.calls) != 1 {
+			t.Fatalf("canonical Workspace open used legacy or extra Fabric reads: %#v", *process.fabric.calls)
+		}
 
 		beforeReplay := fixture.writeCounts()
 		replay := api.mustRequest(t, http.MethodPost, "/api/workspace-launches", map[string]any{
@@ -455,6 +483,12 @@ type gatewayAccountingFaultTransport struct {
 	fixture *gatewayAccountingSub2API
 }
 
+type gatewayAccountingRoundTripper func(*http.Request) (*http.Response, error)
+
+func (roundTrip gatewayAccountingRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return roundTrip(request)
+}
+
 func (t *gatewayAccountingFaultTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
@@ -488,6 +522,21 @@ func newGatewayAccountingFabric() *gatewayAccountingFabric {
 	return &gatewayAccountingFabric{stages: map[string]clients.WorkspaceLaunchStageResult{}}
 }
 
+func (f *gatewayAccountingFabric) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {
+	f.record("fabric.runtime-status")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result, ok := f.stages["runtime"]
+	if !ok || result.State != "ready" || result.Binding.WorkspaceID != workspaceID {
+		return clients.WorkspaceRuntime{WorkspaceID: workspaceID, Status: "not_found"}, nil
+	}
+	return clients.WorkspaceRuntime{
+		ID: result.Resources.RuntimeID, WorkspaceID: workspaceID, URL: result.Resources.RuntimeURL,
+		ServiceName: result.Resources.RuntimeServiceName, Status: "running", Ready: true,
+		Checks: []any{map[string]any{"name": "service_endpoints_ready", "ok": true}},
+	}, nil
+}
+
 func (f *gatewayAccountingFabric) PreflightWorkspaceLaunch(_ context.Context, input clients.WorkspaceLaunchPreflightInput) (clients.WorkspaceLaunchPreflight, error) {
 	return clients.WorkspaceLaunchPreflight{
 		SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, Available: true, Reason: "none",
@@ -509,7 +558,9 @@ func (f *gatewayAccountingFabric) ReadWorkspaceLaunchStage(_ context.Context, in
 	defer f.mu.Unlock()
 	result, ok := f.stages[input.Binding.Stage]
 	if !ok {
-		return clients.WorkspaceLaunchStageResult{}, &clients.FabricHTTPError{StatusCode: http.StatusNotFound, Body: "absent"}
+		return clients.WorkspaceLaunchStageResult{
+			SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, State: "absent", Reason: "no_stage_record", Binding: input.Binding, Resources: input.Resources,
+		}, nil
 	}
 	return result, nil
 }
@@ -531,7 +582,7 @@ func (f *gatewayAccountingFabric) EnsureWorkspaceLaunchStage(_ context.Context, 
 		resources.GatewaySecretRef, resources.GatewaySecretVersion = "secret-"+suffix, "v1"
 		resources.GatewaySecretFingerprint, resources.SecretBindingRef = workspaceLaunchCredentialFingerprint(input.GatewayCredential.Value), "secret-binding-"+suffix
 	case "runtime":
-		resources.RuntimeID, resources.RuntimeServiceName = "runtime-"+suffix, "workspace-runtime-"+suffix
+		resources.RuntimeID, resources.RuntimeServiceName = "runtime-"+suffix, "opl-runtime-"+suffix
 		resources.RuntimeUsername, resources.RuntimeURL = "opl", "https://workspace.local/"+input.Binding.WorkspaceID
 		resources.RuntimeCredentialStatus, resources.RuntimeCredentialVersion = "configured", "v1"
 		resources.RuntimeCredentialSecretRef, resources.RuntimeBindingRef = "runtime-credential-"+suffix, "runtime-binding-"+suffix
@@ -551,6 +602,7 @@ type gatewayAccountingControlPlane struct {
 	server  *httptest.Server
 	handler *controlPlaneHTTPHandler
 	store   StateStore
+	fabric  *gatewayAccountingFabric
 }
 
 func newGatewayAccountingControlPlane(t *testing.T, ledger clients.LedgerClient, sub2API *gatewayAccountingSub2API, accountID, userID string) *gatewayAccountingControlPlane {
@@ -570,7 +622,10 @@ func newGatewayAccountingControlPlane(t *testing.T, ledger clients.LedgerClient,
 	if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
 		t.Fatalf("seed Control Plane owner: %v", err)
 	}
-	service := controlplane.NewService(ledger, newGatewayAccountingFabric(), sub2API.client)
+	fabric := newGatewayAccountingFabric()
+	fabricCalls := []string{}
+	fabric.fakeFabricClient.calls = &fabricCalls
+	service := controlplane.NewService(ledger, fabric, sub2API.client)
 	handler, err := NewPersistentServer(service, store)
 	if err != nil {
 		t.Fatalf("start Control Plane HTTP owner: %v", err)
@@ -581,7 +636,7 @@ func newGatewayAccountingControlPlane(t *testing.T, ledger clients.LedgerClient,
 	}
 	server := httptest.NewTLSServer(handler)
 	t.Cleanup(server.Close)
-	return &gatewayAccountingControlPlane{server: server, handler: typed, store: store}
+	return &gatewayAccountingControlPlane{server: server, handler: typed, store: store, fabric: fabric}
 }
 
 func (p *gatewayAccountingControlPlane) login(t *testing.T, email, password string) *gatewayAccountingAPI {
@@ -716,6 +771,14 @@ func assertGatewayAccountingReadback(t *testing.T, api *gatewayAccountingAPI, su
 		stringValue(receipt.Cost["sub2apiRedeemCode"]) != code || gatewayAccountingInt64(receipt.Cost["totalUsdMicros"]) != gatewayAccountingChargeMicros {
 		t.Fatalf("Ledger purchase receipt identity = %#v", receipt)
 	}
+	scopedLedger, ok := ledger.(clients.LedgerScopedReceiptClient)
+	if !ok {
+		t.Fatal("typed Ledger HTTP client does not support scoped receipt readback")
+	}
+	scopedReceipt, err := scopedLedger.ReceiptForAccount(context.Background(), accountID, workspaceID, receipt.ReceiptID)
+	if err != nil || scopedReceipt.ReceiptID != receipt.ReceiptID || scopedReceipt.AccountID != accountID || scopedReceipt.WorkspaceID != workspaceID {
+		t.Fatalf("Owner Delete scoped purchase receipt=%#v err=%v", scopedReceipt, err)
+	}
 	projected := gatewayAccountingEnvelopeData(t, api.mustRequest(t, http.MethodGet, "/api/billing/receipts", nil, "", http.StatusOK))
 	projectedReceipts, ok := projected["receipts"].([]any)
 	if !ok || len(projectedReceipts) != 1 {
@@ -724,6 +787,57 @@ func assertGatewayAccountingReadback(t *testing.T, api *gatewayAccountingAPI, su
 	projectedReceipt, ok := projectedReceipts[0].(map[string]any)
 	if !ok || stringValue(projectedReceipt["receiptId"]) != receipt.ReceiptID || stringValue(projectedReceipt["workspaceId"]) != workspaceID || stringValue(projectedReceipt["chargeReference"]) != code {
 		t.Fatalf("Control Plane purchase receipt projection = %#v", projectedReceipt)
+	}
+	projectedDetail := gatewayAccountingEnvelopeData(t, api.mustRequest(t, http.MethodGet, "/api/billing/receipts/"+receipt.ReceiptID, nil, "", http.StatusOK))
+	if stringValue(projectedDetail["receiptId"]) != receipt.ReceiptID || stringValue(projectedDetail["workspaceId"]) != workspaceID || stringValue(projectedDetail["chargeReference"]) != code {
+		t.Fatalf("Control Plane purchase receipt detail = %#v", projectedDetail)
+	}
+}
+
+func assertGatewayAccountingCanonicalWorkspaceOpen(t *testing.T, api *gatewayAccountingAPI, operation workspaceLaunchReconcileOperation) {
+	t.Helper()
+	originalTransport := http.DefaultTransport
+	upstreamCalls := 0
+	upstreamMismatch := ""
+	http.DefaultTransport = gatewayAccountingRoundTripper(func(request *http.Request) (*http.Response, error) {
+		upstreamCalls++
+		if request.URL.Host != operation.stringFact("runtimeServiceName")+":3000" || request.URL.Path != "/" || request.Host != operation.stringFact("runtimeServiceName")+":3000" {
+			upstreamMismatch = fmt.Sprintf("Workspace open upstream request = %s host=%q", request.URL.String(), request.Host)
+		}
+		for _, header := range []string{"Authorization", "Cookie", "X-OPL-CSRF", "X-OPL-CSRF-Token"} {
+			if value := request.Header.Get(header); value != "" {
+				upstreamMismatch = fmt.Sprintf("Workspace open forwarded %s=%q", header, value)
+			}
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"text/plain"}, "Set-Cookie": []string{"upstream=forbidden"}},
+			Body:       io.NopCloser(strings.NewReader("workspace-open")),
+			Request:    request,
+		}, nil
+	})
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, api.baseURL+"/w/"+operation.stringFact("workspaceId")+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer platform-session")
+	request.Header.Set("X-OPL-CSRF", api.csrf)
+	response, err := api.client.Do(request)
+	if err != nil {
+		t.Fatalf("canonical Workspace open: %v", err)
+	}
+	defer response.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 1024))
+	if readErr != nil || response.StatusCode != http.StatusOK || string(body) != "workspace-open" || upstreamCalls != 1 || upstreamMismatch != "" {
+		t.Fatalf("canonical Workspace open status=%d body=%q calls=%d mismatch=%q err=%v", response.StatusCode, body, upstreamCalls, upstreamMismatch, readErr)
+	}
+	for _, cookie := range response.Cookies() {
+		if cookie.Name == "upstream" {
+			t.Fatalf("Workspace open forwarded upstream cookie: %#v", cookie)
+		}
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,10 +13,44 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
+type workspaceLaunchMonthlyPreflightLedger struct {
+	fakeLedgerClient
+	mu       sync.Mutex
+	receipts map[string]clients.Receipt
+}
+
+func (l *workspaceLaunchMonthlyPreflightLedger) RecordReceipt(_ context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if receipt, ok := l.receipts[key]; ok {
+		return receipt, nil
+	}
+	receipt := clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-" + stableID(key)[:16]}
+	l.receipts[key] = receipt
+	return receipt, nil
+}
+
+func (l *workspaceLaunchMonthlyPreflightLedger) ListReceipts(_ context.Context, query clients.ReceiptQuery) (clients.ReceiptPage, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	page := clients.ReceiptPage{}
+	for _, receipt := range l.receipts {
+		if receipt.AccountID == query.AccountID {
+			page.Receipts = append(page.Receipts, receipt)
+		}
+	}
+	return page, nil
+}
+
 type workspaceLaunchMonthlyPreflightFabric struct {
 	*gatewayAccountingFabric
-	events      *[]string
-	failureMode string
+	events             *[]string
+	failureMode        string
+	runtimePending     bool
+	runtimeReady       bool
+	runtimeEnsureCalls int
+	runtimeReadCalls   int
+	runtimeReadyResult clients.WorkspaceLaunchStageResult
 }
 
 func (f *workspaceLaunchMonthlyPreflightFabric) PreflightWorkspaceLaunch(_ context.Context, input clients.WorkspaceLaunchPreflightInput) (clients.WorkspaceLaunchPreflight, error) {
@@ -51,7 +86,36 @@ func (f *workspaceLaunchMonthlyPreflightFabric) MonthlyPreflight(_ context.Conte
 
 func (f *workspaceLaunchMonthlyPreflightFabric) EnsureWorkspaceLaunchStage(ctx context.Context, input clients.WorkspaceLaunchStageInput) (clients.WorkspaceLaunchStageResult, error) {
 	*f.events = append(*f.events, "fabric.stage."+input.Binding.Stage)
-	return f.gatewayAccountingFabric.EnsureWorkspaceLaunchStage(ctx, input)
+	result, err := f.gatewayAccountingFabric.EnsureWorkspaceLaunchStage(ctx, input)
+	if err != nil || input.Binding.Stage != "runtime" || !f.runtimePending {
+		return result, err
+	}
+	f.runtimeEnsureCalls++
+	f.runtimeReadyResult = result
+	result.State, result.Reason = workspaceLaunchStagePending, "provider_provisioning"
+	return result, nil
+}
+
+func (f *workspaceLaunchMonthlyPreflightFabric) ReadWorkspaceLaunchStage(ctx context.Context, input clients.WorkspaceLaunchStageInput) (clients.WorkspaceLaunchStageResult, error) {
+	if input.Binding.Stage != "runtime" || !f.runtimePending {
+		return f.gatewayAccountingFabric.ReadWorkspaceLaunchStage(ctx, input)
+	}
+	f.runtimeReadCalls++
+	if f.runtimeEnsureCalls == 0 {
+		*f.events = append(*f.events, "fabric.read.runtime.absent")
+		return clients.WorkspaceLaunchStageResult{
+			SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, State: workspaceLaunchStageAbsent, Reason: "no_stage_record",
+			Binding: input.Binding, Resources: input.Resources,
+		}, nil
+	}
+	if f.runtimeReady {
+		*f.events = append(*f.events, "fabric.read.runtime.ready")
+		return f.runtimeReadyResult, nil
+	}
+	*f.events = append(*f.events, "fabric.read.runtime.pending")
+	result := f.runtimeReadyResult
+	result.State, result.Reason = workspaceLaunchStagePending, "provider_provisioning"
+	return result, nil
 }
 
 type workspaceLaunchMonthlyPreflightSub2API struct {
@@ -115,7 +179,7 @@ func (c *workspaceLaunchMonthlyPreflightSub2API) FinancialBalanceHistoryByCodes(
 	return history, nil
 }
 
-func newWorkspaceLaunchMonthlyPreflightFixture(t *testing.T, failureMode string) (http.Handler, *memoryTableStore, *workspaceLaunchMonthlyPreflightSub2API, *[]string) {
+func newWorkspaceLaunchMonthlyPreflightFixture(t *testing.T, failureMode string) (http.Handler, *memoryTableStore, *workspaceLaunchMonthlyPreflightSub2API, *workspaceLaunchMonthlyPreflightFabric, *[]string) {
 	t.Helper()
 	events := []string{}
 	client := &workspaceLaunchMonthlyPreflightSub2API{
@@ -133,11 +197,12 @@ func newWorkspaceLaunchMonthlyPreflightFixture(t *testing.T, failureMode string)
 	}
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, client), store)
+	ledger := &workspaceLaunchMonthlyPreflightLedger{receipts: map[string]clients.Receipt{}}
+	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, client), store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return server, store, client, &events
+	return server, store, client, fabric, &events
 }
 
 func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *testing.T) {
@@ -151,7 +216,7 @@ func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *t
 		"storage_error", "storage_unavailable", "storage_invalid",
 	} {
 		t.Run(failureMode, func(t *testing.T) {
-			server, store, client, events := newWorkspaceLaunchMonthlyPreflightFixture(t, failureMode)
+			server, store, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, failureMode)
 			session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 
 			response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
@@ -161,13 +226,23 @@ func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *t
 				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 			}
 			handler := server.(*controlPlaneHTTPHandler)
-			_ = handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service)
+			runErr := handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service)
 			operations, err := store.ListRuntimeOperations(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
 			if len(operations) != 1 || len(client.charges) != 0 {
 				t.Fatalf("monthly %s failure crossed debit: operations=%#v charges=%#v events=%#v", failureMode, operations, client.charges, *events)
+			}
+			operation, decodeErr := decodeWorkspaceLaunchReconcileOperation(operations[0])
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			attempt := operation.Attempts["debit"]
+			if runErr == nil || !errors.Is(runErr, errWorkspaceLaunchMutationNotDispatched) ||
+				operation.Status != "manual_review" || operation.Stage != "debit" || attempt.Status != "unknown" || attempt.Unknown != 1 ||
+				operation.Observations["debit"].State != workspaceLaunchStageUnknown || len(operation.FreshContinuationAuthorizations) != 0 {
+				t.Fatalf("monthly %s failure did not park pre-dispatch: operation=%#v attempt=%#v err=%v", failureMode, operation, attempt, runErr)
 			}
 			for _, event := range *events {
 				if strings.HasPrefix(event, "fabric.stage.") || event == "sub2api.charge" {
@@ -178,13 +253,51 @@ func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *t
 	}
 }
 
+func TestWorkspaceLaunchMissingProviderZoneParksReservedDebitWithoutAuthorityWrite(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv(controlledBasicPilotAccountsEnv, "acct-alpha")
+	t.Setenv("OPL_TENCENT_ZONE", "")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+
+	server, store, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+		`{"name":"Missing local provider zone","packageId":"basic","sizeGb":10,"autoRenew":false}`,
+		"missing-local-provider-zone")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	handler := server.(*controlPlaneHTTPHandler)
+	if err := handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service); err == nil || !errors.Is(err, errWorkspaceLaunchMonthlyPreflightInvalid) {
+		t.Fatalf("run launch error=%v, want %v", err, errWorkspaceLaunchMonthlyPreflightInvalid)
+	}
+	rows, err := store.ListRuntimeOperations(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("read launch operations=%#v err=%v", rows, err)
+	}
+	operation, err := decodeWorkspaceLaunchReconcileOperation(rows[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := operation.Attempts["debit"]
+	if operation.Status != "manual_review" || operation.Stage != "debit" ||
+		attempt.Attempted != 1 || attempt.Confirmed != 0 || attempt.Unknown != 1 || attempt.Max != 1 || attempt.Status != "unknown" ||
+		operation.Observations["debit"].State != workspaceLaunchStageUnknown {
+		t.Fatalf("unexpected debit failure transition: operation=%#v attempt=%#v", operation, attempt)
+	}
+	if len(client.charges) != 0 {
+		t.Fatalf("missing provider zone wrote debit authority: charges=%#v events=%#v", client.charges, *events)
+	}
+}
+
 func TestWorkspaceLaunchMonthlyPreflightRunsBeforeDebitAndProviderStages(t *testing.T) {
 	t.Setenv(controlledBasicPilotEnabledEnv, "1")
 	t.Setenv(controlledBasicPilotAccountsEnv, "acct-alpha")
 	t.Setenv("OPL_TENCENT_ZONE", "ap-guangzhou-1")
 	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
 
-	server, store, client, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	server, store, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
 		`{"name":"Monthly preflight success","packageId":"basic","sizeGb":10,"autoRenew":false}`,
@@ -228,5 +341,88 @@ func TestWorkspaceLaunchMonthlyPreflightRunsBeforeDebitAndProviderStages(t *test
 	if key < 0 || monthlyCompute < 0 || monthlyStorage < 0 || debit < 0 || firstFabricStage < 0 ||
 		key >= monthlyCompute || monthlyCompute >= monthlyStorage || monthlyStorage >= debit || debit >= firstFabricStage {
 		t.Fatalf("want key < compute < storage < debit < first Fabric stage: events=%#v", *events)
+	}
+}
+
+func TestWorkspaceLaunchNormalPostWorkerContinuesFreshRuntimePendingReadOnly(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv(controlledBasicPilotAccountsEnv, "acct-alpha")
+	t.Setenv("OPL_TENCENT_ZONE", "ap-guangzhou-1")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+
+	server, store, _, fabric, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	fabric.runtimePending = true
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+		`{"name":"Fresh runtime pending","packageId":"basic","sizeGb":10,"autoRenew":false}`,
+		"fresh-runtime-pending")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	handler := server.(*controlPlaneHTTPHandler)
+	var pending workspaceLaunchReconcileOperation
+	for range len(workspaceLaunchReconcileStages) {
+		if err := handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service); err != nil {
+			t.Fatalf("run launch to runtime pending: %v", err)
+		}
+		rows, err := store.ListRuntimeOperations(context.Background())
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("read launch operations=%#v err=%v", rows, err)
+		}
+		pending, err = decodeWorkspaceLaunchReconcileOperation(rows[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pending.Stage == "runtime" && pending.Status == "pending" && len(pending.FreshContinuationAuthorizations) == 1 {
+			break
+		}
+	}
+	attempt := pending.Attempts["runtime"]
+	authorization := pending.FreshContinuationAuthorizations["runtime"]
+	if pending.Stage != "runtime" || pending.Status != "pending" || attempt.Attempted != 1 || attempt.Confirmed != 0 || attempt.Unknown != 0 ||
+		attempt.PendingReadbacks != 1 || attempt.MaxPendingReadbacks != 3 || authorization.Status != "active" || pending.ResumeAuthorization != nil ||
+		fabric.runtimeEnsureCalls != 1 || fabric.runtimeReadCalls != 2 {
+		t.Fatalf("normal POST did not park fresh runtime pending read-only: operation=%s authorization=%#v ensure=%d reads=%d events=%#v",
+			workspaceLaunchReconcileResultSummary(pending), authorization, fabric.runtimeEnsureCalls, fabric.runtimeReadCalls, *events)
+	}
+
+	fabric.runtimeReady = true
+	if err := handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service); err != nil {
+		t.Fatalf("continue runtime owner read: %v", err)
+	}
+	rows, err := store.ListRuntimeOperations(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("read continued launch operations=%#v err=%v", rows, err)
+	}
+	continued, err := decodeWorkspaceLaunchReconcileOperation(rows[0])
+	if err != nil || continued.Stage != "activation" || continued.Status != "pending" || continued.Attempts["runtime"].Confirmed != 1 ||
+		continued.Attempts["runtime"].PendingReadbacks != 2 || continued.FreshContinuationAuthorizations["runtime"].Status != "consumed" ||
+		fabric.runtimeEnsureCalls != 1 || fabric.runtimeReadCalls != 3 {
+		t.Fatalf("runtime continuation did not converge read-only: operation=%s ensure=%d reads=%d err=%v events=%#v",
+			workspaceLaunchReconcileResultSummary(continued), fabric.runtimeEnsureCalls, fabric.runtimeReadCalls, err, *events)
+	}
+	for range 2 {
+		if err := handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service); err != nil {
+			t.Fatalf("complete launch after runtime ready: %v", err)
+		}
+	}
+	rows, err = store.ListRuntimeOperations(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("read terminal launch operations=%#v err=%v", rows, err)
+	}
+	terminal, err := decodeWorkspaceLaunchReconcileOperation(rows[0])
+	if err != nil || terminal.Status != "succeeded" || terminal.Stage != "succeeded" || terminal.ID != pending.ID ||
+		terminal.stringFact("workspaceId") != pending.stringFact("workspaceId") || fabric.runtimeEnsureCalls != 1 {
+		t.Fatalf("fresh runtime continuation did not reach same-operation terminal: operation=%s ensure=%d err=%v", workspaceLaunchReconcileResultSummary(terminal), fabric.runtimeEnsureCalls, err)
+	}
+	wantOrder := []string{"fabric.read.runtime.absent", "fabric.stage.runtime", "fabric.read.runtime.pending", "fabric.read.runtime.ready"}
+	position := 0
+	for _, event := range *events {
+		if position < len(wantOrder) && event == wantOrder[position] {
+			position++
+		}
+	}
+	if position != len(wantOrder) {
+		t.Fatalf("runtime owner read/mutate order mismatch: want=%#v events=%#v", wantOrder, *events)
 	}
 }

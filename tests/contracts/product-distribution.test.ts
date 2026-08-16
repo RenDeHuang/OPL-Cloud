@@ -36,6 +36,13 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   const compose = YAML.parse(composeSource);
   const localWorkspaceCompose = YAML.parse(localWorkspaceComposeSource);
   assert.deepEqual(Object.keys(compose.services).sort(), ["control-plane", "fabric", "ledger", "postgres"]);
+  const postgresHealthcheck = compose.services.postgres.healthcheck.test as string[];
+  assert.equal(postgresHealthcheck[0], "CMD-SHELL");
+  const postgresReadiness = postgresHealthcheck[1];
+  const postgresProbes = ["control_plane", "fabric", "ledger"].map((owner) =>
+    `PGPASSWORD="$$OPL_${owner.toUpperCase()}_DATABASE_PASSWORD" psql -h 127.0.0.1 -U opl_${owner} -d opl_${owner} -Atqc 'select 1' >/dev/null`
+  );
+  assert.equal(postgresReadiness, postgresProbes.join(" && "));
   for (const [name, service] of Object.entries(compose.services) as Array<[string, { image?: string }]>) {
     const image = service.image || compose["x-opl-cloud-common"]?.image || "";
     assert.ok(
@@ -119,11 +126,20 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   assert.deepEqual(Object.keys(localWorkspaceCompose.services).sort(), ["control-plane", "fabric"]);
   assert.equal(localWorkspaceCompose.services.fabric.user, "root");
   assert.equal(localWorkspaceCompose.services.fabric.environment.OPL_FABRIC_PROVIDER, "local-docker");
+  assert.equal(
+    localWorkspaceCompose.services.fabric.environment.OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT,
+    "${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}"
+  );
   assert.deepEqual(localWorkspaceCompose.services.fabric.volumes, [
     {
       type: "bind",
       source: "${OPL_DOCKER_SOCKET_PATH:-/var/run/docker.sock}",
       target: "/var/run/docker.sock"
+    },
+    {
+      type: "bind",
+      source: "${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}",
+      target: "${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}"
     }
   ]);
   assert.equal(

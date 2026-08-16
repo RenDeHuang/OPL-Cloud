@@ -298,7 +298,8 @@ func prepareWorkspaceLaunchProjection(row, owner, existing map[string]any) (map[
 	accountID, ownerID, workspaceID := stringValue(row["accountId"]), stringValue(row["ownerUserId"]), stringValue(row["id"])
 	if workspaceAcceptedBillingState(row) == nil || accountID == "" || ownerID == "" || workspaceID == "" ||
 		stringValue(row["ownerAccountId"]) != accountID || stringValue(owner["id"]) != ownerID ||
-		stringValue(owner["accountId"]) != accountID || stringValue(owner["status"]) != "active" || stringValue(owner["role"]) != "owner" {
+		stringValue(owner["accountId"]) != accountID || stringValue(owner["status"]) != "active" ||
+		(stringValue(owner["role"]) != "owner" && !isOperatorUser(owner)) {
 		return nil, errWorkspaceActivationConflict
 	}
 	prepared, err := mergeWorkspaceForSave(existing, row)

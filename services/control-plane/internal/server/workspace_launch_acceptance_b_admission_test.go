@@ -86,6 +86,12 @@ func productionAcceptanceBHeaders() http.Header {
 	return header
 }
 
+func productionAcceptanceBResumeHeaders() http.Header {
+	header := productionAcceptanceBHeaders()
+	header.Set(productionAcceptanceBApprovalID, "acceptance-b-resume-existing-approval")
+	return header
+}
+
 func configureProductionAcceptanceBEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "acceptance-b-capability")
@@ -94,6 +100,52 @@ func configureProductionAcceptanceBEnvironment(t *testing.T) {
 	t.Setenv("OPL_WORKSPACE_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:"+strings.Repeat("c", 64))
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-basic-acceptance")
 	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
+}
+
+func canonicalProductionAcceptanceBResumeExistingApproval(operation workspaceLaunchReconcileOperation, authorization workspaceLaunchResumeAuthorization, authoritativeState string) map[string]any {
+	attempt := operation.Attempts[authorization.AuthorizedStage]
+	digests := workspaceLaunchAcceptanceBIdentityDigests(operation)
+	return map[string]any{
+		"schemaVersion": 1,
+		"operationMode": "acceptance_b_resume_existing",
+		"approvalId":    "acceptance-b-resume-existing-approval",
+		"expiresAt":     "2099-08-16T00:00:00Z",
+		"release": map[string]any{
+			"canonicalCloudSha":        strings.Repeat("a", 40),
+			"canonicalCloudTree":       strings.Repeat("d", 40),
+			"deployedCloudImageDigest": "sha256:" + strings.Repeat("b", 64),
+		},
+		"authorization": map[string]any{
+			"authorizationId": authorization.AuthorizationID, "operationId": operation.ID,
+			"launchVersion": authorization.LaunchVersion, "authorizedStage": authorization.AuthorizedStage,
+			"reasonSha256":   acceptanceBDigestParts(authorization.Reason),
+			"mutationBudget": authorization.MutationBudget, "idempotentReplayBudget": authorization.IdempotentReplayBudget,
+			"authoritativeReadBudget": authorization.AuthoritativeReadBudget,
+		},
+		"reconciliation": map[string]any{
+			"operationStatus": operation.Status, "authoritativeStageState": authoritativeState,
+			"attempt": map[string]any{
+				"attempted": attempt.Attempted, "confirmed": attempt.Confirmed, "unknown": attempt.Unknown, "max": attempt.Max,
+				"status": attempt.Status, "idempotencyKeySha256": acceptanceBDigestParts(attempt.IdempotencyKey),
+			},
+		},
+		"identityDigests": map[string]any{
+			"accountIdentitySha256": digests.AccountIdentitySHA256, "operationIdentitySha256": digests.OperationIdentitySHA256,
+			"workspaceIdentitySha256": digests.WorkspaceIdentitySHA256, "keyIdentitySha256": digests.KeyIdentitySHA256,
+			"debitIdentitySha256": digests.DebitIdentitySHA256, "quoteIdentitySha256": digests.QuoteIdentitySHA256,
+			"providerIdentitySha256": digests.ProviderIdentitySHA256,
+		},
+	}
+}
+
+func parseProductionAcceptanceBResumeExistingApprovalFixture(t *testing.T, fixture map[string]any) (productionAcceptanceBResumeExistingApproval, bool) {
+	t.Helper()
+	encoded, err := json.Marshal(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(productionAcceptanceBResumeExistingApprovalEnv, string(encoded))
+	return parseProductionAcceptanceBResumeExistingApproval()
 }
 
 func productionAcceptanceBFixtureApproved(header http.Header, approval productionAcceptanceBApproval) bool {
@@ -119,6 +171,191 @@ func TestProductionAcceptanceBAdmissionMatchesCanonicalProductApproval(t *testin
 	}
 	if !productionAcceptanceBFixtureApproved(productionAcceptanceBHeaders(), approval) {
 		t.Fatal("canonical product approval was not admitted")
+	}
+}
+
+func TestProductionAcceptanceBResumeExistingApprovalBindsServerAuthority(t *testing.T) {
+	configureProductionAcceptanceBEnvironment(t)
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Status, operation.Stage = "manual_review", "debit"
+	attempt := operation.Attempts["debit"]
+	attempt.Attempted, attempt.Status, attempt.IdempotencyKey = 1, "reserved", workspaceLaunchStageIdempotencyKey(operation, 1)
+	operation.Attempts["debit"] = attempt
+	authorization := workspaceLaunchResumeAuthorization{
+		AuthorizationID: "acceptance-b-resume-existing", LaunchVersion: operation.Version, AuthorizedStage: "debit",
+		AuthorizedBy: "reserved-admin", AuthorizedAt: "2026-08-16T00:00:00Z", Reason: "exact owner absence",
+		MutationBudget: 0, IdempotentReplayBudget: 1, AuthoritativeReadBudget: workspaceLaunchAuthoritativeReadBudget,
+	}
+	fixture := canonicalProductionAcceptanceBResumeExistingApproval(operation, authorization, workspaceLaunchStageAbsent)
+	approval, ok := parseProductionAcceptanceBResumeExistingApprovalFixture(t, fixture)
+	if !ok {
+		t.Fatal("canonical resume-existing approval did not parse")
+	}
+	binding, approved := productionAcceptanceBResumeExistingApproved(
+		productionAcceptanceBResumeHeaders(), approval, authorization, operation,
+		workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, time.Now(),
+	)
+	if !approved || binding.ApprovalID != "acceptance-b-resume-existing-approval" || binding.CanonicalCloudTree != strings.Repeat("d", 40) ||
+		binding.IdentityDigests != workspaceLaunchAcceptanceBIdentityDigests(operation) || binding.AuthoritativeState != workspaceLaunchStageAbsent {
+		t.Fatalf("canonical resume-existing approval not bound: approved=%v binding=%#v", approved, binding)
+	}
+
+	for _, mutate := range []func(map[string]any){
+		func(value map[string]any) {
+			value["release"].(map[string]any)["canonicalCloudSha"] = strings.Repeat("e", 40)
+		},
+		func(value map[string]any) {
+			value["authorization"].(map[string]any)["launchVersion"] = operation.Version + 1
+		},
+		func(value map[string]any) {
+			value["authorization"].(map[string]any)["reasonSha256"] = strings.Repeat("f", 64)
+		},
+		func(value map[string]any) {
+			value["reconciliation"].(map[string]any)["authoritativeStageState"] = workspaceLaunchStageReady
+		},
+	} {
+		drifted := canonicalProductionAcceptanceBResumeExistingApproval(operation, authorization, workspaceLaunchStageAbsent)
+		mutate(drifted)
+		candidate, parsed := parseProductionAcceptanceBResumeExistingApprovalFixture(t, drifted)
+		if !parsed {
+			continue
+		}
+		if _, admitted := productionAcceptanceBResumeExistingApproved(
+			productionAcceptanceBResumeHeaders(), candidate, authorization, operation,
+			workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, time.Now(),
+		); admitted {
+			t.Fatal("drifted resume-existing approval was admitted")
+		}
+	}
+	for _, field := range []string{
+		"accountIdentitySha256", "operationIdentitySha256", "workspaceIdentitySha256", "keyIdentitySha256",
+		"debitIdentitySha256", "quoteIdentitySha256", "providerIdentitySha256",
+	} {
+		t.Run("identity drift/"+field, func(t *testing.T) {
+			drifted := canonicalProductionAcceptanceBResumeExistingApproval(operation, authorization, workspaceLaunchStageAbsent)
+			drifted["identityDigests"].(map[string]any)[field] = strings.Repeat("f", 64)
+			candidate, parsed := parseProductionAcceptanceBResumeExistingApprovalFixture(t, drifted)
+			if !parsed {
+				t.Fatal("structurally valid identity drift did not parse")
+			}
+			if _, admitted := productionAcceptanceBResumeExistingApproved(
+				productionAcceptanceBResumeHeaders(), candidate, authorization, operation,
+				workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, time.Now(),
+			); admitted {
+				t.Fatalf("%s drift was admitted", field)
+			}
+		})
+	}
+	if _, admitted := productionAcceptanceBResumeExistingApproved(
+		productionAcceptanceBResumeHeaders(), approval, authorization, operation,
+		workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, time.Now(),
+	); admitted {
+		t.Fatal("unknown owner observation was admitted")
+	}
+	driftedAuthorization := authorization
+	driftedAuthorization.Reason = "different operator reason"
+	if _, admitted := productionAcceptanceBResumeExistingApproved(
+		productionAcceptanceBResumeHeaders(), approval, driftedAuthorization, operation,
+		workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, time.Now(),
+	); admitted {
+		t.Fatal("request reason drift was admitted")
+	}
+}
+
+func TestProductionAcceptanceBResumeExistingRequestModeUsesDedicatedHeadersOnly(t *testing.T) {
+	t.Setenv(productionAcceptanceBResumeExistingApprovalEnv, `{"configured":true}`)
+	requested, valid := productionAcceptanceBResumeExistingRequestMode(http.Header{})
+	if requested || !valid {
+		t.Fatalf("server secret configuration selected dedicated mode: requested=%v valid=%v", requested, valid)
+	}
+
+	for name, configure := range map[string]func(http.Header){
+		"approval only": func(header http.Header) {
+			header.Set(productionAcceptanceBApprovalID, "approval-id")
+		},
+		"capability only": func(header http.Header) {
+			header.Set(productionAcceptanceBCapability, "capability")
+		},
+		"duplicate approval": func(header http.Header) {
+			header.Add(productionAcceptanceBApprovalID, "approval-id")
+			header.Add(productionAcceptanceBApprovalID, "approval-id")
+			header.Set(productionAcceptanceBCapability, "capability")
+		},
+		"duplicate capability": func(header http.Header) {
+			header.Set(productionAcceptanceBApprovalID, "approval-id")
+			header.Add(productionAcceptanceBCapability, "capability")
+			header.Add(productionAcceptanceBCapability, "capability")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			header := http.Header{}
+			configure(header)
+			requested, valid := productionAcceptanceBResumeExistingRequestMode(header)
+			if !requested || valid {
+				t.Fatalf("invalid dedicated header shape: requested=%v valid=%v header=%#v", requested, valid, header)
+			}
+		})
+	}
+	requested, valid = productionAcceptanceBResumeExistingRequestMode(productionAcceptanceBResumeHeaders())
+	if !requested || !valid {
+		t.Fatalf("exact dedicated header pair rejected: requested=%v valid=%v", requested, valid)
+	}
+}
+
+func TestParseProductionAcceptanceBResumeExistingApprovalRejectsDuplicateKeys(t *testing.T) {
+	configureProductionAcceptanceBEnvironment(t)
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Status, operation.Stage = "manual_review", "debit"
+	authorization := workspaceLaunchResumeAuthorization{
+		AuthorizationID: "duplicate-key-authorization", LaunchVersion: operation.Version, AuthorizedStage: "debit",
+		AuthorizedBy: "operator", AuthorizedAt: "2026-08-16T00:00:00Z", Reason: "exact owner absence",
+		IdempotentReplayBudget: 1, AuthoritativeReadBudget: workspaceLaunchAuthoritativeReadBudget,
+	}
+	encoded, err := json.Marshal(canonicalProductionAcceptanceBResumeExistingApproval(operation, authorization, workspaceLaunchStageAbsent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacements := map[string][2]string{
+		"top level":        {`"schemaVersion":1`, `"schemaVersion":1,"schemaVersion":1`},
+		"release":          {`"canonicalCloudSha":"` + strings.Repeat("a", 40) + `"`, `"canonicalCloudSha":"` + strings.Repeat("a", 40) + `","canonicalCloudSha":"` + strings.Repeat("a", 40) + `"`},
+		"authorization":    {`"authorizationId":"duplicate-key-authorization"`, `"authorizationId":"duplicate-key-authorization","authorizationId":"duplicate-key-authorization"`},
+		"reconciliation":   {`"operationStatus":"manual_review"`, `"operationStatus":"manual_review","operationStatus":"manual_review"`},
+		"attempt":          {`"attempted":0`, `"attempted":0,"attempted":0`},
+		"identity digests": {`"accountIdentitySha256":"`, `"accountIdentitySha256":"`},
+	}
+	for name, replacement := range replacements {
+		t.Run(name, func(t *testing.T) {
+			raw := string(encoded)
+			if name == "identity digests" {
+				marker := `"accountIdentitySha256":"`
+				start := strings.Index(raw, marker)
+				if start < 0 {
+					t.Fatal("identity digest marker missing")
+				}
+				valueStart := start + len(marker)
+				valueEnd := strings.Index(raw[valueStart:], `"`)
+				if valueEnd < 0 {
+					t.Fatal("identity digest value incomplete")
+				}
+				field := raw[start : valueStart+valueEnd+1]
+				raw = strings.Replace(raw, field, field+","+field, 1)
+			} else {
+				if !strings.Contains(raw, replacement[0]) {
+					t.Fatalf("duplicate-key marker missing: %s", replacement[0])
+				}
+				raw = strings.Replace(raw, replacement[0], replacement[1], 1)
+			}
+			t.Setenv(productionAcceptanceBResumeExistingApprovalEnv, raw)
+			if _, ok := parseProductionAcceptanceBResumeExistingApproval(); ok {
+				t.Fatal("duplicate JSON key was accepted")
+			}
+		})
 	}
 }
 

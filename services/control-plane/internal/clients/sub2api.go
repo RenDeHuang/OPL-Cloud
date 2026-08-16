@@ -82,6 +82,10 @@ type Sub2APIUserKeyMutationClient interface {
 	DeleteUserKey(context.Context, SessionDelegatedCredential, int64, int64) error
 }
 
+type Sub2APIIdempotentUserKeyDeleteClient interface {
+	DeleteUserKeyIdempotent(context.Context, SessionDelegatedCredential, int64, int64, string) error
+}
+
 type Sub2APIRefundClient interface {
 	Refund(context.Context, Sub2APIRefundInput) (Sub2APIRefund, error)
 }
@@ -1499,13 +1503,17 @@ func (c *Sub2APIHTTPClient) UpdateUserKey(ctx context.Context, credential Sessio
 }
 
 func (c *Sub2APIHTTPClient) DeleteUserKey(ctx context.Context, credential SessionDelegatedCredential, userID, keyID int64) error {
+	return c.DeleteUserKeyIdempotent(ctx, credential, userID, keyID, "")
+}
+
+func (c *Sub2APIHTTPClient) DeleteUserKeyIdempotent(ctx context.Context, credential SessionDelegatedCredential, userID, keyID int64, idempotencyKey string) error {
 	if err := validateDelegatedKeyRequest(credential, userID); err != nil || keyID <= 0 {
 		if err != nil {
 			return err
 		}
 		return errors.New("sub2api key ID must be positive")
 	}
-	_, err := c.request(ctx, http.MethodDelete, "/api/v1/keys/"+strconv.FormatInt(keyID, 10), nil, credential.Bearer, "")
+	_, err := c.request(ctx, http.MethodDelete, "/api/v1/keys/"+strconv.FormatInt(keyID, 10), nil, credential.Bearer, idempotencyKey)
 	return normalizeSub2APIKeyError(err)
 }
 
@@ -1746,7 +1754,7 @@ func (c *Sub2APIHTTPClient) FinancialBalanceHistoryByCodes(ctx context.Context, 
 				matches[entry.Code] = entry
 			}
 		}
-		if len(matches) == len(targets) || page == pages {
+		if page == pages {
 			return matches, nil
 		}
 	}

@@ -45,16 +45,62 @@ func workspaceLaunchStageHashGoldenVectors(t *testing.T) []workspaceLaunchStageH
 
 type workspaceLaunchRecordingProvider struct {
 	testProvider
-	ensureCalls int
+	ensureCalls  int
+	readCalls    int
+	ensureErr    error
+	readErr      error
+	ensureResult *WorkspaceLaunchProviderResult
+	mutateOnRead bool
 }
 
 func (p *workspaceLaunchRecordingProvider) EnsureWorkspaceLaunchStage(_ context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
 	p.ensureCalls++
+	if p.ensureErr != nil {
+		return WorkspaceLaunchProviderResult{}, p.ensureErr
+	}
+	if p.ensureResult != nil {
+		return *p.ensureResult, nil
+	}
 	return WorkspaceLaunchProviderResult{Resources: request.Input.Resources}, nil
 }
 
-func (p *workspaceLaunchRecordingProvider) ReadWorkspaceLaunchStage(_ context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
+func (p *workspaceLaunchRecordingProvider) ReadWorkspaceLaunchStage(ctx context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
+	p.readCalls++
+	if p.mutateOnRead {
+		_, err := beginProviderMutation(ctx, "read_must_not_mutate", "workspace_launch_stage", request.Input.Binding.FabricOperationID, "")
+		return WorkspaceLaunchProviderResult{}, err
+	}
+	if p.readErr != nil {
+		return WorkspaceLaunchProviderResult{}, p.readErr
+	}
+	if p.ensureResult != nil {
+		return *p.ensureResult, nil
+	}
 	return WorkspaceLaunchProviderResult{Resources: request.Input.Resources}, nil
+}
+
+func TestWorkspaceLaunchStageReadContextRejectsProviderMutation(t *testing.T) {
+	service, store, provider, preflight, image, launchHash := workspaceLaunchStageFixture(t)
+	input := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{})
+	operation, _, err := newWorkspaceLaunchStageOperation(input, "tencent-tke", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.mutateOnRead = true
+	if _, err := service.ReadWorkspaceLaunchStage(context.Background(), input); err == nil || err.Error() != "provider_mutation_forbidden_in_read" {
+		t.Fatalf("provider read mutation error=%v", err)
+	}
+	after, err := store.List(context.Background())
+	if err != nil || len(after) != len(before) {
+		t.Fatalf("provider read changed operations before=%d after=%d err=%v", len(before), len(after), err)
+	}
 }
 
 func workspaceLaunchStageFixture(t *testing.T) (*Service, *MemoryOperationStore, *workspaceLaunchRecordingProvider, WorkspaceLaunchPreflight, string, string) {
@@ -117,6 +163,81 @@ func TestWorkspaceLaunchPreflightIsDurableAndPointReadBeforeStageWrite(t *testin
 	operations, err := store.List(context.Background())
 	if err != nil || len(operations) != 1 || operations[0].ID != preflight.BindingRef || provider.ensureCalls != 0 {
 		t.Fatalf("forged preflight crossed stage write: operations=%#v providerCalls=%d err=%v", operations, provider.ensureCalls, err)
+	}
+}
+
+func TestWorkspaceLaunchStageReadbackOwnsReplayDisposition(t *testing.T) {
+	service, store, provider, preflight, image, launchHash := workspaceLaunchStageFixture(t)
+	input := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{})
+
+	absent, err := service.ReadWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || absent.State != "absent" || absent.Reason != "no_stage_record" || absent.Binding != input.Binding || provider.readCalls != 0 {
+		t.Fatalf("missing record disposition=%#v reads=%d err=%v", absent, provider.readCalls, err)
+	}
+
+	for _, tc := range []struct {
+		name, operationStatus, wantState, wantReason string
+		readErr                                      error
+	}{
+		{name: "started provisioning", operationStatus: "started", readErr: ErrWorkspaceLaunchPending, wantState: "pending", wantReason: "provider_provisioning"},
+		{name: "failed no resource", operationStatus: "failed", readErr: ErrWorkspaceLaunchResourceAbsent, wantState: "absent", wantReason: "failed_no_resource"},
+		{name: "failed absence unproven", operationStatus: "failed", readErr: ErrWorkspaceLaunchPending, wantState: "unknown", wantReason: "failed_no_resource_unproven"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stageInput := input
+			stageInput.Binding.FabricOperationID += "-" + strings.ReplaceAll(tc.name, " ", "-")
+			stageInput.Binding.IdempotencyKey = stageInput.Binding.FabricOperationID
+			stageInput.Binding.RequestHash = workspaceLaunchStageRequestHash(stageInput, launchHash)
+			operation, _, buildErr := newWorkspaceLaunchStageOperation(stageInput, "tencent-tke", time.Now)
+			if buildErr != nil {
+				t.Fatal(buildErr)
+			}
+			operation.Status = tc.operationStatus
+			if tc.operationStatus == "failed" {
+				operation.FinishedAt = time.Now().UTC()
+			}
+			if appendErr := store.Append(context.Background(), operation); appendErr != nil {
+				t.Fatal(appendErr)
+			}
+			provider.readErr = tc.readErr
+			got, readErr := service.ReadWorkspaceLaunchStage(context.Background(), stageInput)
+			if readErr != nil || got.State != tc.wantState || got.Reason != tc.wantReason || got.Binding != stageInput.Binding {
+				t.Fatalf("disposition=%#v err=%v", got, readErr)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchEnsureExistingRecordReadsBeforeIdempotentReplay(t *testing.T) {
+	service, store, provider, preflight, image, launchHash := workspaceLaunchStageFixture(t)
+	input := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{})
+	operation, _, err := newWorkspaceLaunchStageOperation(input, "tencent-tke", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Status, operation.FinishedAt = "failed", time.Now().UTC()
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+
+	provider.readErr = ErrWorkspaceLaunchPending
+	blocked, err := service.EnsureWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || blocked.State != "unknown" || blocked.Reason != "failed_no_resource_unproven" || provider.ensureCalls != 0 {
+		t.Fatalf("unproven failed record reached mutation: result=%#v ensures=%d err=%v", blocked, provider.ensureCalls, err)
+	}
+
+	provider.readErr = ErrWorkspaceLaunchResourceAbsent
+	provider.ensureResult = &WorkspaceLaunchProviderResult{Resources: WorkspaceLaunchResources{
+		ComputeAllocationID: workspaceLaunchComputeID(input.Binding), ComputeBindingRef: input.Binding.FabricOperationID,
+	}}
+	replayed, err := service.EnsureWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || replayed.State != "ready" || replayed.Resources.ComputeBindingRef != input.Binding.FabricOperationID || provider.ensureCalls != 1 {
+		t.Fatalf("typed absent did not permit one same-key replay: result=%#v ensures=%d err=%v", replayed, provider.ensureCalls, err)
+	}
+	provider.readErr = nil
+	again, err := service.EnsureWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || again.State != "ready" || provider.ensureCalls != 1 {
+		t.Fatalf("ready replay repeated provider mutation: result=%#v ensures=%d err=%v", again, provider.ensureCalls, err)
 	}
 }
 

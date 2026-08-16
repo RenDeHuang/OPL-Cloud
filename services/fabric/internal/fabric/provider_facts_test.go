@@ -98,6 +98,7 @@ func TestProviderFactsBatchFailsClosedBeforeAdapterRead(t *testing.T) {
 
 type providerFactsDockerRunner struct {
 	networkID     string
+	networkName   string
 	volumeName    string
 	networkLabels map[string]string
 	volumeLabels  map[string]string
@@ -107,12 +108,41 @@ type providerFactsDockerRunner struct {
 func (r *providerFactsDockerRunner) Run(_ context.Context, _ []byte, args ...string) ([]byte, error) {
 	r.calls = append(r.calls, append([]string(nil), args...))
 	switch {
+	case len(args) == 7 && args[0] == "network" && args[1] == "ls":
+		r.networkName = strings.TrimSuffix(strings.TrimPrefix(args[4], "name=^"), "$")
+		return json.Marshal(dockerObjectInventoryRow{ID: r.networkID, Name: r.networkName})
 	case len(args) == 3 && args[0] == "network" && args[1] == "inspect":
-		return json.Marshal([]dockerNetworkInspect{{ID: r.networkID, Name: args[2], Labels: r.networkLabels}})
+		return json.Marshal([]dockerNetworkInspect{{ID: r.networkID, Name: r.networkName, Labels: r.networkLabels}})
+	case len(args) == 6 && args[0] == "volume" && args[1] == "ls":
+		return json.Marshal(dockerObjectInventoryRow{Name: r.volumeName})
 	case len(args) == 3 && args[0] == "volume" && args[1] == "inspect":
 		return json.Marshal([]dockerVolumeInspect{{Name: r.volumeName, Labels: r.volumeLabels}})
 	default:
 		return nil, fmt.Errorf("unexpected docker action: %v", args)
+	}
+}
+
+func TestDockerObjectInventoryRequiresExactUniqueStructuredIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		output  string
+		exists  bool
+		wantErr bool
+	}{
+		{name: "empty is authoritative absent", output: "", exists: false},
+		{name: "exact network", output: `{"ID":"full-id","Name":"opl-runtime-alpha"}`, exists: true},
+		{name: "exact container", output: `{"ID":"full-id","Names":"opl-runtime-alpha"}`, exists: true},
+		{name: "foreign row conflicts", output: `{"ID":"full-id","Name":"opl-runtime-alphabet"}`, wantErr: true},
+		{name: "duplicate exact rows conflict", output: "{\"ID\":\"one\",\"Name\":\"opl-runtime-alpha\"}\n{\"ID\":\"two\",\"Name\":\"opl-runtime-alpha\"}", wantErr: true},
+		{name: "name fields disagree", output: `{"ID":"full-id","Name":"opl-runtime-alpha","Names":"opl-runtime-beta"}`, wantErr: true},
+		{name: "malformed row", output: `{`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, exists, err := decodeDockerObjectInventory([]byte(tc.output), "opl-runtime-alpha")
+			if exists != tc.exists || (err != nil) != tc.wantErr {
+				t.Fatalf("exists=%v err=%v", exists, err)
+			}
+		})
 	}
 }
 
@@ -148,7 +178,7 @@ func TestLocalDockerProviderFactsParityAndReadOnly(t *testing.T) {
 		t.Fatalf("local facts: compute=%#v storage=%#v attachment=%#v runtime=%#v", computeFacts, storageFacts, attachmentFacts, runtimeFacts)
 	}
 	for _, call := range runner.calls {
-		if len(call) < 2 || call[1] != "inspect" || (call[0] != "network" && call[0] != "volume") {
+		if len(call) < 2 || (call[1] != "ls" && call[1] != "inspect") || (call[0] != "network" && call[0] != "volume") {
 			t.Fatalf("local provider facts issued mutation: %#v", runner.calls)
 		}
 	}

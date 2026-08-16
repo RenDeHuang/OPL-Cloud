@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -235,7 +236,7 @@ func (s *Service) workspaceRuntimeStatus(ctx context.Context, workspaceID string
 	if runtime.WorkspaceID != workspaceID || len(matches) != 1 || matches[0].ID == "" || matches[0].CreatedAt.IsZero() || !decodeOperationResource(matches[0], &created) ||
 		created.WorkspaceID != workspaceID || strings.TrimSpace(created.ID) == "" || strings.TrimSpace(created.OperationID) == "" ||
 		runtime.ID != "" && runtime.ID != created.ID || runtime.OperationID != "" && runtime.OperationID != created.OperationID {
-		return runtime, FabricOperation{}, fmt.Errorf("workspace_runtime_identity_unavailable")
+		return runtime, FabricOperation{}, ErrLaunchStageBindingConflict
 	}
 	runtime.ID, runtime.OperationID = created.ID, created.OperationID
 	return runtime, matches[0], nil
@@ -245,6 +246,79 @@ func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string
 	runtime, _, err := s.workspaceRuntimeStatus(ctx, workspaceID)
 	runtime.Access.Password = ""
 	return runtime, err
+}
+
+func workspaceRuntimeOwnerObservation(workspaceID string, runtime WorkspaceRuntime, err error) WorkspaceRuntimeObservation {
+	observation := WorkspaceRuntimeObservation{SchemaVersion: WorkspaceOwnerObservationSchemaVersion, State: WorkspaceOwnerObservationError, WorkspaceID: workspaceID}
+	runtime.Access.Password = ""
+	switch {
+	case strings.TrimSpace(workspaceID) == "":
+		return observation
+	case errors.Is(err, ErrWorkspaceLaunchResourceAbsent):
+		observation.State = WorkspaceOwnerObservationAbsent
+		return observation
+	case errors.Is(err, ErrLaunchStageBindingConflict):
+		observation.State = WorkspaceOwnerObservationConflict
+		return observation
+	case err != nil:
+		return observation
+	case runtime.WorkspaceID != workspaceID || strings.TrimSpace(runtime.ID) == "":
+		observation.State = WorkspaceOwnerObservationConflict
+		return observation
+	}
+	switch runtime.Status {
+	case "running":
+		if runtime.Ready {
+			observation.State = WorkspaceOwnerObservationReady
+		} else {
+			observation.State = WorkspaceOwnerObservationPending
+		}
+	case "unready", "pending", "provisioning", "creating", "destroying":
+		if runtime.Ready {
+			return observation
+		}
+		observation.State = WorkspaceOwnerObservationPending
+	default:
+		return observation
+	}
+	observation.Runtime = &runtime
+	return observation
+}
+
+func workspaceRuntimeGatewaySecretOwnerObservation(workspaceID string, binding WorkspaceRuntimeGatewaySecretBinding, err error) WorkspaceRuntimeGatewaySecretObservation {
+	observation := WorkspaceRuntimeGatewaySecretObservation{SchemaVersion: WorkspaceOwnerObservationSchemaVersion, State: WorkspaceOwnerObservationError, WorkspaceID: workspaceID}
+	switch {
+	case strings.TrimSpace(workspaceID) == "":
+		return observation
+	case errors.Is(err, ErrWorkspaceLaunchResourceAbsent):
+		observation.State = WorkspaceOwnerObservationAbsent
+		return observation
+	case errors.Is(err, ErrLaunchStageBindingConflict):
+		observation.State = WorkspaceOwnerObservationConflict
+		return observation
+	case err != nil:
+		return observation
+	case binding.WorkspaceID != workspaceID || binding.WorkspaceAPIKeyID <= 0 || binding.SecretRef != gatewaySecretName(workspaceID) || strings.TrimSpace(binding.Fingerprint) == "":
+		observation.State = WorkspaceOwnerObservationConflict
+		return observation
+	}
+	if binding.Bound {
+		observation.State = WorkspaceOwnerObservationReady
+	} else {
+		observation.State = WorkspaceOwnerObservationPending
+	}
+	observation.Binding = &binding
+	return observation
+}
+
+func (s *Service) ObserveWorkspaceRuntime(ctx context.Context, workspaceID string) WorkspaceRuntimeObservation {
+	runtime, err := s.WorkspaceRuntimeStatus(ctx, workspaceID)
+	return workspaceRuntimeOwnerObservation(workspaceID, runtime, err)
+}
+
+func (s *Service) ObserveWorkspaceRuntimeGatewaySecret(ctx context.Context, workspaceID string) WorkspaceRuntimeGatewaySecretObservation {
+	binding, err := s.WorkspaceRuntimeGatewaySecret(ctx, workspaceID)
+	return workspaceRuntimeGatewaySecretOwnerObservation(workspaceID, binding, err)
 }
 
 func (s *Service) WorkspaceRuntimeCredentials(ctx context.Context, accountID, workspaceID string) (WorkspaceRuntime, error) {

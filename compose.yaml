@@ -26,7 +26,12 @@ services:
     volumes:
       - opl-cloud-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$$OPL_CONTROL_PLANE_DATABASE_PASSWORD" psql -h 127.0.0.1 -U opl_control_plane -d opl_control_plane -Atqc 'select 1' >/dev/null &&
+          PGPASSWORD="$$OPL_FABRIC_DATABASE_PASSWORD" psql -h 127.0.0.1 -U opl_fabric -d opl_fabric -Atqc 'select 1' >/dev/null &&
+          PGPASSWORD="$$OPL_LEDGER_DATABASE_PASSWORD" psql -h 127.0.0.1 -U opl_ledger -d opl_ledger -Atqc 'select 1' >/dev/null
       interval: 5s
       timeout: 5s
       retries: 20

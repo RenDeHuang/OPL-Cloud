@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -63,6 +64,11 @@ type FabricWorkspaceDeleteClient interface {
 	DestroyStorageVolume(context.Context, string, string, string, string) (StorageVolume, error)
 	DestroyComputeAllocation(context.Context, string, string, string, string) (ComputeAllocation, error)
 	ReadComputeAllocation(context.Context, string) (ComputeAllocation, error)
+}
+
+type FabricWorkspaceDeleteObservationClient interface {
+	ObserveWorkspaceRuntime(context.Context, string) (WorkspaceRuntimeObservation, error)
+	ObserveWorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretObservation, error)
 }
 
 type FabricHTTPError struct {
@@ -243,6 +249,30 @@ type WorkspaceRuntimeGatewaySecretBinding struct {
 	SecretRef         string `json:"secretRef"`
 	Fingerprint       string `json:"fingerprint"`
 	Bound             bool   `json:"bound"`
+}
+
+const WorkspaceOwnerObservationSchemaVersion = 1
+
+const (
+	WorkspaceOwnerObservationReady    = "ready"
+	WorkspaceOwnerObservationAbsent   = "absent"
+	WorkspaceOwnerObservationPending  = "pending"
+	WorkspaceOwnerObservationConflict = "conflict"
+	WorkspaceOwnerObservationError    = "error"
+)
+
+type WorkspaceRuntimeObservation struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	State         string            `json:"state"`
+	WorkspaceID   string            `json:"workspaceId"`
+	Runtime       *WorkspaceRuntime `json:"runtime,omitempty"`
+}
+
+type WorkspaceRuntimeGatewaySecretObservation struct {
+	SchemaVersion int                                   `json:"schemaVersion"`
+	State         string                                `json:"state"`
+	WorkspaceID   string                                `json:"workspaceId"`
+	Binding       *WorkspaceRuntimeGatewaySecretBinding `json:"binding,omitempty"`
 }
 
 type ProviderFactInput struct {
@@ -473,6 +503,73 @@ func (c *fabricHTTPClient) WorkspaceRuntimeGatewaySecret(ctx context.Context, wo
 	var result WorkspaceRuntimeGatewaySecretBinding
 	err := c.get(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(workspaceID)+"/gateway-secret", &result)
 	return result, err
+}
+
+func (c *fabricHTTPClient) ObserveWorkspaceRuntime(ctx context.Context, workspaceID string) (WorkspaceRuntimeObservation, error) {
+	var result WorkspaceRuntimeObservation
+	err := c.get(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(workspaceID)+"/observation", &result)
+	if err != nil {
+		return WorkspaceRuntimeObservation{}, err
+	}
+	if !validWorkspaceRuntimeObservation(result, workspaceID) {
+		return WorkspaceRuntimeObservation{}, errors.New("fabric_workspace_runtime_observation_invalid")
+	}
+	return result, nil
+}
+
+func (c *fabricHTTPClient) ObserveWorkspaceRuntimeGatewaySecret(ctx context.Context, workspaceID string) (WorkspaceRuntimeGatewaySecretObservation, error) {
+	var result WorkspaceRuntimeGatewaySecretObservation
+	err := c.get(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(workspaceID)+"/gateway-secret/observation", &result)
+	if err != nil {
+		return WorkspaceRuntimeGatewaySecretObservation{}, err
+	}
+	if !validWorkspaceRuntimeGatewaySecretObservation(result, workspaceID) {
+		return WorkspaceRuntimeGatewaySecretObservation{}, errors.New("fabric_workspace_runtime_gateway_secret_observation_invalid")
+	}
+	return result, nil
+}
+
+func validWorkspaceOwnerObservationState(state string) bool {
+	switch state {
+	case WorkspaceOwnerObservationReady, WorkspaceOwnerObservationAbsent, WorkspaceOwnerObservationPending, WorkspaceOwnerObservationConflict, WorkspaceOwnerObservationError:
+		return true
+	default:
+		return false
+	}
+}
+
+func validWorkspaceRuntimeObservation(observation WorkspaceRuntimeObservation, workspaceID string) bool {
+	if observation.SchemaVersion != WorkspaceOwnerObservationSchemaVersion || observation.WorkspaceID != workspaceID || !validWorkspaceOwnerObservationState(observation.State) {
+		return false
+	}
+	if observation.State != WorkspaceOwnerObservationReady && observation.State != WorkspaceOwnerObservationPending {
+		return observation.Runtime == nil
+	}
+	if observation.Runtime == nil || observation.Runtime.WorkspaceID != workspaceID || strings.TrimSpace(observation.Runtime.ID) == "" || observation.Runtime.Access.Password != "" {
+		return false
+	}
+	if observation.State == WorkspaceOwnerObservationReady {
+		return observation.Runtime.Status == "running" && observation.Runtime.Ready
+	}
+	if observation.Runtime.Ready {
+		return false
+	}
+	switch observation.Runtime.Status {
+	case "running", "unready", "pending", "provisioning", "creating", "destroying":
+		return true
+	default:
+		return false
+	}
+}
+
+func validWorkspaceRuntimeGatewaySecretObservation(observation WorkspaceRuntimeGatewaySecretObservation, workspaceID string) bool {
+	if observation.SchemaVersion != WorkspaceOwnerObservationSchemaVersion || observation.WorkspaceID != workspaceID || !validWorkspaceOwnerObservationState(observation.State) {
+		return false
+	}
+	if observation.State != WorkspaceOwnerObservationReady && observation.State != WorkspaceOwnerObservationPending {
+		return observation.Binding == nil
+	}
+	return observation.Binding != nil && observation.Binding.WorkspaceID == workspaceID && observation.Binding.WorkspaceAPIKeyID > 0 && strings.TrimSpace(observation.Binding.SecretRef) != "" && strings.TrimSpace(observation.Binding.Fingerprint) != "" && observation.Binding.Bound == (observation.State == WorkspaceOwnerObservationReady)
 }
 
 func (c *fabricHTTPClient) ProviderFactsBatch(ctx context.Context, input ProviderFactsBatchInput) (ProviderFactsBatch, error) {

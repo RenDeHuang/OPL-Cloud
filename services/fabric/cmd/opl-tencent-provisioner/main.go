@@ -2071,7 +2071,19 @@ func (client *tencentSDKClient) resolveComputeAllocation(request Request, allowS
 	scaleRequestId := ""
 	if currentReplicas == request.Pool.BaselineReplicas {
 		if !allowScale {
-			return Response{Ok: false, ErrorCode: "compute_allocation_pending", Message: "The persisted absolute target has not been reached.", ProviderRequestId: describeRequestId, Retryable: true}
+			machines, machineRequestID, machineErr := client.describeClusterMachines(nodePoolId)
+			if machineErr != nil {
+				return sdkErrorResponse("tencent_describe_cluster_machines_failed", machineErr)
+			}
+			if !exactMachineInventoryMatches(machines, request.Pool.BeforeMachineNames) {
+				return Response{Ok: false, ErrorCode: "compute_allocation_baseline_inventory_conflict", Message: "NodePool machine inventory does not exactly match the persisted baseline.", ProviderRequestId: firstNonEmpty(machineRequestID, describeRequestId), Retryable: false}
+			}
+			present := false
+			return Response{
+				Ok: true, PoolId: request.Pool.Id, NodePoolId: nodePoolId, Status: "absent", MachinePresent: &present,
+				ProviderRequestId: firstNonEmpty(machineRequestID, describeRequestId), CurrentReplicas: currentReplicas,
+				MaxReplicas: request.Pool.MaxReplicas, TargetReplicas: request.Pool.TargetReplicas, MutationCount: 0,
+			}
 		}
 		scaleRequest := tke2022.NewScaleNodePoolRequest()
 		scaleRequest.ClusterId = common.StringPtr(client.clusterId)
@@ -2216,6 +2228,38 @@ func (client *tencentSDKClient) resolveComputeAllocation(request Request, allowS
 			"deadline":                   deadline,
 		},
 	}
+}
+
+func exactMachineInventoryMatches(machines []*tke2022.Machine, expectedNames []string) bool {
+	if len(machines) != len(expectedNames) {
+		return false
+	}
+	expected := make(map[string]struct{}, len(expectedNames))
+	for _, name := range expectedNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return false
+		}
+		if _, duplicate := expected[name]; duplicate {
+			return false
+		}
+		expected[name] = struct{}{}
+	}
+	observed := make(map[string]struct{}, len(machines))
+	for _, machine := range machines {
+		if machine == nil {
+			return false
+		}
+		name := strings.TrimSpace(stringValue(machine.MachineName))
+		if _, allowed := expected[name]; !allowed || name == "" {
+			return false
+		}
+		if _, duplicate := observed[name]; duplicate {
+			return false
+		}
+		observed[name] = struct{}{}
+	}
+	return len(observed) == len(expected)
 }
 
 func (client *tencentSDKClient) ComputeClaimTruth(request Request, _ map[string]string) Response {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"time"
 )
@@ -12,11 +13,13 @@ const WorkspaceLaunchFabricSchemaVersion = 1
 
 const workspaceLaunchPreflightPayloadKey = "workspaceLaunchPreflight"
 const workspaceLaunchStageRecordPayloadKey = "workspaceLaunchStageRecord"
+const workspaceLaunchStageRecordSchemaVersion = 2
 
 var (
-	ErrWorkspaceLaunchInputInvalid = errors.New("workspace_launch_input_invalid")
-	ErrWorkspaceLaunchUnavailable  = errors.New("workspace_launch_unavailable")
-	ErrWorkspaceLaunchPending      = errors.New("workspace_launch_pending")
+	ErrWorkspaceLaunchInputInvalid   = errors.New("workspace_launch_input_invalid")
+	ErrWorkspaceLaunchUnavailable    = errors.New("workspace_launch_unavailable")
+	ErrWorkspaceLaunchPending        = errors.New("workspace_launch_pending")
+	ErrWorkspaceLaunchResourceAbsent = errors.New("workspace_launch_resource_absent")
 )
 
 type WorkspaceLaunchPreflightInput struct {
@@ -329,9 +332,66 @@ func setWorkspaceLaunchStageRecord(operation *FabricOperation, record workspaceL
 	if operation.RedactedProviderPayload == nil {
 		operation.RedactedProviderPayload = map[string]any{}
 	}
-	operation.RedactedProviderPayload[workspaceLaunchStageRecordPayloadKey] = persistedWorkspaceLaunchStageRecord{
-		Record: record, Digest: hashInput(record),
+	digest := hashInput(record)
+	if record.SchemaVersion == workspaceLaunchStageRecordSchemaVersion {
+		digest = workspaceLaunchStageRecordDigest(record)
 	}
+	operation.RedactedProviderPayload[workspaceLaunchStageRecordPayloadKey] = persistedWorkspaceLaunchStageRecord{
+		Record: record, Digest: digest,
+	}
+}
+
+func workspaceLaunchStageRecordDigest(record workspaceLaunchStageRecord) string {
+	if len(record.ProviderState) == 0 {
+		return hashInput(record)
+	}
+	var state map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(record.ProviderState)))
+	decoder.UseNumber()
+	if decoder.Decode(&state) != nil || state == nil {
+		return ""
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return ""
+	}
+	canonical, err := json.Marshal(state)
+	if err != nil {
+		return ""
+	}
+	record.ProviderState = canonical
+	return hashInput(record)
+}
+
+func legacyWorkspaceLaunchStageRecordDigest(record workspaceLaunchStageRecord) string {
+	if len(record.ProviderState) == 0 {
+		return hashInput(record)
+	}
+	switch record.ProviderProfileRef {
+	case "local-docker":
+		var state localDockerWorkspaceLaunchState
+		if json.Unmarshal(record.ProviderState, &state) != nil {
+			return ""
+		}
+		providerState, err := encodeLocalDockerWorkspaceLaunchState(state)
+		if err != nil {
+			return ""
+		}
+		record.ProviderState = providerState
+	case "tencent-tke":
+		var state tencentWorkspaceLaunchState
+		if json.Unmarshal(record.ProviderState, &state) != nil {
+			return ""
+		}
+		providerState, err := encodeTencentWorkspaceLaunchState(state)
+		if err != nil {
+			return ""
+		}
+		record.ProviderState = providerState
+	default:
+		return ""
+	}
+	return hashInput(record)
 }
 
 func decodeWorkspaceLaunchStageRecord(operation FabricOperation) (workspaceLaunchStageRecord, bool) {
@@ -344,8 +404,15 @@ func decodeWorkspaceLaunchStageRecord(operation FabricOperation) (workspaceLaunc
 		return workspaceLaunchStageRecord{}, false
 	}
 	var persisted persistedWorkspaceLaunchStageRecord
-	if json.Unmarshal(body, &persisted) != nil || persisted.Record.SchemaVersion != 1 ||
-		persisted.Digest == "" || persisted.Digest != hashInput(persisted.Record) ||
+	if json.Unmarshal(body, &persisted) != nil {
+		return workspaceLaunchStageRecord{}, false
+	}
+	expectedDigest := legacyWorkspaceLaunchStageRecordDigest(persisted.Record)
+	if persisted.Record.SchemaVersion == workspaceLaunchStageRecordSchemaVersion {
+		expectedDigest = workspaceLaunchStageRecordDigest(persisted.Record)
+	}
+	if (persisted.Record.SchemaVersion != 1 && persisted.Record.SchemaVersion != workspaceLaunchStageRecordSchemaVersion) ||
+		persisted.Digest == "" || persisted.Digest != expectedDigest ||
 		persisted.Record.ProviderProfileRef == "" || persisted.Record.PreflightBindingRef == "" {
 		return workspaceLaunchStageRecord{}, false
 	}
@@ -362,7 +429,7 @@ func workspaceLaunchStageCredentialKeyID(input WorkspaceLaunchStageInput) int64 
 func newWorkspaceLaunchStageOperation(input WorkspaceLaunchStageInput, provider string, now func() time.Time) (FabricOperation, workspaceLaunchStageRecord, error) {
 	binding := input.Binding
 	record := workspaceLaunchStageRecord{
-		SchemaVersion: 1, ProviderProfileRef: provider, PreflightBindingRef: input.PreflightBindingRef,
+		SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: provider, PreflightBindingRef: input.PreflightBindingRef,
 		RequestResources: input.Resources, Resources: input.Resources, GatewayKeyID: workspaceLaunchStageCredentialKeyID(input),
 	}
 	operation := newOperation(binding.Action, "workspace_launch_stage", binding.FabricOperationID, binding.AccountID, binding.WorkspaceID, binding.IdempotencyKey, binding.RequestHash, now())
@@ -485,6 +552,10 @@ func pendingWorkspaceLaunchStageResult(input WorkspaceLaunchStageInput, reason s
 	return WorkspaceLaunchStageResult{SchemaVersion: 1, State: "pending", Reason: reason, Binding: input.Binding, Resources: input.Resources}
 }
 
+func observedWorkspaceLaunchStageResult(input WorkspaceLaunchStageInput, state, reason string) WorkspaceLaunchStageResult {
+	return WorkspaceLaunchStageResult{SchemaVersion: WorkspaceLaunchFabricSchemaVersion, State: state, Reason: reason, Binding: input.Binding, Resources: input.Resources}
+}
+
 func (s *Service) persistWorkspaceLaunchStageResult(ctx context.Context, current FabricOperation, record workspaceLaunchStageRecord, result WorkspaceLaunchProviderResult) error {
 	next := current
 	next.Status, next.ErrorCode, next.Retryable, next.FinishedAt = "succeeded", "", false, s.now()
@@ -524,7 +595,7 @@ func (s *Service) EnsureWorkspaceLaunchStage(ctx context.Context, input Workspac
 	if err != nil {
 		return WorkspaceLaunchStageResult{}, err
 	}
-	stored, _, err := s.operations.ClaimRuntime(ctx, operation)
+	stored, claimed, err := s.operations.ClaimRuntime(ctx, operation)
 	if err != nil {
 		return WorkspaceLaunchStageResult{}, err
 	}
@@ -534,6 +605,12 @@ func (s *Service) EnsureWorkspaceLaunchStage(ctx context.Context, input Workspac
 	}
 	if stored.Status == "succeeded" {
 		return s.readWorkspaceLaunchStage(ctx, input, stored, record)
+	}
+	if !claimed {
+		observed, readErr := s.readWorkspaceLaunchStage(ctx, input, stored, record)
+		if readErr != nil || observed.State != "absent" {
+			return observed, readErr
+		}
 	}
 	request, err := s.WorkspaceLaunchProviderRequest(ctx, input, record)
 	if err != nil {
@@ -567,7 +644,7 @@ func (s *Service) ReadWorkspaceLaunchStage(ctx context.Context, input WorkspaceL
 	}
 	operation, err := s.operations.Get(ctx, input.Binding.FabricOperationID)
 	if errors.Is(err, ErrOperationNotFound) {
-		return WorkspaceLaunchStageResult{}, ErrLaunchStageBindingNotFound
+		return observedWorkspaceLaunchStageResult(input, "absent", "no_stage_record"), nil
 	}
 	if err != nil {
 		return WorkspaceLaunchStageResult{}, err
@@ -588,9 +665,21 @@ func (s *Service) readWorkspaceLaunchStage(ctx context.Context, input WorkspaceL
 	if err != nil {
 		return WorkspaceLaunchStageResult{}, err
 	}
-	providerResult, err := stageProvider.ReadWorkspaceLaunchStage(s.providerMutationContext(ctx, operation), request)
+	providerResult, err := stageProvider.ReadWorkspaceLaunchStage(s.providerReadContext(ctx, operation), request)
+	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		if operation.Status == "started" {
+			return observedWorkspaceLaunchStageResult(input, "absent", "started_no_resource"), nil
+		}
+		if operation.Status == "failed" {
+			return observedWorkspaceLaunchStageResult(input, "absent", "failed_no_resource"), nil
+		}
+		return observedWorkspaceLaunchStageResult(input, "unknown", "resource_absence_status_conflict"), nil
+	}
 	if errors.Is(err, ErrWorkspaceLaunchPending) {
-		return pendingWorkspaceLaunchStageResult(input, operation.ErrorCode), nil
+		if operation.Status == "started" {
+			return pendingWorkspaceLaunchStageResult(input, "provider_provisioning"), nil
+		}
+		return observedWorkspaceLaunchStageResult(input, "unknown", "failed_no_resource_unproven"), nil
 	}
 	if err != nil {
 		return WorkspaceLaunchStageResult{}, err

@@ -54,3 +54,27 @@ func (s *Service) WorkspaceDeleteComputeStatus(ctx context.Context, computeID st
 	}
 	return client.ReadComputeAllocation(ctx, computeID)
 }
+
+func (s *Service) workspaceDeleteObservationFabric() (clients.FabricWorkspaceDeleteObservationClient, error) {
+	client, ok := s.fabric.(clients.FabricWorkspaceDeleteObservationClient)
+	if !ok {
+		return nil, errors.New("fabric_workspace_delete_observation_unavailable")
+	}
+	return client, nil
+}
+
+func (s *Service) ObserveWorkspaceDeleteRuntime(ctx context.Context, workspaceID string) (clients.WorkspaceRuntimeObservation, error) {
+	client, err := s.workspaceDeleteObservationFabric()
+	if err != nil {
+		return clients.WorkspaceRuntimeObservation{}, err
+	}
+	return client.ObserveWorkspaceRuntime(ctx, workspaceID)
+}
+
+func (s *Service) ObserveWorkspaceDeleteRuntimeGatewaySecret(ctx context.Context, workspaceID string) (clients.WorkspaceRuntimeGatewaySecretObservation, error) {
+	client, err := s.workspaceDeleteObservationFabric()
+	if err != nil {
+		return clients.WorkspaceRuntimeGatewaySecretObservation{}, err
+	}
+	return client.ObserveWorkspaceRuntimeGatewaySecret(ctx, workspaceID)
+}

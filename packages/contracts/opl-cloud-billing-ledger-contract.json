@@ -63,15 +63,54 @@
     "confirmedNoResource": "one_idempotent_workspace_refund",
     "partialOrUnknownResource": "manual_review_without_refund",
     "ledgerFailureAfterActivation": "retry_receipt_only",
+    "launchDebitRecovery": {
+      "authority": "Sub2API exact redeem code history",
+      "identity": ["sub2apiUserId", "sub2apiRedeemCode", "negative_type", "totalChargeUsdMicros", "redeemed_status"],
+      "ready": "read_only_convergence_without_second_debit",
+      "absentReplay": "same_original_redeem_code_and_same_operation_only_after_persisted_operator_replay_authorization",
+      "unknownConflictOrError": "exact_code_GET_only_and_zero_debit_mutation",
+      "secondWorkspaceOrder": "forbidden"
+    },
     "activationReadback": {
-      "api": "POST /fabric/workspace-activation-truth",
-      "semantic": "describe_get_only_mutation_zero_proof",
+      "api": "Control Plane GetWorkspace(workspaceId) point read",
+      "semantic": "workspaceLaunchProjectionMatches exact operation workspace entitlement and Fabric binding projection",
       "consumers": ["workspace_activation", "workspace_url_gateway"],
       "requiredFacts": ["compute_ownership", "unique_cbs_pv_pvc", "attachment_identity", "gateway_secret_identity", "unique_runtime", "ready_pod_on_claimed_node", "service_endpoints_identity", "workspace_network_policy"],
-      "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+      "deletedFabricRoute": "POST /fabric/workspace-activation-truth returns 404 and is not authority",
+      "mutationCounts": {"controlPlaneExternal": 0, "sub2api": 0, "tencent": 0, "kubernetes": 0},
       "mismatch": "manual_review_without_activation"
     },
+    "purchaseReceiptIdentity": {
+      "requestId": "launchOperationId",
+      "idempotencyKey": "<launchOperationId>:purchase-receipt",
+      "workspaceId": "exact_launch_workspace_id",
+      "debit": "exact_sub2api_user_redeem_code_and_total_usd_micros",
+      "retry": "receipt_only_after_activation"
+    },
     "manualReviewRecoveryContract": "opl-cloud-control-plane-launch-contract.json#recovery"
+  },
+  "workspaceDeleteRefund": {
+    "orchestrationOwner": "services/control-plane",
+    "walletAuthority": "sub2api",
+    "receiptAuthority": "services/ledger",
+    "preMutationAuthority": [
+      "exact_purchase_receipt",
+      "exact_negative_sub2api_debit_history_entry"
+    ],
+    "refundIdentity": ["accountId", "workspaceId", "sub2apiUserId", "sub2apiRedeemCode", "sub2apiRefundCode", "totalUsdMicros"],
+    "refundAmount": "refundUsdMicros_equals_original_purchase_totalUsdMicros",
+    "refundReservation": "persist_same_delete_operation_attempt_before_money_write_then_repeat_exact_refund_code_GET",
+    "responseLoss": "exact_refund_code_GET_only_without_second_refund",
+    "receipt": {
+      "type": "billing.workspace_refunded.v1",
+      "requestId": "workspaceDeleteOperationId",
+      "idempotencyKey": "<workspaceDeleteOperationId>:refund-receipt",
+      "supersedesReceiptId": "exact_purchaseReceiptId",
+      "identityFields": ["accountId", "operationId", "workspaceId", "runtimeId", "keyId", "debitCode", "purchaseReceiptId", "refundReceiptId"],
+      "failureRetry": "receipt_only_without_key_resource_or_refund_mutation"
+    },
+    "operatorWalletAdjustmentSubstitute": false,
+    "unknownConflictOrError": "manual_review_with_zero_later_mutation"
   },
   "walletAdjustmentEvidence": {
     "kinds": ["recharge", "debit", "business_refund"],

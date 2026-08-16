@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -36,6 +37,169 @@ func seedRuntimeAccessWorkspaceForTest(t *testing.T, store controlPlaneTableStor
 		row[key] = value
 	}
 	mustStore(t, store.SaveWorkspace(context.Background(), row))
+}
+
+func seedCanonicalRuntimeAccessWorkspaceForTest(t *testing.T, store *memoryTableStore, ownerID string) workspaceLaunchReconcileOperation {
+	t.Helper()
+	command := workspaceLaunchUnitCommand()
+	command.OperationID, command.AccountID, command.OwnerUserID = "workspace-launch-alpha", "acct-alpha", ownerID
+	command.WorkspaceID = "ws-alpha"
+	operation, err := newWorkspaceLaunchReconcileOperation(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-1] {
+		operation.Stage = stage
+		facts := workspaceLaunchReadyFacts(stage)
+		switch stage {
+		case "debit":
+			facts["periodStart"], facts["paidThrough"], facts["billingAnchorDay"] = "2098-12-01T00:00:00Z", "2099-01-01T00:00:00Z", 1
+		case "secret":
+			facts["credentialStatus"], facts["credentialVersion"], facts["credentialSecretRef"] = "configured", "v1", "secret-alpha"
+		case "runtime":
+			facts["runtimeUsername"] = "opl"
+		case "activation":
+			facts["activationOperationId"] = operation.ID + ":activation"
+		case "receipt":
+			facts["receiptOperationId"] = operation.ID + ":purchase-receipt"
+		}
+		observation, reduceErr := reduceWorkspaceLaunchStageObservation(&operation, workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: facts})
+		if reduceErr != nil {
+			t.Fatalf("seed %s: %v", stage, reduceErr)
+		}
+		attempt := operation.Attempts[stage]
+		attempt.Attempted, attempt.Confirmed, attempt.Status = 1, 1, "confirmed"
+		attempt.IdempotencyKey = workspaceLaunchStageIdempotencyKey(operation, 1)
+		operation.Attempts[stage], operation.Observations[stage] = attempt, observation
+	}
+	operation.Stage, operation.Status = "succeeded", "succeeded"
+	operation.Version = len(workspaceLaunchReconcileStages)
+	operationRow, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), operationRow))
+	workspace, err := workspaceLaunchActivationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
+	return operation
+}
+
+func seedCanonicalRuntimeAccessLegacyRowsForTest(t *testing.T, store *memoryTableStore) {
+	t.Helper()
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
+		"id": "ca-unit", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "running",
+	}))
+	mustStore(t, store.SaveStorage(context.Background(), map[string]any{
+		"id": "vol-unit", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "available",
+	}))
+	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{
+		"id": "att-unit", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "computeAllocationId": "ca-unit", "storageId": "vol-unit", "status": "attached",
+	}))
+}
+
+func TestRuntimeStatusCanonicalSucceededLaunchUsesFabricAuthority(t *testing.T) {
+	store := newMemoryTableStore()
+	calls := []string{}
+	fabric := &fakeFabricClient{calls: &calls, runtimeStatus: clients.WorkspaceRuntime{
+		ID: "rt-unit", WorkspaceID: "ws-alpha", URL: "https://workspace.example/unit", ServiceName: "runtime-unit", Status: "running", Ready: true,
+		Checks: []any{map[string]any{"name": "service_endpoints_ready", "ok": true}},
+	}}
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, fabric), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := tenantOwnerSessionForTest(t, server)
+	seedCanonicalRuntimeAccessWorkspaceForTest(t, store, sessionUserIDForTest(t, server, owner))
+	if len(store.computes) != 0 || len(store.storages) != 0 || len(store.attachments) != 0 {
+		t.Fatalf("canonical launch copied Fabric truth: computes=%d storages=%d attachments=%d", len(store.computes), len(store.storages), len(store.attachments))
+	}
+
+	response := requestWithSession(t, server, owner, http.MethodGet, "/api/workspaces/ws-alpha/runtime-status", "")
+	if response.Code != http.StatusOK || len(calls) != 1 || calls[0] != "fabric.runtime-status" {
+		t.Fatalf("canonical runtime status=%d calls=%#v body=%s", response.Code, calls, response.Body.String())
+	}
+}
+
+func TestRuntimeStatusCanonicalLaunchAuthorityDriftFailsBeforeFabric(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		wantReason string
+		mutate     func(*testing.T, *memoryTableStore, *workspaceLaunchReconcileOperation)
+	}{
+		{name: "launch absent", wantReason: "workspace_storage_entitlement_inactive", mutate: func(_ *testing.T, store *memoryTableStore, _ *workspaceLaunchReconcileOperation) {
+			store.runtimeOps = nil
+		}},
+		{name: "duplicate launch", wantReason: "workspace_runtime_truth_unavailable", mutate: func(t *testing.T, store *memoryTableStore, _ *workspaceLaunchReconcileOperation) {
+			seedCanonicalRuntimeAccessLegacyRowsForTest(t, store)
+			duplicate := cloneMap(store.runtimeOps[0])
+			duplicate["id"], duplicate["operationId"] = "workspace-launch-duplicate", "workspace-launch-duplicate"
+			store.runtimeOps = append(store.runtimeOps, duplicate)
+		}},
+		{name: "projection drift", wantReason: "workspace_runtime_truth_unavailable", mutate: func(t *testing.T, store *memoryTableStore, _ *workspaceLaunchReconcileOperation) {
+			seedCanonicalRuntimeAccessLegacyRowsForTest(t, store)
+			store.workspaces["ws-alpha"]["runtimeId"] = "runtime-other"
+		}},
+		{name: "receipt missing", wantReason: "workspace_runtime_truth_unavailable", mutate: func(t *testing.T, store *memoryTableStore, operation *workspaceLaunchReconcileOperation) {
+			seedCanonicalRuntimeAccessLegacyRowsForTest(t, store)
+			delete(operation.raw, "receiptId")
+			row, err := workspaceLaunchReconcileOperationRow(*operation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.runtimeOps = []map[string]any{row}
+		}},
+		{name: "receipt operation drift", wantReason: "workspace_runtime_truth_unavailable", mutate: func(t *testing.T, store *memoryTableStore, operation *workspaceLaunchReconcileOperation) {
+			seedCanonicalRuntimeAccessLegacyRowsForTest(t, store)
+			operation.raw["receiptOperationId"] = json.RawMessage(`"receipt-operation-other"`)
+			row, err := workspaceLaunchReconcileOperationRow(*operation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.runtimeOps = []map[string]any{row}
+		}},
+		{name: "billing invalid", wantReason: "workspace_billing_state_invalid", mutate: func(_ *testing.T, store *memoryTableStore, _ *workspaceLaunchReconcileOperation) {
+			delete(store.workspaces["ws-alpha"], "priceVersion")
+		}},
+		{name: "billing inactive", wantReason: "workspace_billing_manual_review", mutate: func(_ *testing.T, store *memoryTableStore, _ *workspaceLaunchReconcileOperation) {
+			for _, key := range workspaceBillingStateExclusiveKeys {
+				delete(store.workspaces["ws-alpha"], key)
+			}
+			store.workspaces["ws-alpha"]["autoRenew"], store.workspaces["ws-alpha"]["renewalStatus"], store.workspaces["ws-alpha"]["manualReviewReason"] = false, "manual_review", workspaceBillingLegacyMismatch
+		}},
+		{name: "billing expired", wantReason: "workspace_billing_period_expired", mutate: func(_ *testing.T, store *memoryTableStore, _ *workspaceLaunchReconcileOperation) {
+			store.workspaces["ws-alpha"]["periodStart"], store.workspaces["ws-alpha"]["paidThrough"], store.workspaces["ws-alpha"]["nextRenewalAt"] = "2000-01-01T00:00:00Z", "2000-02-01T00:00:00Z", "2000-01-31T00:00:00Z"
+		}},
+		{name: "cross account", wantReason: "workspace_runtime_truth_unavailable", mutate: func(t *testing.T, store *memoryTableStore, _ *workspaceLaunchReconcileOperation) {
+			seedCanonicalRuntimeAccessLegacyRowsForTest(t, store)
+			store.workspaces["ws-alpha"]["accountId"], store.workspaces["ws-alpha"]["ownerAccountId"] = "acct-other", "acct-other"
+			store.computes["ca-unit"]["accountId"], store.storages["vol-unit"]["accountId"], store.attachments["att-unit"]["accountId"] = "acct-other", "acct-other", "acct-other"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newMemoryTableStore()
+			calls := []string{}
+			fabric := &fakeFabricClient{calls: &calls, runtimeStatus: clients.WorkspaceRuntime{ID: "rt-unit", WorkspaceID: "ws-alpha", Status: "running", Ready: true}}
+			server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, fabric), store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := tenantOwnerSessionForTest(t, server)
+			operation := seedCanonicalRuntimeAccessWorkspaceForTest(t, store, sessionUserIDForTest(t, server, owner))
+			test.mutate(t, store, &operation)
+			workspace := cloneMap(store.workspaces["ws-alpha"])
+			if _, reason := server.(*controlPlaneHTTPHandler).app.workspaceAccessResponse(context.Background(), workspace, time.Now().UTC()); reason != test.wantReason {
+				t.Fatalf("drift reason=%q want=%q", reason, test.wantReason)
+			}
+
+			response := requestWithSession(t, server, owner, http.MethodGet, "/api/workspaces/ws-alpha/runtime-status", "")
+			if response.Code >= http.StatusOK && response.Code < http.StatusMultipleChoices || len(calls) != 0 {
+				t.Fatalf("drift status=%d calls=%#v body=%s", response.Code, calls, response.Body.String())
+			}
+		})
+	}
 }
 
 func TestRuntimeStatusNeverReturnsCredential(t *testing.T) {

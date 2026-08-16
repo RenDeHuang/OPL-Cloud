@@ -543,6 +543,9 @@ func (s *Service) DetachStorageAttachment(ctx context.Context, attachmentID stri
 		_ = s.recordOperation(ctx, operation, "rejected", StorageAttachment{ID: attachmentID}, err)
 		return StorageAttachment{}, err
 	}
+	if existing.Status == "detached" {
+		return existing, nil
+	}
 	operation := newOperation("detach_storage_attachment", "storage_attachment", attachmentID, "", existing.WorkspaceID, "", hashInput(map[string]string{"id": attachmentID}), time.Now().UTC())
 	if err := s.recordOperation(ctx, operation, "started", existing, nil); err != nil {
 		return StorageAttachment{}, err

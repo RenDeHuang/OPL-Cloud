@@ -3,6 +3,7 @@ package clients
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -77,6 +78,63 @@ func TestLedgerReceiptListSendsTypePrefix(t *testing.T) {
 	if _, err := client.ListReceipts(context.Background(), ReceiptQuery{AccountID: "acct-alpha", TypePrefix: "billing."}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestLedgerScopedDetailCapabilityUsesStructuredPathIdentity(t *testing.T) {
+	const capabilityKey = "ledger-capability-key-for-client-tests-32-chars"
+	for _, test := range []struct {
+		name        string
+		workspaceID string
+	}{
+		{name: "account only"},
+		{name: "exact workspace", workspaceID: "ws-alpha"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims := ledgerCapabilityClaimsForTest(t, r.Header.Get("X-OPL-Ledger-Capability"))
+				if r.URL.Path != "/ledger/receipts/receipt-alpha" || claims["resourceId"] != "receipt-alpha" ||
+					claims["accountId"] != "acct-alpha" || claims["workspaceId"] != test.workspaceID {
+					t.Fatalf("request=%s?%s claims=%#v", r.URL.Path, r.URL.RawQuery, claims)
+				}
+				_, _ = w.Write([]byte(`{"receiptId":"receipt-alpha","type":"billing.workspace_purchased.v1","status":"completed","accountId":"acct-alpha","workspaceId":"ws-alpha"}`))
+			}))
+			defer server.Close()
+
+			client := NewLedgerHTTPClientWithCapability(server.URL, "internal-secret", capabilityKey, server.Client()).(LedgerScopedReceiptClient)
+			receipt, err := client.ReceiptForAccount(context.Background(), "acct-alpha", test.workspaceID, "receipt-alpha")
+			if err != nil || receipt.ReceiptID != "receipt-alpha" {
+				t.Fatalf("receipt=%#v err=%v", receipt, err)
+			}
+		})
+	}
+
+	for _, test := range []struct{ path, want string }{
+		{path: "/ledger/receipts/receipt-alpha?accountId=acct-alpha", want: "receipt-alpha"},
+		{path: "/ledger/artifacts/artifact-alpha?accountId=acct-alpha&workspaceId=ws-alpha", want: "artifact-alpha"},
+		{path: "/ledger/reviews/review-alpha?accountId=acct-alpha&workspaceId=ws-alpha", want: "review-alpha"},
+		{path: "/ledger/review-policies/policy-alpha?accountId=acct-alpha&workspaceId=ws-alpha", want: "policy-alpha"},
+	} {
+		if got := ledgerResourceID(test.path); got != test.want {
+			t.Errorf("ledgerResourceID(%q)=%q want %q", test.path, got, test.want)
+		}
+	}
+}
+
+func ledgerCapabilityClaimsForTest(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	parts := strings.Split(raw, ".")
+	if len(parts) != 2 {
+		t.Fatalf("capability parts=%d", len(parts))
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	return claims
 }
 
 func TestLedgerReadinessUsesPublicReadyz(t *testing.T) {

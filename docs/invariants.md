@@ -76,8 +76,12 @@ schemas, workflows, and focused tests.
 - Runtime passwords and owned API Keys are masked by default, revealed only to
   the authorized owner, returned with `private, no-store`, and kept only for the
   bounded interaction that requested them.
-- Kubernetes Secret is the only authorized persistence point for a Workspace
-  Gateway Key. Runtime receives only the scoped Secret reference.
+- Fabric's selected secret owner is the only authorized persistence point for a
+  Workspace Gateway Key: Tencent/TKE uses the Workspace-scoped Kubernetes
+  Secret, while `local-docker` uses its protected host-owned immutable-version
+  store and a read-only Runtime bind. Runtime receives only the scoped Secret
+  reference/version; Control Plane, Ledger, and the browser never persist the
+  raw Key.
 - `OPL_SUB2API_BASE_URL` and Sub2API management credentials remain server-only.
   The browser never calls, embeds, redirects to, or scrapes the management
   surface. The public `/v1` model endpoint may be presented according to the
@@ -108,6 +112,28 @@ schemas, workflows, and focused tests.
   second lock service or multi-replica wallet writer requires an explicit
   architecture and contract change.
 
+## Workspace Delete
+
+- Workspace deletion is one durable Control Plane operation. It preserves the
+  exact account, operation, Workspace, Runtime, Key, debit code, purchase
+  Receipt, and refund Receipt identities through every owner transition.
+- Before the first cleanup mutation, Control Plane reads and matches the exact
+  Ledger purchase Receipt and exact negative Sub2API debit history entry. The
+  ordered completion chain is `runtime + Secret absence -> attachment ->
+  storage -> compute -> Key absence -> refund -> refund Receipt -> Workspace
+  absence`.
+- Fabric reports Runtime and Gateway Secret owner observations as typed
+  `ready/absent/pending/conflict/error` facts. Both must be authoritatively
+  absent before later cleanup stages continue. Unknown, conflict, or error is
+  `manual_review`, never inferred absence.
+- Sub2API alone deletes the exact Workspace Key and records the exact business
+  refund. A lost response is reconciled only through the same Key or refund-code
+  GET; an acceptance runner, Fabric adapter, or Local Docker provider cannot
+  substitute an operator wallet adjustment or private Key cleanup.
+- The refund Receipt supersedes the exact purchase Receipt and is idempotent on
+  the delete operation. Receipt failure retries only that Receipt and never
+  repeats Key deletion, Fabric cleanup, or refund.
+
 ## Launch And Recovery
 
 - Read-only identity, availability, capacity, price, and balance preflight
@@ -126,13 +152,34 @@ schemas, workflows, and focused tests.
   creates a second launch, debit, Key, resource, Runtime, or receipt.
 - External writes are reserved before execution. A reserved or unknown result
   is reconciled through authoritative readback and is never blindly reissued.
-- Each continuation stage has a bounded write budget. Exhausted or unknown
-  outcomes enter manual review and cannot reset their budget after restart.
+- The exact first owner read after a fresh stage mutation is mandatory. If and
+  only if it returns typed `pending`, Control Plane may atomically persist a
+  system continuation authorization in the same operation CAS. It binds the
+  account, Launch, Workspace, stage, original idempotency key, attempt, and
+  operation version; has zero mutation and replay budget; and authorizes only a
+  finite number of additional owner reads. Each read slot is claimed by CAS
+  before the owner GET, so a concurrent loser performs no GET and a crashed
+  claim is consumed rather than refunded or replayed. The mandatory post-write
+  read is count one; two additional claims bound post-write owner reads at
+  three. An expired crash claim must be marked consumed before a distinct
+  remaining slot is claimed and can never be reissued under its old ordinal.
+- Each stage keeps `Max=1`; recovery never resets `Attempted` or raises `Max`.
+  A separately persisted idempotent replay authorization may reuse only the
+  original stage key after fresh owner-authoritative `absent` evidence. An
+  operator continuation-read authorization may consume only typed owner
+  `pending` evidence and remains distinct from the fresh system authorization.
+  Neither path is an unbounded poll or provider-failure heuristic.
+  Exhaustion becomes `unknown/manual_review`; it never proves absence or permits
+  another mutation.
 - Recovery is an authorization path for the original Launch, not a second
   business state machine. It may only save and consume an immutable Resume
   authorization. The authorization binds the launch ID, current CAS version,
-  current stage, remaining mutation budget, reviewer, timestamp, and reason; it
-  is persisted by Control Plane CAS before the same Reconciler can continue.
+  current stage, independent mutation/replay/read budgets, the server-bound
+  readback baseline, reviewer, timestamp, and reason; it is persisted by Control
+  Plane CAS before the same Reconciler can continue. It never impersonates or
+  widens the fresh system authorization. Legacy schema-v3 rows that lack the
+  explicit fresh or operator authorization fields receive zero budget and no
+  invented owner fact.
 - Recovery owns no business stage, reducer, provider/resource identity, or
   Fabric/provider mutation. Console, workflow, review, and Ledger input cannot
   provide or rewrite a resource ID, reset a budget, create a successor Launch,
@@ -170,13 +217,14 @@ schemas, workflows, and focused tests.
   no Machine, CVM, Node, CBS, provider SDK, Kubernetes, providerData, or cost-tag
   implementation knowledge and cannot infer ownership from `:compute` suffixes,
   unscoped operation listings, or provider tags.
-- Owner-authoritative readback proving that the original provider
-  mutation ledger is absent or observed with complete confirmed-zero evidence may
-  authorize Fabric to create a replacement or successor resource only inside
-  the original Launch stage, immutable
-  operation binding, idempotency identity, and remaining mutation budget. It
-  creates no new Launch, debit, or budget. Missing, incomplete, positive, or
-  unknown evidence is never zero and cannot authorize another resource write.
+- Owner-authoritative readback proving that the exact original stage resource is
+  absent may authorize one logical transport replay only when that adapter owns
+  a deterministic identity and idempotency contract. Fabric first persists a
+  same-operation child CAS claim, reads the owner again, and only if the second
+  read is still `absent` reuses the original idempotency key. `ready` converges
+  without provider mutation; typed `pending` consumes only the authorized read
+  budget; conflict, error, and unknown fail closed. Recovery never creates a
+  replacement or successor resource and never increases a business attempt.
 - System resources designated by the deployed instance are protected from
   customer allocation, provider mutation, Kubernetes mutation, and cleanup.
   Their identifiers belong to deployment/instance authority, not this document.

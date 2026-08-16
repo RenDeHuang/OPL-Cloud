@@ -54,6 +54,12 @@ func (app *controlPlaneServer) workspaceAccessResponse(ctx context.Context, row 
 			return response, "workspace_billing_period_expired"
 		}
 	}
+	if _, canonical, err := app.canonicalWorkspaceLaunchForAccess(ctx, row); err != nil {
+		response["openable"], response["accessState"] = false, "disabled"
+		return response, "workspace_runtime_truth_unavailable"
+	} else if canonical {
+		return response, ""
+	}
 	accountID, workspaceID := firstNonEmpty(stringValue(response["accountId"]), stringValue(response["ownerAccountId"])), stringValue(response["id"])
 	storage, ok, err := app.tables.GetStorage(ctx, canonicalStorageID)
 	if err != nil {
@@ -819,18 +825,32 @@ func stripWorkspaceProxyCredentials(r *http.Request) {
 }
 
 func (app *controlPlaneServer) succeededWorkspaceLaunchForAccess(ctx context.Context, workspace map[string]any) (workspaceLaunchReconcileOperation, error) {
-	workspaceID := stringValue(workspace["id"])
-	accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
-	rows, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
-		AccountID: accountID, WorkspaceID: workspaceID, Action: workspaceLaunchAction, Statuses: []string{"succeeded"},
-	})
-	if err != nil || len(rows) != 1 {
-		return workspaceLaunchReconcileOperation{}, errors.New("workspace_runtime_truth_unavailable")
-	}
-	operation, err := decodeWorkspaceLaunchReconcileOperation(rows[0])
-	if err != nil || operation.Status != "succeeded" || operation.Stage != "succeeded" || operation.stringFact("receiptId") == "" ||
-		!workspaceLaunchProjectionMatches(operation, workspace) {
+	operation, found, err := app.canonicalWorkspaceLaunchForAccess(ctx, workspace)
+	if err != nil || !found {
 		return workspaceLaunchReconcileOperation{}, errors.New("workspace_runtime_truth_unavailable")
 	}
 	return operation, nil
+}
+
+func (app *controlPlaneServer) canonicalWorkspaceLaunchForAccess(ctx context.Context, workspace map[string]any) (workspaceLaunchReconcileOperation, bool, error) {
+	workspaceID := stringValue(workspace["id"])
+	rows, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
+		WorkspaceID: workspaceID, Action: workspaceLaunchAction,
+	})
+	if err != nil {
+		return workspaceLaunchReconcileOperation{}, false, err
+	}
+	if len(rows) == 0 {
+		return workspaceLaunchReconcileOperation{}, false, nil
+	}
+	if len(rows) != 1 {
+		return workspaceLaunchReconcileOperation{}, true, errors.New("workspace_runtime_truth_unavailable")
+	}
+	operation, err := decodeWorkspaceLaunchReconcileOperation(rows[0])
+	if err != nil || operation.Status != "succeeded" || operation.Stage != "succeeded" || operation.stringFact("receiptId") == "" ||
+		operation.stringFact("receiptOperationId") != operation.ID+":purchase-receipt" ||
+		!workspaceLaunchProjectionMatches(operation, workspace) {
+		return workspaceLaunchReconcileOperation{}, true, errors.New("workspace_runtime_truth_unavailable")
+	}
+	return operation, true, nil
 }

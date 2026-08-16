@@ -316,6 +316,16 @@ receipt -> succeeded`. Preflight is the read-only admission gate before the
 first external write. Runtime supplies the authoritative Workspace URL as
 readback/projection; URL is not a separate mutation stage.
 
+Workspace deletion is another durable Control Plane operation, not an
+acceptance-runner cleanup. It first matches the exact purchase Receipt and
+Sub2API debit, then coordinates `runtime + Secret absence -> attachment ->
+storage -> compute -> Sub2API Key absence -> exact refund -> refund Receipt ->
+Workspace absence`. Every stage preserves the same account, operation,
+Workspace, Runtime, Key, debit-code, purchase-Receipt, and refund-Receipt
+identity. Fabric owns only resource/Secret observations and mutation; Sub2API
+alone owns Key and wallet mutation; Ledger records the Receipt. Any typed
+pending, conflict, or error that cannot authoritatively converge fails closed.
+
 Control Plane owns only the Launch cursor, attempt and lease state, CAS,
 account/settlement coordination, and customer projection. Fabric owns compute,
 storage, attachment, Secret binding, Runtime, its operation store, provider and
@@ -333,11 +343,29 @@ Control Plane cannot infer resource ownership from idempotency suffixes,
 unscoped operation listings, provider tags, or Machine/CVM/Node/CBS fields.
 
 Recovery only persists and consumes an immutable authorization for the original
-Launch version, stage, and remaining mutation budget. It cannot own a business
-stage, rewrite a resource identity, reset a budget, create a successor Launch,
-or call a provider. The exact public binding shape is admitted only with a real
-caller, source implementation in both owners, and focused tests; this
-architecture does not freeze a speculative universal JSON contract.
+Launch version and stage. Mutation, exact-idempotency replay, and typed
+continuation-read budgets are independent: replay never increments the stage's
+`Attempted` or `Max=1`, and read-budget exhaustion becomes
+`unknown/manual_review` without proving owner absence. Fabric adapters opt in
+only after exact owner readback and a durable same-operation child CAS claim,
+then repeat the owner read immediately before reusing the original key. Recovery
+cannot own a business stage, rewrite a resource identity, create a successor
+Launch, or call a provider directly. The exact public binding shape is admitted
+only with a real caller, source implementation in both owners, and focused
+tests; this architecture does not freeze a speculative universal JSON contract.
+
+Fresh mutation continuation is a separate Control Plane system authorization,
+never an operator Resume authorization. It exists only when the mandatory first
+post-mutation owner read returns exact typed `pending`, and the same operation
+CAS binds account, Launch, Workspace, stage, original idempotency key, attempt,
+and operation version with zero mutation and replay budget. The mandatory read
+is count one and only two additional owner reads may be claimed. Each claim is
+persisted before its GET; concurrent CAS losers perform no GET, and a crashed
+claim consumes its ordinal permanently. `ready` advances the same Launch,
+`pending` consumes the finite budget, and unknown, conflict, error, or exact
+exhaustion enters `unknown/manual_review` without another external mutation.
+Legacy schema-v3 rows without these explicit authorization and claim fields
+have zero system continuation budget.
 
 ## Modularity And Simplification Boundary
 

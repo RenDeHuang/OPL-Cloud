@@ -16,11 +16,39 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 	snapshots := map[string]StorageSnapshot{}
 	attachments := map[string]StorageAttachment{}
 	runtimes := map[string]WorkspaceRuntime{}
+	attachmentRecords := map[string]bool{}
+	canonicalAttachments := map[string]StorageAttachment{}
+	canonicalAttachmentWorkspaces := map[string]string{}
+	canonicalAttachmentConflicts := map[string]bool{}
 	records, err := operations.List(ctx)
 	if err != nil {
 		return computes, volumes, snapshots, attachments, runtimes
 	}
 	for _, operation := range records {
+		if operation.ResourceKind == "storage_attachment" && operation.ResourceID != "" {
+			attachmentRecords[operation.ResourceID] = true
+		}
+		if attachment, workspaceID, candidate, valid := canonicalWorkspaceLaunchAttachment(operation); candidate {
+			if !valid || canonicalAttachmentConflicts[workspaceID] {
+				canonicalAttachmentConflicts[workspaceID] = true
+				continue
+			}
+			if existingID, exists := canonicalAttachmentWorkspaces[workspaceID]; exists && existingID != attachment.ID {
+				canonicalAttachmentConflicts[workspaceID] = true
+				continue
+			}
+			if existing, exists := canonicalAttachments[attachment.ID]; exists && existing.WorkspaceID != attachment.WorkspaceID {
+				canonicalAttachmentConflicts[workspaceID] = true
+				canonicalAttachmentConflicts[existing.WorkspaceID] = true
+				continue
+			}
+			if _, exists := canonicalAttachments[attachment.ID]; exists {
+				canonicalAttachmentConflicts[workspaceID] = true
+				continue
+			}
+			canonicalAttachments[attachment.ID] = attachment
+			canonicalAttachmentWorkspaces[workspaceID] = attachment.ID
+		}
 		switch operation.ResourceKind {
 		case "compute_allocation":
 			var resource ComputeAllocation
@@ -66,7 +94,52 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 			runtimes[resource.WorkspaceID] = resource
 		}
 	}
+	for attachmentID, attachment := range canonicalAttachments {
+		compute, computeOK := computes[attachment.ComputeID]
+		volume, volumeOK := volumes[attachment.VolumeID]
+		if canonicalAttachmentConflicts[attachment.WorkspaceID] || attachmentRecords[attachmentID] || !computeOK || !volumeOK ||
+			compute.AccountID == "" || compute.WorkspaceID != attachment.WorkspaceID || volume.AccountID != compute.AccountID || volume.WorkspaceID != attachment.WorkspaceID {
+			continue
+		}
+		attachments[attachmentID] = attachment
+	}
 	return computes, volumes, snapshots, attachments, runtimes
+}
+
+func canonicalWorkspaceLaunchAttachment(operation FabricOperation) (StorageAttachment, string, bool, bool) {
+	binding, bindingOK := decodeLaunchStageBinding(operation)
+	candidate := operation.Action == "ensure_attachment" || bindingOK && binding.Stage == "attachment"
+	workspaceID := operation.WorkspaceID
+	if bindingOK {
+		workspaceID = binding.WorkspaceID
+	}
+	if !candidate {
+		return StorageAttachment{}, workspaceID, false, false
+	}
+	record, recordOK := decodeWorkspaceLaunchStageRecord(operation)
+	if !bindingOK || !recordOK || operation.Status != "succeeded" || operation.Action != "ensure_attachment" ||
+		operation.ResourceKind != "workspace_launch_stage" || operation.ID != binding.FabricOperationID || operation.OperationID != binding.FabricOperationID ||
+		operation.ResourceID != binding.FabricOperationID || binding.Stage != "attachment" || binding.Action != operation.Action ||
+		operation.Provider == "" || operation.Provider != record.ProviderProfileRef || record.GatewayKeyID != 0 ||
+		record.RequestResources.AttachmentID != "" || record.RequestResources.AttachmentBindingRef != "" ||
+		!workspaceLaunchResourcesContain(record.Resources, record.RequestResources) || record.Resources.AttachmentBindingRef != binding.FabricOperationID ||
+		record.Resources.AttachmentID != workspaceLaunchAttachmentID(binding) {
+		return StorageAttachment{}, workspaceID, true, false
+	}
+	var state struct {
+		Attachment *StorageAttachment `json:"attachment,omitempty"`
+	}
+	if len(record.ProviderState) == 0 || json.Unmarshal(record.ProviderState, &state) != nil || state.Attachment == nil {
+		return StorageAttachment{}, workspaceID, true, false
+	}
+	attachment := *state.Attachment
+	if attachment.ID != record.Resources.AttachmentID || attachment.OperationID != binding.IdempotencyKey || attachment.WorkspaceID != binding.WorkspaceID ||
+		attachment.ComputeID == "" || attachment.ComputeID != record.Resources.ComputeAllocationID || attachment.ComputeID != record.RequestResources.ComputeAllocationID ||
+		attachment.VolumeID == "" || attachment.VolumeID != record.Resources.StorageID || attachment.VolumeID != record.RequestResources.StorageID ||
+		attachment.Status != "attached" || attachment.Provider != operation.Provider || attachment.ProviderAttachmentID == "" || attachment.ProviderRequestID == "" {
+		return StorageAttachment{}, workspaceID, true, false
+	}
+	return attachment, workspaceID, true, true
 }
 
 func decodeOperationResource(operation FabricOperation, target any) bool {
@@ -117,6 +190,8 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 	launchBinding := operation.RedactedProviderPayload[launchStageBindingPayloadKey]
 	providerBinding := operation.RedactedProviderPayload[providerMutationBindingPayloadKey]
 	providerState := operation.RedactedProviderPayload[providerMutationStatePayloadKey]
+	providerReplayEpoch := operation.RedactedProviderPayload[providerMutationReplayEpochPayloadKey]
+	providerChildResourceID := operation.ResourceID
 	switch value := resource.(type) {
 	case ComputeAllocation:
 		operation.ResourceID = firstNonEmpty(value.ID, operation.ResourceID)
@@ -172,10 +247,14 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 		operation.RedactedProviderPayload[launchStageBindingPayloadKey] = launchBinding
 	}
 	if providerBinding != nil {
+		operation.ResourceID = providerChildResourceID
 		operation.RedactedProviderPayload[providerMutationBindingPayloadKey] = providerBinding
 	}
 	if providerState != nil {
 		operation.RedactedProviderPayload[providerMutationStatePayloadKey] = providerState
+	}
+	if providerReplayEpoch != nil {
+		operation.RedactedProviderPayload[providerMutationReplayEpochPayloadKey] = providerReplayEpoch
 	}
 }
 

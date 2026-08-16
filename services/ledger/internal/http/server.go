@@ -435,12 +435,20 @@ func authorizeLedgerRequests(next http.Handler, store ledger.Store, token, capab
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
-		if claims.AccountID != scope.AccountID || claims.WorkspaceID != scope.WorkspaceID {
+		if !ledgerOwnerClaimsMatch(claims, scope) {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 		next.ServeHTTP(w, r)
 	}), token)
+}
+
+func ledgerOwnerClaimsMatch(claims ledgerCapabilityClaims, scope ledgerCapabilityScope) bool {
+	if claims.Action == "read_receipt" {
+		return claims.AccountID != "" && claims.AccountID == scope.AccountID &&
+			(claims.WorkspaceID == "" || claims.WorkspaceID == scope.WorkspaceID)
+	}
+	return claims.AccountID == scope.AccountID && claims.WorkspaceID == scope.WorkspaceID
 }
 
 func enrichLedgerOwnerScope(r *http.Request, store ledger.Store, scope *ledgerCapabilityScope) error {

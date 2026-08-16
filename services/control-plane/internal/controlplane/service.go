@@ -165,6 +165,14 @@ func (s *Service) DeleteGatewayUserKey(ctx context.Context, credential clients.S
 	return client.DeleteUserKey(ctx, credential, userID, keyID)
 }
 
+func (s *Service) DeleteGatewayUserKeyIdempotent(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64, idempotencyKey string) error {
+	client, ok := s.sub2API.(clients.Sub2APIIdempotentUserKeyDeleteClient)
+	if !ok || strings.TrimSpace(idempotencyKey) == "" {
+		return errors.New("sub2api_idempotent_user_key_delete_unavailable")
+	}
+	return client.DeleteUserKeyIdempotent(ctx, credential, userID, keyID, idempotencyKey)
+}
+
 func (s *Service) Sub2APIUser(ctx context.Context, userID int64) (clients.Sub2APIIdentity, error) {
 	client, ok := s.sub2API.(clients.Sub2APIUserReadClient)
 	if !ok {

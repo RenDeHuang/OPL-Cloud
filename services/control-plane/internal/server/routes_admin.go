@@ -30,21 +30,58 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		if !ok {
 			return
 		}
+		if len(r.Header.Values("Idempotency-Key")) != 1 || !validBillingReviewOpaqueID(key) {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		resumeExistingRequested, validResumeExistingHeaders := productionAcceptanceBResumeExistingRequestMode(r.Header)
+		if !validResumeExistingHeaders {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
 		operationID := strings.TrimSpace(r.PathValue("operationId"))
 		input := decodeJSON(r)
 		launchVersion, validVersion := positiveIntegerField(input, "launchVersion")
 		authorizedStage, reason := stringValue(input["authorizedStage"]), stringValue(input["reason"])
 		mutationBudget, validBudget := input["mutationBudget"].(float64)
-		if operationID == "" || !exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "authorizedStage", "reason", "mutationBudget"}) ||
+		idempotentReplayBudget, replayProvided := input["idempotentReplayBudget"].(float64)
+		authoritativeReadBudget, readBudgetProvided := input["authoritativeReadBudget"].(float64)
+		exactFields := exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "authorizedStage", "reason", "mutationBudget"}) ||
+			exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "authorizedStage", "reason", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"})
+		if operationID == "" || !exactFields ||
 			!validVersion || launchVersion > int64(^uint(0)>>1) || authorizedStage == "" || authorizedStage != strings.TrimSpace(authorizedStage) ||
-			reason == "" || reason != strings.TrimSpace(reason) || !validBudget || mutationBudget != 0 && mutationBudget != 1 {
+			reason == "" || reason != strings.TrimSpace(reason) || !validBudget || mutationBudget != 0 && mutationBudget != 1 ||
+			replayProvided != readBudgetProvided || replayProvided && (idempotentReplayBudget != 0 && idempotentReplayBudget != 1 || authoritativeReadBudget != workspaceLaunchAuthoritativeReadBudget) {
 			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
 			return
 		}
-		operation, err := app.resumeWorkspaceLaunch(r.Context(), service, operationID, workspaceLaunchResumeAuthorization{
+		authorization := workspaceLaunchResumeAuthorization{
 			AuthorizationID: key, LaunchVersion: int(launchVersion), AuthorizedStage: authorizedStage,
 			AuthorizedBy: app.sessionUserID(r), Reason: reason, MutationBudget: int(mutationBudget),
-		})
+			IdempotentReplayBudget: int(idempotentReplayBudget), AuthoritativeReadBudget: int(authoritativeReadBudget),
+		}
+		if resumeExistingRequested && (!replayProvided || !readBudgetProvided) {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		if resumeExistingRequested {
+			approval, configured := parseProductionAcceptanceBResumeExistingApproval()
+			if !configured {
+				writeError(w, http.StatusConflict, errWorkspaceLaunchGrantConflict.Error())
+				return
+			}
+			var bindErr error
+			authorization, bindErr = app.bindProductionAcceptanceBResumeExisting(r.Context(), service, r.Header, operationID, approval, authorization)
+			if bindErr != nil {
+				if errors.Is(bindErr, errBillingReviewNotFound) {
+					writeError(w, http.StatusNotFound, "workspace_launch_not_found")
+				} else {
+					writeError(w, http.StatusConflict, errWorkspaceLaunchGrantConflict.Error())
+				}
+				return
+			}
+		}
+		operation, err := app.resumeWorkspaceLaunch(r.Context(), service, operationID, authorization)
 		if err != nil {
 			if errors.Is(err, errBillingReviewNotFound) {
 				writeError(w, http.StatusNotFound, "workspace_launch_not_found")
@@ -60,7 +97,38 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
+		if readback, found := workspaceLaunchResumeAuthorizationReadback(operation, key); found {
+			body["resumeAuthorizationReadback"] = readback
+		}
 		writeJSON(w, http.StatusOK, body)
+	}))
+	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/resume-authorizations/{authorizationId}", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		authorizationID := strings.TrimSpace(r.PathValue("authorizationId"))
+		if operationID == "" || !validBillingReviewOpaqueID(authorizationID) {
+			writeError(w, http.StatusBadRequest, "invalid_resume_authorization")
+			return
+		}
+		row, found, err := app.tables.GetRuntimeOperation(r.Context(), operationID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		if !found {
+			writeError(w, http.StatusNotFound, "workspace_launch_not_found")
+			return
+		}
+		operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		readback, found := workspaceLaunchResumeAuthorizationReadback(operation, authorizationID)
+		if !found {
+			writeError(w, http.StatusNotFound, "resume_authorization_not_found")
+			return
+		}
+		writeJSON(w, http.StatusOK, readback)
 	}))
 	mux.HandleFunc("POST /api/operator/accounts/{accountId}/wallet-adjustments", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		app.createWalletAdjustment(w, r, service)

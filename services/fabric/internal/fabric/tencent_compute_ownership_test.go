@@ -2,8 +2,10 @@ package fabric
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -139,7 +141,7 @@ func TestTencentTagComputeMachineReplaysDeterministicOwnershipChildrenFromAuthor
 		t.Fatal(err)
 	}
 
-	if tagCalls != 1 || patchCalls != 1 || truthCalls != 2 {
+	if tagCalls != 0 || patchCalls != 1 || truthCalls != 3 {
 		t.Fatalf("tagCalls=%d patchCalls=%d truthCalls=%d", tagCalls, patchCalls, truthCalls)
 	}
 	assertTencentOwnershipChildOperations(t, store, parent, allocation)
@@ -223,6 +225,404 @@ func TestTencentOwnershipReservedOrUnknownChildrenReplayWithGETOnly(t *testing.T
 			}
 			assertTencentOwnershipChildOperations(t, store, parent, allocation)
 		})
+	}
+}
+
+func TestTencentOwnershipReservedChildrenReplayAuthoritativeAbsenceOnce(t *testing.T) {
+	for _, status := range []string{"started", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			setProtectedResourceEnv(t)
+			allocation, prepared, ownership := computeClaimProviderFixture()
+			ownership.ProviderRequestID = "req-ownership-replay"
+			provider := NewTencentProvider()
+			provider.convergenceWait = func(context.Context, int) error { return nil }
+			cvmOwned, nodeOwned := false, false
+			tagCalls, truthCalls, patchCalls, getCalls := 0, 0, 0, 0
+			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+				switch request.Action {
+				case "compute_claim_truth":
+					truthCalls++
+					response := tencentTargetOwnedProofResponse(allocation, prepared)
+					if !cvmOwned {
+						response.ProviderData["cvmOwnershipState"] = "recoverable"
+					}
+					return response, nil
+				case "tag_compute_machine":
+					tagCalls++
+					if request.Allocation.ID != allocation.ID || request.Allocation.InstanceID != allocation.InstanceID ||
+						request.Tags["opl_operation_id"] != ownership.ID {
+						t.Fatalf("replay changed CVM identity: request=%#v", request)
+					}
+					cvmOwned = true
+					return provisionerResponse{OK: true, Status: "tagged", MutationCount: 1, MutationEvidence: &ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}}, nil
+				default:
+					t.Fatalf("unexpected provisioner action %q", request.Action)
+					return provisionerResponse{}, nil
+				}
+			}
+			provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				switch args[0] {
+				case "get":
+					getCalls++
+					return tencentOwnershipNodeReadback(allocation, ownership, nodeOwned), nil
+				case "patch":
+					patchCalls++
+					nodeOwned = true
+					return nil, nil
+				default:
+					t.Fatalf("unexpected kubectl args=%#v", args)
+					return nil, nil
+				}
+			}
+
+			store := NewMemoryOperationStore()
+			service := NewServiceWithOperationStore(provider, store)
+			parent := WorkspaceLaunchStageBinding{
+				SchemaVersion: 1, LaunchOperationID: "launch-absent-replay-" + status, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
+				Stage: "ensure_compute_allocation", Action: "ensure_compute_allocation", FabricOperationID: "launch-absent-replay-" + status + ":compute",
+				IdempotencyKey: "launch-absent-replay-" + status + ":compute", RequestHash: strings.Repeat("9", 64),
+			}
+			operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, time.Now().UTC())
+			operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+			operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, prepared)
+			if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Append(context.Background(), operation); err != nil {
+				t.Fatal(err)
+			}
+			ctx := service.providerMutationContext(context.Background(), operation)
+			for _, child := range []struct {
+				action, binding string
+			}{
+				{action: "tencent_cvm_ownership_tag", binding: allocation.InstanceID},
+				{action: "tencent_kubernetes_node_claim", binding: allocation.NodeName},
+			} {
+				attempt, err := beginProviderMutation(ctx, child.action, "compute_binding", allocation.ID, child.binding)
+				if err != nil || attempt == nil || !attempt.Fresh {
+					t.Fatalf("persist %s child attempt=%#v err=%v", child.action, attempt, err)
+				}
+				if status == "failed" {
+					if err := attempt.complete(ctx, ownership.ProviderRequestID, ownership, context.DeadlineExceeded); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			if err := provider.TagComputeMachine(ctx, providerMachineFromComputeAllocation(allocation), ownership); err != nil {
+				t.Fatal(err)
+			}
+			if tagCalls != 1 || patchCalls != 1 {
+				t.Fatalf("authoritative absence replay mutations tag=%d patch=%d truth=%d get=%d", tagCalls, patchCalls, truthCalls, getCalls)
+			}
+			for _, child := range []struct {
+				action, binding string
+			}{
+				{action: "tencent_cvm_ownership_tag", binding: allocation.InstanceID},
+				{action: "tencent_kubernetes_node_claim", binding: allocation.NodeName},
+			} {
+				childID := providerMutationOperationID(parent, child.action, "compute_binding", allocation.ID, child.binding)
+				persisted, err := store.Get(context.Background(), childID)
+				epoch, epochOK := decodeProviderMutationReplayEpoch(persisted)
+				if err != nil || persisted.Status != "succeeded" || persisted.IdempotencyKey != childID || !epochOK || epoch.State != "succeeded" {
+					t.Fatalf("child %s did not converge with original identity: operation=%#v epoch=%#v err=%v", child.action, persisted, epoch, err)
+				}
+			}
+		})
+	}
+}
+
+type tencentOwnershipReplayFixture struct {
+	provider   *TencentProvider
+	store      *MemoryOperationStore
+	service    *Service
+	ctx        context.Context
+	parent     WorkspaceLaunchStageBinding
+	allocation ComputeAllocation
+	prepared   ComputeAllocationPreparation
+	ownership  MachineOwnership
+}
+
+func newTencentOwnershipReplayFixture(t *testing.T, suffix string) tencentOwnershipReplayFixture {
+	t.Helper()
+	setProtectedResourceEnv(t)
+	allocation, prepared, ownership := computeClaimProviderFixture()
+	ownership.ProviderRequestID = "req-ownership-" + suffix
+	provider := NewTencentProvider()
+	provider.convergenceWait = func(context.Context, int) error { return nil }
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(provider, store)
+	parent := WorkspaceLaunchStageBinding{
+		SchemaVersion: 1, LaunchOperationID: "launch-ownership-" + suffix, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
+		Stage: "ensure_compute_allocation", Action: "ensure_compute_allocation", FabricOperationID: "launch-ownership-" + suffix + ":compute",
+		IdempotencyKey: "launch-ownership-" + suffix + ":compute", RequestHash: strings.Repeat("8", 64),
+	}
+	operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, time.Now().UTC())
+	operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+	operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, prepared)
+	if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	return tencentOwnershipReplayFixture{
+		provider: provider, store: store, service: service, ctx: service.providerMutationContext(context.Background(), operation),
+		parent: parent, allocation: allocation, prepared: prepared, ownership: ownership,
+	}
+}
+
+func (f tencentOwnershipReplayFixture) reserveChild(t *testing.T, action, binding, status string) string {
+	t.Helper()
+	attempt, err := beginProviderMutation(f.ctx, action, "compute_binding", f.allocation.ID, binding)
+	if err != nil || attempt == nil || !attempt.Fresh {
+		t.Fatalf("reserve %s attempt=%#v err=%v", action, attempt, err)
+	}
+	if status == "failed" {
+		if err := attempt.complete(f.ctx, f.ownership.ProviderRequestID, f.ownership, context.DeadlineExceeded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return providerMutationOperationID(f.parent, action, "compute_binding", f.allocation.ID, binding)
+}
+
+func (f tencentOwnershipReplayFixture) converge() error {
+	return f.provider.TagComputeMachine(f.ctx, providerMachineFromComputeAllocation(f.allocation), f.ownership)
+}
+
+func TestTencentOwnershipReplaySecondReadReadyConvergesWithoutMutation(t *testing.T) {
+	t.Run("CVM ready race", func(t *testing.T) {
+		fixture := newTencentOwnershipReplayFixture(t, "cvm-ready-race")
+		childID := fixture.reserveChild(t, "tencent_cvm_ownership_tag", fixture.allocation.InstanceID, "started")
+		var truthCalls, tagCalls atomic.Int64
+		fixture.provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+			switch request.Action {
+			case "compute_claim_truth":
+				call := truthCalls.Add(1)
+				response := tencentTargetOwnedProofResponse(fixture.allocation, fixture.prepared)
+				if call == 1 {
+					response.ProviderData["cvmOwnershipState"] = "recoverable"
+				}
+				return response, nil
+			case "tag_compute_machine":
+				tagCalls.Add(1)
+				return provisionerResponse{}, errors.New("ready race attempted CVM mutation")
+			default:
+				t.Fatalf("unexpected action %q", request.Action)
+				return provisionerResponse{}, nil
+			}
+		}
+		fixture.provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+			if args[0] != "get" {
+				t.Fatalf("ready race attempted kubectl mutation: %#v", args)
+			}
+			return tencentOwnershipNodeReadback(fixture.allocation, fixture.ownership, true), nil
+		}
+		if err := fixture.converge(); err != nil {
+			t.Fatal(err)
+		}
+		persisted, err := fixture.store.Get(context.Background(), childID)
+		epoch, epochOK := decodeProviderMutationReplayEpoch(persisted)
+		if err != nil || tagCalls.Load() != 0 || truthCalls.Load() != 2 || persisted.Status != "succeeded" || !epochOK || epoch.State != "succeeded" {
+			t.Fatalf("ready race child=%#v epoch=%#v truth=%d tag=%d err=%v", persisted, epoch, truthCalls.Load(), tagCalls.Load(), err)
+		}
+	})
+
+	t.Run("Node ready race", func(t *testing.T) {
+		fixture := newTencentOwnershipReplayFixture(t, "node-ready-race")
+		cvmID := fixture.reserveChild(t, "tencent_cvm_ownership_tag", fixture.allocation.InstanceID, "started")
+		cvm, err := fixture.store.Get(context.Background(), cvmID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cvm.Status = "succeeded"
+		cvm.FinishedAt = time.Now().UTC()
+		if err := fixture.store.SaveRuntime(context.Background(), cvm); err != nil {
+			t.Fatal(err)
+		}
+		childID := fixture.reserveChild(t, "tencent_kubernetes_node_claim", fixture.allocation.NodeName, "started")
+		var nodeReads, patchCalls atomic.Int64
+		fixture.provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+			if request.Action != "compute_claim_truth" {
+				t.Fatalf("unexpected action %q", request.Action)
+			}
+			return tencentTargetOwnedProofResponse(fixture.allocation, fixture.prepared), nil
+		}
+		fixture.provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+			if args[0] == "patch" {
+				patchCalls.Add(1)
+				return nil, errors.New("ready race attempted node mutation")
+			}
+			owned := nodeReads.Add(1) >= 3
+			return tencentOwnershipNodeReadback(fixture.allocation, fixture.ownership, owned), nil
+		}
+		if err := fixture.converge(); err != nil {
+			t.Fatal(err)
+		}
+		persisted, err := fixture.store.Get(context.Background(), childID)
+		epoch, epochOK := decodeProviderMutationReplayEpoch(persisted)
+		if err != nil || patchCalls.Load() != 0 || nodeReads.Load() != 3 || persisted.Status != "succeeded" || !epochOK || epoch.State != "succeeded" {
+			t.Fatalf("ready race child=%#v epoch=%#v reads=%d patch=%d err=%v", persisted, epoch, nodeReads.Load(), patchCalls.Load(), err)
+		}
+	})
+}
+
+func TestTencentOwnershipReplayUncertainReadFailsClosedWithoutMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		providerFn func(tencentOwnershipReplayFixture) (provisionerResponse, error)
+	}{
+		{name: "provider error", providerFn: func(tencentOwnershipReplayFixture) (provisionerResponse, error) {
+			return provisionerResponse{}, context.DeadlineExceeded
+		}},
+		{name: "identity conflict", providerFn: func(f tencentOwnershipReplayFixture) (provisionerResponse, error) {
+			response := tencentTargetOwnedProofResponse(f.allocation, f.prepared)
+			response.ProviderData["machineName"] = "machine-conflict"
+			return response, nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newTencentOwnershipReplayFixture(t, strings.ReplaceAll(tc.name, " ", "-"))
+			fixture.reserveChild(t, "tencent_cvm_ownership_tag", fixture.allocation.InstanceID, "started")
+			var tagCalls, patchCalls atomic.Int64
+			fixture.provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+				if request.Action == "tag_compute_machine" {
+					tagCalls.Add(1)
+					return provisionerResponse{}, errors.New("uncertain read attempted mutation")
+				}
+				return tc.providerFn(fixture)
+			}
+			fixture.provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				if args[0] == "patch" {
+					patchCalls.Add(1)
+				}
+				return tencentOwnershipNodeReadback(fixture.allocation, fixture.ownership, false), nil
+			}
+			if err := fixture.converge(); err == nil {
+				t.Fatal("uncertain authority unexpectedly converged")
+			}
+			if tagCalls.Load() != 0 || patchCalls.Load() != 0 {
+				t.Fatalf("uncertain authority mutated tag=%d patch=%d", tagCalls.Load(), patchCalls.Load())
+			}
+		})
+	}
+}
+
+func TestTencentOwnershipReplayResponseLossConvergesByGETOnly(t *testing.T) {
+	fixture := newTencentOwnershipReplayFixture(t, "response-loss")
+	childID := fixture.reserveChild(t, "tencent_cvm_ownership_tag", fixture.allocation.InstanceID, "started")
+	var cvmOwned atomic.Bool
+	var tagCalls atomic.Int64
+	fixture.provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "compute_claim_truth":
+			response := tencentTargetOwnedProofResponse(fixture.allocation, fixture.prepared)
+			if !cvmOwned.Load() {
+				response.ProviderData["cvmOwnershipState"] = "recoverable"
+			}
+			return response, nil
+		case "tag_compute_machine":
+			tagCalls.Add(1)
+			cvmOwned.Store(true)
+			return provisionerResponse{}, context.DeadlineExceeded
+		default:
+			t.Fatalf("unexpected action %q", request.Action)
+			return provisionerResponse{}, nil
+		}
+	}
+	fixture.provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if args[0] != "get" {
+			t.Fatalf("response-loss attempted node mutation: %#v", args)
+		}
+		return tencentOwnershipNodeReadback(fixture.allocation, fixture.ownership, true), nil
+	}
+	if err := fixture.converge(); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first response-loss err=%v", err)
+	}
+	persisted, err := fixture.store.Get(context.Background(), childID)
+	epoch, epochOK := decodeProviderMutationReplayEpoch(persisted)
+	if err != nil || !epochOK || epoch.State != "awaiting_readback" || tagCalls.Load() != 1 {
+		t.Fatalf("response-loss child=%#v epoch=%#v tag=%d err=%v", persisted, epoch, tagCalls.Load(), err)
+	}
+	if err := fixture.converge(); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err = fixture.store.Get(context.Background(), childID)
+	epoch, epochOK = decodeProviderMutationReplayEpoch(persisted)
+	if err != nil || tagCalls.Load() != 1 || persisted.Status != "succeeded" || !epochOK || epoch.State != "succeeded" {
+		t.Fatalf("GET-only recovery child=%#v epoch=%#v tag=%d err=%v", persisted, epoch, tagCalls.Load(), err)
+	}
+}
+
+func TestTencentOwnershipReplayConcurrentResumeHasOneWriter(t *testing.T) {
+	fixture := newTencentOwnershipReplayFixture(t, "concurrent")
+	childID := fixture.reserveChild(t, "tencent_cvm_ownership_tag", fixture.allocation.InstanceID, "started")
+	var truthCalls, tagCalls atomic.Int64
+	var nodeMutationCalls atomic.Int64
+	var cvmOwned atomic.Bool
+	firstReadEntered := make(chan struct{})
+	secondReadEntered := make(chan struct{})
+	mutationCompleted := make(chan struct{})
+	staleCompletionReturned := make(chan struct{})
+	fixture.provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "compute_claim_truth":
+			call := truthCalls.Add(1)
+			switch call {
+			case 1:
+				close(firstReadEntered)
+				<-secondReadEntered
+			case 2:
+				close(secondReadEntered)
+				<-mutationCompleted
+			}
+			response := tencentTargetOwnedProofResponse(fixture.allocation, fixture.prepared)
+			if !cvmOwned.Load() {
+				response.ProviderData["cvmOwnershipState"] = "recoverable"
+			}
+			return response, nil
+		case "tag_compute_machine":
+			tagCalls.Add(1)
+			cvmOwned.Store(true)
+			close(mutationCompleted)
+			<-staleCompletionReturned
+			return provisionerResponse{OK: true, Status: "tagged", MutationCount: 1, MutationEvidence: &ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}}, nil
+		default:
+			t.Fatalf("unexpected action %q", request.Action)
+			return provisionerResponse{}, nil
+		}
+	}
+	fixture.provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if args[0] != "get" {
+			nodeMutationCalls.Add(1)
+			return nil, errors.New("concurrent replay attempted node mutation")
+		}
+		return tencentOwnershipNodeReadback(fixture.allocation, fixture.ownership, true), nil
+	}
+	firstResult, secondResult := make(chan error, 1), make(chan error, 1)
+	go func() { firstResult <- fixture.converge() }()
+	<-firstReadEntered
+	go func() {
+		secondResult <- fixture.converge()
+		close(staleCompletionReturned)
+	}()
+	first, second := <-firstResult, <-secondResult
+	if first != nil || !errors.Is(second, ErrRuntimeOperationNotCurrent) {
+		t.Fatalf("concurrent mutation writer=%v stale reader=%v", first, second)
+	}
+	if err := fixture.provider.readComputeMachineOwnership(context.Background(), fixture.allocation, fixture.prepared, fixture.ownership, true); err != nil {
+		t.Fatalf("authoritative final ownership: %v", err)
+	}
+	if tagCalls.Load() != 1 || nodeMutationCalls.Load() != 0 {
+		t.Fatalf("concurrent replay mutations tag=%d node=%d truth=%d", tagCalls.Load(), nodeMutationCalls.Load(), truthCalls.Load())
+	}
+	persisted, err := fixture.store.Get(context.Background(), childID)
+	binding, bindingOK := decodeProviderMutationBinding(persisted)
+	epoch, epochOK := decodeProviderMutationReplayEpoch(persisted)
+	if err != nil || persisted.Status != "succeeded" || persisted.ID != childID || persisted.OperationID != childID || persisted.IdempotencyKey != childID ||
+		!bindingOK || binding.Parent != fixture.parent || binding.FabricOperationID != childID || !epochOK || epoch.State != "succeeded" ||
+		epoch.ParentFabricOperationID != fixture.parent.FabricOperationID || epoch.ChildOperationID != childID || epoch.IdempotencyKey != childID {
+		t.Fatalf("concurrent final child=%#v binding=%#v/%v epoch=%#v/%v err=%v", persisted, binding, bindingOK, epoch, epochOK, err)
 	}
 }
 
@@ -332,7 +732,7 @@ func TestTencentWorkspaceLaunchComputeReplayReusesOwnershipCoreWithoutRepeatedMu
 	if _, err := service.EnsureWorkspaceLaunchStage(context.Background(), input); !errors.Is(err, ErrLaunchStageBindingConflict) {
 		t.Fatalf("NodePool configuration drift err=%v", err)
 	}
-	if prepareCalls != 1 || scaleCalls != 1 || tagCalls != 1 || patchCalls != 1 || truthCalls != 0 || readCalls != 1 {
+	if prepareCalls != 1 || scaleCalls != 1 || tagCalls != 0 || patchCalls != 1 || truthCalls != 1 || readCalls != 2 {
 		t.Fatalf("configuration drift repeated API call: prepareCalls=%d scaleCalls=%d tagCalls=%d patchCalls=%d truthCalls=%d readCalls=%d", prepareCalls, scaleCalls, tagCalls, patchCalls, truthCalls, readCalls)
 	}
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", prepared.NodePoolID)
@@ -344,10 +744,218 @@ func TestTencentWorkspaceLaunchComputeReplayReusesOwnershipCoreWithoutRepeatedMu
 	if err != nil || ownership.Status != "active" || ownership.InstanceID != allocation.InstanceID || ownership.NodeName != allocation.NodeName {
 		t.Fatalf("ownership=%#v err=%v", ownership, err)
 	}
-	if prepareCalls != 2 || scaleCalls != 1 || tagCalls != 1 || patchCalls != 1 || truthCalls != 2 || readCalls != 3 {
+	if prepareCalls != 1 || scaleCalls != 1 || tagCalls != 0 || patchCalls != 1 || truthCalls != 2 || readCalls != 3 {
 		t.Fatalf("prepareCalls=%d scaleCalls=%d tagCalls=%d patchCalls=%d truthCalls=%d readCalls=%d", prepareCalls, scaleCalls, tagCalls, patchCalls, truthCalls, readCalls)
 	}
 	assertTencentOwnershipChildOperations(t, store, input.Binding, allocation)
+}
+
+type tencentWorkspaceLaunchComputeReadRecoveryFixture struct {
+	service    *Service
+	store      *MemoryOperationStore
+	provider   *TencentProvider
+	input      WorkspaceLaunchStageInput
+	allocation ComputeAllocation
+	prepared   ComputeAllocationPreparation
+	computeID  string
+}
+
+func newTencentWorkspaceLaunchComputeReadRecoveryFixture(t *testing.T) tencentWorkspaceLaunchComputeReadRecoveryFixture {
+	t.Helper()
+	service, store, provider, preflight, image, launchHash := newTencentWorkspaceLaunchService(t)
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "20")
+	provider.convergenceWait = func(context.Context, int) error { return nil }
+	input := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{})
+	computeID := workspaceLaunchComputeID(input.Binding)
+	allocation := ComputeAllocation{
+		ID: computeID, OperationID: input.Binding.FabricOperationID, AccountID: input.Binding.AccountID, WorkspaceID: input.Binding.WorkspaceID,
+		PackageID: "basic", Provider: "tencent-tke", ProviderResourceID: "ins-read-recovery", PoolID: "pool-basic-2c4g", NodePoolID: "np-basic",
+		MachineName: "machine-read-recovery", InstanceID: "ins-read-recovery", CVMInstanceID: "ins-read-recovery", NodeName: "node-read-recovery",
+		PrivateIP: "10.0.0.28", PublicIP: "203.0.113.28", InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3",
+		ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-12T00:00:00Z", Status: "ready",
+	}
+	prepared := ComputeAllocationPreparation{
+		PoolID: allocation.PoolID, PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, InstanceType: allocation.InstanceType,
+		MaxReplicas: 20, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"machine-before"},
+	}
+	operation, _, err := newWorkspaceLaunchStageOperation(input, "tencent-tke", func() time.Time { return time.Now().UTC() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	ctx := service.providerMutationContext(context.Background(), operation)
+	child, err := beginProviderMutationWithState(ctx, "tencent_compute_allocation_create", "compute_allocation", computeID, prepared.NodePoolID, tencentComputeMutationState{Allocation: allocation, Plan: prepared})
+	if err != nil || child == nil || !child.Fresh {
+		t.Fatalf("compute child=%#v err=%v", child, err)
+	}
+	return tencentWorkspaceLaunchComputeReadRecoveryFixture{
+		service: service, store: store, provider: provider, input: input,
+		allocation: allocation, prepared: prepared, computeID: computeID,
+	}
+}
+
+func TestTencentWorkspaceLaunchComputeReadIsGETOnlyBeforeSameOperationOwnershipRecovery(t *testing.T) {
+	fixture := newTencentWorkspaceLaunchComputeReadRecoveryFixture(t)
+	service, store, provider := fixture.service, fixture.store, fixture.provider
+	input, allocation, prepared, computeID := fixture.input, fixture.allocation, fixture.prepared, fixture.computeID
+	readCalls, truthCalls, tagCalls, patchCalls := 0, 0, 0, 0
+	tagOwned, nodeOwned := false, false
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "read_compute_allocation":
+			readCalls++
+			return tencentComputeAllocationResponse(allocation, "req-read-recovery"), nil
+		case "compute_claim_truth":
+			truthCalls++
+			response := tencentTargetOwnedProofResponse(allocation, prepared)
+			if !tagOwned {
+				response.ProviderData["cvmOwnershipState"] = "recoverable"
+			}
+			return response, nil
+		case "tag_compute_machine":
+			tagCalls++
+			tagOwned = true
+			return provisionerResponse{OK: true, Status: "tagged", MutationEvidence: &ComputeClaimMutationEvidence{}}, nil
+		default:
+			t.Fatalf("unexpected provisioner action %q", request.Action)
+			return provisionerResponse{}, nil
+		}
+	}
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		ownership := MachineOwnership{ResourceID: allocation.ID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID, PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID}
+		switch args[0] {
+		case "get":
+			return tencentOwnershipNodeReadback(allocation, ownership, nodeOwned), nil
+		case "patch":
+			patchCalls++
+			nodeOwned = true
+			return nil, nil
+		default:
+			t.Fatalf("unexpected kubectl args=%#v", args)
+			return nil, nil
+		}
+	}
+
+	readback, err := service.ReadWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || readback.State != "absent" || readCalls != 1 || truthCalls != 1 || tagCalls != 0 || patchCalls != 0 {
+		t.Fatalf("GET-only readback=%#v err=%v read=%d truth=%d tag=%d patch=%d", readback, err, readCalls, truthCalls, tagCalls, patchCalls)
+	}
+	if _, err := store.MachineOwnership(context.Background(), computeID); !errors.Is(err, ErrMachineOwnershipNotFound) {
+		t.Fatalf("GET-only read persisted ownership err=%v", err)
+	}
+
+	recovered, err := service.EnsureWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || recovered.State != "ready" || recovered.Resources.ComputeAllocationID != computeID || tagCalls != 1 || patchCalls != 1 {
+		t.Fatalf("recovered=%#v err=%v read=%d truth=%d tag=%d patch=%d", recovered, err, readCalls, truthCalls, tagCalls, patchCalls)
+	}
+	ownership, err := store.MachineOwnership(context.Background(), computeID)
+	if err != nil || ownership.Status != "active" || ownership.ResourceID != computeID || ownership.AccountID != input.Binding.AccountID || ownership.WorkspaceID != input.Binding.WorkspaceID {
+		t.Fatalf("recovered ownership=%#v err=%v", ownership, err)
+	}
+	assertTencentOwnershipChildOperations(t, store, input.Binding, allocation)
+}
+
+func TestTencentWorkspaceLaunchComputeReadMissingOwnershipFailsClosedOnAuthoritativeConflictOrError(t *testing.T) {
+	providerErr := errors.New("provider unavailable")
+	for _, tc := range []struct {
+		name             string
+		cvmState         string
+		nodeOwned        bool
+		mutateProof      func(*provisionerResponse)
+		truthErr         error
+		mutateNode       func([]byte) []byte
+		wantSafeAbsent   bool
+		wantTruthReads   int
+		wantKubectlReads int
+	}{
+		{name: "recoverable cvm and unallocated node", cvmState: "recoverable", wantSafeAbsent: true, wantTruthReads: 1, wantKubectlReads: 1},
+		{name: "target owned cvm and node", cvmState: "target_owned", nodeOwned: true, wantSafeAbsent: true, wantTruthReads: 1, wantKubectlReads: 1},
+		{name: "cvm identity conflict", cvmState: "target_owned", mutateProof: func(response *provisionerResponse) {
+			response.ProviderData["machineName"] = "machine-other"
+		}, wantTruthReads: 1},
+		{name: "node identity conflict", cvmState: "target_owned", mutateNode: func(raw []byte) []byte {
+			var node map[string]any
+			if json.Unmarshal(raw, &node) != nil {
+				t.Fatal("decode node fixture")
+			}
+			metadata := node["metadata"].(map[string]any)
+			metadata["name"] = "node-other"
+			return mustJSON(node)
+		}, wantTruthReads: 1, wantKubectlReads: 1},
+		{name: "provider read error", cvmState: "target_owned", truthErr: providerErr, wantTruthReads: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newTencentWorkspaceLaunchComputeReadRecoveryFixture(t)
+			readCalls, truthCalls, tagCalls, kubectlReads, patchCalls := 0, 0, 0, 0, 0
+			fixture.provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+				switch request.Action {
+				case "read_compute_allocation":
+					readCalls++
+					return tencentComputeAllocationResponse(fixture.allocation, "req-read-matrix"), nil
+				case "compute_claim_truth":
+					truthCalls++
+					if tc.truthErr != nil {
+						return provisionerResponse{}, tc.truthErr
+					}
+					response := tencentTargetOwnedProofResponse(fixture.allocation, fixture.prepared)
+					response.ProviderData["cvmOwnershipState"] = tc.cvmState
+					if tc.mutateProof != nil {
+						tc.mutateProof(&response)
+					}
+					return response, nil
+				case "tag_compute_machine":
+					tagCalls++
+					return provisionerResponse{}, errors.New("read attempted tag mutation")
+				default:
+					t.Fatalf("unexpected provisioner action %q", request.Action)
+					return provisionerResponse{}, nil
+				}
+			}
+			fixture.provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				switch args[0] {
+				case "get":
+					kubectlReads++
+					ownership, err := workspaceLaunchComputeOwnership(fixture.allocation)
+					if err != nil {
+						t.Fatal(err)
+					}
+					raw := tencentOwnershipNodeReadback(fixture.allocation, ownership, tc.nodeOwned)
+					if tc.mutateNode != nil {
+						raw = tc.mutateNode(raw)
+					}
+					return raw, nil
+				case "patch":
+					patchCalls++
+					return nil, errors.New("read attempted node mutation")
+				default:
+					t.Fatalf("unexpected kubectl args=%#v", args)
+					return nil, nil
+				}
+			}
+			before, err := fixture.store.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, readErr := fixture.service.ReadWorkspaceLaunchStage(context.Background(), fixture.input)
+			after, listErr := fixture.store.List(context.Background())
+			if listErr != nil || string(mustJSON(after)) != string(mustJSON(before)) || readCalls != 1 || truthCalls != tc.wantTruthReads ||
+				kubectlReads != tc.wantKubectlReads || tagCalls != 0 || patchCalls != 0 {
+				t.Fatalf("read changed owner state or called mutation: result=%#v readErr=%v listErr=%v read=%d truth=%d kubectl=%d tag=%d patch=%d", result, readErr, listErr, readCalls, truthCalls, kubectlReads, tagCalls, patchCalls)
+			}
+			if tc.wantSafeAbsent {
+				if readErr != nil || result.State != "absent" {
+					t.Fatalf("safe owner state did not produce recoverable absence: result=%#v err=%v", result, readErr)
+				}
+			} else if readErr == nil {
+				t.Fatalf("uncertain owner state did not fail closed: result=%#v", result)
+			}
+			if _, err := fixture.store.MachineOwnership(context.Background(), fixture.computeID); !errors.Is(err, ErrMachineOwnershipNotFound) {
+				t.Fatalf("read persisted ownership err=%v", err)
+			}
+		})
+	}
 }
 
 func TestTencentWorkspaceLaunchComputeStateUsesPersistedNodePoolAfterConfigurationDrift(t *testing.T) {

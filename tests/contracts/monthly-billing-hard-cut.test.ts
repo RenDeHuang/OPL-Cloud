@@ -53,7 +53,7 @@ test("current contracts name Sub2API as the only spendable balance", async () =>
 test("management contract hard-cuts customer identity to Sub2API and one atomic owner graph", async () => {
   const management = await readJson("opl-cloud-management-contract.json");
 
-  assert.equal(management.schemaVersion, 18);
+  assert.equal(management.schemaVersion, 19);
   assert.deepEqual(management.entities.account.requiredFields, ["id", "ownerUserId", "status", "sub2apiUserId", "createdAt", "updatedAt"]);
   assert.deepEqual(management.entities.user, {
     requiredFields: ["id", "email", "accountId", "role", "status", "createdAt", "updatedAt"],
@@ -153,9 +153,10 @@ test("pricing contract fixes exact integer monthly charges", async () => {
 });
 
 test("receipt contract exposes monthly product behavior only", async () => {
-	const [billing, evidence] = await Promise.all([
+	const [billing, evidence, management] = await Promise.all([
 		readJson("opl-cloud-billing-ledger-contract.json"),
-		readJson("opl-cloud-evidence-ledger-contract.json")
+		readJson("opl-cloud-evidence-ledger-contract.json"),
+		readJson("opl-cloud-management-contract.json")
 	]);
 
 	for (const type of [
@@ -217,6 +218,32 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	});
 	assert.ok(evidence.workspaceMonthlyBillingReceiptV1.rules.includes("expired receipts contain providerAction=none_expire_by_provider and describe no Fabric or Tencent mutation"));
 	assert.ok(evidence.workspaceMonthlyBillingReceiptV1.rules.includes("cost.resourceId equals receipt workspaceId"));
+	assert.equal(billing.workspaceLaunchFulfillment.activationReadback.api, "Control Plane GetWorkspace(workspaceId) point read");
+	assert.match(billing.workspaceLaunchFulfillment.activationReadback.deletedFabricRoute, /returns 404/);
+	assert.equal(billing.workspaceLaunchFulfillment.ledgerFailureAfterActivation, "retry_receipt_only");
+	assert.deepEqual(billing.workspaceLaunchFulfillment.purchaseReceiptIdentity, {
+		requestId: "launchOperationId",
+		idempotencyKey: "<launchOperationId>:purchase-receipt",
+		workspaceId: "exact_launch_workspace_id",
+		debit: "exact_sub2api_user_redeem_code_and_total_usd_micros",
+		retry: "receipt_only_after_activation"
+	});
+	assert.deepEqual(management.workspaceDeletion.identityFields, [
+		"accountId", "operationId", "workspaceId", "runtimeId", "keyId", "debitCode", "purchaseReceiptId", "refundReceiptId"
+	]);
+	assert.deepEqual(management.workspaceDeletion.fabricObservation.states, ["ready", "absent", "pending", "conflict", "error"]);
+	assert.equal(management.workspaceDeletion.keyAuthority, "sub2api_exact_user_and_workspace_key_id_readback");
+	assert.equal(management.workspaceDeletion.forbiddenKeyCleanupOwners.includes("local_docker"), true);
+	assert.equal(billing.workspaceDeleteRefund.operatorWalletAdjustmentSubstitute, false);
+	assert.equal(billing.workspaceDeleteRefund.responseLoss, "exact_refund_code_GET_only_without_second_refund");
+	assert.equal(billing.workspaceDeleteRefund.receipt.supersedesReceiptId, "exact_purchaseReceiptId");
+	assert.match(billing.workspaceDeleteRefund.receipt.failureRetry, /receipt_only/);
+	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.requestId, "launchOperationId");
+	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.recordIdempotencyKey, "<launchOperationId>:purchase-receipt");
+	assert.match(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.retry, /receipt_only/);
+	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.requestId, "workspaceDeleteOperationId");
+	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.supersedesReceiptId, "exact_purchaseReceiptId");
+	assert.match(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.retry, /receipt_only/);
 	assert.deepEqual(billing.reconciliationPolicy, {
 		reportSchemaContract: "opl-cloud-evidence-ledger-contract.json#reconciliationReportV1",
 		exceptionOnly: true,
@@ -230,9 +257,8 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		providerFacts: ["compute_renewal", "storage_renewal"],
 		receiptType: "billing.workspace_renewed.v1"
 	});
+	assert.equal(management.schemaVersion, 19);
 	assert.equal(evidence.reconciliationReportV1.result.blockNewWorkspaces, "status_equals_mismatch");
-	const management = await readJson("opl-cloud-management-contract.json");
-	assert.equal(management.schemaVersion, 18);
 	assert.deepEqual(management.operatorBillingReviewProjection.included, [
 		"workspace.launch.v2_manual_review",
 		"workspace.renewal_manual_review",

@@ -509,6 +509,21 @@ func (p *TencentProvider) UpsertGatewaySecret(ctx context.Context, input Gateway
 	}
 	if mutation != nil && !mutation.Fresh {
 		readback, readErr := p.ReadGatewaySecret(ctx, input)
+		if errors.Is(readErr, ErrWorkspaceLaunchResourceAbsent) {
+			claimed, claimErr := mutation.claimReplay(ctx)
+			if claimErr != nil || !claimed {
+				return GatewaySecret{}, firstNonNil(claimErr, ErrWorkspaceLaunchPending)
+			}
+			readback, readErr = p.ReadGatewaySecret(ctx, input)
+			if errors.Is(readErr, ErrWorkspaceLaunchResourceAbsent) {
+				if dispatchErr := mutation.markReplayDispatch(ctx); dispatchErr != nil {
+					return GatewaySecret{}, dispatchErr
+				}
+				if _, readErr = p.callKubectl(ctx, []string{"apply", "-f", "-"}, manifest, protectedresource.Target{}); readErr == nil {
+					readback, readErr = p.ReadGatewaySecret(ctx, input)
+				}
+			}
+		}
 		if readErr != nil {
 			_ = mutation.complete(ctx, "", secret, readErr)
 			return GatewaySecret{}, readErr
@@ -550,9 +565,12 @@ func (p *TencentProvider) ReadGatewaySecretByDigest(ctx context.Context, input G
 		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
 	}
 	expected := GatewaySecret{SecretRef: input.SecretRef, Version: input.KeyDigest[:16], Fingerprint: input.Fingerprint}
-	readback, err := p.callKubectl(ctx, []string{"get", "secret/" + expected.SecretRef, "-o", "json"}, nil, protectedresource.Target{})
+	readback, err := p.callKubectl(ctx, []string{"get", "secret/" + expected.SecretRef, "--ignore-not-found", "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return GatewaySecret{}, err
+	}
+	if strings.TrimSpace(string(readback)) == "" {
+		return GatewaySecret{}, ErrWorkspaceLaunchResourceAbsent
 	}
 	var actual struct {
 		Kind     string `json:"kind"`
@@ -565,11 +583,11 @@ func (p *TencentProvider) ReadGatewaySecretByDigest(ctx context.Context, input G
 		Data map[string]string `json:"data"`
 	}
 	if json.Unmarshal(readback, &actual) != nil {
-		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
+		return GatewaySecret{}, ErrLaunchStageBindingConflict
 	}
 	rawKey, err := base64.StdEncoding.DecodeString(actual.Data["opl_gateway_api_key"])
 	if err != nil {
-		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
+		return GatewaySecret{}, ErrLaunchStageBindingConflict
 	}
 	actualDigest := fmt.Sprintf("%x", sha256.Sum256(rawKey))
 	if actual.Kind != "Secret" || actual.Type != "Opaque" || actual.Metadata.Name != expected.SecretRef ||
@@ -577,7 +595,7 @@ func (p *TencentProvider) ReadGatewaySecretByDigest(ctx context.Context, input G
 		actual.Metadata.Annotations["oplcloud.cn/workspace-id"] != input.WorkspaceID || actual.Metadata.Annotations["oplcloud.cn/workspace-api-key-id"] != strconv.FormatInt(input.WorkspaceAPIKeyID, 10) ||
 		actual.Metadata.Annotations["oplcloud.cn/secret-version"] != expected.Version || actual.Metadata.Annotations["oplcloud.cn/secret-fingerprint"] != expected.Fingerprint ||
 		"sha256:"+actualDigest != expected.Fingerprint {
-		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
+		return GatewaySecret{}, ErrLaunchStageBindingConflict
 	}
 	return expected, nil
 }

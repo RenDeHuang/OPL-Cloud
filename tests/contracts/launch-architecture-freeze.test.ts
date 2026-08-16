@@ -34,7 +34,9 @@ test("successor Reconciler durably reserves each stage before mutation", async (
   const boundary = contract.stageDecision.attemptPersistence;
   const source = await optionalText(boundary.reconcilerSource);
 
-  assert.deepEqual(boundary.goFields, ["Attempted", "Max", "IdempotencyKey"]);
+  assert.deepEqual(boundary.goFields, [
+    "Attempted", "Confirmed", "Unknown", "Max", "Status", "IdempotencyKey", "PendingReadbacks", "MaxPendingReadbacks"
+  ]);
   assert.equal(boundary.maxPerStage, 1);
   assert.deepEqual(boundary.reservationOrder, [
     "increment_attempted_and_set_idempotency_key", "persist_exact_result_cas", "invoke_stage_mutation"
@@ -44,8 +46,10 @@ test("successor Reconciler durably reserves each stage before mutation", async (
   // on the same test as soon as the successor Reconciler is present.
   if (source === null) return;
 
-  assert.match(source, /type workspaceLaunchStageAttempt struct \{[\s\S]*Attempted\s+int\s+`json:"attempted"`[\s\S]*Max\s+int\s+`json:"max"`[\s\S]*IdempotencyKey\s+string\s+`json:"idempotencyKey,omitempty"`/);
-  assert.match(source, /attempts\[stage\]\s*=\s*workspaceLaunchStageAttempt\{Max:\s*1\}/);
+  assert.match(source, /type workspaceLaunchStageAttempt struct \{[\s\S]*Attempted\s+int\s+`json:"attempted"`[\s\S]*Max\s+int\s+`json:"max"`[\s\S]*Status\s+string\s+`json:"status,omitempty"`[\s\S]*IdempotencyKey\s+string\s+`json:"idempotencyKey,omitempty"`/);
+  assert.match(source, /attempts\[stage\]\s*=\s*workspaceLaunchStageAttempt\{Max:\s*1,\s*MaxPendingReadbacks:\s*workspaceLaunchLegacyV3AuthoritativeReadBudget\}/);
+  assert.match(source, /attempt\.Attempted\s*==\s*attempt\.Max/);
+  assert.doesNotMatch(source, /attempt\.Max\+\+|attempt\.Attempted\s*=\s*0/);
   assert.doesNotMatch(source, /\bChargeAttempted\b/);
 
   const attempted = source.indexOf("attempt.Attempted++");
