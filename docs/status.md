@@ -60,6 +60,16 @@ Sub2API management origin and credentials are never exposed to the browser.
   ops environment catalogs were re-checked against callers and tests and
   retained. This is source and CI evidence only; it does not change
   code-complete, Pilot, or production flags.
+- The current simplification slice removed the retired staging verifier entry,
+  its tombstone test, and the unused `path-to-regexp` override through PR
+  `#340`; made the Ledger evidence contract the single reconciliation-report
+  schema owner through PR `#341`; moved three retained deployment tools to
+  tool-local `node:util.parseArgs` through PR `#342`; and consolidated stable
+  Qualification checkout, Node, PostgreSQL, and Go-test YAML through PR `#343`.
+  The implementation changes remove 98 more lines than they add, and
+  `npm run verify:local` passes on canonical `main` after absorption. No
+  release, deployment, database/resource migration, or production action was
+  performed.
 
 - Public and login surfaces present the generic OPL Cloud product in user-task
   language, preserve the administrator-provisioned Pilot boundary, and use the

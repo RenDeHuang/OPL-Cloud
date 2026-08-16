@@ -162,8 +162,9 @@ These are current implementation facts, not deletion authorization:
 | Fabric optional verticals | ContentTransfer runtime/API/schema surfaces are retired while historical migrations and data remain; Snapshot/Restore still has provider/service/store/route/test surfaces but no current in-repo product caller and remains excluded from the Pilot |
 | Fabric launch residue | Recovery proof/claim Service/provider/store mutation shells, unassigned legacy `LaunchBinding` branches, and the duplicate Tencent compute-ownership implementation are retired. Typed Tencent Launch has exact stage-chain readback/replay coverage; other operation-list consumers and the remaining mixed Fabric facade still require caller-led cohesion work |
 | Ledger optional verticals | Artifact, Review, ReviewPolicy, and Continuation APIs exist while current Control Plane callers primarily consume receipts and reconciliation |
-| Indirection and tooling | A large Control Plane facade, repeated CLI parsers, repeated workflow setup/cleanup, and custom static-file behavior create maintenance cost |
-| Active-tree residue | Console styles retain multiple generations after the current UI work; dated execution plans and frozen QA assets were retired from active history |
+| Machine contract ownership | Billing retains Control Plane reconciliation orchestration policy but references the Ledger evidence contract as the single reconciliation-report schema owner; other repeated fact families remain in the contract-dedup roadmap phase |
+| Indirection and tooling | Three retained deployment tools use tool-local `node:util.parseArgs`, and Qualification reuses its stable setup and Go-test pipeline without changing job identities or zero-skip gates. The large Control Plane facade, remaining tool-local parsers, and custom static-file behavior still create maintenance cost |
+| Active-tree residue | The retired staging verifier entry and its tombstone test are deleted, and the unused `path-to-regexp` override is gone. Console styles still retain multiple generations after the current UI work; dated execution plans and frozen QA assets remain retired from active history |
 
 The keep, shrink, or delete candidates, priority, risk, admission evidence, and
 owner boundaries live only in the
