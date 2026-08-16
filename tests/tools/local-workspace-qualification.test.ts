@@ -646,6 +646,10 @@ test("READY receipt binds the exact durable and accounting evidence", () => {
 test("local build proxy rejects credentials or URL parameters and errors redact the entire URL authority and query", () => {
   const previous = process.env.OPL_LOCAL_BUILD_PROXY;
   try {
+    process.env.OPL_LOCAL_BUILD_PROXY = "socks5://host.docker.internal:10808";
+    assert.deepEqual(localBuildProxyArgs(), ["--build-arg", "HTTPS_PROXY=socks5://host.docker.internal:10808"]);
+    process.env.OPL_LOCAL_BUILD_PROXY = "socks5h://host.docker.internal:10808";
+    assert.throws(() => localBuildProxyArgs(), /does not support socks5h:\/\/; use socks5:\/\//);
     process.env.OPL_LOCAL_BUILD_PROXY = "http://builder:secret@127.0.0.1:3128";
     assert.throws(() => localBuildProxyArgs(), /must not contain credentials/);
     assert.doesNotMatch(redactedError(new Error("pull https://builder:secret@example.test/v2 failed")), /builder|secret/);

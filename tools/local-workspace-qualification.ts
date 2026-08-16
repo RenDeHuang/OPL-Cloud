@@ -548,8 +548,11 @@ export function exactRepoDigestFromInspection(repository, inspection) {
 export function localBuildProxyArgs() {
   const proxy = String(process.env.OPL_LOCAL_BUILD_PROXY || "").trim();
   if (!proxy) return [];
-  if (!/^(?:https?|socks5h?):\/\/[^\s]+$/.test(proxy)) {
-    throw new Error("OPL_LOCAL_BUILD_PROXY must be an explicit HTTP(S) or SOCKS proxy URL");
+  if (proxy.startsWith("socks5h://")) {
+    throw new Error("OPL_LOCAL_BUILD_PROXY does not support socks5h://; use socks5:// for Dockerfile Go build stages");
+  }
+  if (!/^(?:https?|socks5):\/\/[^\s]+$/.test(proxy)) {
+    throw new Error("OPL_LOCAL_BUILD_PROXY must use an explicit http://, https://, or socks5:// URL");
   }
   const parsed = new URL(proxy);
   if (parsed.username || parsed.password) {
@@ -558,7 +561,7 @@ export function localBuildProxyArgs() {
   if (parsed.search || parsed.hash) {
     throw new Error("OPL_LOCAL_BUILD_PROXY must not contain query or fragment parameters");
   }
-  return proxy.startsWith("socks")
+  return proxy.startsWith("socks5://")
     ? ["--build-arg", `HTTPS_PROXY=${proxy}`]
     : ["--build-arg", `HTTP_PROXY=${proxy}`, "--build-arg", `HTTPS_PROXY=${proxy}`];
 }
