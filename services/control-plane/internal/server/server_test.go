@@ -925,18 +925,6 @@ func (fakeLedgerClient) Receipt(_ context.Context, receiptID string) (clients.Re
 	return clients.Receipt{ReceiptInput: clients.ReceiptInput{Status: "completed", Execution: map[string]any{"jobStatus": "succeeded", "attempt": float64(1)}}, ReceiptID: receiptID, ContinuationID: "continuation-from-ledger"}, nil
 }
 
-func (fakeLedgerClient) Artifact(_ context.Context, artifactID string) (clients.Artifact, error) {
-	return clients.Artifact{ArtifactID: artifactID, JobID: "job-from-fabric", Digest: "sha256:artifact-alpha"}, nil
-}
-
-func (fakeLedgerClient) Review(_ context.Context, reviewID string) (clients.Review, error) {
-	return clients.Review{ReviewID: reviewID, JobID: "job-from-fabric", Decision: "accepted", InputArtifactDigests: []string{"sha256:artifact-alpha"}}, nil
-}
-
-func (fakeLedgerClient) Continuation(_ context.Context, receiptID string) (map[string]any, error) {
-	return map[string]any{"receiptId": receiptID, "continuationId": "continuation-from-ledger"}, nil
-}
-
 func (fakeLedgerClient) RecordReconciliation(_ context.Context, input clients.ReconciliationInput, _ string) (clients.ReconciliationResult, error) {
 	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "ok", Report: input.Report, BlockNewWorkspaces: false, Reason: "operator_reconciliation"}, nil
 }
