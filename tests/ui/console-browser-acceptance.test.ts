@@ -148,9 +148,9 @@ test("Console browser CLI rejects a non-fake network before running Browser QA",
   assert.match(stderr, /console_browser_fake_only_required/);
 });
 
-test("Pull Request CI runs fake-only Browser QA once through the Node acceptance test", async () => {
+test("browser qualification runs fake-only Browser QA once through the Node acceptance test", async () => {
   const [workflow, acceptance] = await Promise.all([
-    readFile(".github/workflows/pull-request-ci.yml", "utf8"),
+    readFile(".github/workflows/qualification.yml", "utf8"),
     readFile("tests/ui/console-browser-acceptance.test.ts", "utf8")
   ]);
   const pullRequestCI = parse(workflow);
@@ -169,8 +169,10 @@ test("Pull Request CI runs fake-only Browser QA once through the Node acceptance
   assert.match(acceptance, /console_browser_fake_only_required/);
 });
 
-test("Console browser final gate machine-checks Node and Go SKIP counts", async () => {
-  const workflow = await readFile(".github/workflows/pull-request-ci.yml", "utf8");
+test("Cloud qualification final gate machine-checks Node and Go SKIP counts", async () => {
+  const workflow = await readFile(".github/workflows/qualification.yml", "utf8");
+  const parsed = parse(workflow);
+  const jobs = parsed.jobs;
   assert.match(workflow, /OPL_CAPACITY_TESTS:\s*["']1["']/);
   assert.match(workflow, /--test-reporter=tap/);
   assert.match(workflow, /Node SKIP result missing or nonzero/);
@@ -180,4 +182,41 @@ test("Console browser final gate machine-checks Node and Go SKIP counts", async 
   assert.match(workflow, /Action === ["']skip["']/);
   assert.match(workflow, /Go SKIP/);
   assert.doesNotMatch(workflow, /console-browser-qa\.ts --network=fake-only/);
+  assert.deepEqual(Object.keys(jobs).sort(), ["control_plane", "fabric", "node_console", "postgres_ledger", "validate"]);
+  assert.deepEqual(jobs.validate.needs, ["node_console", "postgres_ledger", "control_plane", "fabric"]);
+  assert.equal(jobs.validate.if, "${{ always() }}");
+
+  const nodeSetups = [jobs.node_console, jobs.postgres_ledger, jobs.control_plane, jobs.fabric]
+    .map((job) => job.steps.find((step) => step.name === "Set up Node 24"));
+  assert.deepEqual(nodeSetups.map((step) => step.with["node-version"]), ["24", "24", "24", "24"]);
+  const goSetups = [jobs.postgres_ledger, jobs.control_plane, jobs.fabric]
+    .map((job) => job.steps.find((step) => step.name === "Set up Go"));
+  assert.deepEqual(goSetups.map((step) => step.with["go-version"]), ["1.22.x", "1.22.x", "1.25.x"]);
+
+  const goTestSteps = [
+    jobs.postgres_ledger.steps.find((step) => step.name === "Test PostgreSQL migrations"),
+    jobs.postgres_ledger.steps.find((step) => step.name === "Test Ledger"),
+    jobs.control_plane.steps.find((step) => step.name === "Test Control Plane"),
+    jobs.fabric.steps.find((step) => step.name === "Test Fabric")
+  ];
+  assert.deepEqual(goTestSteps.map((step) => ({
+    workingDirectory: step["working-directory"],
+    args: step.env.GO_TEST_ARGS
+  })), [
+    { workingDirectory: "services/internal/postgresmigrate", args: "-race -count=1" },
+    { workingDirectory: "services/ledger", args: "-count=1" },
+    { workingDirectory: "services/control-plane", args: "-timeout=15m -count=1" },
+    { workingDirectory: "services/fabric", args: "-count=1" }
+  ]);
+  for (const step of goTestSteps) {
+    assert.match(step.run, /read -r -a go_test_args <<< "\$GO_TEST_ARGS"/);
+    assert.match(step.run, /go test "\$\{go_test_args\[@\]\}" -json "\$\{test_packages\[@\]\}"/);
+    assert.match(step.run, /Action === "skip"/);
+  }
+  assert.deepEqual(
+    [jobs.postgres_ledger, jobs.control_plane, jobs.fabric].map((job) => job.services),
+    [jobs.postgres_ledger.services, jobs.postgres_ledger.services, jobs.postgres_ledger.services]
+  );
+  assert.equal(jobs.postgres_ledger.services.postgres.image, "postgres:16");
+  assert.equal(jobs.postgres_ledger.services.postgres.env.POSTGRES_HOST_AUTH_METHOD, "trust");
 });

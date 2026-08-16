@@ -1,20 +1,6 @@
 name: OPL Cloud Whitepaper
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - docs/whitepapers/**
-      - README.md
-      - README.zh-CN.md
-      - docs/README.md
-      - docs/architecture.md
-      - docs/implementation-architecture.md
-      - docs/roadmap.md
-      - assets/branding/opl-cloud-overview-v2.png
-      - contracts/whitepaper_profile.json
-      - scripts/build-opl-cloud-whitepaper.ts
-      - .github/workflows/whitepaper.yml
   workflow_dispatch:
 
 permissions:
@@ -22,7 +8,7 @@ permissions:
 
 jobs:
   whitepaper:
-    uses: gaofeng21cn/one-person-lab/.github/workflows/reusable-whitepaper.yml@4fc18d2634212c28c3a1c4ada8b406e6e2e9f267
+    uses: gaofeng21cn/one-person-lab/.github/workflows/reusable-whitepaper.yml@6a96069d3baaec125c5e8a1ff3b5e4ac861e0860
     with:
       profile: contracts/whitepaper_profile.json
       output_name: opl-cloud-whitepaper

@@ -1,0 +1,225 @@
+name: OPL Cloud Qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node_console:
+    name: node-console
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - &checkout
+        name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Test Node
+        run: |
+          set -o pipefail
+          # shellcheck disable=SC2016
+          node --test --test-reporter=tap "tests/**/*.test.ts" | node -e '
+            let output = "";
+            process.stdin.setEncoding("utf8");
+            process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
+            process.stdin.on("end", () => {
+              const failed = [...output.matchAll(/^# fail (\d+)$/gm)];
+              const skipped = [...output.matchAll(/^# skipped (\d+)$/gm)];
+              if (failed.length !== 1 || skipped.length !== 1 || Number(failed[0][1]) !== 0 || Number(skipped[0][1]) !== 0) {
+                console.error(`Node FAIL ${failed[0]?.[1] ?? "missing"} SKIP ${skipped[0]?.[1] ?? "missing"}; Node SKIP result missing or nonzero`);
+                process.exit(1);
+              }
+            });
+          '
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check diff whitespace
+        run: git diff --check
+
+  postgres_ledger:
+    name: postgres-ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services: &postgres_service
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGSSLMODE: disable
+      OPL_POSTGRES_TESTS: "1"
+    steps:
+      - *checkout
+
+      - &setup_node
+        name: Set up Node 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.22.x"
+          cache-dependency-path: |
+            services/ledger/go.sum
+            services/internal/postgresmigrate/go.sum
+
+      - name: Test PostgreSQL migrations
+        working-directory: services/internal/postgresmigrate
+        env:
+          GO_TEST_ARGS: "-race -count=1"
+        run: &go_test |
+          set -o pipefail
+          go test -run '^$' ./...
+          package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
+          mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
+          ((${#test_packages[@]} > 0))
+          read -r -a go_test_args <<< "$GO_TEST_ARGS"
+          # shellcheck disable=SC2016
+          go test "${go_test_args[@]}" -json "${test_packages[@]}" | node -e '
+            let output = "";
+            process.stdin.setEncoding("utf8");
+            process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
+            process.stdin.on("end", () => {
+              const events = output.trim().split(/\n/).filter(Boolean).map(JSON.parse);
+              const failed = events.filter((event) => event.Action === "fail");
+              const skipped = events.filter((event) => event.Action === "skip");
+              if (failed.length || skipped.length) {
+                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}; Go SKIP result missing or nonzero`);
+                process.exit(1);
+              }
+            });
+          '
+
+      - name: Test Ledger
+        working-directory: services/ledger
+        env:
+          GO_TEST_ARGS: "-count=1"
+        run: *go_test
+
+  control_plane:
+    name: control-plane
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services: *postgres_service
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGSSLMODE: disable
+      OPL_POSTGRES_TESTS: "1"
+      OPL_CAPACITY_TESTS: "1"
+    steps:
+      - *checkout
+
+      - *setup_node
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.22.x"
+          cache-dependency-path: services/control-plane/go.sum
+
+      - name: Test Control Plane
+        working-directory: services/control-plane
+        env:
+          GO_TEST_ARGS: "-timeout=15m -count=1"
+        run: *go_test
+
+  fabric:
+    name: fabric
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services: *postgres_service
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGSSLMODE: disable
+      OPL_POSTGRES_TESTS: "1"
+      OPL_FABRIC_LOCAL_DOCKER_INTEGRATION: "1"
+    steps:
+      - *checkout
+
+      - *setup_node
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: services/fabric/go.sum
+
+      - name: Test Fabric
+        working-directory: services/fabric
+        env:
+          GO_TEST_ARGS: "-count=1"
+        run: *go_test
+
+  validate:
+    name: validate
+    if: ${{ always() }}
+    needs:
+      - node_console
+      - postgres_ledger
+      - control_plane
+      - fabric
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require successful test jobs
+        env:
+          NODE_CONSOLE_RESULT: ${{ needs.node_console.result }}
+          POSTGRES_LEDGER_RESULT: ${{ needs.postgres_ledger.result }}
+          CONTROL_PLANE_RESULT: ${{ needs.control_plane.result }}
+          FABRIC_RESULT: ${{ needs.fabric.result }}
+        run: |
+          if [[ "$NODE_CONSOLE_RESULT" != "success" ||
+                "$POSTGRES_LEDGER_RESULT" != "success" ||
+                "$CONTROL_PLANE_RESULT" != "success" ||
+                "$FABRIC_RESULT" != "success" ]]; then
+            printf 'node-console=%s\npostgres-ledger=%s\ncontrol-plane=%s\nfabric=%s\n' \
+              "$NODE_CONSOLE_RESULT" \
+              "$POSTGRES_LEDGER_RESULT" \
+              "$CONTROL_PLANE_RESULT" \
+              "$FABRIC_RESULT"
+            exit 1
+          fi

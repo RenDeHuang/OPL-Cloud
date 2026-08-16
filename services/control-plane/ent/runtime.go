@@ -23,7 +23,6 @@ import (
 	"opl-cloud/services/control-plane/ent/supportticketmapping"
 	"opl-cloud/services/control-plane/ent/user"
 	"opl-cloud/services/control-plane/ent/workspace"
-	"opl-cloud/services/control-plane/ent/workspacebackup"
 	"opl-cloud/services/control-plane/ent/workspacesyncevent"
 	"time"
 )
@@ -1168,58 +1167,6 @@ func init() {
 	workspaceDescID := workspaceFields[0].Descriptor()
 	// workspace.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	workspace.IDValidator = workspaceDescID.Validators[0].(func(string) error)
-	workspacebackupFields := schema.WorkspaceBackup{}.Fields()
-	_ = workspacebackupFields
-	// workspacebackupDescCreatedAt is the schema descriptor for created_at field.
-	workspacebackupDescCreatedAt := workspacebackupFields[1].Descriptor()
-	// workspacebackup.DefaultCreatedAt holds the default value on creation for the created_at field.
-	workspacebackup.DefaultCreatedAt = workspacebackupDescCreatedAt.Default.(func() time.Time)
-	// workspacebackupDescUpdatedAt is the schema descriptor for updated_at field.
-	workspacebackupDescUpdatedAt := workspacebackupFields[2].Descriptor()
-	// workspacebackup.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	workspacebackup.DefaultUpdatedAt = workspacebackupDescUpdatedAt.Default.(func() time.Time)
-	// workspacebackup.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	workspacebackup.UpdateDefaultUpdatedAt = workspacebackupDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// workspacebackupDescAccountID is the schema descriptor for account_id field.
-	workspacebackupDescAccountID := workspacebackupFields[3].Descriptor()
-	// workspacebackup.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
-	workspacebackup.AccountIDValidator = workspacebackupDescAccountID.Validators[0].(func(string) error)
-	// workspacebackupDescWorkspaceID is the schema descriptor for workspace_id field.
-	workspacebackupDescWorkspaceID := workspacebackupFields[4].Descriptor()
-	// workspacebackup.WorkspaceIDValidator is a validator for the "workspace_id" field. It is called by the builders before save.
-	workspacebackup.WorkspaceIDValidator = workspacebackupDescWorkspaceID.Validators[0].(func(string) error)
-	// workspacebackupDescStorageID is the schema descriptor for storage_id field.
-	workspacebackupDescStorageID := workspacebackupFields[5].Descriptor()
-	// workspacebackup.StorageIDValidator is a validator for the "storage_id" field. It is called by the builders before save.
-	workspacebackup.StorageIDValidator = workspacebackupDescStorageID.Validators[0].(func(string) error)
-	// workspacebackupDescSnapshotID is the schema descriptor for snapshot_id field.
-	workspacebackupDescSnapshotID := workspacebackupFields[6].Descriptor()
-	// workspacebackup.SnapshotIDValidator is a validator for the "snapshot_id" field. It is called by the builders before save.
-	workspacebackup.SnapshotIDValidator = workspacebackupDescSnapshotID.Validators[0].(func(string) error)
-	// workspacebackupDescStatus is the schema descriptor for status field.
-	workspacebackupDescStatus := workspacebackupFields[7].Descriptor()
-	// workspacebackup.StatusValidator is a validator for the "status" field. It is called by the builders before save.
-	workspacebackup.StatusValidator = workspacebackupDescStatus.Validators[0].(func(string) error)
-	// workspacebackupDescIdempotencyKey is the schema descriptor for idempotency_key field.
-	workspacebackupDescIdempotencyKey := workspacebackupFields[8].Descriptor()
-	// workspacebackup.IdempotencyKeyValidator is a validator for the "idempotency_key" field. It is called by the builders before save.
-	workspacebackup.IdempotencyKeyValidator = workspacebackupDescIdempotencyKey.Validators[0].(func(string) error)
-	// workspacebackupDescRequestHash is the schema descriptor for request_hash field.
-	workspacebackupDescRequestHash := workspacebackupFields[9].Descriptor()
-	// workspacebackup.RequestHashValidator is a validator for the "request_hash" field. It is called by the builders before save.
-	workspacebackup.RequestHashValidator = workspacebackupDescRequestHash.Validators[0].(func(string) error)
-	// workspacebackupDescManifestJSON is the schema descriptor for manifest_json field.
-	workspacebackupDescManifestJSON := workspacebackupFields[10].Descriptor()
-	// workspacebackup.DefaultManifestJSON holds the default value on creation for the manifest_json field.
-	workspacebackup.DefaultManifestJSON = workspacebackupDescManifestJSON.Default.(string)
-	// workspacebackupDescRestoredStorageID is the schema descriptor for restored_storage_id field.
-	workspacebackupDescRestoredStorageID := workspacebackupFields[11].Descriptor()
-	// workspacebackup.DefaultRestoredStorageID holds the default value on creation for the restored_storage_id field.
-	workspacebackup.DefaultRestoredStorageID = workspacebackupDescRestoredStorageID.Default.(string)
-	// workspacebackupDescID is the schema descriptor for id field.
-	workspacebackupDescID := workspacebackupFields[0].Descriptor()
-	// workspacebackup.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	workspacebackup.IDValidator = workspacebackupDescID.Validators[0].(func(string) error)
 	workspacesynceventFields := schema.WorkspaceSyncEvent{}.Fields()
 	_ = workspacesynceventFields
 	// workspacesynceventDescCreatedAt is the schema descriptor for created_at field.

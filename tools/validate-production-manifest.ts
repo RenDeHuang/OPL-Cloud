@@ -1,17 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { parseArgs } from "node:util";
 
 import { validateProductionManifest } from "../services/control-plane/ops/production-manifest.ts";
 
-function cliArgs(argv) {
-  const args = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const item = argv[index];
-    if (!item.startsWith("--")) continue;
-    const key = item.slice(2);
-    const value = argv[index + 1] && !argv[index + 1].startsWith("--") ? argv[++index] : "true";
-    args[key] = value;
-  }
-  return args;
+function optionValue(value) {
+  return value === undefined ? undefined : String(value || "true");
 }
 
 export async function runProductionManifestCli({
@@ -19,9 +12,15 @@ export async function runProductionManifestCli({
   stdout = process.stdout,
   stderr = process.stderr
 } = {}) {
-  const args = cliArgs(argv);
-  if (!args.manifest) throw new Error("manifest_path_required");
-  const manifest = JSON.parse(await readFile(args.manifest, "utf8"));
+  const { values: args } = parseArgs({
+    args: argv,
+    options: { manifest: { type: "string" } },
+    strict: false,
+    allowPositionals: true
+  });
+  const manifestPath = optionValue(args.manifest);
+  if (!manifestPath) throw new Error("manifest_path_required");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   const report = validateProductionManifest(manifest);
   stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (!report.ok) {

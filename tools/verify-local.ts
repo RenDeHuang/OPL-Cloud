@@ -37,11 +37,10 @@ export const databaseFreeGoTestSpecs = Object.freeze([
 
 export const localVerificationSteps = Object.freeze([
   { name: "product boundary", command: "npm", args: ["run", "validate:product-boundary"] },
-  { name: "Node tests", command: "npm", args: ["test"] },
+  { name: "Node source tests", command: "npm", args: ["run", "test:source"] },
   { name: "TypeScript typecheck", command: "npm", args: ["run", "typecheck"] },
   { name: "TypeScript lint", command: "npm", args: ["run", "lint"] },
   { name: "Console build", command: "npm", args: ["run", "build"] },
-  { name: "whitepaper build", command: "npm", args: ["run", "build:whitepaper"] },
   ...goModules.map((cwd) =>
     ({ name: `${cwd} compile`, command: "go", args: ["test", "-run", "^$", "./..."], cwd })
   ),
@@ -171,18 +170,8 @@ function stepCwd(step) {
   return step.cwd ? join(root, step.cwd) : root;
 }
 
-function stepEnv(step) {
-  if (step.name !== "whitepaper build" || process.env.OPL_FRAMEWORK_REPO) return process.env;
-  const candidates = [
-    join(homedir(), "workspace", "one-person-lab"),
-    join(root, "..", "one-person-lab"),
-    join(root, "..", "..", "one-person-lab"),
-    join(root, "..", "..", "..", "one-person-lab")
-  ];
-  const frameworkRepo = candidates.find((candidate) =>
-    existsSync(join(candidate, "scripts", "run-domain-whitepaper.ts"))
-  );
-  return frameworkRepo ? { ...process.env, OPL_FRAMEWORK_REPO: frameworkRepo } : process.env;
+function stepEnv() {
+  return process.env;
 }
 
 function printStep(name) {
@@ -218,7 +207,7 @@ function runProcess(command, args, { cwd = root, env = process.env, capture = fa
 
 async function runStep(step) {
   printStep(step.name);
-  await runProcess(step.command, step.args, { cwd: stepCwd(step), env: stepEnv(step) });
+  await runProcess(step.command, step.args, { cwd: stepCwd(step), env: stepEnv() });
 }
 
 function parseDockerPort(output) {

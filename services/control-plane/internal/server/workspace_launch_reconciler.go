@@ -134,6 +134,7 @@ var workspaceLaunchStageCanonicalFacts = map[string]map[string]workspaceLaunchCa
 }
 
 var errWorkspaceLaunchGrantConflict = errors.New("workspace_launch_resume_authorization_conflict")
+var errWorkspaceLaunchMutationNotDispatched = errors.New("workspace_launch_mutation_not_dispatched")
 
 type workspaceLaunchStageAttempt struct {
 	Attempted           int    `json:"attempted"`
@@ -663,7 +664,7 @@ func (r *WorkspaceLaunchReconciler) mutateReservedStage(ctx context.Context, res
 		reserved.advance()
 		return r.persist(ctx, reserved)
 	}
-	if postRead.State == workspaceLaunchStagePending {
+	if postRead.State == workspaceLaunchStagePending && !errors.Is(mutationErr, errWorkspaceLaunchMutationNotDispatched) {
 		if _, replay := reserved.IdempotentReplayClaims[reserved.Stage]; replay {
 			return r.waitClaimedReplay(ctx, reserved)
 		}

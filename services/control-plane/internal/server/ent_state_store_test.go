@@ -30,6 +30,54 @@ func NewTestEntStateStore(t *testing.T, path string) StateStore {
 	return &postgresEntStateStore{client: client}
 }
 
+func TestEntStateStoreSchemaRetiresWorkspaceBackupWithoutDroppingLegacyTable(t *testing.T) {
+	t.Run("fresh database", func(t *testing.T) {
+		path := t.TempDir() + "/workspace-backup-fresh.sqlite"
+		_ = NewTestEntStateStore(t, path)
+		db, err := sql.Open("sqlite3", path+"?_fk=1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		var exists bool
+		if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workspace_backups')`).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			t.Fatal("fresh Ent schema created retired workspace_backups table")
+		}
+	})
+
+	t.Run("legacy table", func(t *testing.T) {
+		path := t.TempDir() + "/workspace-backup-legacy.sqlite"
+		legacy, err := sql.Open("sqlite3", path+"?_fk=1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := legacy.Exec(`CREATE TABLE workspace_backups (id TEXT PRIMARY KEY, marker TEXT NOT NULL); INSERT INTO workspace_backups (id, marker) VALUES ('backup-legacy', 'preserve')`); err != nil {
+			_ = legacy.Close()
+			t.Fatal(err)
+		}
+		if err := legacy.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		_ = NewTestEntStateStore(t, path)
+		check, err := sql.Open("sqlite3", path+"?_fk=1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer check.Close()
+		var marker string
+		if err := check.QueryRow(`SELECT marker FROM workspace_backups WHERE id = 'backup-legacy'`).Scan(&marker); err != nil {
+			t.Fatal(err)
+		}
+		if marker != "preserve" {
+			t.Fatalf("legacy workspace backup marker = %q, want preserve", marker)
+		}
+	})
+}
+
 type workspaceAccessReadContextKey struct{}
 
 type workspaceAccessReadTrackingStore struct {

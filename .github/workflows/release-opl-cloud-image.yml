@@ -22,7 +22,7 @@ concurrency:
 jobs:
   build:
     name: Build portable product release
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -83,6 +83,8 @@ jobs:
             --label "org.opencontainers.image.source=https://github.com/$PRODUCT_REPOSITORY" \
             --label "org.opencontainers.image.revision=$PRODUCT_SHA" \
             --label "org.opencontainers.image.version=$RELEASE_TAG" \
+            --cache-from "type=gha,scope=opl-cloud-release" \
+            --cache-to "type=gha,mode=max,scope=opl-cloud-release" \
             --output "type=oci,dest=artifacts/image,tar=false,name=$IMAGE_REPOSITORY:$RELEASE_TAG" \
             .
           manifest="$(docker buildx imagetools inspect "oci-layout://$PWD/artifacts/image:$RELEASE_TAG" --format '{{json .Manifest}}')"
@@ -138,7 +140,7 @@ jobs:
 
   publish:
     name: Publish portable product release
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner }}
     needs: build
     runs-on: ubuntu-latest
     environment: cloud-release

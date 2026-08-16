@@ -226,13 +226,23 @@ func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *t
 				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 			}
 			handler := server.(*controlPlaneHTTPHandler)
-			_ = handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service)
+			runErr := handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service)
 			operations, err := store.ListRuntimeOperations(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
 			if len(operations) != 1 || len(client.charges) != 0 {
 				t.Fatalf("monthly %s failure crossed debit: operations=%#v charges=%#v events=%#v", failureMode, operations, client.charges, *events)
+			}
+			operation, decodeErr := decodeWorkspaceLaunchReconcileOperation(operations[0])
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			attempt := operation.Attempts["debit"]
+			if runErr == nil || !errors.Is(runErr, errWorkspaceLaunchMutationNotDispatched) ||
+				operation.Status != "manual_review" || operation.Stage != "debit" || attempt.Status != "unknown" || attempt.Unknown != 1 ||
+				operation.Observations["debit"].State != workspaceLaunchStageUnknown || len(operation.FreshContinuationAuthorizations) != 0 {
+				t.Fatalf("monthly %s failure did not park pre-dispatch: operation=%#v attempt=%#v err=%v", failureMode, operation, attempt, runErr)
 			}
 			for _, event := range *events {
 				if strings.HasPrefix(event, "fabric.stage.") || event == "sub2api.charge" {

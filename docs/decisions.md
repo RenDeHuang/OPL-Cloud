@@ -1,5 +1,47 @@
 # Decisions
 
+## 2026-08-15: Pre-1.0 Instance Qualification Gates Product Publication
+
+During the current immature pre-1.0 phase, a formal OPL Cloud Release is the
+result of successful candidate adoption, not an input used to discover whether
+the product can deploy. Cloud must first produce a replaceable candidate bound
+to one exact canonical product SHA and image digest. `opl-instance-medopl` then
+deploys and qualifies that candidate through its protected workflow. Only after
+the required deployment and product acceptance readback succeeds may the
+repository owner explicitly publish the same SHA and image bytes as a formal
+Release.
+
+This decision responds to observed version churn. Eight Releases, `v0.1.0`
+through `v0.1.7`, were published in roughly 49 hours while successive changes
+were still closing the same Acceptance B path. They were historical debugging
+checkpoints, not eight independently qualified product handoffs. The repository
+owner subsequently removed `v0.1.0` through `v0.1.6`; only `v0.1.7` remains on
+the current GitHub Release, tag, and GHCR public surfaces.
+
+Candidate and Release identities are distinct. Candidate CI output, assets, and
+exact-SHA image tags may be replaced or discarded before qualification. A
+formal Release must promote the exact candidate SHA and digest that the Instance
+qualified; it must not rebuild different image bytes after the successful
+deployment. The current workflow still builds and publishes in one Release
+dispatch, so a deployable candidate channel plus exact-byte promotion is an
+explicit implementation gap. Until that gap is closed and the candidate has a
+successful Instance receipt, no successor to `v0.1.7` is admitted.
+
+The dependency is evidence-only and does not move authority between
+repositories. Cloud owns reusable product source, candidate/release mechanics,
+portable assets, and publication. `opl-instance-medopl` owns its environment,
+Secrets, provider state, deployment, rollback, acceptance, and receipts. Cloud
+does not dispatch or operate the Instance; the Product owner consumes its
+exact-SHA/digest receipt as the pre-1.0 publication gate.
+
+Only the repository owner may explicitly dispatch a formal Release from
+`main`. PRs, merges, CI, schedules, collaborator actions, deployment retries,
+and failed qualification do not publish a version. The create-only workflow
+prevents accidental version reuse, but it does not remove the repository
+owner's authority to repair or delete public artifacts through a separate
+explicit cleanup decision. Documentation-only, test-only, CI-performance, and
+Instance-only changes do not independently justify a Product Release.
+
 ## 2026-08-15: Keep The Go/TypeScript Service Architecture And Adopt Frameworks By Evidence
 
 OPL Cloud keeps its current Go/TypeScript architecture. Control Plane, Fabric,
@@ -139,6 +181,11 @@ immutable Resume authorization.
 
 ## 2026-08-11: Product Release And Instance Deployment Are Separate
 
+This decision separates repository authority; it no longer defines the
+pre-1.0 publication order. The 2026-08-15 candidate-qualification decision
+above requires the Instance to qualify an exact candidate before Cloud
+publishes that candidate as a formal Release.
+
 `one-person-lab-cloud` publishes the installable product: source, contracts,
 multi-architecture GHCR image, GitHub Release, Compose assets, and reusable
 provider adapters. Its release workflow uses no production environment and does
@@ -146,7 +193,7 @@ not deploy, diagnose, verify, or roll back a concrete installation.
 
 `opl-instance-medopl` is the only medopl.cn customization and deployment owner.
 Its `main` workflow and protected `production` environment select Tencent/TKE,
-hold Secrets, consume an immutable Cloud product SHA and image digest, and own
+hold Secrets, consume an exact Cloud product SHA and image digest, and own
 deployment, canary, rollback, and receipts. Product source is never copied into
 the Instance repository, and Instance state is never written back into Cloud.
 

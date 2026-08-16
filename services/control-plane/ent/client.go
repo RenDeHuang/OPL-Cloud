@@ -30,7 +30,6 @@ import (
 	"opl-cloud/services/control-plane/ent/supportticketmapping"
 	"opl-cloud/services/control-plane/ent/user"
 	"opl-cloud/services/control-plane/ent/workspace"
-	"opl-cloud/services/control-plane/ent/workspacebackup"
 	"opl-cloud/services/control-plane/ent/workspacesyncevent"
 
 	"entgo.io/ent"
@@ -81,8 +80,6 @@ type Client struct {
 	User *UserClient
 	// Workspace is the client for interacting with the Workspace builders.
 	Workspace *WorkspaceClient
-	// WorkspaceBackup is the client for interacting with the WorkspaceBackup builders.
-	WorkspaceBackup *WorkspaceBackupClient
 	// WorkspaceSyncEvent is the client for interacting with the WorkspaceSyncEvent builders.
 	WorkspaceSyncEvent *WorkspaceSyncEventClient
 }
@@ -115,7 +112,6 @@ func (c *Client) init() {
 	c.SupportTicketMapping = NewSupportTicketMappingClient(c.config)
 	c.User = NewUserClient(c.config)
 	c.Workspace = NewWorkspaceClient(c.config)
-	c.WorkspaceBackup = NewWorkspaceBackupClient(c.config)
 	c.WorkspaceSyncEvent = NewWorkspaceSyncEventClient(c.config)
 }
 
@@ -228,7 +224,6 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		SupportTicketMapping:    NewSupportTicketMappingClient(cfg),
 		User:                    NewUserClient(cfg),
 		Workspace:               NewWorkspaceClient(cfg),
-		WorkspaceBackup:         NewWorkspaceBackupClient(cfg),
 		WorkspaceSyncEvent:      NewWorkspaceSyncEventClient(cfg),
 	}, nil
 }
@@ -268,7 +263,6 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		SupportTicketMapping:    NewSupportTicketMappingClient(cfg),
 		User:                    NewUserClient(cfg),
 		Workspace:               NewWorkspaceClient(cfg),
-		WorkspaceBackup:         NewWorkspaceBackupClient(cfg),
 		WorkspaceSyncEvent:      NewWorkspaceSyncEventClient(cfg),
 	}, nil
 }
@@ -304,7 +298,7 @@ func (c *Client) Use(hooks ...Hook) {
 		c.ComputeAllocation, c.Membership, c.Organization, c.ProductionE2ERecord,
 		c.ProjectTaskSyncHead, c.RuntimeOperation, c.Session, c.StorageAttachment,
 		c.StorageVolume, c.SupportTicketMapping, c.User, c.Workspace,
-		c.WorkspaceBackup, c.WorkspaceSyncEvent,
+		c.WorkspaceSyncEvent,
 	} {
 		n.Use(hooks...)
 	}
@@ -319,7 +313,7 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.ComputeAllocation, c.Membership, c.Organization, c.ProductionE2ERecord,
 		c.ProjectTaskSyncHead, c.RuntimeOperation, c.Session, c.StorageAttachment,
 		c.StorageVolume, c.SupportTicketMapping, c.User, c.Workspace,
-		c.WorkspaceBackup, c.WorkspaceSyncEvent,
+		c.WorkspaceSyncEvent,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -366,8 +360,6 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.User.mutate(ctx, m)
 	case *WorkspaceMutation:
 		return c.Workspace.mutate(ctx, m)
-	case *WorkspaceBackupMutation:
-		return c.WorkspaceBackup.mutate(ctx, m)
 	case *WorkspaceSyncEventMutation:
 		return c.WorkspaceSyncEvent.mutate(ctx, m)
 	default:
@@ -2902,139 +2894,6 @@ func (c *WorkspaceClient) mutate(ctx context.Context, m *WorkspaceMutation) (Val
 	}
 }
 
-// WorkspaceBackupClient is a client for the WorkspaceBackup schema.
-type WorkspaceBackupClient struct {
-	config
-}
-
-// NewWorkspaceBackupClient returns a client for the WorkspaceBackup from the given config.
-func NewWorkspaceBackupClient(c config) *WorkspaceBackupClient {
-	return &WorkspaceBackupClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `workspacebackup.Hooks(f(g(h())))`.
-func (c *WorkspaceBackupClient) Use(hooks ...Hook) {
-	c.hooks.WorkspaceBackup = append(c.hooks.WorkspaceBackup, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `workspacebackup.Intercept(f(g(h())))`.
-func (c *WorkspaceBackupClient) Intercept(interceptors ...Interceptor) {
-	c.inters.WorkspaceBackup = append(c.inters.WorkspaceBackup, interceptors...)
-}
-
-// Create returns a builder for creating a WorkspaceBackup entity.
-func (c *WorkspaceBackupClient) Create() *WorkspaceBackupCreate {
-	mutation := newWorkspaceBackupMutation(c.config, OpCreate)
-	return &WorkspaceBackupCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of WorkspaceBackup entities.
-func (c *WorkspaceBackupClient) CreateBulk(builders ...*WorkspaceBackupCreate) *WorkspaceBackupCreateBulk {
-	return &WorkspaceBackupCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *WorkspaceBackupClient) MapCreateBulk(slice any, setFunc func(*WorkspaceBackupCreate, int)) *WorkspaceBackupCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &WorkspaceBackupCreateBulk{err: fmt.Errorf("calling to WorkspaceBackupClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*WorkspaceBackupCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &WorkspaceBackupCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for WorkspaceBackup.
-func (c *WorkspaceBackupClient) Update() *WorkspaceBackupUpdate {
-	mutation := newWorkspaceBackupMutation(c.config, OpUpdate)
-	return &WorkspaceBackupUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *WorkspaceBackupClient) UpdateOne(wb *WorkspaceBackup) *WorkspaceBackupUpdateOne {
-	mutation := newWorkspaceBackupMutation(c.config, OpUpdateOne, withWorkspaceBackup(wb))
-	return &WorkspaceBackupUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *WorkspaceBackupClient) UpdateOneID(id string) *WorkspaceBackupUpdateOne {
-	mutation := newWorkspaceBackupMutation(c.config, OpUpdateOne, withWorkspaceBackupID(id))
-	return &WorkspaceBackupUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for WorkspaceBackup.
-func (c *WorkspaceBackupClient) Delete() *WorkspaceBackupDelete {
-	mutation := newWorkspaceBackupMutation(c.config, OpDelete)
-	return &WorkspaceBackupDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *WorkspaceBackupClient) DeleteOne(wb *WorkspaceBackup) *WorkspaceBackupDeleteOne {
-	return c.DeleteOneID(wb.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *WorkspaceBackupClient) DeleteOneID(id string) *WorkspaceBackupDeleteOne {
-	builder := c.Delete().Where(workspacebackup.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &WorkspaceBackupDeleteOne{builder}
-}
-
-// Query returns a query builder for WorkspaceBackup.
-func (c *WorkspaceBackupClient) Query() *WorkspaceBackupQuery {
-	return &WorkspaceBackupQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeWorkspaceBackup},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a WorkspaceBackup entity by its id.
-func (c *WorkspaceBackupClient) Get(ctx context.Context, id string) (*WorkspaceBackup, error) {
-	return c.Query().Where(workspacebackup.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *WorkspaceBackupClient) GetX(ctx context.Context, id string) *WorkspaceBackup {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *WorkspaceBackupClient) Hooks() []Hook {
-	return c.hooks.WorkspaceBackup
-}
-
-// Interceptors returns the client interceptors.
-func (c *WorkspaceBackupClient) Interceptors() []Interceptor {
-	return c.inters.WorkspaceBackup
-}
-
-func (c *WorkspaceBackupClient) mutate(ctx context.Context, m *WorkspaceBackupMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&WorkspaceBackupCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&WorkspaceBackupUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&WorkspaceBackupUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&WorkspaceBackupDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown WorkspaceBackup mutation op: %q", m.Op())
-	}
-}
-
 // WorkspaceSyncEventClient is a client for the WorkspaceSyncEvent schema.
 type WorkspaceSyncEventClient struct {
 	config
@@ -3175,15 +3034,13 @@ type (
 		ArchivedAdminAuditEvent, AuthAttempt, BillingReconciliation, ComputeAllocation,
 		Membership, Organization, ProductionE2ERecord, ProjectTaskSyncHead,
 		RuntimeOperation, Session, StorageAttachment, StorageVolume,
-		SupportTicketMapping, User, Workspace, WorkspaceBackup,
-		WorkspaceSyncEvent []ent.Hook
+		SupportTicketMapping, User, Workspace, WorkspaceSyncEvent []ent.Hook
 	}
 	inters struct {
 		Account, AdminAuditEvent, Announcement, AnnouncementRead,
 		ArchivedAdminAuditEvent, AuthAttempt, BillingReconciliation, ComputeAllocation,
 		Membership, Organization, ProductionE2ERecord, ProjectTaskSyncHead,
 		RuntimeOperation, Session, StorageAttachment, StorageVolume,
-		SupportTicketMapping, User, Workspace, WorkspaceBackup,
-		WorkspaceSyncEvent []ent.Interceptor
+		SupportTicketMapping, User, Workspace, WorkspaceSyncEvent []ent.Interceptor
 	}
 )

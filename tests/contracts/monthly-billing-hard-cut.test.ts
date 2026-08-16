@@ -186,7 +186,23 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		responseTypePrefixViolation: "fail_closed_unavailable"
 	});
 	assert.deepEqual(evidence.workspaceMonthlyBillingReceiptV1.statuses, ["completed"]);
-	assert.deepEqual(billing.ledgerEvidencePolicy.workspaceReceiptStatuses, ["completed"]);
+	assert.equal(billing.schemaVersion, 14);
+	assert.equal(
+		billing.ledgerEvidencePolicy.workspaceReceiptSchemaContract,
+		"opl-cloud-evidence-ledger-contract.json#workspaceMonthlyBillingReceiptV1"
+	);
+	for (const field of [
+		"workspaceReceiptTypes",
+		"workspaceReceiptStatuses",
+		"workspaceFulfillmentReceiptTypes",
+		"workspaceRequiredCostFields",
+		"workspacePurchasedAdditionalCostFields",
+		"workspaceRenewedAdditionalCostFields",
+		"workspaceRefundedAdditionalCostFields",
+		"workspaceCostRules"
+	]) {
+		assert.equal(billing.ledgerEvidencePolicy[field], undefined, `Billing must not duplicate ${field}`);
+	}
 	assert.deepEqual(evidence.workspaceMonthlyBillingReceiptV1.exactComponents, {
 		compute: ["resourceType", "resourceId", "chargeUsdMicros"],
 		storage: ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]
@@ -201,7 +217,6 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		tencentMutationCount: 0
 	});
 	assert.ok(evidence.workspaceMonthlyBillingReceiptV1.rules.includes("expired receipts contain providerAction=none_expire_by_provider and describe no Fabric or Tencent mutation"));
-	assert.equal(billing.ledgerEvidencePolicy.workspaceCostRules.outerWorkspaceIdentity, "cost.resourceId_equals_receipt.workspaceId");
 	assert.ok(evidence.workspaceMonthlyBillingReceiptV1.rules.includes("cost.resourceId equals receipt workspaceId"));
 	assert.equal(billing.workspaceLaunchFulfillment.activationReadback.api, "Control Plane GetWorkspace(workspaceId) point read");
 	assert.match(billing.workspaceLaunchFulfillment.activationReadback.deletedFabricRoute, /returns 404/);
@@ -229,16 +244,21 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.requestId, "workspaceDeleteOperationId");
 	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.supersedesReceiptId, "exact_purchaseReceiptId");
 	assert.match(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.retry, /receipt_only/);
-	assert.deepEqual(billing.reconciliationPolicy.exceptions.resourceTypes, ["compute", "storage", "workspace"]);
-	assert.deepEqual(billing.reconciliationPolicy.workspaceRenewalAuthority, {
+	assert.deepEqual(billing.reconciliationPolicy, {
+		reportSchemaContract: "opl-cloud-evidence-ledger-contract.json#reconciliationReportV1",
+		exceptionOnly: true,
+		mayBlockNewPurchases: true,
+		requestUsageCopied: false
+	});
+	assert.deepEqual(evidence.reconciliationReportV1.exceptions.resourceTypes, ["compute", "storage", "workspace"]);
+	assert.deepEqual(evidence.reconciliationReportV1.workspaceRenewalAuthority, {
 		customerOperationCardinality: 1,
 		balanceFact: "one_combined_sub2api_charge",
 		providerFacts: ["compute_renewal", "storage_renewal"],
 		receiptType: "billing.workspace_renewed.v1"
 	});
-	assert.deepEqual(evidence.reconciliationReportV1.exceptions.resourceTypes, ["compute", "storage", "workspace"]);
-	assert.deepEqual(evidence.reconciliationReportV1.workspaceRenewalAuthority, billing.reconciliationPolicy.workspaceRenewalAuthority);
 	assert.equal(management.schemaVersion, 19);
+	assert.equal(evidence.reconciliationReportV1.result.blockNewWorkspaces, "status_equals_mismatch");
 	assert.deepEqual(management.operatorBillingReviewProjection.included, [
 		"workspace.launch.v2_manual_review",
 		"workspace.renewal_manual_review",

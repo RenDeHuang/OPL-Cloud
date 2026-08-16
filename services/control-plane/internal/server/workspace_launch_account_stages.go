@@ -140,7 +140,7 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchDebit(ctx
 		return errors.New(reason)
 	}
 	if err := a.preflightWorkspaceLaunchMonthly(ctx, operation); err != nil {
-		return err
+		return errors.Join(errWorkspaceLaunchMutationNotDispatched, err)
 	}
 	_, err = a.service.ChargeSub2API(ctx, clients.Sub2APIChargeInput{
 		UserID: userID, Code: code, ChargeUSDMicros: operation.int64Fact("totalChargeUsdMicros"),

@@ -33,7 +33,8 @@ Sub2API management origin and credentials are never exposed to the browser.
   public interfaces, typed HTTP contracts, PostgreSQL schemas, provider
   operations, and authority boundaries are unchanged. Focused tests plus the
   repository's complete local PostgreSQL, capacity, and local-Docker gate pass;
-  no live Tencent mutation or Instance deployment was run. The remaining mixed
+  no live Tencent mutation was run in this Cloud-source gate. The Instance
+  deployment receipt is recorded below. The remaining mixed
   facades stay in the cohesion backlog and require caller-led slices rather than
   a new cross-service framework.
 - `npm run verify:local` is the repeatable source gate for product boundaries,
@@ -60,6 +61,28 @@ Sub2API management origin and credentials are never exposed to the browser.
   ops environment catalogs were re-checked against callers and tests and
   retained. This is source and CI evidence only; it does not change
   code-complete, Pilot, or production flags.
+- The current simplification slice removed the retired staging verifier entry,
+  its tombstone test, and the unused `path-to-regexp` override through PR
+  `#340`; made the Ledger evidence contract the single reconciliation-report
+  schema owner through PR `#341`; moved three retained deployment tools to
+  tool-local `node:util.parseArgs` through PR `#342`; and consolidated stable
+  Qualification checkout, Node, PostgreSQL, and Go-test YAML through PR `#343`.
+  The same deletion-first pass then retired the 1,767-line aggregate deployment
+  migration contract through PR `#345`, made the Ledger contract the single
+  Workspace monthly-receipt schema owner through PR `#346`, removed the
+  caller-zero Control Plane Artifact/Review/Continuation Ledger client adapter
+  through PR `#347`, and removed 312 lines of superseded Console declarations
+  through PR `#348`. Desktop 1280px and mobile 390px Console comparisons were
+  pixel-identical after the CSS cleanup. Across PRs `#340`-`#343` and
+  `#345`-`#348`, the implementation and contract patches remove 2,412 more
+  lines than they add. `npm run verify:local` and every required PR check pass
+  after canonical absorption.
+- Two further native-replacement candidates were rejected instead of merged.
+  Converting the next two CLI parsers to `node:util.parseArgs` added 54 net
+  lines, while using `http.ServeFile` only for uncompressed assets retained the
+  custom gzip path and added 27 net lines. Both task branches were returned to
+  tree-equivalence with fresh `main` and lifecycle-closed. No release,
+  deployment, database/resource migration, or production action was performed.
 
 - Public and login surfaces present the generic OPL Cloud product in user-task
   language, preserve the administrator-provisioned Pilot boundary, and use the
@@ -111,25 +134,33 @@ Sub2API management origin and credentials are never exposed to the browser.
   (`bb0a221b12273d4dd788003c3d44b0d14e8dee87`): canonical compute and storage
   provider IDs remain required authority, while legacy `nodePoolId` and
   `persistentVolumeId` values are optional response-only projections that do not
-  decide readiness or resource continuity. The Instance owner has not adopted
-  and read back this current contract. This is source and CI evidence, not a
-  complete Console-to-Workspace installation or Instance Provider Acceptance.
+  decide readiness or resource continuity. Instance `main` now carries the
+  instance-owned callers and protected workflow boundary, but this remains
+  source and CI evidence, not a complete Console-to-Workspace installation or
+  successful Instance Provider Acceptance.
 - The Fabric resource catalog contract now retains only provider-neutral package,
   storage-class, ingress, availability, and capacity boundaries. Its unused
   `workspacePackageNodePools` provider-specific subtree was removed through
   Catalog hard-cut PR `#295`; NodePool, SKU, bootstrap, ownership, and launch
   interpretation remain owned by the Fabric adapter/provisioner and Instance
   workflow. This contract cleanup does not change catalog runtime behavior or
-  establish Instance adoption.
+  establish production acceptance.
 - Control Plane Provider Acceptance now consumes Fabric's provider-neutral
   monthly-preflight availability plus Control Plane-owned package, size, and
   zone facts. It no longer interprets Tencent purchase mode, renewal policy, or
   CVM/CBS resource kinds. The isolated Console recovery-plan DTO, read adapter,
   controller intents, and Admin review modal are removed; operator
   reconciliation projects the server-owned action back into the same durable
-  Launch Reconciler. Instance recovery workflows and their pinned Cloud tool
-  callers remain an external cutover obligation, so this source cleanup does
-  not admit PR `#280` or complete Instance Provider Acceptance.
+  Launch Reconciler. Instance recovery workflows now execute their tools from
+  the Instance checkout; exact candidate deployment and production acceptance
+  remain external owner obligations. PR `#280`'s legacy Launch
+  migration implementation was replayed against current `main` and not
+  admitted: its test harness was Linux-only, its compute readback used retired
+  Fabric interfaces, and its partial-history response did not satisfy the
+  Control Plane next-stage boundary. No protected Instance inventory currently
+  proves an eligible schema-2 row or active consumer. Current source therefore
+  has no legacy migration route or temporary Fabric contract; a fresh
+  implementation is triggered only by owner-authoritative row evidence.
 - Fabric's unused recovery proof/claim Service, provider, and operation-store
   mutation shell is retired. Five legacy resource inputs no longer carry
   unassigned `LaunchBinding` branches, and the orphan launch-binding readback is
@@ -182,9 +213,10 @@ Sub2API management origin and credentials are never exposed to the browser.
   remain unconfirmed, and success requires authoritative Workspace-list
   readback. This is source and CI evidence, not a complete live installation.
 - ContentTransfer application runtime/API/Ent schema, Archive application models,
-  and `ExecutionRequest` application code are retired; historical migrations,
-  tables, and data were not dropped. Snapshot/Restore remains an extension
-  surface pending owner-authoritative resource disposition.
+  `ExecutionRequest` application code, and Control Plane `WorkspaceBackup` Ent
+  model are retired; historical migrations, tables, and data were not dropped.
+  Snapshot/Restore remains an extension surface pending owner-authoritative
+  resource disposition.
 - The Control Plane Session credential vault is process-local and single
   replica. Horizontal scaling is not supported until a secure shared vault and
   distributed wallet-mutation serialization boundary exist.
@@ -220,23 +252,52 @@ rollback, or production path. Existing Tencent/TKE evidence applies only to
 medopl instance provenance.
 
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
-workflow, and focused distribution checks exist at source level. The split
-workflow was executed successfully as run `31685878938` and published immutable
-Cloud release `v0.1.0` from exact product SHA
-`98eac98b46fc872ed8c803363de7ed47edacd2ba`. Its GHCR multi-architecture index
-digest is `sha256:68771bb25c8131c931d03f32210ce0fcb119ace90c05dcfe65555f4800db0fe7`,
+workflow, and focused distribution checks exist at source level. Historically,
+eight Product Releases, `v0.1.0` through `v0.1.7`, were published between
+2026-08-13T09:50:02Z and 2026-08-15T10:49:30Z while the same Acceptance B path
+was still under development. The repository owner removed `v0.1.0` through
+`v0.1.6` from the GitHub Release, tag, and GHCR public surfaces on 2026-08-15.
+Only `v0.1.7` remains. Release workflow run `31879240411` published it from
+exact product SHA
+`a59bde68397528186a5220f73195fa1f3eda311b`. Its GHCR multi-architecture index
+digest is `sha256:e64504731f8b61c0864cf59faa647a1150e8a2a5eada34b26faf3a5487d28e8f`,
 with `linux/amd64` and `linux/arm64` manifests. The GitHub Release contains
-`compose.yaml`, `compose.local-workspace.yaml`, `opl-cloud.env.example`, and
-`opl-cloud-release.json`; manifest readback matched the release tag, product
-SHA, image digest, platforms, and asset set. This proves publication of the
-portable product artifact, not installation or production readiness.
+`compose.yaml`, `compose.local-workspace.yaml`, `opl-cloud.env.example`,
+`SHA256SUMS`, and `opl-cloud-release.json`; manifest readback matched the
+release tag, product SHA, image digest, platforms, and asset set. This proves
+publication of the portable product artifact, not installation, Instance
+qualification, or production readiness.
 
-The immutable `v0.1.0` product SHA is distinct from any later canonical `main`
-commit and is not silently substituted by subsequent documentation or source
-changes. A clean Docker-host installation using only the release assets, a
-complete live Console create/readback/open/delete path, real external Sub2API
-authentication/balance/usage evidence, and Instance adoption/deployment remain
-open evidence gaps.
+Current public readback shows only Git tag and GitHub Release `v0.1.7`, and only
+the `v0.1.7` GHCR tag. GHCR retains its top multi-architecture index plus four
+required child/attestation objects. The five downloaded Release assets match
+their API digests and `SHA256SUMS`. GitHub still reports `immutable=false` and
+no tag ruleset; those settings do not override the repository owner's explicit
+cleanup authority. Later canonical `main` commits must not be presented as the
+`v0.1.7` product SHA or digest.
+
+The current pre-1.0 admission decision now requires successful
+`opl-instance-medopl` deployment and product readback for an exact candidate
+SHA/digest before a formal successor Release. The existing workflow cannot yet
+prove that order because one dispatch builds and publishes the image. A
+deployable non-Release candidate channel and exact-byte promotion remain open,
+along with clean-host installation, the complete live Console
+create/readback/open/delete path, and real external Sub2API
+authentication/balance/usage evidence.
+
+The seven successful `v0.1.1` through `v0.1.7` workflow runs spent 1,361 to
+1,963 seconds in the multi-architecture image build while their publish jobs
+took 44 to 103 seconds. The current source removes target-architecture
+emulation from the compute-heavy Node and Go build stages, cross-compiles the
+four Go binaries for the selected image platform, reuses one Fabric dependency
+build for both Fabric executables, and persists reusable BuildKit layers in the
+GitHub Actions cache. The immutable OCI artifact, protected publish job,
+checksums, attestations, and public readback remain unchanged. An uncached local
+`docker-container` Buildx run on an Arm host completed the full `linux/amd64` +
+`linux/arm64` OCI layout in 66 seconds and emitted both target manifests plus
+their attestations. This proves the optimized build path locally, not GitHub
+runner performance; no successor Release is admitted merely to benchmark it,
+so a hosted post-change Release duration is not yet available.
 
 GitHub security controls were read back on 2026-08-13 for the post-release
 canonical baseline before this documentation merge. Private vulnerability
@@ -279,13 +340,15 @@ Review job, and expanded monthly Dependabot coverage. PR `#261` merged as
 `dependency-review`, `validate`, and the three CodeQL language analyses before
 merge. GitHub now requires strict `validate` and `dependency-review` on `main`.
 The `cloud-release` Environment exists with protected branches as its only
-protection rule and has no Secrets or variables. The release workflow is
-create-only: it rejects an existing Git tag, GitHub Release, or GHCR release tag
-before publication. GitHub currently reports no tag ruleset and the `v0.1.0`
-Release API object has `immutable=false`, so workflow-level no-overwrite and
-digest/product-SHA binding are verified, while platform-enforced release/tag
-immutability remains an explicit gap. These controls and checks do not prove
-dependency risk is zero or Instance production state.
+protection rule and has no Secrets or variables. The Release workflow has only
+the manual `workflow_dispatch` trigger, and both build and publish require the
+original actor and current triggering actor to equal the repository owner. It
+is create-only during ordinary publication and rejects an existing Git tag,
+GitHub Release, or GHCR release tag. PR `#334` merged this owner gate as
+`4060590fde52e9224c45968857729650806c990a`; all ten hosted checks passed and no
+new Release run was triggered. These controls prevent collaborator or
+accidental CI publication, but they do not yet provide the pre-Release candidate
+deployment path.
 
 Security currentness now includes the absorbed S1, Gateway, S2, S3, and narrow
 login-CSRF implementation lanes. PR `#271`
@@ -318,12 +381,14 @@ the canonical release-boundary validator. Current workflow source also emits a
 per-asset `SHA256SUMS`, creates GitHub OIDC-backed provenance attestations for
 the exact Release asset bytes, binds both the signing workflow revision and the
 separately selected product SHA, and verifies downloaded assets against the
-checksum manifest, signer workflow, release identity, and image digest. The published `v0.1.0` predates this
-addition, so the new provenance control is source/test evidence until a later
-release executes it; it is not retroactive evidence for `v0.1.0`.
+checksum manifest, signer workflow, release identity, and image digest. Release
+`v0.1.7` executed this path: hosted run `31879240411` completed both the
+`Attest release assets` and `Read back release` steps, and the published asset
+set includes `SHA256SUMS`. This is exact `v0.1.7` publication evidence, not
+retroactive proof for earlier Releases.
 Clean-host installation and production deployment remain `PRODUCT-RELEASE-01`
 / Instance evidence gaps, not another S4 source lane. These controls are source,
-test, and immutable publication evidence only. CodeQL triage is
+test, and exact `v0.1.7` publication evidence only. CodeQL triage is
 terminal at the classification layer only, with alert disposition explicitly
 unperformed as recorded above.
 
@@ -365,29 +430,30 @@ fresh sealed scan of the absorbed revision. No
 production, private-network, deployment, provider mutation, or live load test
 was performed.
 
-The current `opl-instance-medopl` workflow and manifest have not yet adopted the
-full Fabric capability credential set, so source absorption does not prove a
-usable production operator path or a deployment. GitHub tag/Release/GHCR
-immutability also remains an external-owner gap: current evidence still reports
-no tag ruleset and `v0.1.0` `immutable=false`.
+Fresh Instance source and receipt evidence now prove a bounded first deployment,
+but not full product acceptance. Instance `main` now owns and executes the
+medopl production, acceptance, recovery, diagnostic, render, and rollout tools;
+the current workflow and manifest still do not prove the full Fabric capability
+credential set or a deployable non-Release candidate channel whose exact bytes
+can later be promoted as a formal Cloud Release.
 
-This product repository holds no current instance deployment readback. The
-`opl-instance-medopl` repository now owns the medopl profile and production
-workflow source, but GitHub currently reports no Instance Environment or
-Deployment, and the tracked profile remains `deployed_unverified` with no product
-SHA, release tag, image digest, or receipt. Earlier medopl rollout and provider
-evidence is migration provenance only; current deployment, Runtime, billing,
-rollback, and receipt evidence must be read back from the Instance owner for one
-exact Cloud release.
+The `opl-instance-medopl` repository now owns the medopl profile, production
+workflow source, instance-specific production/acceptance/recovery tools, and
+receipts. Its checked-in first-deployment receipt records a successful TKE
+rollout and public health readback for Cloud release `v0.1.7`, while keeping the
+tracked profile `deployed_unverified`: runtime readiness is `ready=false` and
+Acceptance B remains incomplete. This is Instance-owner evidence, not a Cloud
+deployment claim; current deployment, Runtime, billing, rollback, and receipt
+claims must still be read back from Instance for the exact candidate.
 
-The Cloud GitHub repository still carries the legacy production authority. It
-has six non-release Environments in addition to `cloud-release`, and 2,086
+The Cloud GitHub repository still carries residual legacy production settings.
+It has six non-release Environments in addition to `cloud-release`, and 2,086
 historical Deployment records; 2,079 records name the `production` environment,
 whose current configuration exposes 23 Secret names and 31 variables. These
 records include every Actions job that declared an environment and are not
-evidence of 2,079 server rollouts. The residual authority is migration state, not
-evidence that Cloud still owns medopl deployment, and it cannot be retired until
-the Instance successor and one exact deployment receipt are proven.
+evidence of 2,079 server rollouts. The settings are external cleanup state, not
+an excuse to keep instance tool source in Cloud; the protected `cloud-release`
+environment remains product-release authority and is not a retirement target.
 
 Capacity evidence targets a 1000-provisioned-user data set. It does not claim
 1000 concurrent users, concurrent provisioning, multiple Control Plane
@@ -404,12 +470,12 @@ owned by the current Console implementation under an evolvable experience
 guide. The machine Console UI contract and superseded package/shared-execution
 machine contracts are retired.
 
-The aggregate launch freeze is retired. Focused billing, Control Plane Launch,
-Fabric binding, and Ledger evidence contracts now own its retained hard facts and
-are exercised by real caller tests. The aggregate deployment contract remains a
-migration guard until workflow-family owners retain authorization, identity,
-Secret, immutable-image, mutation-bound, readback, and rollback gates. The open
-sequence and acceptance conditions live only in [the roadmap](./roadmap.md).
+The aggregate launch and deployment guards are retired. Focused billing, Control
+Plane Launch, Fabric binding, Ledger evidence, portable distribution, and
+Instance deployment owners retain their hard facts. The remaining Instance
+acceptance and Cloud external-settings cleanup are operational gaps, not a reason
+to recreate an aggregate machine contract; their acceptance conditions live only
+in [the roadmap](./roadmap.md).
 
 ## Evidence Interpretation
 

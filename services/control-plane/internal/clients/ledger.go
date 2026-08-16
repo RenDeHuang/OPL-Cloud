@@ -19,20 +19,11 @@ import (
 type LedgerClient interface {
 	RecordReceipt(ctx context.Context, input ReceiptInput, idempotencyKey string) (Receipt, error)
 	Receipt(ctx context.Context, receiptID string) (Receipt, error)
-	Artifact(ctx context.Context, artifactID string) (Artifact, error)
-	Review(ctx context.Context, reviewID string) (Review, error)
-	Continuation(ctx context.Context, receiptID string) (map[string]any, error)
 	RecordReconciliation(ctx context.Context, input ReconciliationInput, idempotencyKey string) (ReconciliationResult, error)
 }
 
 type LedgerScopedReceiptClient interface {
 	ReceiptForAccount(ctx context.Context, accountID, workspaceID, receiptID string) (Receipt, error)
-}
-
-type LedgerScopedEvidenceClient interface {
-	ArtifactForWorkspace(ctx context.Context, accountID, workspaceID, artifactID string) (Artifact, error)
-	ReviewForWorkspace(ctx context.Context, accountID, workspaceID, reviewID string) (Review, error)
-	ContinuationForWorkspace(ctx context.Context, accountID, workspaceID, receiptID string) (map[string]any, error)
 }
 
 type LedgerReceiptListClient interface {
@@ -102,35 +93,6 @@ type ReceiptPage struct {
 	Receipts   []Receipt `json:"receipts"`
 	NextCursor string    `json:"nextCursor"`
 	HasMore    bool      `json:"hasMore"`
-}
-
-type Review struct {
-	ReviewID             string         `json:"reviewId"`
-	ReceiptID            string         `json:"receiptId"`
-	OrganizationID       string         `json:"organizationId"`
-	WorkspaceID          string         `json:"workspaceId"`
-	ProjectID            string         `json:"projectId"`
-	TaskID               string         `json:"taskId"`
-	JobID                string         `json:"jobId"`
-	ReviewerRef          string         `json:"reviewerRef"`
-	ReviewerVersion      string         `json:"reviewerVersion"`
-	InputArtifactDigests []string       `json:"inputArtifactDigests"`
-	Checks               map[string]any `json:"checks"`
-	Decision             string         `json:"decision"`
-}
-
-type Artifact struct {
-	ArtifactID     string `json:"artifactId"`
-	ReceiptID      string `json:"receiptId"`
-	OrganizationID string `json:"organizationId"`
-	WorkspaceID    string `json:"workspaceId"`
-	ProjectID      string `json:"projectId"`
-	TaskID         string `json:"taskId"`
-	JobID          string `json:"jobId"`
-	Digest         string `json:"digest"`
-	MediaType      string `json:"mediaType"`
-	SizeBytes      int64  `json:"sizeBytes"`
-	StorageRef     string `json:"storageRef"`
 }
 
 type ledgerHTTPClient struct {
@@ -226,59 +188,6 @@ func (c *ledgerHTTPClient) Ready(ctx context.Context) error {
 		return fmt.Errorf("invalid Ledger readiness response")
 	}
 	return nil
-}
-
-func (c *ledgerHTTPClient) Artifact(ctx context.Context, artifactID string) (Artifact, error) {
-	if c.capabilityKey != "" {
-		return Artifact{}, fmt.Errorf("ledger artifact scope required")
-	}
-	return c.ArtifactForWorkspace(ctx, "", "", artifactID)
-}
-
-func (c *ledgerHTTPClient) ArtifactForWorkspace(ctx context.Context, accountID, workspaceID, artifactID string) (Artifact, error) {
-	var result Artifact
-	err := c.getScoped(ctx, "/ledger/artifacts/"+url.PathEscape(artifactID)+ownerQuery(accountID, workspaceID), accountID, workspaceID, &result)
-	return result, err
-}
-
-func (c *ledgerHTTPClient) Review(ctx context.Context, reviewID string) (Review, error) {
-	if c.capabilityKey != "" {
-		return Review{}, fmt.Errorf("ledger review scope required")
-	}
-	return c.ReviewForWorkspace(ctx, "", "", reviewID)
-}
-
-func (c *ledgerHTTPClient) ReviewForWorkspace(ctx context.Context, accountID, workspaceID, reviewID string) (Review, error) {
-	var result Review
-	err := c.getScoped(ctx, "/ledger/reviews/"+url.PathEscape(reviewID)+ownerQuery(accountID, workspaceID), accountID, workspaceID, &result)
-	return result, err
-}
-
-func (c *ledgerHTTPClient) Continuation(ctx context.Context, receiptID string) (map[string]any, error) {
-	if c.capabilityKey != "" {
-		return nil, fmt.Errorf("ledger continuation scope required")
-	}
-	return c.ContinuationForWorkspace(ctx, "", "", receiptID)
-}
-
-func (c *ledgerHTTPClient) ContinuationForWorkspace(ctx context.Context, accountID, workspaceID, receiptID string) (map[string]any, error) {
-	result := map[string]any{}
-	err := c.getScoped(ctx, "/ledger/receipts/"+url.PathEscape(receiptID)+"/continuation"+ownerQuery(accountID, workspaceID), accountID, workspaceID, &result)
-	return result, err
-}
-
-func ownerQuery(accountID, workspaceID string) string {
-	values := url.Values{}
-	if accountID != "" {
-		values.Set("accountId", accountID)
-	}
-	if workspaceID != "" {
-		values.Set("workspaceId", workspaceID)
-	}
-	if encoded := values.Encode(); encoded != "" {
-		return "?" + encoded
-	}
-	return ""
 }
 
 func (c *ledgerHTTPClient) RecordReconciliation(ctx context.Context, input ReconciliationInput, idempotencyKey string) (ReconciliationResult, error) {

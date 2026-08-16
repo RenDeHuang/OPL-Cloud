@@ -860,7 +860,8 @@ func providerAcceptanceSlotResponse(slot providerAcceptanceSlot, workspace, comp
 	return map[string]any{
 		"id": slot.ID, "accountId": slot.AccountID, "workspaceId": stringValue(workspace["id"]), "workspaceUrl": stringValue(workspace["url"]),
 		"computeAllocationId": stringValue(compute["id"]), "computeProviderId": computeFact.Facts.ProviderID,
-		// Deprecated response-only compatibility projection for tools/provider-acceptance.ts.
+		// Deprecated response-only compatibility projection for the Instance-owned
+		// Provider Acceptance client.
 		// These persisted fields never participate in ProviderFactsBatch validation.
 		"nodePoolId": stringValue(compute["nodePoolId"]),
 		"storageId":  stringValue(storage["id"]), "storageProviderId": storageFact.Facts.ProviderID,

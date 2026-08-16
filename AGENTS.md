@@ -106,10 +106,37 @@ Development follows `parallel_work_serialized_integration`. Multiple roadmap
 `next` lanes may proceed at once when they have distinct owners and write sets.
 Serialize only changes to the same files, one shared contract revision,
 canonical `main`, or a real production mutation. Production qualification and
-instance receipts apply to the exact release being promoted; they must not
-become prerequisites for unrelated local development, CI, or preview work.
-Reusable deployment code and instance-specific application may progress in
-parallel and converge only for deployment qualification and readback.
+Instance receipts apply to the exact candidate being considered for
+publication; they must not become prerequisites for unrelated local
+development, CI, or preview work. Reusable deployment code and instance-specific
+application may progress in parallel and converge only for candidate
+deployment, qualification, and publication readback.
+
+## Product Release Admission
+
+During the current pre-1.0 phase, do not dispatch a formal Product Release as a
+development checkpoint or to obtain deployment evidence. First build a
+replaceable candidate from an exact canonical Cloud SHA and image digest, then
+have `opl-instance-medopl` deploy and qualify that candidate through its own
+protected workflow. A successor Release is admitted only after the Instance
+receipt proves the required deployment and product acceptance for that exact
+SHA/digest, and the formal publication promotes the same image bytes without a
+rebuild.
+
+Only the repository owner may explicitly dispatch the manual Release workflow
+from `main`. A PR, merge, CI run, schedule, collaborator action, deployment
+retry, or failed qualification never authorizes publication. The current
+workflow still combines candidate build with formal publication; until a
+deployable candidate channel and exact-byte promotion are implemented, record
+the gap in `docs/roadmap.md` and do not publish a successor to `v0.1.7`.
+
+Cloud retains reusable product and publication authority;
+`opl-instance-medopl` retains environment, Secret, provider, deployment,
+rollback, acceptance, and receipt authority. Using its receipt as a release
+gate does not authorize Cloud to operate the Instance. The create-only workflow
+prevents accidental version reuse but does not override an explicit repository
+owner cleanup decision. Documentation-only, test-only, CI-performance, and
+Instance-only changes do not independently justify a Product Release.
 
 ## Architecture Adoption And Cohesion
 
