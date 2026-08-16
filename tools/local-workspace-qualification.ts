@@ -288,13 +288,13 @@ export function validateLocalQualificationReceipt(value) {
   if (value.stores?.ownerSeparated !== true || ["controlPlane", "fabric", "ledger"].some((name) => value.stores?.[name] !== "durable")) {
     throw new Error("durable owner-separated stores are required");
   }
-  for (const key of [
-    "accountId", "sub2apiUserId", "launchOperationId", "deleteOperationId", "refundOperationId", "workspaceId", "runtimeId", "keyId",
-    "debitCode", "purchaseReceiptId", "refundReceiptId"
-  ]) {
+  const live = value.qualification.authorityMode === "live";
+  const identityKeys = ["accountId", "sub2apiUserId", "launchOperationId", "workspaceId", "runtimeId", "keyId", "debitCode", "purchaseReceiptId"];
+  if (!live) identityKeys.push("deleteOperationId", "refundOperationId", "refundReceiptId");
+  for (const key of identityKeys) {
     requireString(value.identities?.[key], `identity ${key}`);
   }
-  if (value.identities.refundOperationId !== value.identities.deleteOperationId) {
+  if (!live && value.identities.refundOperationId !== value.identities.deleteOperationId) {
     throw new Error("refund operation must reuse the owner DELETE operation identity");
   }
   if (value.debit?.count !== 1 || !String(value.debit?.code || "").startsWith("opl:") ||
@@ -303,7 +303,8 @@ export function validateLocalQualificationReceipt(value) {
     String(value.debit?.userId || "") !== String(value.identities.sub2apiUserId) || !/^[1-9][0-9]*$/.test(String(value.debit?.amountUsdMicros || ""))) {
     throw new Error("exact debit evidence is invalid");
   }
-  if (!["beforeUsdMicros", "afterUsdMicros", "restoredUsdMicros"].every((key) => /^\d+$/.test(String(value.wallet?.[key] || "")))) {
+  const walletKeys = live ? ["beforeUsdMicros", "afterUsdMicros"] : ["beforeUsdMicros", "afterUsdMicros", "restoredUsdMicros"];
+  if (!walletKeys.every((key) => /^\d+$/.test(String(value.wallet?.[key] || "")))) {
     throw new Error("wallet readback is invalid");
   }
   if (value.qualification.authorityMode === "fixture" &&
@@ -318,27 +319,38 @@ export function validateLocalQualificationReceipt(value) {
     value.receipt?.chargeReference !== value.identities.debitCode || String(value.receipt?.amountUsdMicros || "") !== String(value.debit.amountUsdMicros)) {
     throw new Error("receipt binding is invalid");
   }
-  if (!value.restart?.performed || ["operationStable", "workspaceStable", "runtimeStable", "receiptStable"].some((key) => value.restart?.[key] !== true)) {
-    throw new Error("restart continuity is invalid");
-  }
-  if (value.deletion?.ownerAuthorized !== true || value.deletion?.workspaceAbsent !== true || value.deletion?.runtimeAbsent !== true ||
-    value.deletion?.workspaceKeyAbsent !== true || value.deletion?.fabricSecretAbsent !== true ||
-    value.deletion?.accountId !== value.identities.accountId || value.deletion?.operationId !== value.identities.deleteOperationId ||
-    value.deletion?.refundOperationId !== value.identities.refundOperationId || value.deletion?.workspaceId !== value.identities.workspaceId ||
-    value.deletion?.runtimeId !== value.identities.runtimeId || String(value.deletion?.keyId || "") !== String(value.identities.keyId)) {
-    throw new Error("owner deletion evidence is invalid");
+  if (live) {
+    if (value.restart?.performed !== false || value.deletion?.performed !== false || value.deletion?.mode !== "qualification_owned_cleanup") {
+      throw new Error("live qualification must not perform restart or owner deletion");
+    }
+  } else {
+    if (!value.restart?.performed || ["operationStable", "workspaceStable", "runtimeStable", "receiptStable"].some((key) => value.restart?.[key] !== true)) {
+      throw new Error("restart continuity is invalid");
+    }
+    if (value.deletion?.ownerAuthorized !== true || value.deletion?.workspaceAbsent !== true || value.deletion?.runtimeAbsent !== true ||
+      value.deletion?.workspaceKeyAbsent !== true || value.deletion?.fabricSecretAbsent !== true ||
+      value.deletion?.accountId !== value.identities.accountId || value.deletion?.operationId !== value.identities.deleteOperationId ||
+      value.deletion?.refundOperationId !== value.identities.refundOperationId || value.deletion?.workspaceId !== value.identities.workspaceId ||
+      value.deletion?.runtimeId !== value.identities.runtimeId || String(value.deletion?.keyId || "") !== String(value.identities.keyId)) {
+      throw new Error("owner deletion evidence is invalid");
+    }
   }
   if (["containers", "volumes", "networks"].some((key) => value.residuals?.[key] !== 0)) {
     throw new Error("exact-labelled residual evidence is invalid");
   }
-  if (value.qualification.authorityMode === "fixture" && (value.authorityWriteCounts?.keyCreates !== 1 ||
-    value.authorityWriteCounts?.keyDeletes !== 1 || value.authorityWriteCounts?.debits !== 1 || value.authorityWriteCounts?.refunds !== 1)) {
-    throw new Error("qualification fixture write counts are invalid");
+  const expectedAuthorityWrites = live ? { keyCreates: 1, keyDeletes: 0, debits: 1, refunds: 0 } : { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 1 };
+  if (Object.entries(expectedAuthorityWrites).some(([key, count]) => value.authorityWriteCounts?.[key] !== count)) {
+    throw new Error("qualification authority write counts are invalid");
   }
-  if (value.mutationCounts?.workspaceLaunchPosts !== 1 || value.mutationCounts?.workspaceDeleteRequests !== 1 || value.mutationCounts?.refundPosts !== 0) {
+  const expectedMutationCounts = live
+    ? { accountProvisionPosts: 1, workspaceLaunchPosts: 1, workspaceDeleteRequests: 0, refundPosts: 0 }
+    : { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1, refundPosts: 0 };
+  if (Object.entries(expectedMutationCounts).some(([key, count]) => value.mutationCounts?.[key] !== count)) {
     throw new Error("qualification mutation counts are invalid");
   }
-  if (value.refund?.count !== 1 || !String(value.refund?.code || "").trim() ||
+  if (live) {
+    if (value.refund?.count !== 0 || value.refundReceipt?.count !== 0) throw new Error("live qualification must not refund");
+  } else if (value.refund?.count !== 1 || !String(value.refund?.code || "").trim() ||
     value.refund?.accountId !== value.identities.accountId || value.refund?.operationId !== value.identities.refundOperationId || value.refund?.workspaceId !== value.identities.workspaceId ||
     value.refund?.debitCode !== value.identities.debitCode ||
     String(value.refund?.userId || "") !== String(value.identities.sub2apiUserId) ||
@@ -346,11 +358,11 @@ export function validateLocalQualificationReceipt(value) {
     value.refund?.receiptId !== value.identities.refundReceiptId) {
     throw new Error("exact refund evidence is invalid");
   }
-  if (value.refundReceipt?.count !== 1 || value.refundReceipt?.id !== value.identities.refundReceiptId ||
+  if (!live && (value.refundReceipt?.count !== 1 || value.refundReceipt?.id !== value.identities.refundReceiptId ||
     value.refundReceipt?.type !== "billing.workspace_refunded.v1" ||
     value.refundReceipt?.accountId !== value.identities.accountId || value.refundReceipt?.operationId !== value.identities.refundOperationId || value.refundReceipt?.workspaceId !== value.identities.workspaceId ||
     value.refundReceipt?.chargeReference !== value.identities.debitCode || value.refundReceipt?.refundCode !== value.refund.code ||
-    String(value.refundReceipt?.amountUsdMicros || "") !== String(value.debit.amountUsdMicros)) {
+    String(value.refundReceipt?.amountUsdMicros || "") !== String(value.debit.amountUsdMicros))) {
     throw new Error("refund receipt binding is invalid");
   }
   if (value.usage?.source !== "sub2api" || value.usage?.status !== "available") throw new Error("Sub2API usage readback is invalid");
@@ -516,7 +528,7 @@ async function readQualificationSourceIdentity() {
   return { sha: sha.stdout.trim(), tree: tree.stdout.trim(), clean: status.stdout.trim() === "" };
 }
 
-function sourceData(envelope, expectedSource) {
+export function sourceData(envelope, expectedSource) {
   if (!envelope || envelope.source !== expectedSource || envelope.available !== true || !["available", "empty"].includes(envelope.status)) {
     throw new Error(`${expectedSource} source readback is unavailable`);
   }
@@ -611,16 +623,16 @@ export async function continueWorkspaceDelete(http, path, init, auth, expected, 
   }
 }
 
-export async function login(http, email, password) {
+export async function login(http, email, password, expectedAccountId = "acct-admin") {
   const result = await http.json("/api/auth/login", { method: "POST", body: { email, password } });
   const auth = { cookie: responseCookie(result.response.headers), csrf: result.response.headers.get("x-opl-csrf-token") || "" };
-  if (!auth.cookie || !auth.csrf || result.payload?.user?.accountId !== "acct-admin") {
-    throw new Error("local qualification login did not establish the reserved account session");
+  if (!auth.cookie || !auth.csrf || result.payload?.user?.accountId !== expectedAccountId) {
+    throw new Error("local qualification login did not establish the expected account session");
   }
   return auth;
 }
 
-export async function waitForLaunch(http, operationId, auth) {
+export async function waitForLaunch(http, operationId, auth, wait = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))) {
   let launch;
   for (let attempt = 0; attempt < 180; attempt += 1) {
     launch = (await http.json(`/api/workspace-launches/${encodeURIComponent(operationId)}`, {}, auth)).payload;
@@ -628,7 +640,7 @@ export async function waitForLaunch(http, operationId, auth) {
     if (["manual_review", "failed", "refunded"].includes(String(launch?.status || ""))) {
       throw new Error(`Workspace launch stopped at ${launch.status}/${launch.phase}/${launch.errorCode || "none"}`);
     }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
+    await wait(1000);
   }
   throw new Error("Workspace launch did not reach succeeded within 180 seconds");
 }
@@ -690,6 +702,161 @@ export async function readWorkspaceEvidence(http, auth, operationId, workspaceId
   return { launch, workspace, runtime, receipt };
 }
 
+export async function provisionLocalQualificationAccount(http, adminAuth, { email, password, idempotencyKey }) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const accountId = `acct-${stableID("account", normalizedEmail).slice(0, 18)}`;
+  const operationId = `account-provision-${stableID(idempotencyKey, normalizedEmail).slice(0, 18)}`;
+  const provision = await http.json("/api/operator/accounts", {
+    method: "POST", headers: { "idempotency-key": idempotencyKey },
+    body: { email: normalizedEmail, password, name: "Local qualification" }
+  }, adminAuth, [201]);
+  if (provision.payload?.status !== "succeeded" || provision.payload?.accountId !== accountId || provision.payload?.operationId !== operationId) {
+    throw new Error("local qualification account provision response is invalid");
+  }
+  const matches = [];
+  for (let pageNumber = 1; pageNumber <= 100; pageNumber += 1) {
+    const page = sourceData((await http.json(`/api/operator/accounts?page=${pageNumber}&pageSize=50`, {}, adminAuth)).payload, "control-plane+sub2api");
+    if (!Array.isArray(page?.items) || !Number.isSafeInteger(page?.total) || page.total < 0 || page.page !== pageNumber || page.pageSize !== 50) {
+      throw new Error("local qualification account mapping readback is invalid");
+    }
+    matches.push(...page.items.filter((candidate) => candidate?.accountId === accountId && candidate?.email === normalizedEmail));
+    if (pageNumber >= Math.max(1, Math.ceil(page.total / page.pageSize))) break;
+    if (pageNumber === 100) throw new Error("local qualification account mapping readback is invalid");
+  }
+  if (matches.length !== 1 || matches[0]?.status !== "active" || !/^[1-9][0-9]*$/.test(String(matches[0]?.sub2apiUserId || ""))) {
+    throw new Error("local qualification account mapping readback is invalid");
+  }
+  return { accountId, operationId, mapping: matches[0] };
+}
+
+export async function runLocalWorkspaceJ1HTTPQualification(input) {
+  const {
+    http, adminEmail, adminPassword, qualificationEmail, qualificationPassword, accountProvisionKey,
+    launchKey, operationId, workspaceId, workspaceName, receiptBase, readDebit, readRuntime, cleanup, wait,
+    onStage = () => {}
+  } = input;
+  let cleanupEvidence;
+  let cleanupScope = {};
+  try {
+    onStage("bootstrap_ready");
+    const bootstrap = await http.json("/api/healthz");
+    if (bootstrap.payload?.status !== "ok") throw new Error("local qualification bootstrap is not ready");
+    await consoleReadback(http);
+    onStage("admin_login");
+    const adminAuth = await login(http, adminEmail, adminPassword);
+    onStage("account_provision");
+    const provision = await provisionLocalQualificationAccount(http, adminAuth, {
+      email: qualificationEmail, password: qualificationPassword, idempotencyKey: accountProvisionKey
+    });
+    cleanupScope = { accountId: provision.accountId };
+    onStage("qualification_login");
+    const auth = await login(http, qualificationEmail, qualificationPassword, provision.accountId);
+    const me = sourceData((await http.json("/api/auth/me", {}, auth)).payload, "sub2api");
+    const sub2apiUserId = String(me?.sub2apiUserId || "");
+    if (me?.accountId !== provision.accountId || me?.email !== qualificationEmail.toLowerCase() || me?.role !== "owner" || me?.status !== "active" ||
+      sub2apiUserId !== String(provision.mapping.sub2apiUserId)) {
+      throw new Error("qualification authority identity binding is invalid");
+    }
+    onStage("wallet_usage_baseline");
+    const walletBefore = sourceData((await http.json("/api/gateway/wallet", {}, auth)).payload, "sub2api");
+    const usageBefore = sourceData((await http.json("/api/gateway/usage-summary?period=month", {}, auth)).payload, "sub2api");
+    const beforeMicros = String(walletBefore?.usdMicros || "");
+    if (!/^[1-9][0-9]*$/.test(beforeMicros) || typeof usageBefore?.totalRequests !== "number") {
+      throw new Error("qualification Wallet or Usage baseline is invalid");
+    }
+    const baselineKeys = sourceData((await http.json("/api/gateway/keys?page=1&pageSize=50", {}, auth)).payload, "sub2api");
+    const baselineReceipts = sourceData((await http.json("/api/billing/receipts?limit=50", {}, auth)).payload, "ledger");
+    if ((baselineKeys?.items || []).some((candidate) => candidate?.kind === "workspace") ||
+      (baselineReceipts?.receipts || []).some((candidate) => candidate?.type === "billing.workspace_purchased.v1" || candidate?.workspaceId)) {
+      throw new Error("qualification account baseline is not fresh");
+    }
+    onStage("pricing_preview");
+    const pricing = (await http.json("/api/pricing/preview", {
+      method: "POST", body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
+    }, auth)).payload;
+    const amountUsdMicros = String(pricing?.totalChargeUsdMicros || "");
+    if (pricing?.resourceType !== "workspace" || pricing?.packageId !== "basic" || pricing?.currency !== "USD" ||
+      !/^[1-9][0-9]*$/.test(amountUsdMicros) || BigInt(beforeMicros) < BigInt(amountUsdMicros)) {
+      throw new Error("qualification quote is invalid or wallet is insufficient");
+    }
+    onStage("workspace_launch");
+    const initial = (await http.json("/api/workspace-launches", {
+      method: "POST", headers: { "idempotency-key": launchKey },
+      body: { name: workspaceName, packageId: "basic", sizeGb: 10, autoRenew: false }
+    }, auth, [202])).payload;
+    if (initial?.operationId !== operationId || initial?.workspaceId !== workspaceId) throw new Error("deterministic launch identity is invalid");
+    cleanupScope.workspaceId = workspaceId;
+    const launch = await waitForLaunch(http, operationId, auth, wait);
+    const receiptId = String(launch?.receiptId || "");
+    if (!receiptId) throw new Error("terminal launch receipt identity is missing");
+    onStage("terminal_readback");
+    const evidence = await readWorkspaceEvidence(http, auth, operationId, workspaceId, receiptId);
+    const runtimeImage = await readRuntime({ accountId: provision.accountId, workspaceId });
+    onStage("workspace_open");
+    const opened = await http.request(`/w/${encodeURIComponent(workspaceId)}/`, { redirect: "follow" });
+    if (!opened.response.ok || !opened.text.includes("OPL Workspace READY")) throw new Error("Workspace Runtime open failed");
+
+    onStage("accounting_readback");
+    const [usage, walletAfter, keysPage, historyPage, receiptsPage, debit] = await Promise.all([
+      http.json("/api/gateway/usage-summary?period=month", {}, auth).then((result) => sourceData(result.payload, "sub2api")),
+      http.json("/api/gateway/wallet", {}, auth).then((result) => sourceData(result.payload, "sub2api")),
+      http.json("/api/gateway/keys?page=1&pageSize=50", {}, auth).then((result) => sourceData(result.payload, "sub2api")),
+      http.json("/api/gateway/balance-history?page=1&pageSize=20", {}, auth).then((result) => sourceData(result.payload, "sub2api")),
+      http.json("/api/billing/receipts?limit=50", {}, auth).then((result) => sourceData(result.payload, "ledger")),
+      readDebit({ accountId: provision.accountId, sub2apiUserId, code: evidence.receipt.chargeReference, amountUsdMicros })
+    ]);
+    const keyId = String(launch.workspaceApiKeyId || "");
+    const key = sourceData((await http.json(`/api/gateway/keys/${encodeURIComponent(keyId)}`, {}, auth)).payload, "sub2api");
+    const keyUsage = sourceData((await http.json(`/api/gateway/keys/${encodeURIComponent(keyId)}/usage-summary?period=month`, {}, auth)).payload, "sub2api");
+    const allWorkspaceKeys = (keysPage?.items || []).filter((candidate) => candidate?.kind === "workspace");
+    const workspaceKeys = allWorkspaceKeys.filter((candidate) => String(candidate?.id || "") === keyId);
+    const purchaseReceipts = (receiptsPage?.receipts || []).filter((candidate) => candidate?.type === "billing.workspace_purchased.v1");
+    const debitHistory = (historyPage?.items || []).filter((candidate) => String(candidate?.valueUsdMicros || "") === `-${amountUsdMicros}` && candidate?.status === "used");
+    const afterMicros = String(walletAfter?.usdMicros || "");
+    if (typeof usage?.totalRequests !== "number" || key?.id !== keyId || key?.kind !== "workspace" || key?.status !== "active" ||
+      typeof keyUsage?.totalRequests !== "number" || allWorkspaceKeys.length !== 1 || workspaceKeys.length !== 1 || purchaseReceipts.length !== 1 || purchaseReceipts[0]?.receiptId !== receiptId || debitHistory.length !== 1 ||
+      debit?.count !== 1 || debit?.code !== evidence.receipt.chargeReference || String(debit?.userId) !== sub2apiUserId || String(debit?.amountUsdMicros) !== amountUsdMicros ||
+      !/^\d+$/.test(afterMicros) || BigInt(beforeMicros) - BigInt(amountUsdMicros) !== BigInt(afterMicros) ||
+      evidence.receipt.chargeReference !== debit.code || String(evidence.receipt.totalUsdMicros) !== amountUsdMicros ||
+      evidence.receipt.fulfillment?.runtimeId !== evidence.runtime.runtimeId || String(evidence.receipt.fulfillment?.workspaceApiKeyId || "") !== keyId) {
+      throw new Error("local qualification accounting readback is invalid");
+    }
+
+    onStage("qualification_cleanup");
+    cleanupEvidence = await cleanup({ accountId: provision.accountId, workspaceId });
+    onStage("receipt_validation");
+    const receipt = validateLocalQualificationReceipt({
+      ...receiptBase,
+      images: {
+        ...receiptBase.images,
+        workspace: { ...receiptBase.images.workspace, runningDigest: runtimeImage.runningDigest }
+      },
+      identities: {
+        accountId: provision.accountId, sub2apiUserId, launchOperationId: operationId, workspaceId,
+        runtimeId: evidence.runtime.runtimeId, keyId, debitCode: debit.code, purchaseReceiptId: receiptId
+      },
+      debit: { count: 1, accountId: provision.accountId, operationId, workspaceId, code: debit.code, userId: sub2apiUserId, amountUsdMicros },
+      wallet: { beforeUsdMicros: beforeMicros, afterUsdMicros: afterMicros },
+      receipt: {
+        count: 1, id: receiptId, accountId: provision.accountId, operationId, workspaceId,
+        runtimeId: evidence.runtime.runtimeId, keyId, chargeReference: evidence.receipt.chargeReference,
+        amountUsdMicros: String(evidence.receipt.totalUsdMicros)
+      },
+      restart: { performed: false },
+      deletion: { performed: false, mode: "qualification_owned_cleanup" },
+      residuals: cleanupEvidence,
+      authorityWriteCounts: { keyCreates: 1, keyDeletes: 0, debits: 1, refunds: 0 },
+      mutationCounts: { accountProvisionPosts: 1, workspaceLaunchPosts: 1, workspaceDeleteRequests: 0, refundPosts: 0 },
+      refund: { count: 0 },
+      refundReceipt: { count: 0 },
+      usage: { source: "sub2api", status: "available", totalRequests: usage.totalRequests }
+    });
+    return { receipt, auth, provision, launch, evidence, cleanupEvidence };
+  } finally {
+    if (cleanupEvidence === undefined) await cleanup({ ...cleanupScope, failed: true });
+  }
+}
+
 async function exactLabelIDs(kind, accountId, workspaceId) {
   const base = [
     `label=opl.fabric.provider=local-docker`,
@@ -709,6 +876,24 @@ export async function residualCounts(accountId, workspaceId) {
     exactLabelIDs("networks", accountId, workspaceId)
   ]);
   return { containers: containers.length, volumes: volumes.length, networks: networks.length };
+}
+
+export async function cleanupLocalQualificationResources(accountId, workspaceId, beforeNetworks = async () => {}) {
+  for (const id of await exactLabelIDs("containers", accountId, workspaceId)) {
+    await runProcess("docker", ["stop", "--time", "10", id], { allowFailure: true });
+    const removed = await runProcess("docker", ["rm", id], { allowFailure: true });
+    if (removed.code !== 0) throw new Error("qualification-owned Runtime cleanup failed");
+  }
+  for (const id of await exactLabelIDs("volumes", accountId, workspaceId)) {
+    const removed = await runProcess("docker", ["volume", "rm", id], { allowFailure: true });
+    if (removed.code !== 0) throw new Error("qualification-owned volume cleanup failed");
+  }
+  await beforeNetworks();
+  for (const id of await exactLabelIDs("networks", accountId, workspaceId)) {
+    const removed = await runProcess("docker", ["network", "rm", id], { allowFailure: true });
+    if (removed.code !== 0) throw new Error("qualification-owned network cleanup failed");
+  }
+  return residualCounts(accountId, workspaceId);
 }
 
 async function runtimeImageReadback(accountId, workspaceId, expectedImage, expectedImageID) {
@@ -852,11 +1037,12 @@ export async function runLocalWorkspaceQualification(options) {
   const fabricSecretRoot = join(tempRoot, "fabric-secrets");
   await mkdir(fabricSecretRoot, { recursive: true, mode: 0o700 });
   const envFile = join(tempRoot, "qualification.env");
+  const liveAdmissionOverride = join(tempRoot, "qualification-live-admission.yaml");
   const publicPort = await unusedPort();
   const authorityPort = await unusedPort();
   const registryPort = await unusedPort();
   const subnetOctet = 20 + (Number.parseInt(randomBytes(1).toString("hex"), 16) % 200);
-  const accountId = "acct-admin";
+  let accountId = "acct-admin";
   const fixtureEmail = "local-qualification@example.test";
   const fixturePassword = `Local-${randomBytes(18).toString("base64url")}-Aa1!`;
   const adminEmail = options.authorityMode === "live" ? liveAuthority.qualificationUserEmail : fixtureEmail;
@@ -864,8 +1050,8 @@ export async function runLocalWorkspaceQualification(options) {
   const userToken = randomBytes(32).toString("hex");
   const authorityToken = randomBytes(32).toString("hex");
   const launchKey = `local-qualification:${suffix}`;
-  const operationId = `workspace-launch-${stableID(accountId, launchKey).slice(0, 18)}`;
-  const workspaceId = `ws-${stableID("workspace-launch-v2", accountId, operationId).slice(0, 18)}`;
+  let operationId = `workspace-launch-${stableID(accountId, launchKey).slice(0, 18)}`;
+  let workspaceId = `ws-${stableID("workspace-launch-v2", accountId, operationId).slice(0, 18)}`;
   const sourceBefore = await readQualificationSourceIdentity();
   validateQualificationSourceIdentity(sourceBefore, sourceBefore, options.sourceSha);
   const sourceTree = sourceBefore.tree;
@@ -892,6 +1078,7 @@ export async function runLocalWorkspaceQualification(options) {
   const composePrefix = ["compose", "--project-name", project, "--env-file", envFile];
   const qualificationCompose = options.authorityMode === "fixture" ? "deploy/portable/compose.local-qualification.yaml" : "deploy/portable/compose.local-qualification-live.yaml";
   for (const file of [...baseComposeFiles, qualificationCompose]) composePrefix.push("-f", file);
+  if (options.authorityMode === "live") composePrefix.push("-f", liveAdmissionOverride);
   let composeEnvironment = process.env;
   const compose = (args, settings = {}) => runProcess("docker", [...composePrefix, ...args], { ...settings, env: composeEnvironment });
 
@@ -951,6 +1138,13 @@ export async function runLocalWorkspaceQualification(options) {
       ["OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES", workspaceImage],
       ["OPL_FABRIC_LOCAL_DOCKER_HOST", "127.0.0.1"]
     ];
+    if (options.authorityMode === "live") {
+      accountId = `acct-${stableID("account", adminEmail.toLowerCase()).slice(0, 18)}`;
+      operationId = `workspace-launch-${stableID(accountId, launchKey).slice(0, 18)}`;
+      workspaceId = `ws-${stableID("workspace-launch-v2", accountId, operationId).slice(0, 18)}`;
+      envEntries.push(["OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS", accountId]);
+      await writeFile(liveAdmissionOverride, "services:\n  control-plane:\n    environment:\n      OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS: ${OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS:?Set the task-owned qualification account}\n", { mode: 0o600 });
+    }
     composeEnvironment = qualificationComposeEnvironment(process.env, envEntries);
     const envFileEntries = qualificationEnvFileEntries(envEntries, options);
     await writeFile(envFile, `${envFileEntries.map(([key, value]) => `${key}=${value}`).join("\n")}\n`, { mode: 0o600 });
@@ -970,6 +1164,61 @@ export async function runLocalWorkspaceQualification(options) {
     const stores = await verifyStores(compose);
     const http = createHTTP(`http://127.0.0.1:${publicPort}`);
 
+    if (options.authorityMode === "live") {
+      finalReceipt = (await runLocalWorkspaceJ1HTTPQualification({
+        http,
+        adminEmail: liveAuthority.adminEmail,
+        adminPassword: liveAuthority.adminPassword,
+        qualificationEmail: adminEmail,
+        qualificationPassword: adminPassword,
+        accountProvisionKey: `local-qualification-account:${stableID(adminEmail.toLowerCase()).slice(0, 24)}`,
+        launchKey,
+        operationId,
+        workspaceId,
+        workspaceName: `Local qualification ${suffix}`,
+        wait: (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
+        onStage: (name) => { stage = name; },
+        readRuntime: async ({ accountId: exactAccountId, workspaceId: exactWorkspaceId }) => {
+          const runtime = await runtimeImageReadback(exactAccountId, exactWorkspaceId, workspaceImage, workspaceInspection.Id);
+          return { runningDigest: runtime.Image };
+        },
+        readDebit: async ({ sub2apiUserId, code, amountUsdMicros }) => {
+          const readback = await liveAuthorityAdjustmentReadback(
+            liveAuthority.baseURL, liveAuthority.adminEmail, liveAuthority.adminPassword,
+            sub2apiUserId, code, `-${amountUsdMicros}`
+          );
+          if (readback.valueUsdMicros !== `-${amountUsdMicros}`) throw new Error("live Sub2API debit amount readback is invalid");
+          return { code: readback.code, userId: readback.userId, amountUsdMicros, count: readback.count };
+        },
+        cleanup: async (scope) => {
+          if (!scope?.accountId || !scope?.workspaceId) return { containers: 0, volumes: 0, networks: 0 };
+          const counts = await cleanupLocalQualificationResources(scope.accountId, scope.workspaceId, async () => {
+            await compose(["down", "--volumes", "--remove-orphans", "--timeout", "30"], { allowFailure: false });
+          });
+          await rm(fabricSecretRoot, { recursive: true, force: true });
+          await mkdir(fabricSecretRoot, { recursive: true, mode: 0o700 });
+          return counts;
+        },
+        receiptBase: {
+          schemaVersion: 1,
+          status: "READY",
+          startedAt,
+          completedAt: new Date().toISOString(),
+          source: { sha: options.sourceSha, tree: sourceTree },
+          images: {
+            cloud: { input: cloudImage, repoDigest: cloudImage, digest: cloudDigest, runningDigest: cloudInspection.Id },
+            workspace: { input: workspaceImage, repoDigest: workspaceImage, digest: workspaceDigest, runningDigest: workspaceInspection.Id }
+          },
+          command: receiptCommand({ ...options, cloudImage, workspaceImage }),
+          processes: { console: "ready", controlPlane: "ready", fabric: "ready", ledger: "ready" },
+          stores,
+          productMatrix,
+          qualification: { authorityMode: "live", p0Ready: productMatrix?.zeroSkip === true },
+          deferred: [...deferredCloudGates]
+        }
+      })).receipt;
+      validateQualificationSourceIdentity(sourceBefore, await readQualificationSourceIdentity(), options.sourceSha);
+    } else {
     stage = "console_and_login";
     await consoleReadback(http);
     auth = await login(http, adminEmail, adminPassword);
@@ -1155,6 +1404,7 @@ export async function runLocalWorkspaceQualification(options) {
       qualification: { authorityMode: options.authorityMode, p0Ready: options.authorityMode === "live" && productMatrix?.zeroSkip === true },
       deferred: [...deferredCloudGates]
     });
+    }
   } catch (error) {
     failure = error;
   } finally {
