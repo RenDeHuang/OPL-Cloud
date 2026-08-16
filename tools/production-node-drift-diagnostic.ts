@@ -3,6 +3,7 @@ import { createHash, createHmac } from "node:crypto";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { parseArgs } from "node:util";
 
 const OPERATION_MODE = "normal_launch_node_drift_get_only";
 const APPROVED_CUSTOMER_EMAIL_DIGEST = "sha256:d241839999cab1dbb0fc96c4dda28f9433ccfa68e12246e1b2ed0726d19ec376";
@@ -598,13 +599,8 @@ function safeFailureArtifact(error = new Error("node_drift_collection_failed"), 
   };
 }
 
-function cliArgs(argv) {
-  const result = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    if (!argv[index].startsWith("--")) continue;
-    result[argv[index].slice(2)] = argv[index + 1] && !argv[index + 1].startsWith("--") ? argv[++index] : "true";
-  }
-  return result;
+function optionValue(value) {
+  return value === undefined ? undefined : String(value || "true");
 }
 
 async function httpJSON(url, options = {}) {
@@ -836,7 +832,7 @@ async function collectAudit(env, nodeName, operationUpdatedAt) {
 }
 
 function launchOperationID(args) {
-  const launchOperationId = String(args["launch-operation-id"] || "");
+  const launchOperationId = String(optionValue(args["launch-operation-id"]) || "");
   if (!/^workspace-launch-[A-Za-z0-9-]+$/.test(launchOperationId)) throw new Error("node_drift_launch_operation_invalid");
   return launchOperationId;
 }
@@ -900,14 +896,26 @@ async function collect(args, env) {
 }
 
 async function main() {
-  const args = cliArgs(process.argv.slice(2));
-  if (args.validate === "true") {
-    assertNodeDriftDiagnosticArtifact(JSON.parse(await readFile(args.artifact, "utf8")));
+  const { values: args } = parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      validate: { type: "boolean" },
+      artifact: { type: "string" },
+      out: { type: "string" },
+      identity: { type: "string" },
+      "identity-out": { type: "string" },
+      "launch-operation-id": { type: "string" }
+    },
+    strict: false,
+    allowPositionals: true
+  });
+  if (args.validate === true) {
+    assertNodeDriftDiagnosticArtifact(JSON.parse(await readFile(optionValue(args.artifact), "utf8")));
     return;
   }
-  const outputPath = String(args.out || "");
+  const outputPath = String(optionValue(args.out) || "");
   if (!outputPath.startsWith("/") || !outputPath.includes("production-node-drift-diagnostic")) throw new Error("node_drift_output_path_invalid");
-  const identityOutputPath = String(args["identity-out"] || "");
+  const identityOutputPath = String(optionValue(args["identity-out"]) || "");
   if (identityOutputPath) {
     if (!identityOutputPath.startsWith("/") || !identityOutputPath.includes("production-node-drift-diagnostic-raw/control-plane-identity.json")) {
       throw new Error("node_drift_control_plane_preflight_path_invalid");

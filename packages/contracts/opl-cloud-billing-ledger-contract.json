@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "owner": "OPL Control Plane",
   "purpose": "One-charge Workspace purchase and renewal, fulfillment, entitlement, receipt, wallet-adjustment reference, and reconciliation ownership contract.",
   "state": "current",
@@ -254,56 +254,9 @@
     ]
   },
   "reconciliationPolicy": {
-    "owner": "opl-ledger",
-    "recordApi": "POST /ledger/reconciliation",
+    "reportSchemaContract": "opl-cloud-evidence-ledger-contract.json#reconciliationReportV1",
     "exceptionOnly": true,
     "mayBlockNewPurchases": true,
-    "requestUsageCopied": false,
-    "idempotencyKey": "required_non_blank",
-    "requiredReportFields": ["id", "status", "counts", "exceptions"],
-    "statuses": ["ok", "mismatch"],
-    "counts": {
-      "requiredFields": ["billingOperations", "matched", "exceptions"],
-      "allFields": "non_negative_integer"
-    },
-    "exceptions": {
-      "type": "array",
-      "requiredFields": ["resourceType", "resourceId", "code"],
-      "resourceTypes": ["compute", "storage", "workspace"],
-      "resourceId": "non_empty_opaque_string",
-      "codes": [
-        "billing_operation_invalid",
-        "sub2api_balance_history_unavailable",
-        "sub2api_charge_missing",
-        "sub2api_charge_mismatch",
-        "fabric_operations_unavailable",
-        "fabric_operation_missing",
-        "fabric_operation_mismatch",
-        "ledger_receipts_unavailable",
-        "ledger_receipt_missing",
-        "ledger_receipt_mismatch"
-      ]
-    },
-    "workspaceRenewalAuthority": {
-      "customerOperationCardinality": 1,
-      "balanceFact": "one_combined_sub2api_charge",
-      "providerFacts": ["compute_renewal", "storage_renewal"],
-      "receiptType": "billing.workspace_renewed.v1"
-    },
-    "consistencyRules": [
-      "counts.exceptions equals exceptions length",
-      "counts.billingOperations equals counts.matched plus unique exception resource count",
-      "ok has zero exceptions and does not block new Workspaces",
-      "mismatch has at least one exception and blocks new Workspaces"
-    ],
-    "result": {
-      "identity": "id and status equal the submitted report",
-      "report": "structurally_equal_to_submitted_report",
-      "blockNewWorkspaces": "status_equals_mismatch",
-      "reason": "operator_reconciliation"
-    },
-    "validationOrder": "validate before hash, idempotency lookup, or persistence",
-    "replayRule": "validate persisted report and result guard before return",
-    "forbiddenContentRule": "same recursive case-insensitive exact-field rule as billing receipts"
+    "requestUsageCopied": false
   }
 }

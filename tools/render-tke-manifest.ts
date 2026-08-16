@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { parseArgs } from "node:util";
 
 const DEPLOY_VALUE_KEYS = [
   "OPL_K8S_NAMESPACE",
@@ -159,16 +160,8 @@ export function renderTkeManifest({ manifest, values, skipSharedIngress = false 
   return rendered;
 }
 
-function cliArgs(argv) {
-  const args = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const item = argv[index];
-    if (!item.startsWith("--")) continue;
-    const key = item.slice(2);
-    const value = argv[index + 1] && !argv[index + 1].startsWith("--") ? argv[++index] : "true";
-    args[key] = value;
-  }
-  return args;
+function optionValue(value) {
+  return value === undefined ? undefined : String(value || "true");
 }
 
 export async function runRenderTkeManifestCli({
@@ -176,15 +169,25 @@ export async function runRenderTkeManifestCli({
   env = process.env,
   stdout = process.stdout
 } = {}) {
-  const args = cliArgs(argv);
-  if (!args.manifest) throw new Error("manifest_path_required");
-  const outputPath = args.out;
-  const manifest = JSON.parse(await readFile(args.manifest, "utf8"));
+  const { values: args } = parseArgs({
+    args: argv,
+    options: {
+      manifest: { type: "string" },
+      out: { type: "string" },
+      "skip-shared-ingress": { type: "boolean" }
+    },
+    strict: false,
+    allowPositionals: true
+  });
+  const manifestPath = optionValue(args.manifest);
+  if (!manifestPath) throw new Error("manifest_path_required");
+  const outputPath = optionValue(args.out);
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   const values = Object.fromEntries(DEPLOY_VALUE_KEYS.map((key) => [key, env[key]]));
   const rendered = renderTkeManifest({
     manifest,
     values,
-    skipSharedIngress: args["skip-shared-ingress"] === "true"
+    skipSharedIngress: args["skip-shared-ingress"] === true
   });
   const output = `${JSON.stringify(rendered, null, 2)}\n`;
   if (outputPath) {
