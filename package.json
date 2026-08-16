@@ -10,7 +10,6 @@
     "staging:local": "node tools/start-staging-local-api.ts",
     "staging:ui": "node tools/start-staging-local-ui.ts",
     "staging:readiness": "node tools/staging-readiness.ts",
-    "staging:e2e": "node tools/staging-local-verifier.ts",
     "start": "cd services/control-plane && go run ./cmd/control-plane",
     "test": "npm run test:source",
     "test:source": "node --test \"tests/contracts/*.test.ts\" \"tests/tools/*.test.ts\" tests/ui/console-model.test.ts tests/ui/console-source-adapters.test.ts tests/ui/pricing-preview.test.ts tests/ui/react-ui-primitives.test.ts",
@@ -36,8 +35,7 @@
     "vite": "^6.0.7"
   },
   "overrides": {
-    "lodash": "4.18.1",
-    "path-to-regexp": "^8.4.0"
+    "lodash": "4.18.1"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",
