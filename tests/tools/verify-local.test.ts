@@ -17,6 +17,7 @@ import {
   productMatrixStages,
   productMatrixVerticalPackage,
   productMatrixVerticalTests,
+  parseNodeTAPOutput,
   runVerification
 } from "../../tools/verify-local.ts";
 
@@ -110,6 +111,56 @@ test("Product matrix receipt is derived from exact passed packages and tests", (
   for (const packageName of productMatrixRequiredPackages) {
     assert.ok(receipt.packages.some((entry) => entry.name === packageName));
   }
+});
+
+test("vertical verification parses Node's supported TAP reporter without losing evidence", () => {
+  const output = [
+    "TAP version 13",
+    "# Subtest: E0 fresh PostgreSQL owners and restart count zero",
+    "ok 1 - E0 fresh PostgreSQL owners and restart count zero",
+    "# Subtest: E1 canonical nine-stage launch is exactly once",
+    "ok 2 - E1 canonical nine-stage launch is exactly once",
+    "# Subtest: E2 intermediate and succeeded restart preserve identities",
+    "ok 3 - E2 intermediate and succeeded restart preserve identities",
+    "# Subtest: E3 runtime status and workspace open are authoritative",
+    "ok 4 - E3 runtime status and workspace open are authoritative",
+    "# Subtest: E5 launch pending unknown continuation preserves one operation",
+    "ok 5 - E5 launch pending unknown continuation preserves one operation",
+    "# Subtest: E6 fixture authority launch cardinalities and bindings are exact",
+    "ok 6 - E6 fixture authority launch cardinalities and bindings are exact",
+    "# Subtest: E7 qualification-owned exact-label cleanup leaves zero residuals",
+    "ok 7 - E7 qualification-owned exact-label cleanup leaves zero residuals",
+    "1..7",
+    "# tests 7",
+    "# pass 7",
+    "# fail 0",
+    "# skipped 0",
+    "# todo 0"
+  ].join("\n");
+
+  assert.deepEqual(parseNodeTAPOutput(output), {
+    passed: productMatrixVerticalTests,
+    failed: 0,
+    skipped: 0
+  });
+});
+
+test("vertical verification keeps TAP failure and skip evidence visible", () => {
+  assert.deepEqual(parseNodeTAPOutput([
+    "TAP version 13",
+    "not ok 1 - E0 fresh PostgreSQL owners and restart count zero",
+    "ok 2 - E1 canonical nine-stage launch is exactly once # SKIP unavailable",
+    "1..2",
+    "# tests 2",
+    "# pass 1",
+    "# fail 1",
+    "# skipped 1",
+    "# todo 0"
+  ].join("\n")), {
+    passed: ["E1 canonical nine-stage launch is exactly once"],
+    failed: 1,
+    skipped: 1
+  });
 });
 
 test("Product matrix receipt rejects dirty source drift and incomplete test evidence", () => {
