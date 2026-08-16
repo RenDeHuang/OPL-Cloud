@@ -1077,6 +1077,16 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if runner.gatewayConnectCalls != 1 {
 		t.Fatalf("canonical readback repeated gateway network connect: %d", runner.gatewayConnectCalls)
 	}
+	attachmentFacts, err := restartedService.ProviderFactsBatch(ctx, ProviderFactsBatchInput{Items: []ProviderFactInput{{
+		AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "attachment", ResourceID: attachment.Resources.AttachmentID,
+	}}})
+	if err != nil || len(attachmentFacts.Items) != 1 || !attachmentFacts.Items[0].Available {
+		t.Fatalf("canonical attachment facts after restart=%#v err=%v", attachmentFacts, err)
+	}
+	detached, err := restartedService.DetachStorageAttachment(ctx, attachment.Resources.AttachmentID)
+	if err != nil || detached.Status != "detached" {
+		t.Fatalf("canonical attachment detach after restart=%#v err=%v", detached, err)
+	}
 
 	for action, operationID := range mutationIDs {
 		operation, err := store.Get(ctx, operationID)

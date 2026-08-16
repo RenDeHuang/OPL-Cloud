@@ -2344,6 +2344,153 @@ func TestServiceReplaysResourceStateFromOperationStore(t *testing.T) {
 	}
 }
 
+type canonicalAttachmentReplayFixture struct {
+	operations []FabricOperation
+	binding    WorkspaceLaunchStageBinding
+	attachment StorageAttachment
+}
+
+type countingCanonicalDetachProvider struct {
+	testProvider
+	detachCalls atomic.Int32
+}
+
+func (p *countingCanonicalDetachProvider) DetachStorageAttachment(_ context.Context, attachment StorageAttachment) (StorageAttachment, error) {
+	p.detachCalls.Add(1)
+	attachment.Status = "detached"
+	return attachment, nil
+}
+
+func canonicalAttachmentReplayFixtureFor(t *testing.T, providerProfile, suffix string) canonicalAttachmentReplayFixture {
+	t.Helper()
+	parentBinding := testWorkspaceLaunchBinding("attachment", "ensure_attachment", "launch-canonical-attachment:attachment")
+	parentBinding.AccountID, parentBinding.WorkspaceID = "acct-"+suffix, "ws-"+suffix
+	parentBinding.LaunchOperationID = "launch-" + suffix
+	parentBinding.FabricOperationID = parentBinding.LaunchOperationID + ":attachment"
+	parentBinding.IdempotencyKey = parentBinding.LaunchOperationID + ":attachment"
+	parentBinding.RequestHash = hashInput(map[string]string{"launch": parentBinding.LaunchOperationID, "stage": parentBinding.Stage})
+	attachment := StorageAttachment{
+		ID: workspaceLaunchAttachmentID(parentBinding), OperationID: parentBinding.IdempotencyKey, WorkspaceID: parentBinding.WorkspaceID,
+		ComputeID: "ca_" + suffix, VolumeID: "vol_" + suffix, Status: "attached", Provider: providerProfile,
+		ProviderAttachmentID: "provider/attachment-" + suffix, ProviderRequestID: "provider-attachment-" + suffix,
+	}
+	now := time.Date(2026, 8, 16, 6, 0, 0, 0, time.UTC)
+	parent := newOperation(parentBinding.Action, "workspace_launch_stage", parentBinding.FabricOperationID, parentBinding.AccountID, parentBinding.WorkspaceID, parentBinding.IdempotencyKey, parentBinding.RequestHash, now)
+	parent.ID, parent.OperationID, parent.Provider, parent.Status = parentBinding.FabricOperationID, parentBinding.FabricOperationID, providerProfile, "succeeded"
+	parent.CreatedAt, parent.FinishedAt = now, now
+	if err := bindLaunchStageOperation(&parent, &parentBinding); err != nil {
+		t.Fatal(err)
+	}
+	state, err := encodeLocalDockerWorkspaceLaunchState(localDockerWorkspaceLaunchState{Attachment: &attachment})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setWorkspaceLaunchStageRecord(&parent, workspaceLaunchStageRecord{
+		SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: providerProfile, PreflightBindingRef: "preflight-" + suffix,
+		RequestResources: WorkspaceLaunchResources{ComputeAllocationID: attachment.ComputeID, ComputeBindingRef: parentBinding.LaunchOperationID + ":compute", StorageID: attachment.VolumeID, StorageBindingRef: parentBinding.LaunchOperationID + ":storage"},
+		Resources:        WorkspaceLaunchResources{ComputeAllocationID: attachment.ComputeID, ComputeBindingRef: parentBinding.LaunchOperationID + ":compute", StorageID: attachment.VolumeID, StorageBindingRef: parentBinding.LaunchOperationID + ":storage", AttachmentID: attachment.ID, AttachmentBindingRef: parentBinding.FabricOperationID},
+		ProviderState:    state,
+	})
+	compute := ComputeAllocation{ID: attachment.ComputeID, AccountID: parentBinding.AccountID, WorkspaceID: parentBinding.WorkspaceID, Status: "running"}
+	computeOperation := newOperation("create_compute_allocation", "compute_allocation", compute.ID, compute.AccountID, compute.WorkspaceID, "canonical-attachment-compute-"+suffix, "compute-request-"+suffix, now.Add(time.Second))
+	computeOperation.ID, computeOperation.Status = "fop_compute_"+stableSuffix(suffix)[:16], "succeeded"
+	computeOperation.CreatedAt, computeOperation.FinishedAt = now.Add(time.Second), now.Add(time.Second)
+	fillOperationResource(&computeOperation, compute)
+	volume := StorageVolume{ID: attachment.VolumeID, AccountID: parentBinding.AccountID, WorkspaceID: parentBinding.WorkspaceID, Status: "ready"}
+	volumeOperation := newOperation("create_storage_volume", "storage_volume", volume.ID, volume.AccountID, volume.WorkspaceID, "canonical-attachment-storage-"+suffix, "storage-request-"+suffix, now.Add(2*time.Second))
+	volumeOperation.ID, volumeOperation.Status = "fop_storage_"+stableSuffix(suffix)[:16], "succeeded"
+	volumeOperation.CreatedAt, volumeOperation.FinishedAt = now.Add(2*time.Second), now.Add(2*time.Second)
+	fillOperationResource(&volumeOperation, volume)
+	return canonicalAttachmentReplayFixture{operations: []FabricOperation{parent, computeOperation, volumeOperation}, binding: parentBinding, attachment: attachment}
+}
+
+func TestServiceReplaysCanonicalLaunchAttachmentFromParentAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	provider := &countingCanonicalDetachProvider{}
+	fixture := canonicalAttachmentReplayFixtureFor(t, provider.Descriptor().Name, "canonical-attachment")
+	for _, operation := range fixture.operations {
+		if err := store.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	restarted := NewServiceWithOperationStore(provider, store)
+	facts, err := restarted.ProviderFactsBatch(ctx, ProviderFactsBatchInput{Items: []ProviderFactInput{{
+		AccountID: fixture.binding.AccountID, WorkspaceID: fixture.binding.WorkspaceID, ResourceType: "attachment", ResourceID: fixture.attachment.ID,
+	}}})
+	if err != nil || len(facts.Items) != 1 || !facts.Items[0].Available {
+		t.Fatalf("canonical parent attachment facts=%#v err=%v", facts, err)
+	}
+	if detached, err := restarted.DetachStorageAttachment(ctx, fixture.attachment.ID); err != nil || detached.Status != "detached" {
+		t.Fatalf("canonical parent attachment detach=%#v err=%v", detached, err)
+	}
+	if provider.detachCalls.Load() != 1 {
+		t.Fatalf("canonical attachment provider detach calls=%d", provider.detachCalls.Load())
+	}
+	replayed := NewServiceWithOperationStore(provider, store)
+	if detached, err := replayed.DetachStorageAttachment(ctx, fixture.attachment.ID); err != nil || detached.Status != "detached" || provider.detachCalls.Load() != 1 {
+		t.Fatalf("replayed canonical detach=%#v err=%v providerCalls=%d", detached, err, provider.detachCalls.Load())
+	}
+}
+
+func TestCanonicalLaunchAttachmentReplayFailsClosedOnConflictOrUnknownDetach(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*testing.T, *canonicalAttachmentReplayFixture)
+	}{
+		{name: "provider state identity drift", mutate: func(t *testing.T, fixture *canonicalAttachmentReplayFixture) {
+			record, ok := decodeWorkspaceLaunchStageRecord(fixture.operations[0])
+			if !ok {
+				t.Fatal("decode canonical attachment parent")
+			}
+			var state localDockerWorkspaceLaunchState
+			if json.Unmarshal(record.ProviderState, &state) != nil || state.Attachment == nil {
+				t.Fatal("decode canonical attachment state")
+			}
+			state.Attachment.WorkspaceID += "-drift"
+			var err error
+			record.ProviderState, err = encodeLocalDockerWorkspaceLaunchState(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			setWorkspaceLaunchStageRecord(&fixture.operations[0], record)
+		}},
+		{name: "duplicate canonical parent", mutate: func(_ *testing.T, fixture *canonicalAttachmentReplayFixture) {
+			fixture.operations = append(fixture.operations, fixture.operations[0])
+		}},
+		{name: "unknown prior detach", mutate: func(_ *testing.T, fixture *canonicalAttachmentReplayFixture) {
+			operation := newOperation("detach_storage_attachment", "storage_attachment", fixture.attachment.ID, "", fixture.attachment.WorkspaceID, "", hashInput(map[string]string{"id": fixture.attachment.ID}), time.Now().UTC())
+			operation.Status = "failed"
+			fillOperationResource(&operation, fixture.attachment)
+			fixture.operations = append(fixture.operations, operation)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := NewMemoryOperationStore()
+			provider := &countingCanonicalDetachProvider{}
+			fixture := canonicalAttachmentReplayFixtureFor(t, provider.Descriptor().Name, "canonical-conflict-"+stableSuffix(test.name)[:8])
+			test.mutate(t, &fixture)
+			for _, operation := range fixture.operations {
+				if err := store.Append(ctx, operation); err != nil {
+					t.Fatal(err)
+				}
+			}
+			restarted := NewServiceWithOperationStore(provider, store)
+			facts, err := restarted.ProviderFactsBatch(ctx, ProviderFactsBatchInput{Items: []ProviderFactInput{{
+				AccountID: fixture.binding.AccountID, WorkspaceID: fixture.binding.WorkspaceID, ResourceType: "attachment", ResourceID: fixture.attachment.ID,
+			}}})
+			if err != nil || len(facts.Items) != 1 || facts.Items[0].Available || facts.Items[0].ErrorCode != "provider_fact_identity_mismatch" {
+				t.Fatalf("conflicted attachment facts=%#v err=%v", facts, err)
+			}
+			if _, err := restarted.DetachStorageAttachment(ctx, fixture.attachment.ID); err == nil || err.Error() != "storage_attachment_not_found" || provider.detachCalls.Load() != 0 {
+				t.Fatalf("conflicted attachment detach err=%v providerCalls=%d", err, provider.detachCalls.Load())
+			}
+		})
+	}
+}
+
 type countingAttachmentProvider struct {
 	testProvider
 	calls atomic.Int32

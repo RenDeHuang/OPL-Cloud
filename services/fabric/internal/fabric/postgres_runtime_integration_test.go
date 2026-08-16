@@ -1453,6 +1453,41 @@ func TestPostgresWorkspaceRuntimeIdentityCandidatesCanonicalRestart(t *testing.T
 	}
 }
 
+func TestPostgresServiceReplaysCanonicalLaunchAttachmentFromParentAfterRestart(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx := context.Background()
+	first, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &countingCanonicalDetachProvider{}
+	fixture := canonicalAttachmentReplayFixtureFor(t, provider.Descriptor().Name, "canonical-attachment-pg")
+	for _, operation := range fixture.operations {
+		if err := first.Append(ctx, operation); err != nil {
+			_ = first.client.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := first.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restartedStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restartedStore.client.Close()
+	restarted := NewServiceWithOperationStore(provider, restartedStore)
+	facts, err := restarted.ProviderFactsBatch(ctx, ProviderFactsBatchInput{Items: []ProviderFactInput{{
+		AccountID: fixture.binding.AccountID, WorkspaceID: fixture.binding.WorkspaceID, ResourceType: "attachment", ResourceID: fixture.attachment.ID,
+	}}})
+	if err != nil || len(facts.Items) != 1 || !facts.Items[0].Available {
+		t.Fatalf("PostgreSQL canonical attachment facts=%#v err=%v", facts, err)
+	}
+	if detached, err := restarted.DetachStorageAttachment(ctx, fixture.attachment.ID); err != nil || detached.Status != "detached" || provider.detachCalls.Load() != 1 {
+		t.Fatalf("PostgreSQL canonical attachment detach=%#v err=%v providerCalls=%d", detached, err, provider.detachCalls.Load())
+	}
+}
+
 func fabricTestDatabaseURL(t *testing.T) string {
 	t.Helper()
 	databaseURL := os.Getenv("FABRIC_TEST_DATABASE_URL")
