@@ -124,16 +124,76 @@ type remoteClaimResponse struct {
 }
 
 type remoteCredentialResponse struct {
+	ProtocolVersion    string `json:"protocol_version"`
+	PairingID          string `json:"pairing_id"`
+	DeviceID           string `json:"device_id"`
+	Role               string `json:"role"`
+	Provider           string `json:"provider"`
+	SDKAppID           int64  `json:"sdk_app_id"`
+	ProviderUserID     string `json:"provider_user_id"`
+	PeerProviderUserID string `json:"peer_provider_user_id"`
+	UserSig            string `json:"usersig"`
+	UserSigExpiresAt   string `json:"usersig_expires_at"`
+	State              string `json:"state"`
+}
+
+// Internal pairing responses retain provider and seat details for broker
+// operations. Route-specific responses below are the only HTTP wire shapes.
+type remoteCreateHTTPResponse struct {
 	ProtocolVersion  string `json:"protocol_version"`
 	PairingID        string `json:"pairing_id"`
-	DeviceID         string `json:"device_id"`
-	Role             string `json:"role"`
-	Provider         string `json:"provider"`
-	SDKAppID         int64  `json:"sdk_app_id"`
-	ProviderUserID   string `json:"provider_user_id"`
-	UserSig          string `json:"usersig"`
-	UserSigExpiresAt string `json:"usersig_expires_at"`
-	State            string `json:"state"`
+	DesktopPairToken string `json:"desktop_pair_token"`
+	ClaimSecret      string `json:"claim_secret"`
+	ManualCode       string `json:"manual_code"`
+	ExpiresAt        string `json:"expires_at"`
+	BrokerURL        string `json:"broker_url"`
+}
+
+type remoteClaimHTTPResponse struct {
+	ProtocolVersion      string `json:"protocol_version"`
+	PairingID            string `json:"pairing_id"`
+	IOSClaimToken        string `json:"ios_claim_token"`
+	State                string `json:"state"`
+	AuthenticationString string `json:"authentication_string"`
+	ExpiresAt            string `json:"expires_at"`
+}
+
+type remoteConfirmHTTPResponse struct {
+	ProtocolVersion string `json:"protocol_version"`
+	PairingID       string `json:"pairing_id"`
+	State           string `json:"state"`
+}
+
+type remoteCredentialHTTPResponse struct {
+	ProtocolVersion    string `json:"protocol_version"`
+	Provider           string `json:"provider"`
+	SDKAppID           int64  `json:"sdk_app_id"`
+	ProviderUserID     string `json:"provider_user_id"`
+	PeerProviderUserID string `json:"peer_provider_user_id"`
+	UserSig            string `json:"usersig"`
+	UserSigExpiresAt   string `json:"usersig_expires_at"`
+}
+
+type remoteDeviceActivation struct {
+	DeviceID           string `json:"device_id"`
+	DeviceLabel        string `json:"device_label"`
+	PeerDeviceID       string `json:"peer_device_id"`
+	PeerDeviceLabel    string `json:"peer_device_label"`
+	ProviderUserID     string `json:"provider_user_id"`
+	PeerProviderUserID string `json:"peer_provider_user_id"`
+	PeerPublicKey      string `json:"peer_public_key"`
+	SDKAppID           int64  `json:"sdk_app_id"`
+	UserSig            string `json:"usersig"`
+	UserSigExpiresAt   string `json:"usersig_expires_at"`
+}
+
+type remoteReadPairingResponse struct {
+	ProtocolVersion      string                 `json:"protocol_version"`
+	PairingID            string                 `json:"pairing_id"`
+	State                string                 `json:"state"`
+	AuthenticationString string                 `json:"authentication_string"`
+	ExpiresAt            string                 `json:"expires_at"`
+	DeviceActivation     remoteDeviceActivation `json:"device_activation"`
 }
 
 type remoteProviderReclaimReceipt struct {
@@ -834,16 +894,60 @@ func (b *remoteCompanionBroker) authenticateDevice(ctx context.Context, pairingI
 	return pairing, matched, nil
 }
 
-func (b *remoteCompanionBroker) readClaim(ctx context.Context, pairingID, credential string) (remotePairingResponse, error) {
-	pairing, _, err := b.authenticate(ctx, pairingID, credential)
+func (b *remoteCompanionBroker) readClaim(ctx context.Context, pairingID, credential string) (remoteReadPairingResponse, error) {
+	pairing, device, err := b.authenticateDevice(ctx, pairingID, credential, "")
 	if err != nil {
-		return remotePairingResponse{}, err
+		return remoteReadPairingResponse{}, err
 	}
-	capacity, err := b.capacity(ctx)
+	activation, err := b.deviceActivation(ctx, pairing, device)
 	if err != nil {
-		return remotePairingResponse{}, err
+		return remoteReadPairingResponse{}, err
 	}
-	return b.pairingResponse(pairing, capacity), nil
+	return remoteReadPairingResponse{
+		ProtocolVersion:      remoteProtocolVersion,
+		PairingID:            pairing.ID,
+		State:                pairing.State,
+		AuthenticationString: pairing.Sas,
+		ExpiresAt:            pairing.ExpiresAt,
+		DeviceActivation:     activation,
+	}, nil
+}
+
+func (b *remoteCompanionBroker) deviceActivation(ctx context.Context, pairing *controlplaneent.RemotePairing, device *controlplaneent.RemoteDeviceCredential) (remoteDeviceActivation, error) {
+	providerUserID, peerProviderUserID, peerPublicKey, err := remoteProviderIdentity(pairing, device)
+	if err != nil {
+		return remoteDeviceActivation{}, err
+	}
+	activation := remoteDeviceActivation{
+		DeviceID:           device.DeviceID,
+		ProviderUserID:     providerUserID,
+		PeerProviderUserID: peerProviderUserID,
+		PeerPublicKey:      peerPublicKey,
+		SDKAppID:           remoteProviderSDKAppID(b.provider),
+	}
+	switch device.Role {
+	case "desktop":
+		activation.DeviceLabel = pairing.DesktopDeviceLabel
+		activation.PeerDeviceID = pairing.IosDeviceID
+		activation.PeerDeviceLabel = pairing.IosDeviceLabel
+	case "ios":
+		activation.DeviceLabel = pairing.IosDeviceLabel
+		activation.PeerDeviceID = pairing.DesktopDeviceID
+		activation.PeerDeviceLabel = pairing.DesktopDeviceLabel
+	}
+	if pairing.State != "active" {
+		return activation, nil
+	}
+	if providerUserID == "" {
+		return remoteDeviceActivation{}, errRemoteNotConfirmed
+	}
+	sig, expires, err := b.provider.SignUserSig(ctx, providerUserID, b.now(), remoteUserSigTTL)
+	if err != nil {
+		return remoteDeviceActivation{}, err
+	}
+	activation.UserSig = sig
+	activation.UserSigExpiresAt = expires.UTC().Format(time.RFC3339Nano)
+	return activation, nil
 }
 
 func (b *remoteCompanionBroker) confirmPairing(ctx context.Context, pairingID, credential, authenticationString string) (remotePairingResponse, error) {
@@ -972,25 +1076,41 @@ func (b *remoteCompanionBroker) credentials(ctx context.Context, pairingID, cred
 }
 
 func (b *remoteCompanionBroker) issueUserSig(ctx context.Context, pairing *controlplaneent.RemotePairing, device *controlplaneent.RemoteDeviceCredential) (remoteCredentialResponse, error) {
-	if device.ProviderUserID == "" {
+	providerUserID, peerProviderUserID, _, err := remoteProviderIdentity(pairing, device)
+	if err != nil {
+		return remoteCredentialResponse{}, err
+	}
+	if providerUserID == "" {
 		return remoteCredentialResponse{}, errRemoteNotConfirmed
 	}
-	sig, expires, err := b.provider.SignUserSig(ctx, device.ProviderUserID, b.now(), remoteUserSigTTL)
+	sig, expires, err := b.provider.SignUserSig(ctx, providerUserID, b.now(), remoteUserSigTTL)
 	if err != nil {
 		return remoteCredentialResponse{}, err
 	}
 	return remoteCredentialResponse{
-		ProtocolVersion:  remoteProtocolVersion,
-		PairingID:        pairing.ID,
-		DeviceID:         device.DeviceID,
-		Role:             device.Role,
-		Provider:         "tencent_cloud_im",
-		SDKAppID:         remoteProviderSDKAppID(b.provider),
-		ProviderUserID:   device.ProviderUserID,
-		UserSig:          sig,
-		UserSigExpiresAt: expires.UTC().Format(time.RFC3339Nano),
-		State:            pairing.State,
+		ProtocolVersion:    remoteProtocolVersion,
+		PairingID:          pairing.ID,
+		DeviceID:           device.DeviceID,
+		Role:               device.Role,
+		Provider:           "tencent_cloud_im",
+		SDKAppID:           remoteProviderSDKAppID(b.provider),
+		ProviderUserID:     providerUserID,
+		PeerProviderUserID: peerProviderUserID,
+		UserSig:            sig,
+		UserSigExpiresAt:   expires.UTC().Format(time.RFC3339Nano),
+		State:              pairing.State,
 	}, nil
+}
+
+func remoteProviderIdentity(pairing *controlplaneent.RemotePairing, device *controlplaneent.RemoteDeviceCredential) (providerUserID, peerProviderUserID, peerPublicKey string, err error) {
+	switch device.Role {
+	case "desktop":
+		return pairing.DesktopProviderUserID, pairing.IosProviderUserID, pairing.IosPublicKey, nil
+	case "ios":
+		return pairing.IosProviderUserID, pairing.DesktopProviderUserID, pairing.DesktopPublicKey, nil
+	default:
+		return "", "", "", errRemoteCredentialDenied
+	}
 }
 
 func (b *remoteCompanionBroker) revokePairing(ctx context.Context, pairingID, credential string) (remoteRevokeReceipt, error) {
@@ -1538,7 +1658,15 @@ func registerRemoteCompanionRoutes(mux *http.ServeMux, app *controlPlaneServer) 
 			writeRemoteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, created)
+		writeJSON(w, http.StatusCreated, remoteCreateHTTPResponse{
+			ProtocolVersion:  created.ProtocolVersion,
+			PairingID:        created.PairingID,
+			DesktopPairToken: created.DesktopCredential,
+			ClaimSecret:      created.ClaimSecret,
+			ManualCode:       created.ManualCode,
+			ExpiresAt:        created.ExpiresAt,
+			BrokerURL:        created.BrokerURL,
+		})
 	})
 
 	mux.HandleFunc("POST "+remoteCompanionBasePath+"/pairings/claim", func(w http.ResponseWriter, r *http.Request) {
@@ -1567,7 +1695,14 @@ func registerRemoteCompanionRoutes(mux *http.ServeMux, app *controlPlaneServer) 
 			writeRemoteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, claimed)
+		writeJSON(w, http.StatusOK, remoteClaimHTTPResponse{
+			ProtocolVersion:      claimed.ProtocolVersion,
+			PairingID:            claimed.PairingID,
+			IOSClaimToken:        claimed.IOSCredential,
+			State:                claimed.State,
+			AuthenticationString: claimed.AuthenticationString,
+			ExpiresAt:            claimed.ExpiresAt,
+		})
 	})
 
 	mux.HandleFunc("GET "+remoteCompanionBasePath+"/pairings/{pairingId}", func(w http.ResponseWriter, r *http.Request) {
@@ -1603,7 +1738,11 @@ func registerRemoteCompanionRoutes(mux *http.ServeMux, app *controlPlaneServer) 
 			writeRemoteError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, confirmed)
+		writeJSON(w, http.StatusOK, remoteConfirmHTTPResponse{
+			ProtocolVersion: confirmed.ProtocolVersion,
+			PairingID:       confirmed.PairingID,
+			State:           confirmed.State,
+		})
 	})
 
 	mux.HandleFunc("POST "+remoteCompanionBasePath+"/pairings/{pairingId}/credentials", func(w http.ResponseWriter, r *http.Request) {
@@ -1637,7 +1776,15 @@ func registerRemoteCompanionRoutes(mux *http.ServeMux, app *controlPlaneServer) 
 			return
 		}
 		_ = idempotencyKey
-		writeJSON(w, http.StatusOK, credentials)
+		writeJSON(w, http.StatusOK, remoteCredentialHTTPResponse{
+			ProtocolVersion:    credentials.ProtocolVersion,
+			Provider:           credentials.Provider,
+			SDKAppID:           credentials.SDKAppID,
+			ProviderUserID:     credentials.ProviderUserID,
+			PeerProviderUserID: credentials.PeerProviderUserID,
+			UserSig:            credentials.UserSig,
+			UserSigExpiresAt:   credentials.UserSigExpiresAt,
+		})
 	})
 
 	mux.HandleFunc("DELETE "+remoteCompanionBasePath+"/pairings/{pairingId}", func(w http.ResponseWriter, r *http.Request) {

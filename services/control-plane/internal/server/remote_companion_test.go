@@ -442,6 +442,7 @@ func TestRemoteCompanionWireUsesCanonicalPathAndSnakeCase(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
+	assertExactJSONKeys(t, recorder.Body.Bytes(), "protocol_version", "pairing_id", "desktop_pair_token", "claim_secret", "manual_code", "expires_at", "broker_url")
 	if _, ok := response["pairing_id"]; !ok {
 		t.Fatalf("wire response lacks pairing_id: %#v", response)
 	}
@@ -490,6 +491,7 @@ func TestRemoteCompanionCanonicalHTTPLifecycle(t *testing.T) {
 	if err := json.Unmarshal(createRecorder.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
+	assertExactJSONKeys(t, createRecorder.Body.Bytes(), "protocol_version", "pairing_id", "desktop_pair_token", "claim_secret", "manual_code", "expires_at", "broker_url")
 	pairingID, _ := created["pairing_id"].(string)
 	claimSecret, _ := created["claim_secret"].(string)
 	desktopToken, _ := created["desktop_pair_token"].(string)
@@ -509,8 +511,10 @@ func TestRemoteCompanionCanonicalHTTPLifecycle(t *testing.T) {
 	if err := json.Unmarshal(claimRecorder.Body.Bytes(), &claimed); err != nil {
 		t.Fatal(err)
 	}
+	assertExactJSONKeys(t, claimRecorder.Body.Bytes(), "protocol_version", "pairing_id", "ios_claim_token", "state", "authentication_string", "expires_at")
 	authenticationString, _ := claimed["authentication_string"].(string)
-	if authenticationString == "" || claimed["ios_claim_token"] == nil {
+	iosToken, _ := claimed["ios_claim_token"].(string)
+	if authenticationString == "" || iosToken == "" {
 		t.Fatalf("claim response omitted canonical fields: %#v", claimed)
 	}
 
@@ -522,6 +526,99 @@ func TestRemoteCompanionCanonicalHTTPLifecycle(t *testing.T) {
 	mux.ServeHTTP(confirmRecorder, confirmRequest)
 	if confirmRecorder.Code != http.StatusOK {
 		t.Fatalf("confirm status = %d, body = %s", confirmRecorder.Code, confirmRecorder.Body.String())
+	}
+	assertExactJSONKeys(t, confirmRecorder.Body.Bytes(), "protocol_version", "pairing_id", "state")
+
+	desktopReadRequest := httptest.NewRequest(http.MethodGet, remoteCompanionBasePath+"/pairings/"+pairingID, nil)
+	desktopReadRequest.Header.Set("Authorization", "Bearer "+desktopToken)
+	desktopReadRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(desktopReadRecorder, desktopReadRequest)
+	if desktopReadRecorder.Code != http.StatusOK {
+		t.Fatalf("desktop read status = %d, body = %s", desktopReadRecorder.Code, desktopReadRecorder.Body.String())
+	}
+	desktopRead := assertExactJSONKeys(t, desktopReadRecorder.Body.Bytes(), "protocol_version", "pairing_id", "state", "authentication_string", "expires_at", "device_activation")
+	desktopActivation, ok := desktopRead["device_activation"].(map[string]any)
+	if !ok {
+		t.Fatalf("desktop device_activation = %#v", desktopRead["device_activation"])
+	}
+	assertExactJSONKeys(t, mustMarshalJSON(t, desktopActivation), "device_id", "device_label", "peer_device_id", "peer_device_label", "provider_user_id", "peer_provider_user_id", "peer_public_key", "sdk_app_id", "usersig", "usersig_expires_at")
+	if desktopActivation["device_id"] != "desktop-device" || desktopActivation["device_label"] != "Desktop" || desktopActivation["peer_device_id"] != "ios-device" || desktopActivation["peer_device_label"] != "iPhone" || desktopActivation["peer_public_key"] != "ios-key" {
+		t.Fatalf("desktop activation leaked or lost caller-scoped values: %#v", desktopActivation)
+	}
+	if desktopActivation["provider_user_id"] != tencentPairUserID(pairingID, "desktop") || desktopActivation["peer_provider_user_id"] != tencentPairUserID(pairingID, "ios") || desktopActivation["usersig"] == "" {
+		t.Fatalf("desktop activation provider values = %#v", desktopActivation)
+	}
+	for _, forbidden := range []string{"desktop_provider_user_id", "ios_provider_user_id", "device_credential", "desktop_credential", "ios_credential", "seat", "desktop_public_key", "ios_public_key"} {
+		if _, present := desktopRead[forbidden]; present {
+			t.Fatalf("desktop read exposed forbidden field %q: %#v", forbidden, desktopRead)
+		}
+	}
+	if strings.Contains(desktopReadRecorder.Body.String(), desktopToken) || strings.Contains(desktopReadRecorder.Body.String(), iosToken) {
+		t.Fatalf("desktop read exposed a bearer credential: %s", desktopReadRecorder.Body.String())
+	}
+
+	desktopReadAgain := httptest.NewRecorder()
+	mux.ServeHTTP(desktopReadAgain, desktopReadRequest)
+	if desktopReadAgain.Code != http.StatusOK {
+		t.Fatalf("desktop second read status = %d, body = %s", desktopReadAgain.Code, desktopReadAgain.Body.String())
+	}
+	var desktopReadAgainBody map[string]any
+	if err := json.Unmarshal(desktopReadAgain.Body.Bytes(), &desktopReadAgainBody); err != nil {
+		t.Fatal(err)
+	}
+	if activation, ok := desktopReadAgainBody["device_activation"].(map[string]any); !ok {
+		t.Fatalf("desktop repeat read omitted device_activation: %#v", desktopReadAgainBody)
+	} else {
+		assertExactJSONKeys(t, mustMarshalJSON(t, activation), "device_id", "device_label", "peer_device_id", "peer_device_label", "provider_user_id", "peer_provider_user_id", "peer_public_key", "sdk_app_id", "usersig", "usersig_expires_at")
+	}
+	if strings.Contains(desktopReadAgain.Body.String(), desktopToken) || strings.Contains(desktopReadAgain.Body.String(), iosToken) {
+		t.Fatalf("desktop repeat read exposed a bearer credential: %s", desktopReadAgain.Body.String())
+	}
+
+	iosReadRequest := httptest.NewRequest(http.MethodGet, remoteCompanionBasePath+"/pairings/"+pairingID, nil)
+	iosReadRequest.Header.Set("Authorization", "Bearer "+iosToken)
+	iosReadRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(iosReadRecorder, iosReadRequest)
+	if iosReadRecorder.Code != http.StatusOK {
+		t.Fatalf("iOS read status = %d, body = %s", iosReadRecorder.Code, iosReadRecorder.Body.String())
+	}
+	iosRead := assertExactJSONKeys(t, iosReadRecorder.Body.Bytes(), "protocol_version", "pairing_id", "state", "authentication_string", "expires_at", "device_activation")
+	iosActivation, ok := iosRead["device_activation"].(map[string]any)
+	if !ok {
+		t.Fatalf("iOS device_activation = %#v", iosRead["device_activation"])
+	}
+	assertExactJSONKeys(t, mustMarshalJSON(t, iosActivation), "device_id", "device_label", "peer_device_id", "peer_device_label", "provider_user_id", "peer_provider_user_id", "peer_public_key", "sdk_app_id", "usersig", "usersig_expires_at")
+	if iosActivation["device_id"] != "ios-device" || iosActivation["device_label"] != "iPhone" || iosActivation["peer_device_id"] != "desktop-device" || iosActivation["peer_device_label"] != "Desktop" || iosActivation["peer_public_key"] != "desktop-key" {
+		t.Fatalf("iOS activation leaked or lost caller-scoped values: %#v", iosActivation)
+	}
+	if iosActivation["provider_user_id"] != tencentPairUserID(pairingID, "ios") || iosActivation["peer_provider_user_id"] != tencentPairUserID(pairingID, "desktop") || iosActivation["usersig"] == "" {
+		t.Fatalf("iOS activation provider values = %#v", iosActivation)
+	}
+	for _, forbidden := range []string{"desktop_provider_user_id", "ios_provider_user_id", "device_credential", "desktop_credential", "ios_credential", "seat", "desktop_public_key", "ios_public_key"} {
+		if _, present := iosRead[forbidden]; present {
+			t.Fatalf("iOS read exposed forbidden field %q: %#v", forbidden, iosRead)
+		}
+	}
+	if strings.Contains(iosReadRecorder.Body.String(), desktopToken) || strings.Contains(iosReadRecorder.Body.String(), iosToken) {
+		t.Fatalf("iOS read exposed a bearer credential: %s", iosReadRecorder.Body.String())
+	}
+
+	iosReadAgain := httptest.NewRecorder()
+	mux.ServeHTTP(iosReadAgain, iosReadRequest)
+	if iosReadAgain.Code != http.StatusOK {
+		t.Fatalf("iOS second read status = %d, body = %s", iosReadAgain.Code, iosReadAgain.Body.String())
+	}
+	var iosReadAgainBody map[string]any
+	if err := json.Unmarshal(iosReadAgain.Body.Bytes(), &iosReadAgainBody); err != nil {
+		t.Fatal(err)
+	}
+	if activation, ok := iosReadAgainBody["device_activation"].(map[string]any); !ok {
+		t.Fatalf("iOS repeat read omitted device_activation: %#v", iosReadAgainBody)
+	} else {
+		assertExactJSONKeys(t, mustMarshalJSON(t, activation), "device_id", "device_label", "peer_device_id", "peer_device_label", "provider_user_id", "peer_provider_user_id", "peer_public_key", "sdk_app_id", "usersig", "usersig_expires_at")
+	}
+	if strings.Contains(iosReadAgain.Body.String(), desktopToken) || strings.Contains(iosReadAgain.Body.String(), iosToken) {
+		t.Fatalf("iOS repeat read exposed a bearer credential: %s", iosReadAgain.Body.String())
 	}
 
 	credentialsBody := `{"protocol_version":"` + remoteProtocolVersion + `","device_id":"desktop-device"}`
@@ -537,7 +634,8 @@ func TestRemoteCompanionCanonicalHTTPLifecycle(t *testing.T) {
 	if err := json.Unmarshal(credentialsRecorder.Body.Bytes(), &credentials); err != nil {
 		t.Fatal(err)
 	}
-	if credentials["usersig"] == nil || credentials["provider"] != "tencent_cloud_im" {
+	assertExactJSONKeys(t, credentialsRecorder.Body.Bytes(), "protocol_version", "provider", "sdk_app_id", "provider_user_id", "peer_provider_user_id", "usersig", "usersig_expires_at")
+	if credentials["usersig"] == nil || credentials["provider"] != "tencent_cloud_im" || credentials["peer_provider_user_id"] != tencentPairUserID(pairingID, "ios") {
 		t.Fatalf("credentials response = %#v", credentials)
 	}
 
@@ -566,4 +664,34 @@ func TestRemoteCompanionCanonicalHTTPLifecycle(t *testing.T) {
 	if readRecorder.Code != http.StatusOK || !strings.Contains(readRecorder.Body.String(), `"seat_released":true`) {
 		t.Fatalf("revocation readback status = %d, body = %s", readRecorder.Code, readRecorder.Body.String())
 	}
+}
+
+func assertExactJSONKeys(t *testing.T, raw []byte, expected ...string) map[string]any {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatalf("decode JSON for exact-key assertion: %v", err)
+	}
+	allowed := make(map[string]struct{}, len(expected))
+	for _, key := range expected {
+		allowed[key] = struct{}{}
+		if _, ok := value[key]; !ok {
+			t.Fatalf("JSON omitted required field %q: %#v", key, value)
+		}
+	}
+	for key := range value {
+		if _, ok := allowed[key]; !ok {
+			t.Fatalf("JSON exposed undeclared field %q: %#v", key, value)
+		}
+	}
+	return value
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
