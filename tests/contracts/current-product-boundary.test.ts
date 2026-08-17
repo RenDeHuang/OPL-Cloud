@@ -120,7 +120,7 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
     route: "GET /api/operator/workspace-launches/{operationId}/resume-approval-candidates",
     authentication: "control_plane_operator_session_plus_internal_acceptance_b_capability",
     mode: "read_only_non_persistent",
-    requestHeaders: ["x-opl-acceptance-b-capability", "x-opl-acceptance-b-approval-id", "x-opl-resume-authorization-id", "x-opl-resume-reason-sha256", "x-opl-resume-release-sha", "x-opl-resume-release-tree", "x-opl-resume-image-digest", "x-opl-resume-launch-version", "x-opl-resume-stage", "x-opl-resume-operation-status", "x-opl-resume-authoritative-stage-state"],
+    requestHeaders: ["x-opl-acceptance-b-capability", "x-opl-acceptance-b-approval-id", "x-opl-resume-authorization-id", "x-opl-resume-reason-sha256", "x-opl-resume-release-sha", "x-opl-resume-release-tree", "x-opl-resume-image-digest"],
     derivedFields: ["operationId", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget", "reconciliation.attempt", "identityDigests", "expiresAt"],
     releaseAuthority: ["OPL_RELEASE_SHA", "OPL_RELEASE_TREE", "OPL_CLOUD_IMAGE"],
     expirySeconds: 900,

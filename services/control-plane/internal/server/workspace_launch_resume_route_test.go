@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -429,8 +428,4 @@ func addResumePrepareHeaders(request *http.Request, candidate productionAcceptan
 	request.Header.Set(productionAcceptanceBResumeReleaseSHA, candidate.Release.CanonicalCloudSHA)
 	request.Header.Set(productionAcceptanceBResumeReleaseTree, candidate.Release.CanonicalCloudTree)
 	request.Header.Set(productionAcceptanceBResumeImageDigest, candidate.Release.DeployedCloudImageDigest)
-	request.Header.Set(productionAcceptanceBResumeLaunchVersion, strconv.Itoa(candidate.Expected.LaunchVersion))
-	request.Header.Set(productionAcceptanceBResumeStage, candidate.Expected.AuthorizedStage)
-	request.Header.Set(productionAcceptanceBResumeOperationStatus, candidate.Expected.OperationStatus)
-	request.Header.Set(productionAcceptanceBResumeStageState, candidate.Expected.AuthoritativeStageState)
 }

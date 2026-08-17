@@ -33,10 +33,6 @@ const (
 	productionAcceptanceBResumeReleaseSHA          = "x-opl-resume-release-sha"
 	productionAcceptanceBResumeReleaseTree         = "x-opl-resume-release-tree"
 	productionAcceptanceBResumeImageDigest         = "x-opl-resume-image-digest"
-	productionAcceptanceBResumeLaunchVersion       = "x-opl-resume-launch-version"
-	productionAcceptanceBResumeStage               = "x-opl-resume-stage"
-	productionAcceptanceBResumeOperationStatus     = "x-opl-resume-operation-status"
-	productionAcceptanceBResumeStageState          = "x-opl-resume-authoritative-stage-state"
 )
 
 var productionAcceptanceBAllowedWrites = []string{
@@ -140,12 +136,6 @@ type productionAcceptanceBResumeExistingPrepareRequest struct {
 		CanonicalCloudTree       string `json:"canonicalCloudTree"`
 		DeployedCloudImageDigest string `json:"deployedCloudImageDigest"`
 	} `json:"release"`
-	Expected struct {
-		LaunchVersion           int    `json:"launchVersion"`
-		AuthorizedStage         string `json:"authorizedStage"`
-		OperationStatus         string `json:"operationStatus"`
-		AuthoritativeStageState string `json:"authoritativeStageState"`
-	} `json:"expected"`
 }
 
 type workspaceLaunchAcceptanceBResumeExistingBinding struct {
@@ -395,11 +385,7 @@ func productionAcceptanceBReleaseCurrent(release struct {
 func productionAcceptanceBResumeExistingPrepareRequestValid(request productionAcceptanceBResumeExistingPrepareRequest) bool {
 	return productionAcceptanceBApprovalIDPattern.MatchString(request.ApprovalID) &&
 		validBillingReviewOpaqueID(request.AuthorizationID) && productionAcceptanceBIdentityDigestPattern.MatchString(request.ReasonSHA256) &&
-		productionAcceptanceBReleaseShapeValid(request.Release) && request.Expected.LaunchVersion > 0 &&
-		workspaceLaunchReconcileStageValid(request.Expected.AuthorizedStage) && request.Expected.AuthorizedStage != "succeeded" &&
-		request.Expected.OperationStatus == "manual_review" &&
-		(request.Expected.AuthoritativeStageState == workspaceLaunchStageReady || request.Expected.AuthoritativeStageState == workspaceLaunchStageAbsent || request.Expected.AuthoritativeStageState == workspaceLaunchStagePending) &&
-		request.Expected.AuthorizedStage == strings.TrimSpace(request.Expected.AuthorizedStage)
+		productionAcceptanceBReleaseShapeValid(request.Release)
 }
 
 func productionAcceptanceBReleaseShapeValid(release struct {
@@ -417,9 +403,10 @@ func productionAcceptanceBResumeExistingCandidate(
 	observation workspaceLaunchStageObservation,
 	now time.Time,
 ) (productionAcceptanceBResumeExistingApproval, bool) {
-	if !productionAcceptanceBResumeExistingPrepareRequestValid(request) || !productionAcceptanceBReleaseCurrent(request.Release) || operation.Status != "manual_review" || operation.Stage == "succeeded" ||
-		operation.Version != request.Expected.LaunchVersion || operation.Stage != request.Expected.AuthorizedStage || operation.Status != request.Expected.OperationStatus ||
-		observation.State != request.Expected.AuthoritativeStageState || operation.ResumeAuthorization != nil && operation.ResumeAuthorizationConsumedAt == "" {
+	if !productionAcceptanceBResumeExistingPrepareRequestValid(request) || !productionAcceptanceBReleaseCurrent(request.Release) || operation.Status != "manual_review" ||
+		!workspaceLaunchReconcileStageValid(operation.Stage) || operation.Stage == "succeeded" ||
+		(observation.State != workspaceLaunchStageReady && observation.State != workspaceLaunchStageAbsent && observation.State != workspaceLaunchStagePending) ||
+		operation.ResumeAuthorization != nil && operation.ResumeAuthorizationConsumedAt == "" {
 		return productionAcceptanceBResumeExistingApproval{}, false
 	}
 	attempt, found := operation.Attempts[operation.Stage]

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func canonicalResumePrepareRequest(operation workspaceLaunchReconcileOperation, state string) productionAcceptanceBResumeExistingPrepareRequest {
+func canonicalResumePrepareRequest(_ workspaceLaunchReconcileOperation, _ string) productionAcceptanceBResumeExistingPrepareRequest {
 	var request productionAcceptanceBResumeExistingPrepareRequest
 	request.ApprovalID = "acceptance-b-resume-prepare"
 	request.AuthorizationID = "acceptance-b-resume-auth"
@@ -17,10 +17,6 @@ func canonicalResumePrepareRequest(operation workspaceLaunchReconcileOperation, 
 	request.Release.CanonicalCloudSHA = strings.Repeat("a", 40)
 	request.Release.CanonicalCloudTree = strings.Repeat("d", 40)
 	request.Release.DeployedCloudImageDigest = "sha256:" + strings.Repeat("b", 64)
-	request.Expected.LaunchVersion = operation.Version
-	request.Expected.AuthorizedStage = operation.Stage
-	request.Expected.OperationStatus = operation.Status
-	request.Expected.AuthoritativeStageState = state
 	return request
 }
 
@@ -80,6 +76,9 @@ func TestProductionAcceptanceBResumePrepareBuildsExactReadOnlyCandidate(t *testi
 	if _, ok := productionAcceptanceBResumeExistingApproved(header, approval, authorization, operation, workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, now); !ok {
 		t.Fatal("exact prepared candidate was not admitted by Resume")
 	}
+	if _, ok := productionAcceptanceBResumeExistingApproved(header, approval, authorization, operation, workspaceLaunchStageObservation{State: workspaceLaunchStagePending}, now); ok {
+		t.Fatal("Resume admitted a candidate after provider observation drift")
+	}
 	drifted := operation
 	drifted.Version++
 	if _, ok := productionAcceptanceBResumeExistingApproved(header, approval, authorization, drifted, workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, now); ok {
@@ -126,15 +125,6 @@ func TestProductionAcceptanceBResumePrepareRejectsDriftAndUnknownWithoutMutation
 		}},
 		{name: "image", mutate: func(r *productionAcceptanceBResumeExistingPrepareRequest, _ *workspaceLaunchUnitAdapter) {
 			r.Release.DeployedCloudImageDigest = "sha256:" + strings.Repeat("f", 64)
-		}},
-		{name: "version", mutate: func(r *productionAcceptanceBResumeExistingPrepareRequest, _ *workspaceLaunchUnitAdapter) {
-			r.Expected.LaunchVersion++
-		}},
-		{name: "stage", mutate: func(r *productionAcceptanceBResumeExistingPrepareRequest, _ *workspaceLaunchUnitAdapter) {
-			r.Expected.AuthorizedStage = "storage"
-		}},
-		{name: "provider observation", mutate: func(_ *productionAcceptanceBResumeExistingPrepareRequest, a *workspaceLaunchUnitAdapter) {
-			a.stageObservations["debit"] = workspaceLaunchStageObservation{State: workspaceLaunchStagePending}
 		}},
 		{name: "unknown observation", mutate: func(_ *productionAcceptanceBResumeExistingPrepareRequest, a *workspaceLaunchUnitAdapter) {
 			a.stageObservations["debit"] = workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}
@@ -184,12 +174,6 @@ func TestProductionAcceptanceBResumePrepareRequestRequiresExactShortLivedBinding
 		func(value *productionAcceptanceBResumeExistingPrepareRequest) { value.ApprovalID = "short" },
 		func(value *productionAcceptanceBResumeExistingPrepareRequest) { value.AuthorizationID = "bad id" },
 		func(value *productionAcceptanceBResumeExistingPrepareRequest) { value.ReasonSHA256 = "raw reason" },
-		func(value *productionAcceptanceBResumeExistingPrepareRequest) {
-			value.Expected.OperationStatus = "pending"
-		},
-		func(value *productionAcceptanceBResumeExistingPrepareRequest) {
-			value.Expected.AuthoritativeStageState = workspaceLaunchStageUnknown
-		},
 	} {
 		drifted := request
 		mutate(&drifted)

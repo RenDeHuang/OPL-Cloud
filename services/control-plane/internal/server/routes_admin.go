@@ -39,21 +39,13 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		releaseSHA, releaseSHAOK := singleHeaderValue(r.Header, productionAcceptanceBResumeReleaseSHA)
 		releaseTree, releaseTreeOK := singleHeaderValue(r.Header, productionAcceptanceBResumeReleaseTree)
 		imageDigest, imageOK := singleHeaderValue(r.Header, productionAcceptanceBResumeImageDigest)
-		launchVersionRaw, launchVersionOK := singleHeaderValue(r.Header, productionAcceptanceBResumeLaunchVersion)
-		stage, stageOK := singleHeaderValue(r.Header, productionAcceptanceBResumeStage)
-		operationStatus, statusOK := singleHeaderValue(r.Header, productionAcceptanceBResumeOperationStatus)
-		stageState, stateOK := singleHeaderValue(r.Header, productionAcceptanceBResumeStageState)
-		launchVersion, versionErr := strconv.Atoi(launchVersionRaw)
-		if operationID == "" || !approvalOK || !authorizationOK || !reasonOK || !releaseSHAOK || !releaseTreeOK || !imageOK ||
-			!launchVersionOK || !stageOK || !statusOK || !stateOK || versionErr != nil {
+		if operationID == "" || !approvalOK || !authorizationOK || !reasonOK || !releaseSHAOK || !releaseTreeOK || !imageOK {
 			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
 			return
 		}
 		var request productionAcceptanceBResumeExistingPrepareRequest
 		request.ApprovalID, request.AuthorizationID, request.ReasonSHA256 = approvalID, authorizationID, reasonSHA256
 		request.Release.CanonicalCloudSHA, request.Release.CanonicalCloudTree, request.Release.DeployedCloudImageDigest = releaseSHA, releaseTree, imageDigest
-		request.Expected.LaunchVersion, request.Expected.AuthorizedStage = launchVersion, stage
-		request.Expected.OperationStatus, request.Expected.AuthoritativeStageState = operationStatus, stageState
 		if !productionAcceptanceBResumeExistingPrepareRequestValid(request) {
 			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
 			return
