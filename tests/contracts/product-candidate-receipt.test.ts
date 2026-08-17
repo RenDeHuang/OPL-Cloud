@@ -67,5 +67,10 @@ test("distribution contract exposes candidate handoff without changing release o
     formalPublication: false,
     instanceDeployment: false
   });
+  assert.deepEqual(contract.instanceHandoff.inputs, ["candidate_receipt_b64"]);
+  assert.equal(
+    contract.instanceHandoff.contract,
+    "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV1"
+  );
   assert.equal(contract.distribution.workflow, ".github/workflows/release-opl-cloud-image.yml");
 });

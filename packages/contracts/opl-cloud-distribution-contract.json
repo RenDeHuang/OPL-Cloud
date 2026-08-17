@@ -72,9 +72,9 @@
   },
   "instanceHandoff": {
     "repository": "gaofeng21cn/opl-instance-medopl",
+    "contract": "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV1",
     "inputs": [
-      "productSha",
-      "imageDigest"
+      "candidate_receipt_b64"
     ],
     "cloudRepositoryMustNotOwn": [
       "instance_domains",
