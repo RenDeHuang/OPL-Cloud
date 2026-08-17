@@ -911,6 +911,26 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
         accountProvisionKey, launchKey, operationId, workspaceId, workspaceName: "J1", wait: async () => {},
         onStage: (stage) => stages.push(stage), readRuntime: async () => ({ runningDigest: workspaceDigest }),
         readDebit: async ({ code, sub2apiUserId, amountUsdMicros: value }) => ({ code, userId: sub2apiUserId, amountUsdMicros: value, count: 1 }),
+        browserQualification: async ({ onLaunchIdentity }) => {
+          const launch = { operationId, workspaceId, receiptId, workspaceApiKeyId: keyId, autoRenew: false, status: "succeeded" };
+          onLaunchIdentity(launch);
+          counts.workspacePosts += 1;
+          counts.keyCreates += 1;
+          counts.debits += 1;
+          launchReads = 1;
+          return {
+            launch,
+            receiptId,
+            evidence: {
+              status: "READY",
+              screenshots: ["01-login.png", "02-balance-usage.png", "03-create-confirmation.png", "04-ready.png", "05-detail.png", "06-workspace-ready.png"]
+                .map((name) => ({ name, digest: `sha256:${"e".repeat(64)}`, sizeBytes: 1 })),
+              requests: [], responses: [], pageErrors: [], consoleErrors: [],
+              launchPosts: 1, ownerDeleteRequests: 0, refundPosts: 0,
+              readback: { autoRenew: false, workspaceState: "running", runtimeStatus: "running", runtimeReady: true }
+            }
+          };
+        },
         cleanup: async (scope) => { cleanupCalls.push(scope); return { containers: 0, volumes: 0, networks: 0 }; },
         receiptBase: {
           schemaVersion: 1, status: "READY", source: { sha, tree: "d".repeat(40) },
@@ -930,7 +950,7 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
     assert.deepEqual(stages, ["bootstrap_ready", "admin_login", "account_provision", "qualification_login", "wallet_usage_baseline", "pricing_preview", "workspace_launch", "terminal_readback", "workspace_open", "accounting_readback", "receipt_validation", "qualification_cleanup"]);
     assert.deepEqual(cleanupCalls, [{ accountId, workspaceId }]);
     assert.deepEqual(counts, { mappingPosts: 1, workspacePosts: 1, keyCreates: 1, debits: 1, refunds: 0, deletes: 0, restarts: 0 });
-    assert.equal(requests.filter((request) => request.method === "POST" && request.path === "/api/workspace-launches").length, 1);
+    assert.equal(requests.filter((request) => request.method === "POST" && request.path === "/api/workspace-launches").length, 0);
     assert.equal(requests.some((request) => request.method === "DELETE"), false);
     assert.equal(requests.some((request) => request.path.includes("refund")), false);
   } finally {

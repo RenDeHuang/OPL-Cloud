@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, mkdtemp, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -449,6 +449,19 @@ export function validateLocalQualificationReceipt(value) {
     throw new Error("refund receipt binding is invalid");
   }
   if (value.usage?.source !== "sub2api" || value.usage?.status !== "available") throw new Error("Sub2API usage readback is invalid");
+  if (live) {
+    const browser = value.browser;
+    const expectedScreenshots = ["01-login.png", "02-balance-usage.png", "03-create-confirmation.png", "04-ready.png", "05-detail.png", "06-workspace-ready.png"];
+    if (browser?.status !== "READY" || browser.launchPosts !== 1 || browser.ownerDeleteRequests !== 0 || browser.refundPosts !== 0 ||
+      !Array.isArray(browser.screenshots) || browser.screenshots.length !== expectedScreenshots.length ||
+      browser.screenshots.some((artifact, index) => artifact?.name !== expectedScreenshots[index] || !digestPattern.test(String(artifact?.digest || "")) ||
+        !Number.isSafeInteger(artifact?.sizeBytes) || artifact.sizeBytes <= 0) ||
+      !Array.isArray(browser.requests) || !Array.isArray(browser.responses) ||
+      browser.pageErrors?.length !== 0 || browser.consoleErrors?.length !== 0 || browser.readback?.autoRenew !== false ||
+      browser.readback?.workspaceState !== "running" || browser.readback?.runtimeStatus !== "running" || browser.readback?.runtimeReady !== true) {
+      throw new Error("live browser qualification evidence is invalid");
+    }
+  }
   const serialized = JSON.stringify(value);
   if (/"(?:password|cookie|csrf|authorization|token|apiKey)"\s*:/i.test(serialized)) {
     throw new Error("receipt contains a forbidden credential field");
@@ -653,7 +666,7 @@ export function createHTTP(origin) {
     }
     return result;
   };
-  return { request, json };
+  return { origin, request, json };
 }
 
 function waitForWorkspaceDeleteSchedule(milliseconds) {
@@ -898,12 +911,15 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
   const {
     http, adminEmail, adminPassword, qualificationEmail, qualificationPassword, accountProvisionKey,
     launchKey, operationId, workspaceId, workspaceName, receiptBase, readDebit, readRuntime, cleanup, wait,
+    browserQualification, browserEvidenceDir,
     onStage = () => {}
   } = input;
   let cleanupEvidence;
   let cleanupScope = {};
   let launchSubmitted = false;
   let auth = null;
+  let qualifiedOperationId = operationId;
+  let qualifiedWorkspaceId = workspaceId;
   try {
     onStage("bootstrap_ready");
     const bootstrap = await http.json("/api/healthz");
@@ -945,21 +961,45 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
       throw new Error("qualification quote is invalid or wallet is insufficient");
     }
     onStage("workspace_launch");
-    launchSubmitted = true;
-    const initial = (await http.json("/api/workspace-launches", {
-      method: "POST", headers: { "idempotency-key": launchKey },
-      body: { name: workspaceName, packageId: "basic", sizeGb: 10, autoRenew: false }
-    }, auth, [202])).payload;
-    if (initial?.operationId !== operationId || initial?.workspaceId !== workspaceId) throw new Error("deterministic launch identity is invalid");
-    cleanupScope.workspaceId = workspaceId;
-    const launch = await waitForLaunch(http, operationId, auth, wait);
-    const receiptId = String(launch?.receiptId || "");
+    const browserResult = browserQualification
+      ? await browserQualification({
+        origin: http.origin, email: qualificationEmail, password: qualificationPassword, workspaceName,
+        evidenceDir: browserEvidenceDir,
+        onLaunchIdentity: (identity) => {
+          qualifiedOperationId = String(identity.operationId || "");
+          qualifiedWorkspaceId = String(identity.workspaceId || "");
+          launchSubmitted = Boolean(qualifiedOperationId && qualifiedWorkspaceId);
+          cleanupScope.operationId = qualifiedOperationId;
+          cleanupScope.workspaceId = qualifiedWorkspaceId;
+        }
+      })
+      : null;
+    const launchIdentity = browserResult?.launch || null;
+    const activeOperationId = String(launchIdentity?.operationId || qualifiedOperationId);
+    const activeWorkspaceId = String(launchIdentity?.workspaceId || qualifiedWorkspaceId);
+    if (browserResult && (!activeOperationId || !activeWorkspaceId || launchIdentity.autoRenew !== false)) {
+      throw new Error("browser launch identity or renewal intent is invalid");
+    }
+    let initial = launchIdentity;
+    if (!browserResult) {
+      launchSubmitted = true;
+      initial = (await http.json("/api/workspace-launches", {
+        method: "POST", headers: { "idempotency-key": launchKey },
+        body: { name: workspaceName, packageId: "basic", sizeGb: 10, autoRenew: false }
+      }, auth, [202])).payload;
+    }
+    if (!browserResult && (initial?.operationId !== operationId || initial?.workspaceId !== workspaceId)) throw new Error("deterministic launch identity is invalid");
+    qualifiedOperationId = activeOperationId;
+    qualifiedWorkspaceId = activeWorkspaceId;
+    cleanupScope.workspaceId = qualifiedWorkspaceId;
+    const launch = browserResult?.launch?.status === "succeeded" ? browserResult.launch : await waitForLaunch(http, qualifiedOperationId, auth, wait);
+    const receiptId = String(launch?.receiptId || browserResult?.receiptId || "");
     if (!receiptId) throw new Error("terminal launch receipt identity is missing");
     onStage("terminal_readback");
-    const evidence = await readWorkspaceEvidence(http, auth, operationId, workspaceId, receiptId);
-    const runtimeImage = await readRuntime({ accountId: provision.accountId, workspaceId });
+    const evidence = await readWorkspaceEvidence(http, auth, qualifiedOperationId, qualifiedWorkspaceId, receiptId);
+    const runtimeImage = await readRuntime({ accountId: provision.accountId, workspaceId: qualifiedWorkspaceId });
     onStage("workspace_open");
-    const opened = await http.request(`/w/${encodeURIComponent(workspaceId)}/`, { redirect: "follow" });
+    const opened = await http.request(`/w/${encodeURIComponent(qualifiedWorkspaceId)}/`, { redirect: "follow" });
     if (!opened.response.ok || !opened.text.includes("OPL Workspace READY")) throw new Error("Workspace Runtime open failed");
 
     onStage("accounting_readback");
@@ -976,7 +1016,7 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
     const keyUsage = sourceData((await http.json(`/api/gateway/keys/${encodeURIComponent(keyId)}/usage-summary?period=month`, {}, auth)).payload, "sub2api");
     const afterMicros = String(walletAfter?.usdMicros || "");
     const accounting = validateLocalJ1AccountingReadback({
-      operationId, workspaceId, receiptId, runtimeId: evidence.runtime.runtimeId, keyId, sub2apiUserId,
+      operationId: qualifiedOperationId, workspaceId: qualifiedWorkspaceId, receiptId, runtimeId: evidence.runtime.runtimeId, keyId, sub2apiUserId,
       debitCode: evidence.receipt.chargeReference, amountUsdMicros, beforeMicros, afterMicros,
       baselineKeys, baselineReceipts, keys, receipts, key, keyUsage, usage, history: historyPage, debit, evidence
     });
@@ -988,13 +1028,13 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
         workspace: { ...receiptBase.images.workspace, runningDigest: runtimeImage.runningDigest }
       },
       identities: {
-        accountId: provision.accountId, sub2apiUserId, launchOperationId: operationId, workspaceId,
+        accountId: provision.accountId, sub2apiUserId, launchOperationId: qualifiedOperationId, workspaceId: qualifiedWorkspaceId,
         runtimeId: evidence.runtime.runtimeId, keyId, debitCode: debit.code, purchaseReceiptId: receiptId
       },
-      debit: { count: 1, accountId: provision.accountId, operationId, workspaceId, code: debit.code, userId: sub2apiUserId, amountUsdMicros },
+      debit: { count: 1, accountId: provision.accountId, operationId: qualifiedOperationId, workspaceId: qualifiedWorkspaceId, code: debit.code, userId: sub2apiUserId, amountUsdMicros },
       wallet: { beforeUsdMicros: beforeMicros, afterUsdMicros: afterMicros, exactDeltaObserved: accounting.walletExactDeltaObserved },
       receipt: {
-        count: 1, id: receiptId, accountId: provision.accountId, operationId, workspaceId,
+        count: 1, id: receiptId, accountId: provision.accountId, operationId: qualifiedOperationId, workspaceId: qualifiedWorkspaceId,
         runtimeId: evidence.runtime.runtimeId, keyId, chargeReference: evidence.receipt.chargeReference,
         amountUsdMicros: String(evidence.receipt.totalUsdMicros)
       },
@@ -1007,10 +1047,11 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
       refundReceipt: { count: 0 },
       usage: { source: "sub2api", status: "available", totalRequests: usage.totalRequests }
     };
+    if (browserResult) receiptCandidate.browser = browserResult.evidence;
     onStage("receipt_validation");
     validateLocalQualificationReceipt({ ...receiptCandidate, residuals: { containers: 0, volumes: 0, networks: 0 } });
     onStage("qualification_cleanup");
-    cleanupEvidence = await cleanup({ accountId: provision.accountId, workspaceId });
+    cleanupEvidence = await cleanup({ accountId: provision.accountId, workspaceId: qualifiedWorkspaceId });
     const receipt = validateLocalQualificationReceipt({ ...receiptCandidate, residuals: cleanupEvidence });
     return { receipt, auth, provision, launch, evidence, cleanupEvidence };
   } finally {
@@ -1018,13 +1059,156 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
       let recoveryAuthority = null;
       if (launchSubmitted && auth) {
         try {
-          recoveryAuthority = await collectLocalJ1RecoveryAuthority({ http, auth, operationId, launchSubmitted });
+          recoveryAuthority = await collectLocalJ1RecoveryAuthority({ http, auth, operationId: qualifiedOperationId, launchSubmitted });
         } catch {
           // The preserved service and PostgreSQL state remain the recovery authority when readback is temporarily unavailable.
         }
       }
       await cleanup({ ...cleanupScope, failed: true, launchSubmitted, recoveryAuthority });
     }
+  }
+}
+
+export async function runLocalWorkspaceBrowserQualification({ origin, email, password, workspaceName, evidenceDir, onLaunchIdentity = () => {} }) {
+  const exactEvidenceDir = resolve(String(evidenceDir || ""));
+  if (!isAbsolute(String(evidenceDir || "")) || exactEvidenceDir === root || exactEvidenceDir.startsWith(`${root}${sep}`)) {
+    throw new Error("browser evidence directory must be an external absolute path");
+  }
+  await mkdir(exactEvidenceDir, { recursive: true, mode: 0o700 });
+  const evidenceStat = await lstat(exactEvidenceDir);
+  const canonicalEvidenceDir = await realpath(exactEvidenceDir);
+  if (!evidenceStat.isDirectory() || evidenceStat.isSymbolicLink() || canonicalEvidenceDir !== exactEvidenceDir) {
+    throw new Error("browser evidence directory is invalid");
+  }
+  await chmod(exactEvidenceDir, 0o700);
+  const { chromium } = await import("playwright");
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
+  const page = await context.newPage();
+  const requests = [];
+  const responses = [];
+  const pageErrors = [];
+  const consoleErrors = [];
+  const responseTasks = new Set();
+  const digest = (value) => `sha256:${createHash("sha256").update(String(value || "")).digest("hex")}`;
+  const recordResponse = async (response) => {
+    const url = new URL(response.url());
+    if (!url.pathname.startsWith("/api/")) return;
+    responses.push({ method: response.request().method(), path: url.pathname + url.search, status: response.status() });
+  };
+  const attachEvidenceListeners = (target) => {
+    target.on("request", (request) => {
+      const url = new URL(request.url());
+      if (!url.pathname.startsWith("/api/")) return;
+      const entry = { method: request.method(), path: url.pathname + url.search };
+      const idempotencyKey = request.headers()["idempotency-key"];
+      if (idempotencyKey) entry.idempotencyKeySha256 = digest(idempotencyKey);
+      requests.push(entry);
+    });
+    target.on("response", (response) => {
+      const task = recordResponse(response).finally(() => responseTasks.delete(task));
+      responseTasks.add(task);
+    });
+    target.on("pageerror", (error) => pageErrors.push(String(error?.message || error)));
+    target.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  };
+  attachEvidenceListeners(page);
+  const screenshot = async (name) => {
+    const path = join(exactEvidenceDir, `${name}.png`);
+    await page.screenshot({ path, fullPage: true });
+    await chmod(path, 0o600);
+  };
+  try {
+    await page.goto(`${origin}/login`, { waitUntil: "domcontentloaded" });
+    await screenshot("01-login");
+    await page.getByLabel("邮箱").fill(email);
+    await page.getByLabel("密码").fill(password);
+    await Promise.all([page.waitForURL(/\/console\//, { timeout: 60_000 }), page.getByRole("button", { name: "登录", exact: true }).click()]);
+    await page.goto(`${origin}/console/api`, { waitUntil: "networkidle" });
+    await page.getByText("可用余额", { exact: true }).waitFor();
+    await screenshot("02-balance-usage");
+    await page.goto(`${origin}/console/workspaces/new`, { waitUntil: "networkidle" });
+    await page.getByLabel("Workspace 名称").fill(workspaceName);
+    await page.getByRole("button", { name: "核对开通信息", exact: true }).click();
+    await page.getByRole("checkbox").check();
+    await screenshot("03-create-confirmation");
+    const initialResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "POST" && url.pathname === "/api/workspace-launches";
+    }, { timeout: 60_000 });
+    await page.getByRole("button", { name: "确认预付并开通", exact: true }).click();
+    const initialResponse = await initialResponsePromise;
+    const initialLaunch = await initialResponse.json();
+    if (initialResponse.status() !== 202 || !initialLaunch?.operationId || !initialLaunch?.workspaceId || initialLaunch.autoRenew !== false) {
+      throw new Error("browser initial launch response is invalid");
+    }
+    onLaunchIdentity(initialLaunch);
+    await page.getByText("开通状态", { exact: true }).waitFor({ timeout: 30_000 });
+    await page.getByRole("button", { name: "读取 Workspace", exact: true }).waitFor({ timeout: 240_000 });
+    const launchPayload = await page.evaluate(async (operationId) => {
+      const response = await fetch(`/api/workspace-launches/${encodeURIComponent(operationId)}`);
+      return response.ok ? response.json() : null;
+    }, initialLaunch.operationId);
+    if (!launchPayload?.operationId || !launchPayload?.workspaceId || launchPayload.autoRenew !== false || !launchPayload.receiptId) {
+      throw new Error("browser terminal launch readback is invalid");
+    }
+    await screenshot("04-ready");
+    await page.getByRole("button", { name: "读取 Workspace", exact: true }).click();
+    await page.getByText("访问与凭据", { exact: true }).waitFor({ timeout: 60_000 });
+    await screenshot("05-detail");
+    const browserReadback = await page.evaluate(async (workspaceId) => {
+      const [workspaceResponse, runtimeResponse] = await Promise.all([
+        fetch("/api/workspaces?page=1&pageSize=100"),
+        fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/runtime-status`)
+      ]);
+      const workspaceEnvelope = workspaceResponse.ok ? await workspaceResponse.json() : null;
+      const runtimeEnvelope = runtimeResponse.ok ? await runtimeResponse.json() : null;
+      return {
+        workspace: workspaceEnvelope?.data?.items?.find((item) => item.id === workspaceId) || null,
+        runtime: runtimeEnvelope?.data || null
+      };
+    }, launchPayload.workspaceId);
+    if (!browserReadback.workspace?.paidThrough || browserReadback.workspace.autoRenew !== false ||
+      browserReadback.workspace.renewalStatus !== "active" || browserReadback.workspace.state !== "running" ||
+      browserReadback.runtime?.status !== "running" || browserReadback.runtime?.ready !== true) {
+      throw new Error("browser workspace readback is invalid");
+    }
+    const popupPromise = page.waitForEvent("popup", { timeout: 30_000 });
+    await page.getByRole("button", { name: "打开 WebUI", exact: false }).click();
+    const popup = await popupPromise;
+    attachEvidenceListeners(popup);
+    await popup.waitForLoadState("domcontentloaded");
+    await popup.getByText("OPL Workspace READY", { exact: false }).waitFor({ timeout: 60_000 });
+    const workspaceScreenshotPath = join(exactEvidenceDir, "06-workspace-ready.png");
+    await popup.screenshot({ path: workspaceScreenshotPath, fullPage: true });
+    await chmod(workspaceScreenshotPath, 0o600);
+    await popup.close();
+    await Promise.allSettled([...responseTasks]);
+    const launchPosts = requests.filter((entry) => entry.method === "POST" && entry.path === "/api/workspace-launches").length;
+    if (launchPosts !== 1 || requests.some((entry) => entry.method === "DELETE") || requests.some((entry) => entry.path.includes("/refund")) ||
+      pageErrors.length !== 0 || consoleErrors.length !== 0) {
+      throw new Error("browser mutation or error cardinality is invalid");
+    }
+    const screenshotNames = ["01-login.png", "02-balance-usage.png", "03-create-confirmation.png", "04-ready.png", "05-detail.png", "06-workspace-ready.png"];
+    const screenshots = await Promise.all(screenshotNames.map(async (name) => {
+      const bytes = await readFile(join(exactEvidenceDir, name));
+      return { name, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, sizeBytes: bytes.length };
+    }));
+    const evidence = {
+      status: "READY", screenshots, requests, responses, pageErrors, consoleErrors,
+      launchPosts, ownerDeleteRequests: 0, refundPosts: 0,
+      readback: {
+        autoRenew: browserReadback.workspace.autoRenew,
+        workspaceState: browserReadback.workspace.state,
+        runtimeStatus: browserReadback.runtime.status,
+        runtimeReady: browserReadback.runtime.ready
+      }
+    };
+    await writeJSONAtomic(join(exactEvidenceDir, "browser-evidence.json"), evidence);
+    return { launch: launchPayload, receiptId: launchPayload.receiptId, evidence };
+  } finally {
+    await context.close();
+    await browser.close();
   }
 }
 
@@ -1375,6 +1559,8 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
           if (readback.valueUsdMicros !== `-${amountUsdMicros}`) throw new Error("live Sub2API debit amount readback is invalid");
           return { code: readback.code, userId: readback.userId, amountUsdMicros, count: readback.count };
         },
+        browserQualification: runLocalWorkspaceBrowserQualification,
+        browserEvidenceDir: `${options.receiptPath}.browser`,
         cleanup: async (scope) => {
           const authority = scope?.recoveryAuthority || { externalWrites: noLocalJ1ExternalWrites() };
           const cleanupPlan = localJ1CleanupPlan({
@@ -1404,7 +1590,11 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
             };
             const artifact = scope?.recoveryAuthority
               ? createLocalJ1RecoveryArtifact({ ...common, authority })
-              : createLocalJ1RecoveryReadbackPendingArtifact({ ...common, operationId, workspaceId });
+              : createLocalJ1RecoveryReadbackPendingArtifact({
+                ...common,
+                operationId: scope?.operationId || operationId,
+                workspaceId: scope?.workspaceId || workspaceId
+              });
             await writeLocalJ1RecoveryArtifact(recoveryPath, artifact);
             recovery = { status: artifact.status, path: recoveryPath, artifact };
             return null;
