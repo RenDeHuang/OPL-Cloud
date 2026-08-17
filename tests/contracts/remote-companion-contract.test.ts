@@ -27,3 +27,16 @@ test("remote companion credential refresh has durable exact-replay idempotency",
     restart: "operation_result_survives_control_plane_restart_without_persisting_raw_usersig"
   });
 });
+
+test("remote companion contract defines optional non-secret APNs business ID projection", async () => {
+  const contract = JSON.parse(await readFile(contractPath, "utf8"));
+
+  assert.deepEqual(contract.credentials?.pushBusinessId, {
+    sourceEnv: "OPL_TENCENT_IM_APNS_BUSINESS_ID",
+    wireField: "push_business_id",
+    type: "positive_int32",
+    secret: false,
+    optional: true,
+    projection: ["device_activation", "credential_refresh"]
+  });
+});

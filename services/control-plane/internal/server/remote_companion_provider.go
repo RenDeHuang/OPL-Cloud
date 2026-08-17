@@ -23,6 +23,7 @@ import (
 
 type tencentRemoteCompanionConfig struct {
 	SDKAppID        int64
+	PushBusinessID  int64
 	AdminIdentifier string
 	Secret          string
 	BaseURL         string
@@ -34,14 +35,20 @@ type tencentRemoteCompanionProvider struct {
 	client *http.Client
 }
 
+const maxTencentAPNSBusinessID = int64(1<<31 - 1)
+
 func newTencentRemoteCompanionProviderFromEnv() remoteCompanionProvider {
 	sdkAppID, parseErr := strconv.ParseInt(strings.TrimSpace(getenvNonSecret("OPL_TENCENT_IM_SDK_APP_ID")), 10, 64)
+	pushBusinessID, pushParseErr := strconv.ParseInt(strings.TrimSpace(getenvNonSecret("OPL_TENCENT_IM_APNS_BUSINESS_ID")), 10, 64)
+	if pushParseErr != nil || pushBusinessID <= 0 || pushBusinessID > maxTencentAPNSBusinessID {
+		pushBusinessID = 0
+	}
 	baseURL := strings.TrimRight(strings.TrimSpace(getenvNonSecret("OPL_TENCENT_IM_BASE_URL")), "/")
 	admin := strings.TrimSpace(getenvNonSecret("OPL_TENCENT_IM_ADMIN_IDENTIFIER"))
 	secret := getenvNonSecret("OPL_TENCENT_IM_SECRET")
 	configured := parseErr == nil && sdkAppID > 0 && admin != "" && secret != "" && baseURL != ""
 	return &tencentRemoteCompanionProvider{
-		config: tencentRemoteCompanionConfig{SDKAppID: sdkAppID, AdminIdentifier: admin, Secret: secret, BaseURL: baseURL, Configured: configured},
+		config: tencentRemoteCompanionConfig{SDKAppID: sdkAppID, PushBusinessID: pushBusinessID, AdminIdentifier: admin, Secret: secret, BaseURL: baseURL, Configured: configured},
 		client: &http.Client{Timeout: 5 * time.Second},
 	}
 }

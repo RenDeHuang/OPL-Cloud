@@ -37,8 +37,10 @@ mutation requires `Idempotency-Key`.
 Focused tests cover invitation single-use, concurrent seat bounds, manual-code
 attempt invalidation, revocation retry, and Tencent TLS UserSig encoding. This is
 Cloud-source and local-test evidence only: no live Tencent application Secret,
-TestFlight or App Store release, or China three-network qualification is proven
-by this repository change.
+APNs business ID, TestFlight or App Store release, or China three-network
+qualification is proven by this repository change. The candidate can project an
+optional non-secret `push_business_id` in initial activation and credential
+refresh responses once the Instance owner configures it.
 
 ## Implementation Snapshot
 
