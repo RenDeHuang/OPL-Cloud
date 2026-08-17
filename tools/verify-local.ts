@@ -65,7 +65,7 @@ export const productMatrixLaneSpecs = Object.freeze([
   { order: 1, cwd: "services/ledger", command: "go", argsPrefix: ["test", "-count=1", "-json"] },
   { order: 2, cwd: "services/control-plane", command: "go", argsPrefix: ["test", "-timeout=15m", "-count=1", "-json"] },
   { order: 3, cwd: "services/fabric", command: "go", argsPrefix: ["test", "-count=1", "-json"] },
-  { order: 4, cwd: ".", command: "node", argsPrefix: ["--test", "--test-reporter=json", "tests/integration/local-workspace-vertical-readback.test.ts"] }
+  { order: 4, cwd: ".", command: "node", argsPrefix: ["--test", "--test-reporter=./tools/test-json-reporter.mjs", "tests/integration/local-workspace-vertical-readback.test.ts"] }
 ]);
 
 export const productMatrixVerticalTests = Object.freeze([
