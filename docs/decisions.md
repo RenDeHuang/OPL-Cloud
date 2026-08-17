@@ -22,10 +22,13 @@ Candidate and Release identities are distinct. Candidate CI output, assets, and
 exact-SHA image tags may be replaced or discarded before qualification. A
 formal Release must promote the exact candidate SHA and digest that the Instance
 qualified; it must not rebuild different image bytes after the successful
-deployment. The current workflow still builds and publishes in one Release
-dispatch, so a deployable candidate channel plus exact-byte promotion is an
-explicit implementation gap. Until that gap is closed and the candidate has a
-successful Instance receipt, no successor to `v0.1.7` is admitted.
+deployment. Cloud therefore owns a separate owner-only Candidate workflow that
+builds one `linux/amd64` image from an exact canonical SHA, reads back its
+registry digest and revision, and emits the canonical neutral Candidate receipt
+without creating a Git tag, GitHub Release, or versioned image tag. Exact-byte
+promotion of an already qualified Candidate remains an explicit implementation
+gap. Until that gap is closed and the Candidate has a successful Instance
+receipt, no successor to `v0.1.7` is admitted.
 
 The dependency is evidence-only and does not move authority between
 repositories. Cloud owns reusable product source, candidate/release mechanics,

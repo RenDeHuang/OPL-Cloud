@@ -290,7 +290,13 @@ rollback, or production path. Existing Tencent/TKE evidence applies only to
 medopl instance provenance.
 
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
-workflow, and focused distribution checks exist at source level. Historically,
+workflow, owner-only non-Release Candidate workflow, neutral Candidate receipt
+contract/validator, and focused distribution checks exist at source level. The
+Candidate workflow verifies an exact canonical Product SHA, builds one
+run-scoped `linux/amd64` image, reads back its registry digest/platform/revision,
+and uploads the canonical receipt without a Git tag, GitHub Release, versioned
+image tag, or Instance action. It has not been dispatched, so no Candidate image
+or production qualification is claimed here. Historically,
 eight Product Releases, `v0.1.0` through `v0.1.7`, were published between
 2026-08-13T09:50:02Z and 2026-08-15T10:49:30Z while the same Acceptance B path
 was still under development. The repository owner removed `v0.1.0` through
@@ -316,10 +322,11 @@ cleanup authority. Later canonical `main` commits must not be presented as the
 
 The current pre-1.0 admission decision now requires successful
 `opl-instance-medopl` deployment and product readback for an exact candidate
-SHA/digest before a formal successor Release. The existing workflow cannot yet
-prove that order because one dispatch builds and publishes the image. A
-deployable non-Release candidate channel and exact-byte promotion remain open,
-along with clean-host installation, the complete live Console
+SHA/digest before a formal successor Release. The non-Release Candidate source
+path now exists, but Instance consumption, protected qualification, and formal
+exact-byte promotion remain open. The formal Release workflow still rebuilds
+and publishes in one dispatch. Other open evidence includes clean-host
+installation, the complete live Console
 create/readback/open/delete path, and real external Sub2API
 authentication/balance/usage evidence.
 
@@ -472,8 +479,8 @@ Fresh Instance source and receipt evidence now prove a bounded first deployment,
 but not full product acceptance. Instance `main` now owns and executes the
 medopl production, acceptance, recovery, diagnostic, render, and rollout tools;
 the current workflow and manifest still do not prove the full Fabric capability
-credential set or a deployable non-Release candidate channel whose exact bytes
-can later be promoted as a formal Cloud Release.
+credential set, consumption of the new neutral Candidate receipt, or promotion
+of the qualified Candidate's exact bytes as a formal Cloud Release.
 
 The `opl-instance-medopl` repository now owns the medopl profile, production
 workflow source, instance-specific production/acceptance/recovery tools, and
