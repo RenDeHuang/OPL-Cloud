@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 43,
+  "schemaVersion": 44,
   "owner": "OPL Platform Architecture",
   "purpose": "Enforce the physical boundaries between Console UI, Control Plane, Fabric, Ledger, and external Sub2API while pointing launch and settlement facts to their focused owners.",
   "state": "current",
