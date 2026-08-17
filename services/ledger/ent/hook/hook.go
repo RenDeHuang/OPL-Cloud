@@ -44,18 +44,6 @@ func (f ReconciliationReportFunc) Mutate(ctx context.Context, m ent.Mutation) (e
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ReconciliationReportMutation", m)
 }
 
-// The ReviewPolicyFunc type is an adapter to allow the use of ordinary
-// function as ReviewPolicy mutator.
-type ReviewPolicyFunc func(context.Context, *ent.ReviewPolicyMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ReviewPolicyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ReviewPolicyMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ReviewPolicyMutation", m)
-}
-
 // Condition is a hook condition function.
 type Condition func(context.Context, ent.Mutation) bool
 

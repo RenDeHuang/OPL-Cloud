@@ -6,7 +6,6 @@ import (
 	"opl-cloud/services/ledger/ent/evidencereceipt"
 	"opl-cloud/services/ledger/ent/idempotencykey"
 	"opl-cloud/services/ledger/ent/reconciliationreport"
-	"opl-cloud/services/ledger/ent/reviewpolicy"
 	"opl-cloud/services/ledger/ent/schema"
 	"time"
 )
@@ -153,58 +152,4 @@ func init() {
 	reconciliationreportDescID := reconciliationreportFields[0].Descriptor()
 	// reconciliationreport.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	reconciliationreport.IDValidator = reconciliationreportDescID.Validators[0].(func(string) error)
-	reviewpolicyFields := schema.ReviewPolicy{}.Fields()
-	_ = reviewpolicyFields
-	// reviewpolicyDescOrganizationID is the schema descriptor for organization_id field.
-	reviewpolicyDescOrganizationID := reviewpolicyFields[1].Descriptor()
-	// reviewpolicy.DefaultOrganizationID holds the default value on creation for the organization_id field.
-	reviewpolicy.DefaultOrganizationID = reviewpolicyDescOrganizationID.Default.(string)
-	// reviewpolicyDescWorkspaceID is the schema descriptor for workspace_id field.
-	reviewpolicyDescWorkspaceID := reviewpolicyFields[2].Descriptor()
-	// reviewpolicy.WorkspaceIDValidator is a validator for the "workspace_id" field. It is called by the builders before save.
-	reviewpolicy.WorkspaceIDValidator = reviewpolicyDescWorkspaceID.Validators[0].(func(string) error)
-	// reviewpolicyDescProjectID is the schema descriptor for project_id field.
-	reviewpolicyDescProjectID := reviewpolicyFields[3].Descriptor()
-	// reviewpolicy.ProjectIDValidator is a validator for the "project_id" field. It is called by the builders before save.
-	reviewpolicy.ProjectIDValidator = reviewpolicyDescProjectID.Validators[0].(func(string) error)
-	// reviewpolicyDescTaskID is the schema descriptor for task_id field.
-	reviewpolicyDescTaskID := reviewpolicyFields[4].Descriptor()
-	// reviewpolicy.TaskIDValidator is a validator for the "task_id" field. It is called by the builders before save.
-	reviewpolicy.TaskIDValidator = reviewpolicyDescTaskID.Validators[0].(func(string) error)
-	// reviewpolicyDescJobID is the schema descriptor for job_id field.
-	reviewpolicyDescJobID := reviewpolicyFields[5].Descriptor()
-	// reviewpolicy.JobIDValidator is a validator for the "job_id" field. It is called by the builders before save.
-	reviewpolicy.JobIDValidator = reviewpolicyDescJobID.Validators[0].(func(string) error)
-	// reviewpolicyDescVersion is the schema descriptor for version field.
-	reviewpolicyDescVersion := reviewpolicyFields[6].Descriptor()
-	// reviewpolicy.VersionValidator is a validator for the "version" field. It is called by the builders before save.
-	reviewpolicy.VersionValidator = reviewpolicyDescVersion.Validators[0].(func(string) error)
-	// reviewpolicyDescRequiredReviewersJSON is the schema descriptor for required_reviewers_json field.
-	reviewpolicyDescRequiredReviewersJSON := reviewpolicyFields[7].Descriptor()
-	// reviewpolicy.RequiredReviewersJSONValidator is a validator for the "required_reviewers_json" field. It is called by the builders before save.
-	reviewpolicy.RequiredReviewersJSONValidator = reviewpolicyDescRequiredReviewersJSON.Validators[0].(func(string) error)
-	// reviewpolicyDescStatus is the schema descriptor for status field.
-	reviewpolicyDescStatus := reviewpolicyFields[8].Descriptor()
-	// reviewpolicy.StatusValidator is a validator for the "status" field. It is called by the builders before save.
-	reviewpolicy.StatusValidator = reviewpolicyDescStatus.Validators[0].(func(string) error)
-	// reviewpolicyDescSupersedesPolicyID is the schema descriptor for supersedes_policy_id field.
-	reviewpolicyDescSupersedesPolicyID := reviewpolicyFields[9].Descriptor()
-	// reviewpolicy.DefaultSupersedesPolicyID holds the default value on creation for the supersedes_policy_id field.
-	reviewpolicy.DefaultSupersedesPolicyID = reviewpolicyDescSupersedesPolicyID.Default.(string)
-	// reviewpolicyDescIdempotencyKey is the schema descriptor for idempotency_key field.
-	reviewpolicyDescIdempotencyKey := reviewpolicyFields[10].Descriptor()
-	// reviewpolicy.IdempotencyKeyValidator is a validator for the "idempotency_key" field. It is called by the builders before save.
-	reviewpolicy.IdempotencyKeyValidator = reviewpolicyDescIdempotencyKey.Validators[0].(func(string) error)
-	// reviewpolicyDescRequestHash is the schema descriptor for request_hash field.
-	reviewpolicyDescRequestHash := reviewpolicyFields[11].Descriptor()
-	// reviewpolicy.RequestHashValidator is a validator for the "request_hash" field. It is called by the builders before save.
-	reviewpolicy.RequestHashValidator = reviewpolicyDescRequestHash.Validators[0].(func(string) error)
-	// reviewpolicyDescCreatedAt is the schema descriptor for created_at field.
-	reviewpolicyDescCreatedAt := reviewpolicyFields[12].Descriptor()
-	// reviewpolicy.DefaultCreatedAt holds the default value on creation for the created_at field.
-	reviewpolicy.DefaultCreatedAt = reviewpolicyDescCreatedAt.Default.(func() time.Time)
-	// reviewpolicyDescID is the schema descriptor for id field.
-	reviewpolicyDescID := reviewpolicyFields[0].Descriptor()
-	// reviewpolicy.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	reviewpolicy.IDValidator = reviewpolicyDescID.Validators[0].(func(string) error)
 }

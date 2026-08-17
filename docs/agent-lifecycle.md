@@ -66,8 +66,8 @@ or
 9. Fabric consumes package, revision and policy refs to bind approved compute,
    storage, environments, secrets, network and connectors.
 10. Ledger records package, service, deployment, invocation/session, resource,
-    output, review and continuation refs without becoming package, service or
-    domain truth.
+    output, review and continuation refs as opaque provenance without becoming
+    package, service, continuation-authority, or domain truth.
 
 ## Failure And Repair
 

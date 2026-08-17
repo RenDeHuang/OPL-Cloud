@@ -159,9 +159,10 @@ only the business cursor, attempt/lease/CAS state, account and settlement
 coordination, and customer projection. `services/fabric` owns compute, storage,
 attachment, Secret binding, Runtime, its operation store, provider/Kubernetes
 mutation, and authoritative resource readback. `services/ledger` owns append-only
-receipt, evidence, review, reconciliation, and continuation references, but none
-of those references can authorize or advance a Launch. Sub2API remains the
-identity, wallet, Key, and Usage authority.
+receipts, reconciliation, idempotency, and caller-owned opaque provenance; none
+of those refs can authorize or advance a Launch. Control Plane's typed
+continuation authorization remains separate. Sub2API remains the identity,
+wallet, Key, and Usage authority.
 
 Control Plane calls Fabric through a typed public HTTP contract carrying an
 explicit, immutable, provider-neutral launch/stage operation binding. Fabric

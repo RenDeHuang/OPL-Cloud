@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 14,
+  "schemaVersion": 15,
   "owner": "OPL Ledger",
-  "purpose": "General execution, monthly billing, and current control-plane lifecycle evidence receipts.",
+  "purpose": "General execution, monthly billing, reconciliation, and current control-plane lifecycle evidence receipts.",
   "state": "current",
-  "machineBoundary": "General receipt states, identity, provenance, artifact, review result, review policy and gate, continuation, idempotency, and current receipt API shape.",
+  "machineBoundary": "Receipt states, identity, opaque provenance, idempotency, reconciliation, and current receipt API shape.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
@@ -23,8 +23,6 @@
     "billing.workspace_refunded.v1",
     "gateway.wallet_adjustment.v1",
     "workspace.gateway_key_rotated.v1",
-    "artifact.manifest.v1",
-    "review.result.v1",
     "execution.receipt.v1"
   ],
   "historicalReadOnlyReceiptCompatibility": {
@@ -35,7 +33,9 @@
       "billing.resource_renewed.v1",
       "billing.resource_expired.v1",
       "billing.resource_refunded.v1",
-      "billing.charge_review_required.v1"
+      "billing.charge_review_required.v1",
+      "artifact.manifest.v1",
+      "review.result.v1"
     ],
     "existingReceiptsReadable": true,
     "newWritesAllowed": false
@@ -59,16 +59,7 @@
     "api": {
       "record": "POST /ledger/receipts",
       "list": "GET /ledger/receipts",
-      "query": "GET /ledger/receipts/<receiptId>",
-      "resolveContinuation": "GET /ledger/receipts/<receiptId>/continuation",
-      "recordArtifact": "POST /ledger/artifacts",
-      "queryArtifact": "GET /ledger/artifacts/<artifactId>",
-      "recordReview": "POST /ledger/reviews",
-      "queryReview": "GET /ledger/reviews/<reviewId>",
-      "createReviewPolicy": "POST /ledger/review-policies",
-      "listReviewPolicies": "GET /ledger/review-policies",
-      "queryReviewPolicy": "GET /ledger/review-policies/<policyId>",
-      "evaluateReviewGate": "POST /ledger/review-gates/evaluate"
+      "query": "GET /ledger/receipts/<receiptId>"
     },
     "query": {
       "endpoint": "GET /ledger/receipts",
@@ -131,93 +122,25 @@
       "receipt",
       "continuation"
     ],
-    "artifactManifestFields": [
-      "artifactId",
-      "digest",
-      "mediaType",
-      "sizeBytes",
-      "storageRef",
-      "organizationId",
-      "workspaceId",
-      "projectId",
-      "taskId",
-      "jobId",
-      "createdAt"
-    ],
-    "reviewResultFields": [
-      "reviewId",
-      "reviewerRef",
-      "reviewerVersion",
-      "inputArtifactDigests",
-      "checks",
-      "decision",
-      "organizationId",
-      "workspaceId",
-      "projectId",
-      "taskId",
-      "jobId",
-      "createdAt"
-    ],
-    "reviewDecisions": [
-      "pending",
-      "accepted",
-      "rejected"
-    ],
-    "reviewPolicy": {
-      "ownership": "ledger",
-      "writeProtocol": "append_new_version_with_idempotency",
-      "idempotencyNamespace": "review_policy",
-      "statuses": [
-        "active",
-        "superseded"
+    "opaqueProvenance": {
+      "fields": [
+        "artifactId",
+        "reviewId",
+        "inputRefs",
+        "outputRefs",
+        "reviewerChecks",
+        "continuationId",
+        "continuation"
       ],
-      "scopeFields": [
-        "organizationId",
-        "workspaceId",
-        "projectId",
-        "taskId",
-        "jobId"
+      "semantics": "caller_owned_opaque_values_are_persisted_and_returned_without_ledger_interpretation",
+      "continuationIdentity": "caller_supplied_only_ledger_does_not_generate_or_resolve_identity",
+      "workspaceAuthorization": "forbidden",
+      "historicalReceiptTypes": [
+        "artifact.manifest.v1",
+        "review.result.v1"
       ],
-      "requiredFields": [
-        "policyId",
-        "version",
-        "requiredReviewers[].reviewerRef",
-        "requiredReviewers[].reviewerVersion",
-        "status",
-        "createdAt"
-      ]
+      "newStructuredWrites": false
     },
-    "reviewGate": {
-      "input": [
-        "execution identity",
-        "reviewIds"
-      ],
-      "statuses": [
-        "accepted",
-        "review_required",
-        "review_blocked"
-      ],
-      "evidence": [
-        "missing",
-        "pending",
-        "rejected",
-        "versionMismatches"
-      ],
-      "continuationRule": "eligible only when status is accepted; a full execution identity without an active policy is ineligible",
-      "receiptReadRule": "for a full execution identity, receipt query and list omit continuationId and continuation unless the active review gate is accepted",
-      "waiver": "not_supported_without_auditable_signed_policy_decision"
-    },
-    "continuationFields": [
-      "continuationId",
-      "receiptId",
-      "projectId",
-      "taskId",
-      "taskVersion",
-      "requiredArtifactDigests",
-      "artifactIds",
-      "reviewIds",
-      "environmentRef"
-    ],
     "writeProtocol": "append_first_with_idempotency",
     "correctionProtocol": "append_superseding_receipt",
     "forbiddenContent": [

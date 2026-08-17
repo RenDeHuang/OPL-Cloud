@@ -91,7 +91,7 @@ Required fields:
 
 Every completed, failed, cancelled, or reviewer-blocked job should produce a
 Ledger receipt. The receipt links the request, approval, execution, outputs,
-review results, owner, and continuation entry.
+review refs, owner, and continuation ref as caller-owned opaque provenance.
 
 ## Surface Responsibilities
 
@@ -102,7 +102,7 @@ review results, owner, and continuation entry.
 | OPL Serve | Submits exact Agent Revision invocations/sessions through Runway and projects endpoint status, events and outputs |
 | OPL Console | Applies account/service policy, quota, approval, and billing rules for managed resources and exact package/revision refs |
 | OPL Fabric | Selects adapters, prepares resources, runs jobs, and collects outputs |
-| OPL Ledger | Records receipts, provenance, reviewer results, and continuation refs |
+| OPL Ledger | Records receipts and caller-owned opaque provenance, including reviewer and continuation refs |
 | Package owner | Owns Package identity, capabilities, entrypoints and exact publication revisions outside this resource-execution contract |
 | Native carrier | Owns physical install, update, remove and fresh installed/callable readback |
 | OPL Packages | Discovers owner descriptors, delegates configured-carrier actions and aggregates state without creating a parallel resolver, lock or currentness |

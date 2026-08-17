@@ -85,7 +85,7 @@ fresh Framework and domain readback.
 | Account/service availability, credential approval, quota and audit policy | OPL Console |
 | Resource and environment binding | OPL Fabric |
 | Retrieval strategy, evidence use, writing and review | Domain Agent |
-| Receipt/provenance refs and continuation entry | OPL Ledger |
+| Receipt and opaque provenance refs | OPL Ledger; the calling owner retains continuation authority |
 
 Connector availability, package health, policy approval and domain readiness
 are separate states and must remain separately readable.

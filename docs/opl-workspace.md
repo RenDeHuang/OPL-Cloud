@@ -75,7 +75,8 @@ endpoint or traffic state.
 - Serve owns Agent Service publication, immutable revisions and external endpoints.
 - Fabric binds and runs compute, storage, environment and connector resources.
 - Gateway supplies AI access.
-- Ledger records receipt and provenance refs.
+- Ledger records receipt and opaque provenance refs; Workspace retains project,
+  artifact, review, and continuation authority.
 - Workspace presents the user experience and dispatches owner actions.
 
 A Workspace URL is a workbench access surface and cannot be reused as an Agent

@@ -24,10 +24,17 @@ them:
 | Customer settlement coordination and Sub2API balance authority | `opl-cloud-billing-ledger-contract.json` |
 | Launch business operation, stage decision, and recovery authorization | `opl-cloud-control-plane-launch-contract.json` |
 | Fabric stage operation, idempotency, request hash, and resource binding | `opl-cloud-fabric-launch-binding-contract.json` |
-| Receipt, evidence, reconciliation, and continuation refs | `opl-cloud-evidence-ledger-contract.json` |
+| Receipt, opaque provenance, reconciliation, and idempotency | `opl-cloud-evidence-ledger-contract.json` |
 
 These focused contracts are the only current machine owners for the launch and
 settlement boundary. Do not recreate an aggregate launch contract.
+
+The Ledger contract does not make Artifact, Review, ReviewPolicy, ReviewGate, or
+Continuation a structured Ledger API. Receipt fields such as `artifactId`,
+`reviewId`, `outputRefs`, `reviewerChecks`, `continuationId`, and `continuation`
+are caller-owned opaque provenance. Historical `review_policies` rows and
+receipt provenance columns remain retained for data integrity; they do not
+authorize Workspace operations or permit a new structured writer.
 
 ## Admission
 

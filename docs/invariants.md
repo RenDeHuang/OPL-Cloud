@@ -34,9 +34,11 @@ schemas, workflows, and focused tests.
 - Fabric physically owns compute, storage, attachment, Secret binding, Runtime,
   its operation store, provider/Kubernetes mutation, and authoritative resource
   readback. Provider-specific behavior stays behind a Fabric provider adapter.
-- Ledger owns append-only receipts, evidence, review, reconciliation, and
-  continuation references. It never owns or changes spendable balance, and a
-  Ledger reference cannot authorize or advance a Workspace Launch.
+- Ledger owns append-only receipts, reconciliation, idempotency, and
+  caller-owned opaque provenance. Artifact, review, and continuation refs are
+  persisted and returned without Ledger interpretation; they never authorize or
+  advance a Workspace Launch. Control Plane's typed continuation authorization
+  remains separate from Ledger provenance.
 - Sub2API is the only authority for customer identity credentials, spendable USD
   balance, API keys, model routing, and request usage. Cloud must not create a
   second wallet, Key store, Usage store, or Gateway service.

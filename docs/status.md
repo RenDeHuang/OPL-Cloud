@@ -93,6 +93,15 @@ by this repository change.
   `#345`-`#348`, the implementation and contract patches remove 2,412 more
   lines than they add. `npm run verify:local` and every required PR check pass
   after canonical absorption.
+- The current Ledger simplification slice retires the structured Artifact,
+  Review, ReviewPolicy, ReviewGate, and Continuation APIs, stores, routes, and
+  generated Ent code. Receipt `artifactId`, `reviewId`, `outputRefs`,
+  `reviewerChecks`, `continuationId`, and `continuation` remain caller-owned
+  opaque provenance; Ledger does not generate continuation identities, hide
+  provenance on reads, or authorize Workspace operations. Historical
+  `review_policies` rows and Receipt provenance columns remain retained without
+  migration or deletion. Focused Ledger Go tests pass on this source slice;
+  aggregate verification and canonical integration remain separate evidence.
 - Two further native-replacement candidates were rejected instead of merged.
   Converting the next two CLI parsers to `node:util.parseArgs` added 54 net
   lines, while using `http.ServeFile` only for uncompressed assets retained the

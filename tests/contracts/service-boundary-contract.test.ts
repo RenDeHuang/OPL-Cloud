@@ -47,7 +47,16 @@ test("credential and Ledger reads verify capability before sensitive owner looku
   assert.equal(fabric.transportTokenOnly, "forbidden");
   assert.equal(ledger.preverification, "signature_caller_resource_action_operation_expiry_and_body_digest_before_owner_lookup");
   assert.equal(ledger.finalVerification, "persisted_owner_account_and_workspace_match");
-  assert.deepEqual(ledger.indexedOwnerLookups, ["receipt_id", "artifact_id", "review_id", "review_policy_id"]);
-  assert.equal(ledger.reviewGateLookup, "bounded_indexed_review_id_set");
+  assert.deepEqual(ledger.indexedOwnerLookups, ["receipt_id"]);
+  assert.equal(ledger.reviewGateLookup, undefined);
+  assert.equal(ledger.opaqueProvenanceAuthorization, "receipt_provenance_fields_never_grant_workspace_access_or_advance_control_plane_operations");
   assert.equal(ledger.transportTokenOnly, "forbidden");
+
+  assert.deepEqual(contract.services.ledger.owns, ["evidenceReceipts", "idempotencyKeys", "reconciliationReports"]);
+  assert.deepEqual(contract.services.ledger.historicalPersistence, {
+    tables: ["review_policies"],
+    receiptProvenanceColumns: ["artifact_id", "review_id"],
+    migrationPolicy: "retain_without_new_writer_or_data_migration"
+  });
+  assert.deepEqual(contract.services.ledger.readApis, ["receiptQuery", "paginatedTenantReceiptQuery"]);
 });

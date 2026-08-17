@@ -15,6 +15,12 @@ skill-first flows, receipts can point to the main skill, enhancement packs,
 Connect adapter, source refs, and selected outputs without making Ledger the
 domain source of truth.
 
+Artifact refs, review refs, reviewer checks, output refs, and continuation refs
+in this planning shape are opaque caller-owned provenance. The structured
+Artifact, Review, ReviewPolicy, ReviewGate, and Continuation APIs are not Ledger
+runtime capabilities; their semantics, authorization, and source data remain
+with the consuming domain or Workspace owner.
+
 ## Minimal JSON Shape
 
 ```json
@@ -94,11 +100,12 @@ domain source of truth.
 
 ## Boundary
 
-Ledger receipts support review, audit, handoff, continuation, and later
+Ledger receipts carry refs for audit, handoff, continuation, and later
 reproduction. Runtime truth still belongs to the owning runtime, storage truth
 belongs to the owning storage system, and domain-quality truth belongs to the
-responsible domain owner or reviewer. Ledger records provenance and receipts;
-it does not replace MAS, ScholarSkills, or another domain owner.
+responsible domain owner or reviewer. Ledger records opaque provenance and
+receipts; it does not replace MAS, ScholarSkills, or another domain owner, and
+it does not generate continuation identities or grant Workspace access.
 
 For Serve receipts, Service/Revision/Deployment truth remains with OPL Serve and
 Invocation/Session truth remains with OPL Runway. Provider session identifiers,

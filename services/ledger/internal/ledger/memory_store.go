@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,9 +17,7 @@ type MemoryStore struct {
 	mu                        sync.Mutex
 	idempotency               map[string]idempotencyRecord
 	reconciliationIdempotency map[string]idempotencyRecord
-	reviewPolicyIdempotency   map[string]idempotencyRecord
 	receipts                  map[string]Receipt
-	reviewPolicies            map[string]ReviewPolicy
 	nextID                    int64
 }
 
@@ -46,9 +43,7 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		idempotency:               map[string]idempotencyRecord{},
 		reconciliationIdempotency: map[string]idempotencyRecord{},
-		reviewPolicyIdempotency:   map[string]idempotencyRecord{},
 		receipts:                  map[string]Receipt{},
-		reviewPolicies:            map[string]ReviewPolicy{},
 	}
 }
 
@@ -81,7 +76,6 @@ func (s *MemoryStore) RecordReceipt(_ context.Context, input ReceiptInput) (Rece
 
 	receipt := Receipt{ReceiptInput: input, ReceiptID: s.newID("receipt"), CreatedAt: time.Now().UTC()}
 	receipt.IdempotencyKey = ""
-	finalizeReceiptContinuation(&receipt)
 	receipt = cloneMemoryValue(receipt)
 	s.receipts[receipt.ReceiptID] = receipt
 	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: receipt.ReceiptID}
@@ -95,8 +89,7 @@ func (s *MemoryStore) Receipt(_ context.Context, receiptID string) (Receipt, err
 	if !ok {
 		return Receipt{}, ErrReceiptNotFound
 	}
-	gate, err := s.evaluateReviewGateLocked(ReviewGateInput{ExecutionIdentity: executionIdentityFromReceipt(receipt), ReviewIDs: stringSlice(receipt.Continuation["reviewIds"])})
-	return receiptForRead(cloneMemoryValue(receipt), gate, err), nil
+	return cloneMemoryValue(receipt), nil
 }
 
 func (s *MemoryStore) UpdateReceiptRetention(_ context.Context, input ReceiptRetentionInput) (ReceiptRetentionResult, error) {
@@ -206,8 +199,7 @@ func (s *MemoryStore) ListReceipts(_ context.Context, query ReceiptQuery) (Recei
 			(!cursor.CreatedAt.IsZero() && (receipt.CreatedAt.After(cursor.CreatedAt) || (receipt.CreatedAt.Equal(cursor.CreatedAt) && receipt.ReceiptID >= cursor.ReceiptID))) {
 			continue
 		}
-		gate, gateErr := s.evaluateReviewGateLocked(ReviewGateInput{ExecutionIdentity: executionIdentityFromReceipt(receipt), ReviewIDs: stringSlice(receipt.Continuation["reviewIds"])})
-		receipts = append(receipts, receiptForRead(cloneMemoryValue(receipt), gate, gateErr))
+		receipts = append(receipts, cloneMemoryValue(receipt))
 	}
 	sort.Slice(receipts, func(i, j int) bool {
 		if receipts[i].CreatedAt.Equal(receipts[j].CreatedAt) {
@@ -224,206 +216,6 @@ func (s *MemoryStore) ListReceipts(_ context.Context, query ReceiptQuery) (Recei
 		page.NextCursor = encodeReceiptCursor(receipts[len(receipts)-1])
 	}
 	return page, nil
-}
-
-func (s *MemoryStore) Continuation(ctx context.Context, receiptID string) (map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	receipt, ok := s.receipts[receiptID]
-	if !ok {
-		return nil, ErrReceiptNotFound
-	}
-	continuation, err := continuationFromReceipt(receipt)
-	if err != nil {
-		return nil, err
-	}
-	identity := executionIdentityFromReceipt(receipt)
-	if !validExecutionIdentity(identity) {
-		return nil, ErrContinuationIneligible
-	}
-	gate, err := s.evaluateReviewGateLocked(ReviewGateInput{ExecutionIdentity: identity, ReviewIDs: stringSlice(continuation["reviewIds"])})
-	if errors.Is(err, ErrReviewPolicyNotFound) {
-		return nil, ErrContinuationIneligible
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !gate.ContinuationEligible {
-		return nil, ErrContinuationIneligible
-	}
-	return continuation, nil
-}
-
-func (s *MemoryStore) RecordArtifact(ctx context.Context, input ArtifactInput) (Artifact, error) {
-	if err := validateArtifactInput(input); err != nil {
-		return Artifact{}, err
-	}
-	receipt, err := s.RecordReceipt(ctx, ReceiptInput{
-		Type: artifactReceiptType, Status: "completed", Surface: "ledger",
-		OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, JobID: input.JobID,
-		ArtifactID:     evidenceID("artifact", input.IdempotencyKey),
-		OutputRefs:     map[string]any{"digest": input.Digest, "mediaType": input.MediaType, "sizeBytes": input.SizeBytes, "storageRef": input.StorageRef},
-		IdempotencyKey: input.IdempotencyKey,
-	})
-	if err != nil {
-		return Artifact{}, err
-	}
-	return artifactFromReceipt(receipt), nil
-}
-
-func (s *MemoryStore) Artifact(_ context.Context, artifactID string) (Artifact, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, receipt := range s.receipts {
-		if receipt.Type == artifactReceiptType && receipt.ArtifactID == artifactID {
-			return artifactFromReceipt(receipt), nil
-		}
-	}
-	return Artifact{}, ErrArtifactNotFound
-}
-
-func (s *MemoryStore) RecordReview(ctx context.Context, input ReviewInput) (Review, error) {
-	if err := validateReviewInput(input); err != nil {
-		return Review{}, err
-	}
-	status := reviewReceiptStatus(input.Decision)
-	receipt, err := s.RecordReceipt(ctx, ReceiptInput{
-		Type: reviewReceiptType, Status: status, Surface: "ledger",
-		OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, JobID: input.JobID,
-		ReviewID:       evidenceID("review", input.IdempotencyKey),
-		ReviewerChecks: map[string]any{"reviewerRef": input.ReviewerRef, "reviewerVersion": input.ReviewerVersion, "inputArtifactDigests": input.InputArtifactDigests, "checks": input.Checks, "decision": input.Decision},
-		IdempotencyKey: input.IdempotencyKey,
-	})
-	if err != nil {
-		return Review{}, err
-	}
-	return reviewFromReceipt(receipt), nil
-}
-
-func (s *MemoryStore) Review(_ context.Context, reviewID string) (Review, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, receipt := range s.receipts {
-		if receipt.Type == reviewReceiptType && receipt.ReviewID == reviewID {
-			return reviewFromReceipt(receipt), nil
-		}
-	}
-	return Review{}, ErrReviewNotFound
-}
-
-func (s *MemoryStore) CreateReviewPolicy(_ context.Context, input ReviewPolicyInput) (ReviewPolicy, error) {
-	if err := validateReviewPolicyInput(input); err != nil {
-		return ReviewPolicy{}, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	hashInput := input
-	hashInput.IdempotencyKey = ""
-	payloadHash, err := hashJSON(hashInput)
-	if err != nil {
-		return ReviewPolicy{}, err
-	}
-	if existing, ok := s.reviewPolicyIdempotency[input.IdempotencyKey]; ok {
-		if existing.payloadHash != payloadHash {
-			return ReviewPolicy{}, ErrIdempotencyConflict
-		}
-		policy, ok := existing.result.(ReviewPolicy)
-		if !ok {
-			return ReviewPolicy{}, ErrIdempotencyConflict
-		}
-		if current, ok := s.reviewPolicies[policy.PolicyID]; ok {
-			policy = current
-		}
-		policy.Replayed = true
-		return policy, nil
-	}
-	if input.SupersedesPolicyID != "" {
-		previous, ok := s.reviewPolicies[input.SupersedesPolicyID]
-		if !ok {
-			return ReviewPolicy{}, ErrReviewPolicyNotFound
-		}
-		if previous.Status != "active" || !sameExecutionIdentity(previous.ExecutionIdentity, input.ExecutionIdentity) || previous.Version == input.Version {
-			return ReviewPolicy{}, ErrInvalidReviewPolicyInput
-		}
-	} else {
-		for _, existing := range s.reviewPolicies {
-			if existing.Status == "active" && sameExecutionIdentity(existing.ExecutionIdentity, input.ExecutionIdentity) {
-				return ReviewPolicy{}, ErrInvalidReviewPolicyInput
-			}
-		}
-	}
-	policy := ReviewPolicy{ReviewPolicyInput: input, PolicyID: evidenceID("review-policy", input.IdempotencyKey), Status: "active", CreatedAt: time.Now().UTC()}
-	policy.IdempotencyKey = ""
-	s.reviewPolicies[policy.PolicyID] = policy
-	if input.SupersedesPolicyID != "" {
-		previous := s.reviewPolicies[input.SupersedesPolicyID]
-		previous.Status = "superseded"
-		s.reviewPolicies[previous.PolicyID] = previous
-	}
-	s.reviewPolicyIdempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: policy}
-	return policy, nil
-}
-
-func (s *MemoryStore) ReviewPolicy(_ context.Context, policyID string) (ReviewPolicy, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	policy, ok := s.reviewPolicies[policyID]
-	if !ok {
-		return ReviewPolicy{}, ErrReviewPolicyNotFound
-	}
-	return policy, nil
-}
-
-func (s *MemoryStore) ListReviewPolicies(_ context.Context, query ReviewPolicyQuery) ([]ReviewPolicy, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	policies := make([]ReviewPolicy, 0, len(s.reviewPolicies))
-	for _, policy := range s.reviewPolicies {
-		if (query.OrganizationID != "" && policy.OrganizationID != query.OrganizationID) || (query.WorkspaceID != "" && policy.WorkspaceID != query.WorkspaceID) || (query.ProjectID != "" && policy.ProjectID != query.ProjectID) || (query.TaskID != "" && policy.TaskID != query.TaskID) || (query.JobID != "" && policy.JobID != query.JobID) || (query.Status != "" && policy.Status != query.Status) {
-			continue
-		}
-		policies = append(policies, policy)
-	}
-	sort.Slice(policies, func(i, j int) bool {
-		if policies[i].CreatedAt.Equal(policies[j].CreatedAt) {
-			return policies[i].PolicyID > policies[j].PolicyID
-		}
-		return policies[i].CreatedAt.After(policies[j].CreatedAt)
-	})
-	return policies, nil
-}
-
-func (s *MemoryStore) EvaluateReviewGate(_ context.Context, input ReviewGateInput) (ReviewGateResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.evaluateReviewGateLocked(input)
-}
-
-func (s *MemoryStore) evaluateReviewGateLocked(input ReviewGateInput) (ReviewGateResult, error) {
-	if !validReviewGateInput(input) {
-		return ReviewGateResult{}, ErrInvalidReviewGateInput
-	}
-	var active ReviewPolicy
-	for _, policy := range s.reviewPolicies {
-		if policy.Status == "active" && sameExecutionIdentity(policy.ExecutionIdentity, input.ExecutionIdentity) {
-			active = policy
-			break
-		}
-	}
-	if active.PolicyID == "" {
-		return ReviewGateResult{}, ErrReviewPolicyNotFound
-	}
-	wanted := make(map[string]struct{}, len(input.ReviewIDs))
-	for _, id := range input.ReviewIDs {
-		wanted[id] = struct{}{}
-	}
-	reviews := make([]Review, 0, len(wanted))
-	for _, receipt := range s.receipts {
-		if _, ok := wanted[receipt.ReviewID]; ok && receipt.Type == reviewReceiptType {
-			reviews = append(reviews, reviewFromReceipt(receipt))
-		}
-	}
-	return evaluateReviewGate(active, reviews), nil
 }
 
 func (s *MemoryStore) RecordReconciliation(_ context.Context, input ReconciliationInput) (ReconciliationResult, error) {
