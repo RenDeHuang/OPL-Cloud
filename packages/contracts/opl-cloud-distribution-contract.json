@@ -9,6 +9,14 @@
     "removalCondition": "Replace only with a newer current contract for the same distribution and instance-handoff boundary."
   },
   "productRepository": "gaofeng21cn/one-person-lab-cloud",
+  "candidate": {
+    "workflow": ".github/workflows/build-opl-cloud-candidate.yml",
+    "contract": "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV1",
+    "registry": "ghcr.io/gaofeng21cn/one-person-lab-cloud",
+    "platform": "linux/amd64",
+    "formalPublication": false,
+    "instanceDeployment": false
+  },
   "distribution": {
     "workflow": ".github/workflows/release-opl-cloud-image.yml",
     "registry": "ghcr.io/gaofeng21cn/one-person-lab-cloud",
@@ -64,9 +72,9 @@
   },
   "instanceHandoff": {
     "repository": "gaofeng21cn/opl-instance-medopl",
+    "contract": "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV1",
     "inputs": [
-      "productSha",
-      "imageDigest"
+      "candidate_receipt_b64"
     ],
     "cloudRepositoryMustNotOwn": [
       "instance_domains",

@@ -504,15 +504,22 @@ same SHA and image bytes as a formal Release. Cloud does not dispatch or operate
 the Instance, and failed development or deployment attempts do not create a
 formal version.
 
-The current Release workflow cannot yet implement that complete path. It builds
-and validates the OCI layout in a read-only job, passes one digest-checked
-Actions artifact to a separate publish job, and grants
+The owner-only `build-opl-cloud-candidate.yml` workflow now implements the
+pre-publication half of that path. It verifies one exact canonical Product SHA,
+builds and pushes one run-scoped `linux/amd64` image, reads back its registry
+digest, platform, and OCI revision, and uploads one canonical neutral Candidate
+receipt binding that Cloud image to an immutable Workspace image. It creates no
+Git tag, GitHub Release, versioned image tag, or Instance action.
+
+The formal Release workflow still cannot promote those already qualified bytes.
+It builds and validates the OCI layout in a read-only job, passes one
+digest-checked Actions artifact to a separate publish job, and grants
 `contents:write`, `packages:write`, `artifact-metadata:write`,
 `attestations:write`, and `id-token:write` only to that publish job under the
 protected `cloud-release` Environment. Both jobs run in one owner-only manual
-Release dispatch, so the repository still lacks a deployable non-Release
-candidate channel and exact-byte promotion from an already qualified candidate.
-Until those gaps close, no successor to `v0.1.7` is admitted.
+Release dispatch and rebuild the image, so exact-byte promotion from an already
+qualified Candidate remains open. Until that gap closes, no successor to
+`v0.1.7` is admitted.
 
 The build emits a SHA-256 manifest for every GitHub Release asset; the publish job
 checks those bytes, signs a GitHub OIDC-backed attestation that binds the

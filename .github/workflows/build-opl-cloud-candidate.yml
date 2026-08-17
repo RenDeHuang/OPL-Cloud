@@ -1,0 +1,215 @@
+name: Build OPL Cloud Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      product_sha:
+        description: Exact 40-character Product commit already merged into Cloud main.
+        required: true
+        type: string
+      workspace_image:
+        description: Immutable Workspace image reference using repository@sha256.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: opl-cloud-candidate-${{ inputs.product_sha }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    if: ${{ github.ref == 'refs/heads/main' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PRODUCT_REPOSITORY: ${{ github.repository }}
+      PRODUCT_SHA: ${{ inputs.product_sha }}
+      WORKSPACE_IMAGE: ${{ inputs.workspace_image }}
+      IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
+
+    steps:
+      - name: Checkout exact product source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.product_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$PRODUCT_SHA" =~ ^[0-9a-f]{40}$ ]] || [ "$(git rev-parse HEAD)" != "$PRODUCT_SHA" ]; then
+            echo "product_sha must be the exact checked-out lowercase Product SHA." >&2
+            exit 1
+          fi
+          git fetch --no-tags "https://github.com/$PRODUCT_REPOSITORY.git" main:refs/remotes/candidate-source/main
+          if ! git merge-base --is-ancestor "$PRODUCT_SHA" refs/remotes/candidate-source/main; then
+            echo "Product SHA is not merged into canonical main." >&2
+            exit 1
+          fi
+          product_tree="$(git rev-parse "$PRODUCT_SHA^{tree}")"
+          if ! [[ "$product_tree" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Product tree readback is invalid." >&2
+            exit 1
+          fi
+          if ! [[ "$WORKSPACE_IMAGE" =~ ^[a-z0-9.-]+(:[1-9][0-9]*)?/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "workspace_image must be an immutable repository@sha256 reference." >&2
+            exit 1
+          fi
+          workspace_digest="${WORKSPACE_IMAGE##*@}"
+          {
+            printf 'PRODUCT_TREE=%s\n' "$product_tree"
+            printf 'WORKSPACE_IMAGE_DIGEST=%s\n' "$workspace_digest"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up Node 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Validate portable product boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run validate:product-boundary
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        env:
+          PACKAGES_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$PACKAGES_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Build and publish linux amd64 candidate
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/candidate
+          candidate_tag="$IMAGE_REPOSITORY:candidate-$PRODUCT_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          metadata="$RUNNER_TEMP/opl-cloud-candidate-metadata.json"
+          docker buildx build \
+            --platform linux/amd64 \
+            --label "org.opencontainers.image.source=https://github.com/$PRODUCT_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$PRODUCT_SHA" \
+            --cache-from "type=gha,scope=opl-cloud-candidate" \
+            --cache-to "type=gha,mode=max,scope=opl-cloud-candidate" \
+            --metadata-file "$metadata" \
+            --tag "$candidate_tag" \
+            --push \
+            .
+          digest="$(jq -r '."containerimage.digest" // empty' "$metadata")"
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Candidate build did not return an immutable digest." >&2
+            exit 1
+          fi
+          {
+            printf 'candidate_tag=%s\n' "$candidate_tag"
+            printf 'digest=%s\n' "$digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Read back candidate digest platform and revision
+        shell: bash
+        env:
+          CANDIDATE_TAG: ${{ steps.image.outputs.candidate_tag }}
+          EXPECTED_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          manifest="$(docker buildx imagetools inspect "$CANDIDATE_TAG" --format '{{json .Manifest}}')"
+          observed_digest="$(jq -r '.digest // empty' <<< "$manifest")"
+          if [ "$observed_digest" != "$EXPECTED_DIGEST" ]; then
+            echo "Candidate registry digest readback mismatch." >&2
+            exit 1
+          fi
+          jq -e '
+            .mediaType == "application/vnd.oci.image.index.v1+json" and
+            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1 and
+            all(.manifests[];
+              (.platform.os == "linux" and .platform.architecture == "amd64") or
+              (.platform.os == "unknown" and .platform.architecture == "unknown" and
+               .annotations["vnd.docker.reference.type"] == "attestation-manifest")
+            )
+          ' <<< "$manifest" >/dev/null
+          platform_digest="$(jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' <<< "$manifest")"
+          if ! [[ "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Candidate linux/amd64 manifest digest readback failed." >&2
+            exit 1
+          fi
+          image="$(docker buildx imagetools inspect "$IMAGE_REPOSITORY@$platform_digest" --format '{{json .Image}}')"
+          jq -e --arg revision "$PRODUCT_SHA" '
+            .os == "linux" and .architecture == "amd64" and
+            .config.Labels["org.opencontainers.image.revision"] == $revision
+          ' <<< "$image" >/dev/null
+
+      - name: Write and validate neutral candidate receipt
+        id: receipt
+        shell: bash
+        env:
+          CLOUD_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          raw="$RUNNER_TEMP/opl-cloud-candidate-raw.json"
+          receipt="artifacts/candidate/candidate.json"
+          jq -n \
+            --arg productRepository "$PRODUCT_REPOSITORY" \
+            --arg productSha "$PRODUCT_SHA" \
+            --arg productTree "$PRODUCT_TREE" \
+            --arg cloudRepository "$IMAGE_REPOSITORY" \
+            --arg cloudDigest "$CLOUD_IMAGE_DIGEST" \
+            --arg workspaceRef "$WORKSPACE_IMAGE" \
+            --arg workspaceDigest "$WORKSPACE_IMAGE_DIGEST" \
+            --arg workflowSha "$GITHUB_SHA" \
+            --arg workflowRunId "$GITHUB_RUN_ID" \
+            --arg workflowRunAttempt "$GITHUB_RUN_ATTEMPT" '
+            {
+              schemaVersion: 1,
+              kind: "opl_cloud_candidate",
+              product: {repository: $productRepository, sha: $productSha, tree: $productTree},
+              platform: "linux/amd64",
+              cloudImage: {repository: $cloudRepository, ref: ($cloudRepository + "@" + $cloudDigest), digest: $cloudDigest, revision: $productSha},
+              workspaceImage: {ref: $workspaceRef, digest: $workspaceDigest},
+              provenance: {workflowRepository: $productRepository, workflowSha: $workflowSha, workflowRunId: $workflowRunId, workflowRunAttempt: $workflowRunAttempt}
+            }
+          ' > "$raw"
+          RAW="$raw" RECEIPT="$receipt" node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import { writeCandidateReceipt } from "./tools/cloud-candidate-receipt.ts";
+          await writeCandidateReceipt(process.env.RECEIPT, JSON.parse(await readFile(process.env.RAW, "utf8")));
+          NODE
+          node tools/cloud-candidate-receipt.ts validate --receipt "$receipt"
+          receipt_digest="$(node tools/cloud-candidate-receipt.ts digest --receipt "$receipt")"
+          printf 'receipt_digest=%s\n' "$receipt_digest" >> "$GITHUB_OUTPUT"
+          {
+            printf '## OPL Cloud candidate\n\n'
+            printf -- '- Product SHA: `%s`\n' "$PRODUCT_SHA"
+            printf -- '- Cloud image: `%s@%s`\n' "$IMAGE_REPOSITORY" "$CLOUD_IMAGE_DIGEST"
+            printf -- '- Candidate receipt: `%s`\n' "$receipt_digest"
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$raw"
+
+      - name: Upload neutral candidate receipt
+        id: candidate_artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opl-cloud-candidate-${{ inputs.product_sha }}
+          path: artifacts/candidate/candidate.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Log out from GHCR
+        if: always()
+        shell: bash
+        run: docker logout ghcr.io >/dev/null 2>&1 || true

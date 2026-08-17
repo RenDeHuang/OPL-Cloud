@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Cloud",
+  "purpose": "Bind one exact canonical Cloud source revision to immutable Cloud and Workspace image identities before Instance qualification.",
+  "state": "current",
+  "machineBoundary": "Cloud owns portable candidate identity and Cloud image publication; Instance or installer owners verify environment-specific registry and runtime facts.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same portable candidate identity boundary."
+  },
+  "candidateReceiptV1": {
+    "kind": "opl_cloud_candidate",
+    "productRepository": "gaofeng21cn/one-person-lab-cloud",
+    "cloudImageRepository": "ghcr.io/gaofeng21cn/one-person-lab-cloud",
+    "platform": "linux/amd64",
+    "exactKeys": [
+      "schemaVersion",
+      "kind",
+      "product",
+      "platform",
+      "cloudImage",
+      "workspaceImage",
+      "provenance"
+    ],
+    "productExactKeys": [
+      "repository",
+      "sha",
+      "tree"
+    ],
+    "cloudImageExactKeys": [
+      "repository",
+      "ref",
+      "digest",
+      "revision"
+    ],
+    "workspaceImageExactKeys": [
+      "ref",
+      "digest"
+    ],
+    "provenanceExactKeys": [
+      "workflowRepository",
+      "workflowSha",
+      "workflowRunId",
+      "workflowRunAttempt"
+    ],
+    "receiptDigest": "sha256_of_canonical_json_bytes",
+    "workspaceRegistryReadbackOwner": "instance_or_installer"
+  }
+}
