@@ -1,0 +1,353 @@
+
+> opl-cloud@0.1.0 verify:local:full
+> node tools/verify-local.ts --with-postgres --product-matrix-receipt /tmp/opl-cloud-351-browser-run-2/j0-product-matrix.json
+
+
+==> product boundary
+
+> opl-cloud@0.1.0 validate:product-boundary
+> node tools/validate-product-boundary.mjs
+
+OPL Cloud product distribution boundary is valid
+
+==> Node source tests
+
+> opl-cloud@0.1.0 test:source
+> node --test "tests/contracts/*.test.ts" "tests/tools/*.test.ts" tests/ui/console-model.test.ts tests/ui/console-source-adapters.test.ts tests/ui/pricing-preview.test.ts tests/ui/react-ui-primitives.test.ts
+
+✔ business object contract defines the current commercial object boundary (37.197625ms)
+✔ business object contract contains only current OPL Cloud business facts (5.060375ms)
+✔ Workspace contract is the stable URL, storage, and current runtime pointer (5.539209ms)
+✔ ComputeAllocation contract requires dedicated CVM or Kubernetes node identity (4.850542ms)
+✔ clean-host workflow delegates qualification to the reusable local runner (33.638833ms)
+✔ all OPL Cloud contracts declare lifecycle metadata (29.846083ms)
+✔ Console presentation choices are not machine contracts (3.725208ms)
+✔ machine contracts do not own presentation taste or mutable delivery status (12.816667ms)
+✔ current contracts do not preserve compatibility aliases as product truth (11.423708ms)
+✔ CONTRACT-OWNER-02 has one current owner for each retained hard boundary (15.852208ms)
+✔ current launch and settlement facts have four focused owners (13.557542ms)
+✔ Control Plane durable launch chain keeps preflight outside mutation stages (20.035666ms)
+✔ Fabric uses explicit immutable launch-stage binding and typed routes (2.025791ms)
+✔ pricing contract preserves the Basic and Pro monthly package facts (18.017333ms)
+✔ identity contracts expose operator-provisioned owners and keep Organization internal (9.479667ms)
+✔ current contracts expose only authoritative Pilot sources and controls (28.436875ms)
+✔ Workspace owns renewal while retired machine contracts stay absent (5.978833ms)
+✔ every external GitHub workflow dependency is pinned to one immutable SHA (171.90425ms)
+✔ launch architecture uses focused owners without the aggregate freeze (12.708666ms)
+✔ successor Reconciler durably reserves each stage before mutation (12.487833ms)
+✔ Control Plane and Fabric tests consume the same owner hash vectors (36.611459ms)
+✔ Control Plane owns the launch identity and recovery authorization (7.910792ms)
+✔ Fabric launch binding freezes only the typed successor seam (6.77075ms)
+✔ service boundary delegates launch truth to focused owners and typed routes (1.418958ms)
+✔ Go services remain physically isolated behind typed HTTP contracts (942.335ms)
+✔ Console UI reaches services only through the same-origin Control Plane API adapter (8.543291ms)
+✔ current contracts name Sub2API as the only spendable balance (9.063ms)
+✔ management contract hard-cuts customer identity to Sub2API and one atomic owner graph (2.601042ms)
+✔ pricing contract fixes exact integer monthly charges (2.15ms)
+✔ receipt contract exposes monthly product behavior only (3.095833ms)
+✔ product contract treats app image as runtime template, not commercial resource (16.050167ms)
+✔ business object contract keeps runtime template out of billing ownership (10.08325ms)
+✔ Fabric catalog is the live availability authority for both target packages (3.627125ms)
+✔ portable distribution is product-owned and instance-neutral (41.778792ms)
+✔ Cloud release publishes GHCR and GitHub Release without production deployment (15.687542ms)
+✔ current Console adapters do not consume retired V2 routes or fallbacks (9.717167ms)
+✔ current source has no legacy route strings outside explicit retired tests (42.907459ms)
+✔ current Workspace launch has no legacy child-billing executor or DTO fields (18.896541ms)
+✔ Fabric mutations use a scoped capability distinct from transport identity (6.906708ms)
+✔ credential and Ledger reads verify capability before sensitive owner lookup (5.005209ms)
+✔ Console source truth exposes Sub2API Keys parity without a second authority (9.7875ms)
+✔ Console source truth contract fixes strict envelopes and live Gateway projections (5.714ms)
+✔ qualification authority configuration is explicit and rejects unsafe input (1.539917ms)
+✔ qualification authority provides one persistent user, key, and exact debit identity (336.731334ms)
+✔ fixture source contains no public domain or credential literals (1.76725ms)
+✔ owner delete continues only from exact durable compute pending evidence (5.445375ms)
+✔ owner delete response-loss continuation preserves the consumed read ordinal (0.493ms)
+✔ owner delete rejects pending identity, ordinal, and budget drift (0.727916ms)
+✔ owner delete failure keeps only redacted last pending evidence (1.086084ms)
+✔ qualification compose uses the runner-owned exact environment (1.358167ms)
+✔ source image tag inspection hands off one exact immutable RepoDigest (0.345333ms)
+✔ local qualification accepts exact source and immutable image identities (0.444333ms)
+✔ live arguments require one external J0 READY receipt instead of a Product matrix (1.392375ms)
+✔ J0 READY admission binds exact clean source, P0 gates, authority, provider, and external 0600 file (108.285292ms)
+✔ top-level live entry rejects J0 source and gate drift before starting the J1 stack or HTTP (162.82125ms)
+✔ live Sub2API secret file admission is exact and never creates a second env SSOT (6.397209ms)
+✔ Sub2API secret file failures redact the path and values before Docker (20.108875ms)
+✔ live authority adjustment readback counts the exact code through the final financial page (4.497333ms)
+✔ Local J1 accounting allows unrelated history and rejects duplicate operation evidence (0.443958ms)
+✔ READY receipt binds the exact durable and accounting evidence (1.12925ms)
+✔ local build proxy rejects credentials or URL parameters and errors redact the entire URL authority and query (0.4975ms)
+✔ qualification source identity requires one clean unchanged HEAD and tree (0.109833ms)
+✔ Product matrix receipt admission binds exact source, nine stages, CAS, and unknown zero deltas (0.949833ms)
+✔ package exposes one local Workspace qualification command (3.790375ms)
+✔ sourceData and createHTTP/login preserve account mapping scope without Workspace mutation (29.150209ms)
+✔ sourceData export has no undefined import or default export dependency (4.601291ms)
+✔ canonical J1 HTTP preview covers every live stage and validates exact local cleanup (59.844042ms)
+✔ canonical J1 HTTP preview cleans a failure before Workspace Create (1.035416ms)
+✔ canonical J1 HTTP preview preserves exact recovery authority after Workspace Create submission (1.0795ms)
+✔ canonical J1 HTTP preview still forbids cleanup when the post-Create owner readback is unavailable (0.428833ms)
+✔ live authority configuration fails closed before Docker and writes a redacted receipt (23.521125ms)
+✔ local J1 cleanup is permitted only before Create acceptance or after READY (8.157084ms)
+✔ cleanup plan preserves running service and volume authority after Create submission (0.359292ms)
+✔ recovery artifact path is deterministic beside the qualification receipt (0.468916ms)
+✔ owner-authoritative recovery readback is GET-only and scoped to the original operation (1.066542ms)
+✔ recovery readback preserves budgets and counts without raw identities (0.345375ms)
+✔ recovery readback rejects missing, conflicting, or exhausted counter shapes (0.312209ms)
+✔ 0600 recovery artifact binds exact source, recovery refs, and redacted authority (20.03475ms)
+✔ recovery artifact fails closed without owner-authoritative launch readback (0.318791ms)
+✔ readback-unavailable recovery artifact still preserves exact refs and only identity digests (0.301375ms)
+✔ staging env loader parses ignored local env files without overwriting explicit process env (9.218917ms)
+✔ staging env validation requires Tencent mode, shared persistence, and cloud mutation settings (0.735125ms)
+✔ verify-local exposes one default gate across Node, builds, and every Go module (1.513042ms)
+✔ vertical lane uses the repository-owned JSON reporter (13.428625ms)
+✔ Product matrix receipt is derived from exact passed packages and tests (6.261375ms)
+✔ Product matrix receipt rejects dirty source drift and incomplete test evidence (8.310541ms)
+✔ Product matrix receipt rejects spoofed lane cwd, order, and missing vertical evidence (1.09675ms)
+✔ full local gate covers every PostgreSQL owner with the CI-only extensions (14.928167ms)
+✔ full verification adds the temporary PostgreSQL lane after the default gate (0.465083ms)
+✔ customer navigation exposes the five pilot surfaces (7.351958ms)
+✔ Workspace routes separate list, launch, and refreshable detail views (0.866833ms)
+✔ operator navigation has the five frozen operations surfaces (0.385083ms)
+✔ public and login routes render without session recovery (0.248333ms)
+✔ Workspace status never invents a running state (0.121083ms)
+✔ Workspace launch requires balance strictly greater than the server quote (0.432875ms)
+✔ unavailable and zero are distinct source facts (165.573792ms)
+✔ Console exposes typed source adapters for the customer truth surfaces (2.710458ms)
+✔ unavailable source adapters preserve the authoritative reason code (1.715792ms)
+✔ unavailable source adapters reject a missing reason code (0.574625ms)
+✔ source adapters reject contradictory availability states (0.216208ms)
+✔ unavailable source adapters reject data disguised as an unavailable source (0.427958ms)
+✔ source adapters require non-empty source and fetchedAt fields (0.174958ms)
+✔ local unavailable fallbacks keep a stable reason code and a real fetch timestamp (2.825625ms)
+✔ Console read adapters normalize a legacy unavailable envelope with a stable reason code (56.53875ms)
+✔ per-Key usage list and summary send the same canonical period (0.638291ms)
+✔ Workspace adapters find an exact ID through real server pagination and stop when found (0.704542ms)
+✔ Workspace adapters return an authoritative not-found result after total is exhausted (0.611041ms)
+✔ Console production and browser fixtures do not invent a Workspace detail GET (27.736167ms)
+✔ Workspace detail is found before runtime status and renders authoritative not-found (13.835167ms)
+✔ API request records expose the approved six-column facts (0.954584ms)
+✔ customer UI has one launch entry and no internal service or resource vocabulary (2.0415ms)
+✔ critical frontend contracts use named DTOs instead of AnyRecord (2.218167ms)
+✔ Workspace launch requires the authoritative total price and fixed SKU size pair (0.823708ms)
+✔ an unavailable launch catalog is explicit and retryable (1.834166ms)
+✔ operator account rows do not render the raw internal source identifier (4.32725ms)
+✔ storage quote comes from the authenticated pricing preview API (46.485375ms)
+✔ Console UI foundation uses real Apps SDK UI exports (7.063917ms)
+✔ Console primitives expose accessible busy, invalid and modal states (3.1405ms)
+✔ Apps SDK fields are not restyled by the legacy global input border (3.101042ms)
+ℹ tests 119
+ℹ suites 0
+ℹ pass 119
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1577.477459
+
+==> TypeScript typecheck
+
+> opl-cloud@0.1.0 typecheck
+> tsc -p apps/console-ui/tsconfig.json --noEmit
+
+
+==> TypeScript lint
+
+> opl-cloud@0.1.0 lint
+> tsc -p apps/console-ui/tsconfig.json --noEmit --noUnusedLocals --noUnusedParameters
+
+
+==> Console build
+
+> opl-cloud@0.1.0 build
+> vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 2524 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                    0.79 kB │ gzip:   0.45 kB
+dist/assets/vendor-CxnBv3UW.css   96.23 kB │ gzip:  11.05 kB
+dist/assets/index-BY7--4Ig.css   193.14 kB │ gzip:  33.37 kB
+dist/assets/index-BZP3P5U9.js    184.94 kB │ gzip:  43.19 kB
+dist/assets/vendor-D1-thX0v.js   351.80 kB │ gzip: 112.37 kB
+✓ built in 3.10s
+
+==> services/control-plane compile
+ok  	opl-cloud/services/control-plane/cmd/control-plane	(cached) [no tests to run]
+?   	opl-cloud/services/control-plane/ent	[no test files]
+?   	opl-cloud/services/control-plane/ent/account	[no test files]
+?   	opl-cloud/services/control-plane/ent/adminauditevent	[no test files]
+?   	opl-cloud/services/control-plane/ent/announcement	[no test files]
+?   	opl-cloud/services/control-plane/ent/announcementread	[no test files]
+?   	opl-cloud/services/control-plane/ent/archivedadminauditevent	[no test files]
+?   	opl-cloud/services/control-plane/ent/authattempt	[no test files]
+?   	opl-cloud/services/control-plane/ent/billingreconciliation	[no test files]
+?   	opl-cloud/services/control-plane/ent/computeallocation	[no test files]
+?   	opl-cloud/services/control-plane/ent/enttest	[no test files]
+?   	opl-cloud/services/control-plane/ent/hook	[no test files]
+?   	opl-cloud/services/control-plane/ent/membership	[no test files]
+?   	opl-cloud/services/control-plane/ent/migrate	[no test files]
+?   	opl-cloud/services/control-plane/ent/organization	[no test files]
+?   	opl-cloud/services/control-plane/ent/predicate	[no test files]
+?   	opl-cloud/services/control-plane/ent/productione2erecord	[no test files]
+?   	opl-cloud/services/control-plane/ent/projecttasksynchead	[no test files]
+?   	opl-cloud/services/control-plane/ent/runtime	[no test files]
+?   	opl-cloud/services/control-plane/ent/runtimeoperation	[no test files]
+?   	opl-cloud/services/control-plane/ent/schema	[no test files]
+?   	opl-cloud/services/control-plane/ent/session	[no test files]
+?   	opl-cloud/services/control-plane/ent/storageattachment	[no test files]
+?   	opl-cloud/services/control-plane/ent/storagevolume	[no test files]
+?   	opl-cloud/services/control-plane/ent/supportticketmapping	[no test files]
+?   	opl-cloud/services/control-plane/ent/user	[no test files]
+?   	opl-cloud/services/control-plane/ent/workspace	[no test files]
+?   	opl-cloud/services/control-plane/ent/workspacesyncevent	[no test files]
+ok  	opl-cloud/services/control-plane/internal/clients	(cached) [no tests to run]
+?   	opl-cloud/services/control-plane/internal/controlplane	[no test files]
+?   	opl-cloud/services/control-plane/internal/domain	[no test files]
+ok  	opl-cloud/services/control-plane/internal/server	(cached) [no tests to run]
+ok  	opl-cloud/services/control-plane/migrations	(cached) [no tests to run]
+
+==> services/fabric compile
+ok  	opl-cloud/services/fabric/cmd/fabric	(cached) [no tests to run]
+ok  	opl-cloud/services/fabric/cmd/opl-tencent-provisioner	(cached) [no tests to run]
+?   	opl-cloud/services/fabric/ent	[no test files]
+?   	opl-cloud/services/fabric/ent/enttest	[no test files]
+?   	opl-cloud/services/fabric/ent/fabricoperation	[no test files]
+?   	opl-cloud/services/fabric/ent/hook	[no test files]
+?   	opl-cloud/services/fabric/ent/machineownership	[no test files]
+?   	opl-cloud/services/fabric/ent/migrate	[no test files]
+?   	opl-cloud/services/fabric/ent/predicate	[no test files]
+?   	opl-cloud/services/fabric/ent/runtime	[no test files]
+?   	opl-cloud/services/fabric/ent/schema	[no test files]
+ok  	opl-cloud/services/fabric/internal/fabric	(cached) [no tests to run]
+ok  	opl-cloud/services/fabric/internal/http	(cached) [no tests to run]
+ok  	opl-cloud/services/fabric/internal/protectedresource	(cached) [no tests to run]
+
+==> services/ledger compile
+ok  	opl-cloud/services/ledger/cmd/ledger	(cached) [no tests to run]
+?   	opl-cloud/services/ledger/ent	[no test files]
+?   	opl-cloud/services/ledger/ent/enttest	[no test files]
+?   	opl-cloud/services/ledger/ent/evidencereceipt	[no test files]
+?   	opl-cloud/services/ledger/ent/hook	[no test files]
+?   	opl-cloud/services/ledger/ent/idempotencykey	[no test files]
+?   	opl-cloud/services/ledger/ent/migrate	[no test files]
+?   	opl-cloud/services/ledger/ent/predicate	[no test files]
+?   	opl-cloud/services/ledger/ent/reconciliationreport	[no test files]
+?   	opl-cloud/services/ledger/ent/reviewpolicy	[no test files]
+?   	opl-cloud/services/ledger/ent/runtime	[no test files]
+?   	opl-cloud/services/ledger/ent/schema	[no test files]
+ok  	opl-cloud/services/ledger/internal/http	(cached) [no tests to run]
+ok  	opl-cloud/services/ledger/internal/ledger	(cached) [no tests to run]
+
+==> services/internal/postgresmigrate compile
+ok  	opl-cloud/services/internal/postgresmigrate	(cached) [no tests to run]
+
+==> services/control-plane database-free tests
+ok  	opl-cloud/services/control-plane/cmd/control-plane	1.112s
+ok  	opl-cloud/services/control-plane/internal/clients	1.076s
+
+==> services/fabric database-free tests
+ok  	opl-cloud/services/fabric/cmd/fabric	0.369s
+ok  	opl-cloud/services/fabric/cmd/opl-tencent-provisioner	0.966s
+ok  	opl-cloud/services/fabric/internal/http	0.396s
+ok  	opl-cloud/services/fabric/internal/protectedresource	1.249s
+
+==> services/ledger database-free tests
+ok  	opl-cloud/services/ledger/cmd/ledger	0.367s
+ok  	opl-cloud/services/ledger/internal/http	0.754s
+
+==> services/internal/postgresmigrate database-free tests
+ok  	opl-cloud/services/internal/postgresmigrate	0.342s
+
+==> Git whitespace
+
+==> temporary PostgreSQL 16
+ec0349ecf1b6bf335583be76fcd794105cc63a5b267b0b947328237f2a074a40
+
+==> services/internal/postgresmigrate PostgreSQL compile
+ok  	opl-cloud/services/internal/postgresmigrate	(cached) [no tests to run]
+
+==> services/internal/postgresmigrate PostgreSQL tests (zero skips)
+Go packages passed: 1; skipped: 0
+
+==> services/ledger PostgreSQL compile
+ok  	opl-cloud/services/ledger/cmd/ledger	(cached) [no tests to run]
+?   	opl-cloud/services/ledger/ent	[no test files]
+?   	opl-cloud/services/ledger/ent/enttest	[no test files]
+?   	opl-cloud/services/ledger/ent/evidencereceipt	[no test files]
+?   	opl-cloud/services/ledger/ent/hook	[no test files]
+?   	opl-cloud/services/ledger/ent/idempotencykey	[no test files]
+?   	opl-cloud/services/ledger/ent/migrate	[no test files]
+?   	opl-cloud/services/ledger/ent/predicate	[no test files]
+?   	opl-cloud/services/ledger/ent/reconciliationreport	[no test files]
+?   	opl-cloud/services/ledger/ent/reviewpolicy	[no test files]
+?   	opl-cloud/services/ledger/ent/runtime	[no test files]
+?   	opl-cloud/services/ledger/ent/schema	[no test files]
+ok  	opl-cloud/services/ledger/internal/http	(cached) [no tests to run]
+ok  	opl-cloud/services/ledger/internal/ledger	(cached) [no tests to run]
+
+==> services/ledger PostgreSQL tests (zero skips)
+Go packages passed: 3; skipped: 0
+
+==> services/control-plane PostgreSQL compile
+ok  	opl-cloud/services/control-plane/cmd/control-plane	(cached) [no tests to run]
+?   	opl-cloud/services/control-plane/ent	[no test files]
+?   	opl-cloud/services/control-plane/ent/account	[no test files]
+?   	opl-cloud/services/control-plane/ent/adminauditevent	[no test files]
+?   	opl-cloud/services/control-plane/ent/announcement	[no test files]
+?   	opl-cloud/services/control-plane/ent/announcementread	[no test files]
+?   	opl-cloud/services/control-plane/ent/archivedadminauditevent	[no test files]
+?   	opl-cloud/services/control-plane/ent/authattempt	[no test files]
+?   	opl-cloud/services/control-plane/ent/billingreconciliation	[no test files]
+?   	opl-cloud/services/control-plane/ent/computeallocation	[no test files]
+?   	opl-cloud/services/control-plane/ent/enttest	[no test files]
+?   	opl-cloud/services/control-plane/ent/hook	[no test files]
+?   	opl-cloud/services/control-plane/ent/membership	[no test files]
+?   	opl-cloud/services/control-plane/ent/migrate	[no test files]
+?   	opl-cloud/services/control-plane/ent/organization	[no test files]
+?   	opl-cloud/services/control-plane/ent/predicate	[no test files]
+?   	opl-cloud/services/control-plane/ent/productione2erecord	[no test files]
+?   	opl-cloud/services/control-plane/ent/projecttasksynchead	[no test files]
+?   	opl-cloud/services/control-plane/ent/runtime	[no test files]
+?   	opl-cloud/services/control-plane/ent/runtimeoperation	[no test files]
+?   	opl-cloud/services/control-plane/ent/schema	[no test files]
+?   	opl-cloud/services/control-plane/ent/session	[no test files]
+?   	opl-cloud/services/control-plane/ent/storageattachment	[no test files]
+?   	opl-cloud/services/control-plane/ent/storagevolume	[no test files]
+?   	opl-cloud/services/control-plane/ent/supportticketmapping	[no test files]
+?   	opl-cloud/services/control-plane/ent/user	[no test files]
+?   	opl-cloud/services/control-plane/ent/workspace	[no test files]
+?   	opl-cloud/services/control-plane/ent/workspacesyncevent	[no test files]
+ok  	opl-cloud/services/control-plane/internal/clients	(cached) [no tests to run]
+?   	opl-cloud/services/control-plane/internal/controlplane	[no test files]
+?   	opl-cloud/services/control-plane/internal/domain	[no test files]
+ok  	opl-cloud/services/control-plane/internal/server	(cached) [no tests to run]
+ok  	opl-cloud/services/control-plane/migrations	(cached) [no tests to run]
+
+==> services/control-plane PostgreSQL tests (zero skips)
+Go packages passed: 4; skipped: 0
+
+==> services/fabric PostgreSQL compile
+ok  	opl-cloud/services/fabric/cmd/fabric	(cached) [no tests to run]
+ok  	opl-cloud/services/fabric/cmd/opl-tencent-provisioner	(cached) [no tests to run]
+?   	opl-cloud/services/fabric/ent	[no test files]
+?   	opl-cloud/services/fabric/ent/enttest	[no test files]
+?   	opl-cloud/services/fabric/ent/fabricoperation	[no test files]
+?   	opl-cloud/services/fabric/ent/hook	[no test files]
+?   	opl-cloud/services/fabric/ent/machineownership	[no test files]
+?   	opl-cloud/services/fabric/ent/migrate	[no test files]
+?   	opl-cloud/services/fabric/ent/predicate	[no test files]
+?   	opl-cloud/services/fabric/ent/runtime	[no test files]
+?   	opl-cloud/services/fabric/ent/schema	[no test files]
+ok  	opl-cloud/services/fabric/internal/fabric	(cached) [no tests to run]
+ok  	opl-cloud/services/fabric/internal/http	(cached) [no tests to run]
+ok  	opl-cloud/services/fabric/internal/protectedresource	(cached) [no tests to run]
+
+==> services/fabric PostgreSQL tests (zero skips)
+Go packages passed: 5; skipped: 0
+
+==> local Workspace vertical readback E0-E3/E5-E7 (E4 BLOCKED_PRODUCT_DECISION, zero skips)
+
+Local verification passed with PostgreSQL and Docker integration.
+
+EXIT_CODE=0

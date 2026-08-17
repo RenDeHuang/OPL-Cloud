@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "kind": "opl.local-workspace.j0-ready.v1",
+  "status": "READY",
+  "source": {
+    "sha": "0ed9097c7eb114a88cc97b69f8fb65e2afc8c696",
+    "tree": "9420ac69cc84f9155893ae18ed224a4cafe4735b",
+    "clean": true
+  },
+  "gates": [
+    {
+      "id": "E0",
+      "status": "GREEN",
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "E1",
+      "status": "GREEN",
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "E2",
+      "status": "GREEN",
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "E3",
+      "status": "GREEN",
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "E4",
+      "status": "BLOCKED_PRODUCT_DECISION_OUT_OF_P0",
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "E5",
+      "status": "GREEN",
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "E6",
+      "status": "GREEN",
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "E7",
+      "status": "GREEN",
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "authority": {
+    "mode": "live",
+    "class": "sandbox",
+    "dedicated": true,
+    "confirmed": true
+  },
+  "provider": "local-docker",
+  "failed": 0,
+  "skipped": 0
+}

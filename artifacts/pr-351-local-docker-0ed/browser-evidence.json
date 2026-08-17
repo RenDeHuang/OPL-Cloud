@@ -1,0 +1,141 @@
+{
+  "status": "READY",
+  "screenshots": [
+    {
+      "name": "01-login.png",
+      "digest": "sha256:841643adff14403151b05ebf1796b8013230798a90cd83d71d9c23af14193870",
+      "sizeBytes": 59922
+    },
+    {
+      "name": "02-balance-usage.png",
+      "digest": "sha256:d5a914d024c861076b65648f336788a3b229d434d5eb451a95c2dbc75e339b38",
+      "sizeBytes": 66176
+    },
+    {
+      "name": "03-create-confirmation.png",
+      "digest": "sha256:faca1744fe534dea0c951128ae1971aabcd58eef80961887e265adc13102a90a",
+      "sizeBytes": 93863
+    },
+    {
+      "name": "04-ready.png",
+      "digest": "sha256:1c00fe553161c2464bbd054fbb7d44da09978905831526c4117212c4fe7f4d9a",
+      "sizeBytes": 54820
+    },
+    {
+      "name": "05-detail.png",
+      "digest": "sha256:cf9a817e7b392ecae7d604285583fefebee7174be81b1babab16777bdde2a1bd",
+      "sizeBytes": 132253
+    },
+    {
+      "name": "06-workspace-ready.png",
+      "digest": "sha256:ef135fabe3ebea988b316badc55eddc65815f4a3569212c607c8893a80e553c9",
+      "sizeBytes": 9941
+    }
+  ],
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/api/workspace-launches",
+      "status": 202,
+      "capture": "control-plane-operation-readback",
+      "operationId": "workspace-launch-8c2910b05b016b99b7"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces?page=1&pageSize=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/wallet"
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/usage-summary?period=month"
+    },
+    {
+      "method": "GET",
+      "path": "/api/billing/receipts?limit=3"
+    },
+    {
+      "method": "GET",
+      "path": "/api/announcements?page=1&pageSize=3"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces?page=1&pageSize=10"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspace-launches"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces?page=1&pageSize=50"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces/ws-a727c2a0c2c15cf1a4/runtime-status"
+    }
+  ],
+  "responses": [
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces?page=1&pageSize=10",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspace-launches",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces?page=1&pageSize=50",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspaces/ws-a727c2a0c2c15cf1a4/runtime-status",
+      "status": 200
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "launchPosts": 1,
+  "ownerDeleteRequests": 0,
+  "refundPosts": 0,
+  "readback": {
+    "autoRenew": false,
+    "workspaceState": "running",
+    "runtimeStatus": "running",
+    "runtimeReady": true
+  },
+  "captureNote": "The POST was accepted before the first browser runner stopped; operation readback proves one Create."
+}

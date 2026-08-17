@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "status": "READY",
+  "startedAt": "2026-08-17T16:27:00.000Z",
+  "completedAt": "2026-08-17T08:39:44.615Z",
+  "source": {
+    "sha": "0ed9097c7eb114a88cc97b69f8fb65e2afc8c696",
+    "tree": "9420ac69cc84f9155893ae18ed224a4cafe4735b"
+  },
+  "images": {
+    "cloud": {
+      "input": "127.0.0.1:60925/opl-local-qualification-93372-4e6cd3e1-cloud@sha256:3f0a1ebaf68f8be3e35027e08cc6087a41c3065b104230b63455a655578c768e",
+      "repoDigest": "127.0.0.1:60925/opl-local-qualification-93372-4e6cd3e1-cloud@sha256:3f0a1ebaf68f8be3e35027e08cc6087a41c3065b104230b63455a655578c768e",
+      "digest": "sha256:3f0a1ebaf68f8be3e35027e08cc6087a41c3065b104230b63455a655578c768e",
+      "runningDigest": "sha256:3f0a1ebaf68f8be3e35027e08cc6087a41c3065b104230b63455a655578c768e"
+    },
+    "workspace": {
+      "input": "127.0.0.1:60925/opl-local-qualification-93372-4e6cd3e1-workspace@sha256:78883f6de1e821cc001cddd810f46f7d3113f433286fdcbe38b61f2506a217b0",
+      "repoDigest": "127.0.0.1:60925/opl-local-qualification-93372-4e6cd3e1-workspace@sha256:78883f6de1e821cc001cddd810f46f7d3113f433286fdcbe38b61f2506a217b0",
+      "digest": "sha256:78883f6de1e821cc001cddd810f46f7d3113f433286fdcbe38b61f2506a217b0",
+      "runningDigest": "sha256:78883f6de1e821cc001cddd810f46f7d3113f433286fdcbe38b61f2506a217b0"
+    }
+  },
+  "command": "recovery browser readback for existing live operation workspace-launch-8c2910b05b016b99b7",
+  "processes": {
+    "console": "ready",
+    "controlPlane": "ready",
+    "fabric": "ready",
+    "ledger": "ready"
+  },
+  "stores": {
+    "controlPlane": "durable",
+    "fabric": "durable",
+    "ledger": "durable",
+    "ownerSeparated": true
+  },
+  "j0Ready": {
+    "digest": "sha256:90b843574241e5eb61633831c71b60650f0a6f873475da67f0f723f66d8f8509",
+    "source": {
+      "sha": "0ed9097c7eb114a88cc97b69f8fb65e2afc8c696",
+      "tree": "9420ac69cc84f9155893ae18ed224a4cafe4735b",
+      "clean": true
+    },
+    "gates": [
+      {
+        "id": "E0",
+        "status": "GREEN",
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "id": "E1",
+        "status": "GREEN",
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "id": "E2",
+        "status": "GREEN",
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "id": "E3",
+        "status": "GREEN",
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "id": "E4",
+        "status": "BLOCKED_PRODUCT_DECISION_OUT_OF_P0",
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "id": "E5",
+        "status": "GREEN",
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "id": "E6",
+        "status": "GREEN",
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "id": "E7",
+        "status": "GREEN",
+        "failed": 0,
+        "skipped": 0
+      }
+    ],
+    "authority": {
+      "mode": "live",
+      "class": "sandbox",
+      "dedicated": true,
+      "confirmed": true
+    },
+    "provider": "local-docker",
+    "failed": 0,
+    "skipped": 0
+  },
+  "qualification": {
+    "authorityMode": "live",
+    "p0Ready": true
+  },
+  "deferred": [
+    "tencent-tke",
+    "tcr-and-tke-image-pull",
+    "kubernetes-secret-and-network",
+    "instance-deployment-and-rollback"
+  ],
+  "identities": {
+    "accountId": "acct-891294e122b21116bb",
+    "sub2apiUserId": "52",
+    "launchOperationId": "workspace-launch-8c2910b05b016b99b7",
+    "workspaceId": "ws-a727c2a0c2c15cf1a4",
+    "runtimeId": "rt_d9007c4c05a3bf1c4a",
+    "keyId": "161",
+    "debitCode": "opl:a7887b159b2c8c70995db2ff81d3",
+    "purchaseReceiptId": "receipt_1786955297643858084"
+  },
+  "debit": {
+    "count": 1,
+    "accountId": "acct-891294e122b21116bb",
+    "operationId": "workspace-launch-8c2910b05b016b99b7",
+    "workspaceId": "ws-a727c2a0c2c15cf1a4",
+    "code": "opl:a7887b159b2c8c70995db2ff81d3",
+    "userId": "52",
+    "amountUsdMicros": "52580000"
+  },
+  "wallet": {
+    "beforeUsdMicros": "200000000",
+    "afterUsdMicros": "147420000",
+    "exactDeltaObserved": false
+  },
+  "receipt": {
+    "count": 1,
+    "id": "receipt_1786955297643858084",
+    "accountId": "acct-891294e122b21116bb",
+    "operationId": "workspace-launch-8c2910b05b016b99b7",
+    "workspaceId": "ws-a727c2a0c2c15cf1a4",
+    "runtimeId": "rt_d9007c4c05a3bf1c4a",
+    "keyId": "161",
+    "chargeReference": "opl:a7887b159b2c8c70995db2ff81d3",
+    "amountUsdMicros": "52580000"
+  },
+  "restart": {
+    "performed": false
+  },
+  "deletion": {
+    "performed": false,
+    "mode": "qualification_owned_cleanup"
+  },
+  "residuals": {
+    "containers": 0,
+    "volumes": 0,
+    "networks": 0
+  },
+  "authorityWriteCounts": {
+    "keyCreates": 1,
+    "keyDeletes": 0,
+    "debits": 1,
+    "refunds": 0
+  },
+  "mutationCounts": {
+    "accountProvisionPosts": 1,
+    "workspaceLaunchPosts": 1,
+    "workspaceDeleteRequests": 0,
+    "refundPosts": 0
+  },
+  "refund": {
+    "count": 0
+  },
+  "refundReceipt": {
+    "count": 0
+  },
+  "usage": {
+    "source": "sub2api",
+    "status": "available",
+    "totalRequests": 0
+  },
+  "browser": {
+    "status": "READY",
+    "screenshots": [
+      {
+        "name": "01-login.png",
+        "digest": "sha256:841643adff14403151b05ebf1796b8013230798a90cd83d71d9c23af14193870",
+        "sizeBytes": 59922
+      },
+      {
+        "name": "02-balance-usage.png",
+        "digest": "sha256:d5a914d024c861076b65648f336788a3b229d434d5eb451a95c2dbc75e339b38",
+        "sizeBytes": 66176
+      },
+      {
+        "name": "03-create-confirmation.png",
+        "digest": "sha256:faca1744fe534dea0c951128ae1971aabcd58eef80961887e265adc13102a90a",
+        "sizeBytes": 93863
+      },
+      {
+        "name": "04-ready.png",
+        "digest": "sha256:1c00fe553161c2464bbd054fbb7d44da09978905831526c4117212c4fe7f4d9a",
+        "sizeBytes": 54820
+      },
+      {
+        "name": "05-detail.png",
+        "digest": "sha256:cf9a817e7b392ecae7d604285583fefebee7174be81b1babab16777bdde2a1bd",
+        "sizeBytes": 132253
+      },
+      {
+        "name": "06-workspace-ready.png",
+        "digest": "sha256:ef135fabe3ebea988b316badc55eddc65815f4a3569212c607c8893a80e553c9",
+        "sizeBytes": 9941
+      }
+    ],
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/api/workspace-launches",
+        "status": 202,
+        "capture": "control-plane-operation-readback",
+        "operationId": "workspace-launch-8c2910b05b016b99b7"
+      },
+      {
+        "method": "POST",
+        "path": "/api/auth/login"
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspaces?page=1&pageSize=1"
+      },
+      {
+        "method": "GET",
+        "path": "/api/gateway/wallet"
+      },
+      {
+        "method": "GET",
+        "path": "/api/gateway/usage-summary?period=month"
+      },
+      {
+        "method": "GET",
+        "path": "/api/billing/receipts?limit=3"
+      },
+      {
+        "method": "GET",
+        "path": "/api/announcements?page=1&pageSize=3"
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/me"
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspaces?page=1&pageSize=10"
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspace-launches"
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/me"
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspaces?page=1&pageSize=50"
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspaces/ws-a727c2a0c2c15cf1a4/runtime-status"
+      }
+    ],
+    "responses": [
+      {
+        "method": "POST",
+        "path": "/api/auth/login",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspaces?page=1&pageSize=10",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspace-launches",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspaces?page=1&pageSize=50",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspaces/ws-a727c2a0c2c15cf1a4/runtime-status",
+        "status": 200
+      }
+    ],
+    "pageErrors": [],
+    "consoleErrors": [],
+    "launchPosts": 1,
+    "ownerDeleteRequests": 0,
+    "refundPosts": 0,
+    "readback": {
+      "autoRenew": false,
+      "workspaceState": "running",
+      "runtimeStatus": "running",
+      "runtimeReady": true
+    },
+    "captureNote": "The POST was accepted before the first browser runner stopped; operation readback proves one Create."
+  }
+}
