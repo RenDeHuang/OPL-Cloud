@@ -57,7 +57,10 @@ test("identity contracts expose operator-provisioned owners and keep Organizatio
   assert.equal(management.identitySecurity.plaintextPasswordValidation, "non_empty_delegated_to_sub2api");
   assert.equal(management.identitySecurity.plaintextPasswordMinimumCharacters, undefined);
   assert.deepEqual(management.internalCompatibilityRecords, {
-    organizationAndMembership: "one_to_one_storage_only",
+    organizationAndMembership: "historical_read_only_table_custody",
+    legacyCustody: "preserve_existing_rows_and_ids_for_migration_validation_only",
+    runtimeRead: false,
+    runtimeWrite: false,
     customerAuthorizationAuthority: false,
     browserProjection: false,
     sharedBehavior: false,

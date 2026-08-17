@@ -133,8 +133,6 @@ func TestAcceptanceBReconcileLocalGraphDistinguishesAbsentAndComplete(t *testing
 	mustStore(t, store.CreateProvisionedAccount(context.Background(),
 		map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": int64(41), "status": "active"},
 		map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"},
-		map[string]any{"id": "org-reconcile", "name": "Reconcile", "billingAccountId": accountID, "status": "active"},
-		map[string]any{"id": "mem-reconcile", "accountId": accountID, "organizationId": "org-reconcile", "userId": userID, "role": "owner", "status": "active"},
 	))
 	state, _, _, err = app.acceptanceBLocalGraph(context.Background(), accountID, userID, email)
 	if err != nil || state != "complete" {
@@ -238,8 +236,6 @@ func newAcceptanceBAccountReconcileFixture(t *testing.T) *acceptanceBAccountReco
 	mustStore(t, store.CreateProvisionedAccount(context.Background(),
 		map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": int64(41), "status": "active"},
 		map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"},
-		map[string]any{"id": "org-reconcile", "name": "Reconcile", "billingAccountId": accountID, "status": "active"},
-		map[string]any{"id": "mem-reconcile", "accountId": accountID, "organizationId": "org-reconcile", "userId": userID, "role": "owner", "status": "active"},
 	))
 	sub2API := &acceptanceBReconcileSub2APIClient{
 		testSub2APIClient: &testSub2APIClient{balance: 27_635_986, charges: map[string]int64{}},

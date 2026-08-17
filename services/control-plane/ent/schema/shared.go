@@ -31,14 +31,6 @@ func accountFields() []ent.Field {
 	)
 }
 
-func organizationFields() []ent.Field {
-	return append(baseFields(),
-		field.String("billing_account_id").NotEmpty().Unique(),
-		field.String("name").Default(""),
-		field.String("status").Default("active"),
-	)
-}
-
 func userFields() []ent.Field {
 	return append(baseFields(),
 		field.String("account_id").NotEmpty().Unique(),
@@ -57,21 +49,6 @@ func userFields() []ent.Field {
 		field.String("deleted_at").Default(""),
 		field.String("deleted_by").Default(""),
 		field.String("delete_reason").Default(""),
-	)
-}
-
-func membershipFields() []ent.Field {
-	return append(baseFields(),
-		field.String("account_id").NotEmpty().Unique(),
-		field.String("organization_id").NotEmpty().Unique(),
-		field.String("user_id").NotEmpty().Unique(),
-		field.String("role").Default("owner").Validate(func(value string) error {
-			if value != "owner" {
-				return errors.New("membership role must be owner")
-			}
-			return nil
-		}),
-		field.String("status").Default("active"),
 	)
 }
 
@@ -410,12 +387,10 @@ func remoteDeviceCredentialFields() []ent.Field {
 	)
 }
 
-func (Account) Annotations() []schema.Annotation      { return table("control_plane_accounts") }
-func (Organization) Annotations() []schema.Annotation { return table("control_plane_organizations") }
-func (User) Annotations() []schema.Annotation         { return table("control_plane_users") }
-func (Membership) Annotations() []schema.Annotation   { return table("control_plane_memberships") }
-func (Session) Annotations() []schema.Annotation      { return table("control_plane_sessions") }
-func (AuthAttempt) Annotations() []schema.Annotation  { return table("control_plane_auth_attempts") }
+func (Account) Annotations() []schema.Annotation     { return table("control_plane_accounts") }
+func (User) Annotations() []schema.Annotation        { return table("control_plane_users") }
+func (Session) Annotations() []schema.Annotation     { return table("control_plane_sessions") }
+func (AuthAttempt) Annotations() []schema.Annotation { return table("control_plane_auth_attempts") }
 func (ComputeAllocation) Annotations() []schema.Annotation {
 	return table("control_plane_compute_allocations")
 }

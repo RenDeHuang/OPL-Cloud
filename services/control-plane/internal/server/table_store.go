@@ -17,7 +17,6 @@ var errWorkspaceActivationConflict = errors.New("workspace_activation_conflict")
 var errWorkspaceAPIKeyCASConflict = errors.New("workspace_api_key_cas_conflict")
 var errInvalidAccountID = errors.New("invalid_account_id")
 var errInvalidEmail = errors.New("invalid_email")
-var errMembershipExists = errors.New("membership_already_exists")
 var errAccountIdentityConflict = errors.New("account_identity_conflict")
 var errAnnouncementStateConflict = errors.New("announcement_state_conflict")
 var errAnnouncementNotActive = errors.New("announcement_not_active")
@@ -225,7 +224,7 @@ type controlPlaneTableStore interface {
 	PageAccounts(ctx context.Context, query tablePageQuery) (tablePage, error)
 	CountAccountStatuses(ctx context.Context) (map[string]int, error)
 	SaveAccount(ctx context.Context, row map[string]any) error
-	CreateProvisionedAccount(ctx context.Context, account, user, organization, membership map[string]any) error
+	CreateProvisionedAccount(ctx context.Context, account, user map[string]any) error
 	ApplyUserLifecycle(ctx context.Context, user map[string]any) error
 	ListUsers(ctx context.Context, includeDeleted bool) ([]map[string]any, error)
 	GetUser(ctx context.Context, id string) (map[string]any, bool, error)
@@ -237,13 +236,6 @@ type controlPlaneTableStore interface {
 	ListSessionsByUser(ctx context.Context, userID string) (controlPlaneRecordSet, error)
 	SaveSession(ctx context.Context, row map[string]any) error
 	DeleteSession(ctx context.Context, id string) error
-	ListOrganizations(ctx context.Context) ([]map[string]any, error)
-	GetOrganizationByAccount(ctx context.Context, accountID string) (map[string]any, bool, error)
-	SaveOrganization(ctx context.Context, row map[string]any) error
-	ListMemberships(ctx context.Context) ([]map[string]any, error)
-	GetMembershipByAccount(ctx context.Context, accountID string) (map[string]any, bool, error)
-	SaveMembership(ctx context.Context, row map[string]any) error
-
 	ListComputes(ctx context.Context, accountID string) ([]map[string]any, error)
 	GetCompute(ctx context.Context, id string) (map[string]any, bool, error)
 	SaveCompute(ctx context.Context, row map[string]any) error
@@ -327,7 +319,7 @@ func validateSub2APIAccountMapping(accounts []map[string]any, row map[string]any
 	return nil
 }
 
-func stageProvisionedAccount(accounts, users, organizations, memberships controlPlaneRecordSet, account, user, organization, membership map[string]any) error {
+func stageProvisionedAccount(accounts, users controlPlaneRecordSet, account, user map[string]any) error {
 	accountID := stringValue(account["id"])
 	sub2APIUserID, mapped := positiveIntegerField(account, "sub2apiUserId")
 	userID := stringValue(user["id"])
@@ -383,54 +375,9 @@ func stageProvisionedAccount(accounts, users, organizations, memberships control
 	userRow := cloneMap(user)
 	userRow["email"] = email
 
-	organizationID := stringValue(organization["id"])
-	if organizationID == "" || stringValue(organization["billingAccountId"]) != accountID || stringValue(organization["status"]) != "active" {
-		return errMembershipAccountMismatch
-	}
-	organizationRow, organizationExists := cloneMap(organization), false
-	for _, existing := range organizations {
-		sameID := stringValue(existing["id"]) == organizationID
-		sameAccount := stringValue(existing["billingAccountId"]) == accountID
-		if !sameID && !sameAccount {
-			continue
-		}
-		if !sameID || !sameAccount || stringValue(existing["status"]) != "active" || stringValue(existing["name"]) != stringValue(organization["name"]) {
-			return errMembershipAccountMismatch
-		}
-		organizationRow = cloneMap(existing)
-		organizationExists = true
-	}
-
-	membershipID := stringValue(membership["id"])
-	if membershipID == "" || stringValue(membership["accountId"]) != accountID || stringValue(membership["organizationId"]) != organizationID {
-		return errMembershipAccountMismatch
-	}
-	if stringValue(membership["userId"]) != userID {
-		return errMembershipUserNotFound
-	}
-	if stringValue(membership["role"]) != "owner" || stringValue(membership["status"]) != "active" {
-		return errInvalidRole
-	}
-	membershipExists := false
-	for _, existing := range memberships {
-		collides := stringValue(existing["id"]) == membershipID || stringValue(existing["accountId"]) == accountID || stringValue(existing["organizationId"]) == organizationID || stringValue(existing["userId"]) == userID
-		if !collides {
-			continue
-		}
-		if stringValue(existing["id"]) != membershipID || stringValue(existing["accountId"]) != accountID || stringValue(existing["organizationId"]) != organizationID || stringValue(existing["userId"]) != userID || stringValue(existing["role"]) != "owner" || stringValue(existing["status"]) != "active" {
-			return errMembershipExists
-		}
-		membershipExists = true
-	}
 	accounts[accountID] = accountRow
 	if !userExists {
 		users[userID] = userRow
-	}
-	if !organizationExists {
-		organizations[organizationID] = organizationRow
-	}
-	if !membershipExists {
-		memberships[membershipID] = cloneMap(membership)
 	}
 	return nil
 }

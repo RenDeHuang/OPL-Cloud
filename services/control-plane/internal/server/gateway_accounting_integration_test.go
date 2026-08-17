@@ -618,8 +618,8 @@ func newGatewayAccountingControlPlane(t *testing.T, ledger clients.LedgerClient,
 		t.Fatalf("start Control Plane PostgreSQL store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.(*postgresEntStateStore).client.Close() })
-	account, user, organization, membership := provisionedAccountRowsFor(accountID, userID, "org-"+accountID, sub2API.ownerEmail, gatewayAccountingSub2APIUserID)
-	if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
+	account, user := provisionedAccountRowsFor(accountID, userID, sub2API.ownerEmail, gatewayAccountingSub2APIUserID)
+	if err := store.CreateProvisionedAccount(context.Background(), account, user); err != nil {
 		t.Fatalf("seed Control Plane owner: %v", err)
 	}
 	fabric := newGatewayAccountingFabric()

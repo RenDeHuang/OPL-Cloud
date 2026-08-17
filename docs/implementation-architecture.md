@@ -157,7 +157,7 @@ These are current implementation facts, not deletion authorization:
 
 | Cluster | Current implementation fact |
 | --- | --- |
-| Control Plane persistence | Archive, `ExecutionRequest`, and `WorkspaceBackup` application/Ent models are deleted while historical SQL/tables remain; Organization/Membership are one-to-one compatibility storage |
+| Control Plane persistence | Archive, `ExecutionRequest`, and `WorkspaceBackup` application/Ent models are deleted while historical SQL/tables remain; Organization/Membership application/Ent models and runtime store APIs are deleted, while raw tables remain only as read-only historical custody for migration validation |
 | Control Plane instance extension | The normal Launch/Resume path is provider-neutral. Instance-owned Provider Acceptance consumes one provider-neutral facts batch and a narrow Runtime path; it requires canonical compute/storage provider IDs and treats legacy node-pool and persistent-volume values as optional response-only projections. Instance deployment and production acceptance remain external |
 | Fabric optional verticals | ContentTransfer runtime/API/schema surfaces are retired while historical migrations and data remain; Snapshot/Restore still has provider/service/store/route/test surfaces but no current in-repo product caller and remains excluded from the Pilot |
 | Fabric launch residue | Recovery proof/claim Service/provider/store mutation shells, unassigned legacy `LaunchBinding` branches, and the duplicate Tencent compute-ownership implementation are retired. Typed Tencent Launch has exact stage-chain readback/replay coverage; other operation-list consumers and the remaining mixed Fabric facade still require caller-led cohesion work |
@@ -233,14 +233,16 @@ immutable revision deployed and authoritatively read back in production.
 Fabric, Ledger, Tencent, Kubernetes, or Sub2API directly.
 
 `services/control-plane` owns local sessions, one-to-one Account-to-Sub2API
-mappings, N Workspace entitlements per Account, Workspace-level monthly
-operations, the Launch business cursor, attempts/leases/CAS, settlement
-coordination, selected provider-profile refs, and strict customer DTOs. It does
-not own a Fabric operation store, resource-stage reducer, live Compute, Storage,
-Attachment, Secret, or Runtime status, or provider mutation. Sub2API
-authenticates customer credentials. Organization and
-Membership rows remain internal one-to-one compatibility records only; they are
-not shared-account or customer-authorization surfaces.
+mappings, Account/User owner authorization, N Workspace entitlements per
+Account, Workspace-level monthly operations, the Launch business cursor,
+attempts/leases/CAS, settlement coordination, selected provider-profile refs,
+and strict customer DTOs. It does not own a Fabric operation store,
+resource-stage reducer, live Compute, Storage, Attachment, Secret, or Runtime
+status, or provider mutation. Sub2API authenticates customer credentials.
+Organization and Membership application/Ent models, runtime store APIs, and
+provisioning writes are retired; their raw PostgreSQL tables remain only to
+preserve historical rows and IDs for migration validation. They are not shared-
+account or customer-authorization surfaces.
 
 The login route admits JSON before credential processing. If a browser supplies
 an `Origin` or `Referer`, Control Plane compares its scheme, host, and effective

@@ -8,8 +8,6 @@ import (
 	controlplaneent "opl-cloud/services/control-plane/ent"
 	"opl-cloud/services/control-plane/ent/account"
 	"opl-cloud/services/control-plane/ent/computeallocation"
-	"opl-cloud/services/control-plane/ent/membership"
-	"opl-cloud/services/control-plane/ent/organization"
 	"opl-cloud/services/control-plane/ent/session"
 	"opl-cloud/services/control-plane/ent/storagevolume"
 	"opl-cloud/services/control-plane/ent/user"
@@ -20,11 +18,6 @@ var (
 	accountEntFields = []entRecordField{
 		textField("OwnerUserID", "SetOwnerUserID", "ownerUserId"),
 		intField("Sub2apiUserID", "SetSub2apiUserID", "sub2apiUserId"),
-		textField("Name", "SetName", "name"),
-		textField("Status", "SetStatus", "status"),
-	}
-	organizationEntFields = []entRecordField{
-		textField("BillingAccountID", "SetBillingAccountID", "billingAccountId"),
 		textField("Name", "SetName", "name"),
 		textField("Status", "SetStatus", "status"),
 	}
@@ -44,13 +37,6 @@ var (
 		textField("UserID", "SetUserID", "userId"),
 		textField("Csrf", "SetCsrf", "csrf"),
 		textField("ExpiresAt", "SetExpiresAt", "expiresAt"),
-	}
-	membershipEntFields = []entRecordField{
-		textField("AccountID", "SetAccountID", "accountId"),
-		textField("OrganizationID", "SetOrganizationID", "organizationId"),
-		textField("UserID", "SetUserID", "userId"),
-		textField("Role", "SetRole", "role"),
-		textField("Status", "SetStatus", "status"),
 	}
 )
 
@@ -239,7 +225,7 @@ func (s *postgresEntStateStore) SaveAccount(ctx context.Context, row map[string]
 	return tx.Commit()
 }
 
-func (s *postgresEntStateStore) CreateProvisionedAccount(ctx context.Context, accountRow, userRow, organizationRow, membershipRow map[string]any) error {
+func (s *postgresEntStateStore) CreateProvisionedAccount(ctx context.Context, accountRow, userRow map[string]any) error {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return err
@@ -267,17 +253,8 @@ func (s *postgresEntStateStore) CreateProvisionedAccount(ctx context.Context, ac
 		if err != nil {
 			return finish(err)
 		}
-		organizations, err := loadRecordSet(ctx, client.Organization.Query().All, organizationEntFields)
-		if err != nil {
-			return finish(err)
-		}
-		memberships, err := loadRecordSet(ctx, client.Membership.Query().All, membershipEntFields)
-		if err != nil {
-			return finish(err)
-		}
 		if accounts[stringValue(accountRow["id"])] == nil || users[stringValue(userRow["id"])] == nil ||
-			organizations[stringValue(organizationRow["id"])] == nil || memberships[stringValue(membershipRow["id"])] == nil ||
-			stageProvisionedAccount(accounts, users, organizations, memberships, accountRow, userRow, organizationRow, membershipRow) != nil {
+			stageProvisionedAccount(accounts, users, accountRow, userRow) != nil {
 			return finish(conflict)
 		}
 		return finish(nil)
@@ -300,22 +277,9 @@ func (s *postgresEntStateStore) CreateProvisionedAccount(ctx context.Context, ac
 	if err != nil {
 		return rollback(err)
 	}
-	organizations, err := loadRecordSet(ctx, client.Organization.Query().All, organizationEntFields)
-	if err != nil {
-		return rollback(err)
-	}
-	memberships, err := loadRecordSet(ctx, client.Membership.Query().All, membershipEntFields)
-	if err != nil {
-		return rollback(err)
-	}
-
-	organizationID := stringValue(organizationRow["id"])
-	_, organizationExists := organizations[organizationID]
 	userID := stringValue(userRow["id"])
 	_, userExists := users[userID]
-	membershipID := stringValue(membershipRow["id"])
-	_, membershipExists := memberships[membershipID]
-	if err := stageProvisionedAccount(accounts, users, organizations, memberships, accountRow, userRow, organizationRow, membershipRow); err != nil {
+	if err := stageProvisionedAccount(accounts, users, accountRow, userRow); err != nil {
 		return rollback(err)
 	}
 
@@ -339,22 +303,6 @@ func (s *postgresEntStateStore) CreateProvisionedAccount(ctx context.Context, ac
 		if err := saveRecord(ctx, userID, users[userID], client.User.Create(), userEntFields); err != nil {
 			if controlplaneent.IsConstraintError(err) {
 				return replayAfterConstraint(errUserExists)
-			}
-			return rollback(err)
-		}
-	}
-	if !organizationExists {
-		if err := saveRecord(ctx, organizationID, organizations[organizationID], client.Organization.Create(), organizationEntFields); err != nil {
-			if controlplaneent.IsConstraintError(err) {
-				return replayAfterConstraint(err)
-			}
-			return rollback(err)
-		}
-	}
-	if !membershipExists {
-		if err := saveRecord(ctx, membershipID, memberships[membershipID], client.Membership.Create(), membershipEntFields); err != nil {
-			if controlplaneent.IsConstraintError(err) {
-				return replayAfterConstraint(err)
 			}
 			return rollback(err)
 		}
@@ -460,108 +408,6 @@ func (s *postgresEntStateStore) ApplyUserLifecycle(ctx context.Context, user map
 				return rollback(err)
 			}
 		}
-	}
-	return tx.Commit()
-}
-
-func (s *postgresEntStateStore) ListOrganizations(ctx context.Context) ([]map[string]any, error) {
-	rows, err := loadRecordSet(ctx, s.client.Organization.Query().All, organizationEntFields)
-	if err != nil {
-		return nil, err
-	}
-	return filteredRecords(rows, "")
-}
-
-func (s *postgresEntStateStore) GetOrganizationByAccount(ctx context.Context, accountID string) (map[string]any, bool, error) {
-	entity, err := s.client.Organization.Query().Where(organization.BillingAccountID(accountID)).Only(ctx)
-	if controlplaneent.IsNotFound(err) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	return recordFromEnt(entity, organizationEntFields), true, nil
-}
-
-func (s *postgresEntStateStore) SaveOrganization(ctx context.Context, row map[string]any) error {
-	tx, err := s.client.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	client := tx.Client()
-	if _, err := client.Account.Get(ctx, stringValue(row["billingAccountId"])); err != nil {
-		_ = tx.Rollback()
-		if controlplaneent.IsNotFound(err) {
-			return errAccountNotFound
-		}
-		return err
-	}
-	if err := s.replaceRecord(ctx, row, func(id string) error { return client.Organization.DeleteOneID(id).Exec(ctx) }, func() any { return client.Organization.Create() }, organizationEntFields); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
-}
-
-func (s *postgresEntStateStore) ListMemberships(ctx context.Context) ([]map[string]any, error) {
-	rows, err := loadRecordSet(ctx, s.client.Membership.Query().All, membershipEntFields)
-	if err != nil {
-		return nil, err
-	}
-	return filteredRecords(rows, "")
-}
-
-func (s *postgresEntStateStore) GetMembershipByAccount(ctx context.Context, accountID string) (map[string]any, bool, error) {
-	entity, err := s.client.Membership.Query().Where(membership.AccountID(accountID)).Only(ctx)
-	if controlplaneent.IsNotFound(err) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	return recordFromEnt(entity, membershipEntFields), true, nil
-}
-
-func (s *postgresEntStateStore) SaveMembership(ctx context.Context, row map[string]any) error {
-	if stringValue(row["role"]) != "owner" {
-		return errInvalidRole
-	}
-	tx, err := s.client.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	client := tx.Client()
-	accountID := stringValue(row["accountId"])
-	if _, err := client.Account.Get(ctx, accountID); err != nil {
-		_ = tx.Rollback()
-		if controlplaneent.IsNotFound(err) {
-			return errAccountNotFound
-		}
-		return err
-	}
-	organization, err := client.Organization.Get(ctx, stringValue(row["organizationId"]))
-	if err != nil {
-		_ = tx.Rollback()
-		if controlplaneent.IsNotFound(err) {
-			return errOrganizationNotFound
-		}
-		return err
-	}
-	user, err := client.User.Get(ctx, stringValue(row["userId"]))
-	if err != nil {
-		_ = tx.Rollback()
-		if controlplaneent.IsNotFound(err) {
-			return errMembershipUserNotFound
-		}
-		return err
-	}
-	if organization.BillingAccountID != accountID || user.AccountID != accountID {
-		_ = tx.Rollback()
-		return errMembershipAccountMismatch
-	}
-	if err := s.replaceRecord(ctx, row, func(id string) error { return client.Membership.DeleteOneID(id).Exec(ctx) }, func() any { return client.Membership.Create() }, membershipEntFields); err != nil {
-		_ = tx.Rollback()
-		return err
 	}
 	return tx.Commit()
 }

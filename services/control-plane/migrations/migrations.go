@@ -46,6 +46,9 @@ var controlPlaneCapacityIndexes string
 //go:embed 202608170001_remote_companion_broker.sql
 var remoteCompanionBroker string
 
+//go:embed 202608170002_legacy_identity_table_custody.sql
+var legacyIdentityTableCustody string
+
 func Apply(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, monthlyHardCut, []any{}, nil)
 }
@@ -120,4 +123,8 @@ func ApplyControlPlaneCapacityIndexes(ctx context.Context, driver dialect.Driver
 
 func ApplyRemoteCompanionBroker(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, remoteCompanionBroker, []any{}, nil)
+}
+
+func ApplyLegacyIdentityTableCustody(ctx context.Context, driver dialect.Driver) error {
+	return driver.Exec(ctx, legacyIdentityTableCustody, []any{}, nil)
 }

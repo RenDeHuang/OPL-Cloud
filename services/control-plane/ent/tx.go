@@ -28,10 +28,6 @@ type Tx struct {
 	BillingReconciliation *BillingReconciliationClient
 	// ComputeAllocation is the client for interacting with the ComputeAllocation builders.
 	ComputeAllocation *ComputeAllocationClient
-	// Membership is the client for interacting with the Membership builders.
-	Membership *MembershipClient
-	// Organization is the client for interacting with the Organization builders.
-	Organization *OrganizationClient
 	// ProductionE2ERecord is the client for interacting with the ProductionE2ERecord builders.
 	ProductionE2ERecord *ProductionE2ERecordClient
 	// ProjectTaskSyncHead is the client for interacting with the ProjectTaskSyncHead builders.
@@ -199,8 +195,6 @@ func (tx *Tx) init() {
 	tx.AuthAttempt = NewAuthAttemptClient(tx.config)
 	tx.BillingReconciliation = NewBillingReconciliationClient(tx.config)
 	tx.ComputeAllocation = NewComputeAllocationClient(tx.config)
-	tx.Membership = NewMembershipClient(tx.config)
-	tx.Organization = NewOrganizationClient(tx.config)
 	tx.ProductionE2ERecord = NewProductionE2ERecordClient(tx.config)
 	tx.ProjectTaskSyncHead = NewProjectTaskSyncHeadClient(tx.config)
 	tx.RemoteDeviceCredential = NewRemoteDeviceCredentialClient(tx.config)

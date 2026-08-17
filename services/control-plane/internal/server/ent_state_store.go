@@ -78,6 +78,9 @@ func newPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		{Version: "202607140001_sub2api_monthly_hard_cut", Run: func(ctx context.Context) error {
 			return controlplanemigrations.Apply(ctx, driver)
 		}},
+		{Version: "202608170002_legacy_identity_table_custody", Run: func(ctx context.Context) error {
+			return controlplanemigrations.ApplyLegacyIdentityTableCustody(ctx, driver)
+		}},
 		{Version: "202607150001_legacy_membership_normalize", Run: func(ctx context.Context) error {
 			return validateAndNormalizeLegacyMemberships(ctx, driver)
 		}},

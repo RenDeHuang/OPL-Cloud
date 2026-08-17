@@ -289,13 +289,13 @@ func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFu
 			return
 		}
 		if !requiresAdmin && isOperatorUser(user) {
-			active, err := app.hasActiveCustomerMembership(r.Context(), user)
+			active, err := app.hasActiveCustomerAccount(r.Context(), user)
 			if err != nil {
 				writeError(w, http.StatusServiceUnavailable, "authentication_unavailable")
 				return
 			}
 			if !active {
-				writeError(w, http.StatusForbidden, "organization_membership_required")
+				writeError(w, http.StatusForbidden, "customer_account_required")
 				return
 			}
 		}
@@ -369,7 +369,7 @@ func writeUserLifecycleError(w http.ResponseWriter, err error) {
 
 func writeCreateUserError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, errUserExists), errors.Is(err, errAccountIdentityConflict), errors.Is(err, errSub2APIAccountMappingConflict), errors.Is(err, errMembershipExists), errors.Is(err, errMembershipAccountMismatch):
+	case errors.Is(err, errUserExists), errors.Is(err, errAccountIdentityConflict), errors.Is(err, errSub2APIAccountMappingConflict):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, errSub2APIUserMappingUnverified):
 		writeError(w, http.StatusBadGateway, err.Error())
