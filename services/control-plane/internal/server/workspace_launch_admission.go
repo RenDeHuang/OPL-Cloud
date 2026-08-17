@@ -27,6 +27,12 @@ const (
 	productionAcceptanceBCapability                = "x-opl-acceptance-b-capability"
 	productionAcceptanceBApprovalID                = "x-opl-acceptance-b-approval-id"
 	productionAcceptanceBConfirmation              = "RUN_ONE_INDEPENDENT_FRESH_BASIC_ORDER_FOR_ACCEPTANCE_B"
+	productionAcceptanceBResumePrepareLifetime     = 15 * time.Minute
+	productionAcceptanceBResumeAuthorizationID     = "x-opl-resume-authorization-id"
+	productionAcceptanceBResumeReasonSHA256        = "x-opl-resume-reason-sha256"
+	productionAcceptanceBResumeReleaseSHA          = "x-opl-resume-release-sha"
+	productionAcceptanceBResumeReleaseTree         = "x-opl-resume-release-tree"
+	productionAcceptanceBResumeImageDigest         = "x-opl-resume-image-digest"
 )
 
 var productionAcceptanceBAllowedWrites = []string{
@@ -119,6 +125,17 @@ type productionAcceptanceBResumeExistingApproval struct {
 		} `json:"attempt"`
 	} `json:"reconciliation"`
 	IdentityDigests workspaceLaunchAcceptanceBIdentityDigestSet `json:"identityDigests"`
+}
+
+type productionAcceptanceBResumeExistingPrepareRequest struct {
+	ApprovalID      string `json:"approvalId"`
+	AuthorizationID string `json:"authorizationId"`
+	ReasonSHA256    string `json:"reasonSha256"`
+	Release         struct {
+		CanonicalCloudSHA        string `json:"canonicalCloudSha"`
+		CanonicalCloudTree       string `json:"canonicalCloudTree"`
+		DeployedCloudImageDigest string `json:"deployedCloudImageDigest"`
+	} `json:"release"`
 }
 
 type workspaceLaunchAcceptanceBResumeExistingBinding struct {
@@ -353,6 +370,93 @@ func productionAcceptanceBResumeExistingApprovalDigest(approval productionAccept
 	return fmt.Sprintf("sha256:%x", digest[:])
 }
 
+func productionAcceptanceBReleaseCurrent(release struct {
+	CanonicalCloudSHA        string `json:"canonicalCloudSha"`
+	CanonicalCloudTree       string `json:"canonicalCloudTree"`
+	DeployedCloudImageDigest string `json:"deployedCloudImageDigest"`
+}) bool {
+	return productionAcceptanceBReleaseSHAPattern.MatchString(release.CanonicalCloudSHA) &&
+		productionAcceptanceBReleaseSHAPattern.MatchString(release.CanonicalCloudTree) &&
+		release.CanonicalCloudSHA == strings.TrimSpace(os.Getenv("OPL_RELEASE_SHA")) &&
+		release.CanonicalCloudTree == strings.TrimSpace(os.Getenv("OPL_RELEASE_TREE")) &&
+		release.DeployedCloudImageDigest == deployedImageDigest(os.Getenv("OPL_CLOUD_IMAGE"))
+}
+
+func productionAcceptanceBResumeExistingPrepareRequestValid(request productionAcceptanceBResumeExistingPrepareRequest) bool {
+	return productionAcceptanceBApprovalIDPattern.MatchString(request.ApprovalID) &&
+		validBillingReviewOpaqueID(request.AuthorizationID) && productionAcceptanceBIdentityDigestPattern.MatchString(request.ReasonSHA256) &&
+		productionAcceptanceBReleaseShapeValid(request.Release)
+}
+
+func productionAcceptanceBReleaseShapeValid(release struct {
+	CanonicalCloudSHA        string `json:"canonicalCloudSha"`
+	CanonicalCloudTree       string `json:"canonicalCloudTree"`
+	DeployedCloudImageDigest string `json:"deployedCloudImageDigest"`
+}) bool {
+	return productionAcceptanceBReleaseSHAPattern.MatchString(release.CanonicalCloudSHA) &&
+		productionAcceptanceBReleaseSHAPattern.MatchString(release.CanonicalCloudTree) && workspaceImageDigestPattern.MatchString(release.DeployedCloudImageDigest)
+}
+
+func productionAcceptanceBResumeExistingCandidate(
+	request productionAcceptanceBResumeExistingPrepareRequest,
+	operation workspaceLaunchReconcileOperation,
+	observation workspaceLaunchStageObservation,
+	now time.Time,
+) (productionAcceptanceBResumeExistingApproval, bool) {
+	if !productionAcceptanceBResumeExistingPrepareRequestValid(request) || !productionAcceptanceBReleaseCurrent(request.Release) || operation.Status != "manual_review" ||
+		!workspaceLaunchReconcileStageValid(operation.Stage) || operation.Stage == "succeeded" ||
+		(observation.State != workspaceLaunchStageReady && observation.State != workspaceLaunchStageAbsent && observation.State != workspaceLaunchStagePending) ||
+		operation.ResumeAuthorization != nil && operation.ResumeAuthorizationConsumedAt == "" {
+		return productionAcceptanceBResumeExistingApproval{}, false
+	}
+	attempt, found := operation.Attempts[operation.Stage]
+	if !found || attempt.Max != 1 {
+		return productionAcceptanceBResumeExistingApproval{}, false
+	}
+
+	authorization := workspaceLaunchResumeAuthorization{
+		AuthorizationID: request.AuthorizationID, LaunchVersion: operation.Version, AuthorizedStage: operation.Stage,
+	}
+	remainingBudget := attempt.Max - attempt.Attempted
+	if attempt.Status == "reserved" || attempt.Attempted >= attempt.Max {
+		replay := authorization
+		replay.IdempotentReplayBudget, replay.AuthoritativeReadBudget = 1, workspaceLaunchAuthoritativeReadBudget
+		read := authorization
+		read.AuthoritativeReadBudget = workspaceLaunchAuthoritativeReadBudget
+		switch {
+		case workspaceLaunchReservedStageReplayEligible(operation, attempt, replay):
+			authorization = replay
+		case workspaceLaunchReservedStageReadEligible(operation, attempt, read):
+			authorization = read
+		default:
+			return productionAcceptanceBResumeExistingApproval{}, false
+		}
+	} else if remainingBudget == 0 || remainingBudget > 1 {
+		return productionAcceptanceBResumeExistingApproval{}, false
+	} else {
+		authorization.MutationBudget = remainingBudget
+	}
+
+	var approval productionAcceptanceBResumeExistingApproval
+	approval.SchemaVersion, approval.OperationMode = 1, "acceptance_b_resume_existing"
+	approval.ApprovalID = request.ApprovalID
+	approval.ExpiresAt = now.UTC().Add(productionAcceptanceBResumePrepareLifetime).Format(time.RFC3339)
+	approval.Release = request.Release
+	approval.Authorization.AuthorizationID, approval.Authorization.OperationID = request.AuthorizationID, operation.ID
+	approval.Authorization.LaunchVersion, approval.Authorization.AuthorizedStage = operation.Version, operation.Stage
+	approval.Authorization.ReasonSHA256 = request.ReasonSHA256
+	approval.Authorization.MutationBudget = authorization.MutationBudget
+	approval.Authorization.IdempotentReplayBudget = authorization.IdempotentReplayBudget
+	approval.Authorization.AuthoritativeReadBudget = authorization.AuthoritativeReadBudget
+	approval.Reconciliation.OperationStatus, approval.Reconciliation.AuthoritativeStageState = operation.Status, observation.State
+	approval.Reconciliation.Attempt.Attempted, approval.Reconciliation.Attempt.Confirmed = attempt.Attempted, attempt.Confirmed
+	approval.Reconciliation.Attempt.Unknown, approval.Reconciliation.Attempt.Max = attempt.Unknown, attempt.Max
+	approval.Reconciliation.Attempt.Status = attempt.Status
+	approval.Reconciliation.Attempt.IdempotencyKeySHA256 = acceptanceBDigestParts(attempt.IdempotencyKey)
+	approval.IdentityDigests = workspaceLaunchAcceptanceBIdentityDigests(operation)
+	return approval, validWorkspaceLaunchAcceptanceBIdentityDigests(approval.IdentityDigests)
+}
+
 func productionAcceptanceBResumeExistingApproved(
 	header http.Header,
 	approval productionAcceptanceBResumeExistingApproval,
@@ -375,9 +479,7 @@ func productionAcceptanceBResumeExistingApproved(
 	approved := expiryErr == nil && now.Before(expiresAt) && approval.SchemaVersion == 1 && approval.OperationMode == "acceptance_b_resume_existing" &&
 		productionAcceptanceBApprovalIDPattern.MatchString(approval.ApprovalID) && headerValue(productionAcceptanceBApprovalID) == approval.ApprovalID &&
 		secureHeaderMatches(headerValue(productionAcceptanceBCapability), strings.TrimSpace(os.Getenv("OPL_INTERNAL_SERVICE_TOKEN"))) &&
-		approval.Release.CanonicalCloudSHA == strings.TrimSpace(os.Getenv("OPL_RELEASE_SHA")) && productionAcceptanceBReleaseSHAPattern.MatchString(approval.Release.CanonicalCloudSHA) &&
-		productionAcceptanceBReleaseSHAPattern.MatchString(approval.Release.CanonicalCloudTree) &&
-		approval.Release.DeployedCloudImageDigest == deployedImageDigest(os.Getenv("OPL_CLOUD_IMAGE")) &&
+		productionAcceptanceBReleaseCurrent(approval.Release) &&
 		approval.Authorization.AuthorizationID == authorization.AuthorizationID && approval.Authorization.OperationID == operation.ID &&
 		approval.Authorization.LaunchVersion == authorization.LaunchVersion && approval.Authorization.AuthorizedStage == authorization.AuthorizedStage &&
 		approval.Authorization.ReasonSHA256 == acceptanceBDigestParts(authorization.Reason) &&
@@ -429,8 +531,7 @@ func productionAcceptanceBResumeExistingReplayApproved(
 		return strings.TrimSpace(values[0])
 	}
 	binding := existing.AcceptanceBResumeExisting
-	releaseCurrent := approval.Release.CanonicalCloudSHA == strings.TrimSpace(os.Getenv("OPL_RELEASE_SHA")) &&
-		approval.Release.DeployedCloudImageDigest == deployedImageDigest(os.Getenv("OPL_CLOUD_IMAGE"))
+	releaseCurrent := productionAcceptanceBReleaseCurrent(approval.Release)
 	expiresAt, expiryErr := time.Parse(time.RFC3339, approval.ExpiresAt)
 	return approval.SchemaVersion == 1 && approval.OperationMode == "acceptance_b_resume_existing" && approval.ApprovalID == binding.ApprovalID &&
 		headerValue(productionAcceptanceBApprovalID) == approval.ApprovalID &&

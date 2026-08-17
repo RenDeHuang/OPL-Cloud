@@ -348,3 +348,84 @@ func TestAcceptanceBResumeExistingRoutePersistsApprovalBindingAndConvergesReady(
 		t.Fatalf("Acceptance B readback=%#v", readback)
 	}
 }
+
+func TestAcceptanceBResumePrepareRouteRequiresOperatorAndCapability(t *testing.T) {
+	configureProductionAcceptanceBEnvironment(t)
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	command := workspaceLaunchUnitCommand()
+	command.AccountID, command.OwnerUserID, command.Sub2APIUserID = "acct-alpha", "usr-alpha", 41
+	command.WorkspaceID = "ws-acceptance-b-prepare-route"
+	operation, err := newWorkspaceLaunchReconcileOperation(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Status, operation.Stage = "manual_review", "key"
+	attempt := operation.Attempts[operation.Stage]
+	attempt.Attempted, attempt.Status, attempt.IdempotencyKey = 1, "reserved", workspaceLaunchStageIdempotencyKey(operation, 1)
+	operation.Attempts[operation.Stage] = attempt
+	row, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), row))
+	groupID := int64(7)
+	client := &workspaceLaunchResumeRouteSub2API{
+		testSub2APIClient: &testSub2APIClient{balance: 100_000_000, charges: map[string]int64{}},
+		keys: []clients.Sub2APIWorkspaceKey{{
+			ID: 19, UserID: 41, Name: workspaceReservedKeyName(command.WorkspaceID), Key: "prepare-route-key-secret", GroupID: &groupID, Status: "active",
+		}},
+	}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := reservedOperatorSessionForTest(t, server)
+	request := canonicalResumePrepareRequest(operation, workspaceLaunchStageReady)
+	path := "/api/operator/workspace-launches/" + operation.ID + "/resume-approval-candidates"
+	for name, configure := range map[string]func(*http.Request){
+		"anonymous":          func(_ *http.Request) {},
+		"missing capability": func(value *http.Request) { addAuth(value, operator); addResumePrepareHeaders(value, request) },
+		"wrong capability": func(value *http.Request) {
+			addAuth(value, operator)
+			addResumePrepareHeaders(value, request)
+			value.Header.Set(productionAcceptanceBCapability, "wrong")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			configure(req)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, req)
+			if response.Code == http.StatusOK {
+				t.Fatal("unauthorized prepare succeeded")
+			}
+		})
+	}
+	persistedBefore := stringValue(row["result"])
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	addAuth(req, operator)
+	addResumePrepareHeaders(req, request)
+	req.Header.Set(productionAcceptanceBCapability, "acceptance-b-capability")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, req)
+	var approval productionAcceptanceBResumeExistingApproval
+	persisted, found, readErr := store.GetRuntimeOperation(context.Background(), operation.ID)
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &approval) != nil || approval.OperationMode != "acceptance_b_resume_existing" ||
+		approval.Authorization.OperationID != operation.ID || approval.Reconciliation.AuthoritativeStageState != workspaceLaunchStageReady ||
+		readErr != nil || !found || stringValue(persisted["result"]) != persistedBefore || client.convergenceReads != 1 || client.createCalls != 0 {
+		t.Fatalf("prepare route status=%d body=%s reads=%d creates=%d found=%v err=%v", response.Code, response.Body.String(), client.convergenceReads, client.createCalls, found, readErr)
+	}
+	if strings.Contains(response.Body.String(), "prepare-route-key-secret") || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("prepare route leaked owner fact or omitted no-store: headers=%v", response.Header())
+	}
+}
+
+func addResumePrepareHeaders(request *http.Request, candidate productionAcceptanceBResumeExistingPrepareRequest) {
+	request.Header.Set(productionAcceptanceBApprovalID, candidate.ApprovalID)
+	request.Header.Set(productionAcceptanceBResumeAuthorizationID, candidate.AuthorizationID)
+	request.Header.Set(productionAcceptanceBResumeReasonSHA256, candidate.ReasonSHA256)
+	request.Header.Set(productionAcceptanceBResumeReleaseSHA, candidate.Release.CanonicalCloudSHA)
+	request.Header.Set(productionAcceptanceBResumeReleaseTree, candidate.Release.CanonicalCloudTree)
+	request.Header.Set(productionAcceptanceBResumeImageDigest, candidate.Release.DeployedCloudImageDigest)
+}

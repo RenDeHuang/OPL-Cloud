@@ -40,7 +40,7 @@ test("current launch and settlement facts have four focused owners", async () =>
 test("Control Plane durable launch chain keeps preflight outside mutation stages", async () => {
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
-  assert.equal(contract.schemaVersion, 4);
+  assert.equal(contract.schemaVersion, 5);
   assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
     "launchOperationId", "accountId", "ownerUserId", "workspaceId", "requestHash"
@@ -116,11 +116,24 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
   assert.deepEqual(contract.recovery.authorizationReadback.attemptFields,
     ["attempted", "confirmed", "unknown", "max", "status", "idempotencyKey", "pendingReadbacks", "maxPendingReadbacks"]);
   assert.equal(contract.recovery.acceptanceBResumeExisting.operationMode, "acceptance_b_resume_existing");
+  assert.deepEqual(contract.recovery.acceptanceBResumeExisting.prepare, {
+    route: "GET /api/operator/workspace-launches/{operationId}/resume-approval-candidates",
+    authentication: "control_plane_operator_session_plus_internal_acceptance_b_capability",
+    mode: "read_only_non_persistent",
+    requestHeaders: ["x-opl-acceptance-b-capability", "x-opl-acceptance-b-approval-id", "x-opl-resume-authorization-id", "x-opl-resume-reason-sha256", "x-opl-resume-release-sha", "x-opl-resume-release-tree", "x-opl-resume-image-digest"],
+    derivedFields: ["operationId", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget", "reconciliation.attempt", "identityDigests", "expiresAt"],
+    releaseAuthority: ["OPL_RELEASE_SHA", "OPL_RELEASE_TREE", "OPL_CLOUD_IMAGE"],
+    expirySeconds: 900,
+    externalMutationCount: 0,
+    persistenceWrites: 0,
+    redaction: "approval_schema_digests_only_no_raw_account_user_workspace_redeem_idempotency_or_provider_refs",
+    resumeRevalidation: "installed_candidate_is_reloaded_and_fresh_operation_stage_attempt_release_image_and_identity_facts_are_revalidated_before_authorization_CAS"
+  });
   assert.deepEqual(contract.recovery.acceptanceBResumeExisting.approvalSchema.identityDigestFields, [
     "accountIdentitySha256", "operationIdentitySha256", "workspaceIdentitySha256", "keyIdentitySha256",
     "debitIdentitySha256", "quoteIdentitySha256", "providerIdentitySha256"
   ]);
-  assert.equal(contract.recovery.acceptanceBResumeExisting.releaseAuthority.canonicalCloudTree, "instance_approval_binding_not_control_plane_runtime_fact");
+  assert.equal(contract.recovery.acceptanceBResumeExisting.releaseAuthority.canonicalCloudTree, "control_plane_OPL_RELEASE_TREE_exact_match");
 });
 
 test("Fabric uses explicit immutable launch-stage binding and typed routes", async () => {

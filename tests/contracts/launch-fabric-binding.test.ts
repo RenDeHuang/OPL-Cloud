@@ -11,7 +11,7 @@ test("Control Plane owns the launch identity and recovery authorization", async 
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
   assert.equal(contract.owner, "services/control-plane");
-  assert.equal(contract.schemaVersion, 4);
+  assert.equal(contract.schemaVersion, 5);
   assert.equal(contract.launchOperation.action, "workspace.launch.v2");
   assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
@@ -120,6 +120,19 @@ test("Control Plane owns the launch identity and recovery authorization", async 
     },
     acceptanceBResumeExisting: {
       operationMode: "acceptance_b_resume_existing",
+      prepare: {
+        route: "GET /api/operator/workspace-launches/{operationId}/resume-approval-candidates",
+        authentication: "control_plane_operator_session_plus_internal_acceptance_b_capability",
+        mode: "read_only_non_persistent",
+        requestHeaders: ["x-opl-acceptance-b-capability", "x-opl-acceptance-b-approval-id", "x-opl-resume-authorization-id", "x-opl-resume-reason-sha256", "x-opl-resume-release-sha", "x-opl-resume-release-tree", "x-opl-resume-image-digest"],
+        derivedFields: ["operationId", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget", "reconciliation.attempt", "identityDigests", "expiresAt"],
+        releaseAuthority: ["OPL_RELEASE_SHA", "OPL_RELEASE_TREE", "OPL_CLOUD_IMAGE"],
+        expirySeconds: 900,
+        externalMutationCount: 0,
+        persistenceWrites: 0,
+        redaction: "approval_schema_digests_only_no_raw_account_user_workspace_redeem_idempotency_or_provider_refs",
+        resumeRevalidation: "installed_candidate_is_reloaded_and_fresh_operation_stage_attempt_release_image_and_identity_facts_are_revalidated_before_authorization_CAS"
+      },
       approvalSecretEnv: "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_RESUME_EXISTING_APPROVAL_JSON",
       capabilityHeader: "x-opl-acceptance-b-capability",
       approvalIdHeader: "x-opl-acceptance-b-approval-id",
@@ -135,7 +148,7 @@ test("Control Plane owns the launch identity and recovery authorization", async 
       },
       releaseAuthority: {
         canonicalCloudSha: "control_plane_OPL_RELEASE_SHA_exact_match",
-        canonicalCloudTree: "instance_approval_binding_not_control_plane_runtime_fact",
+        canonicalCloudTree: "control_plane_OPL_RELEASE_TREE_exact_match",
         deployedCloudImageDigest: "control_plane_OPL_CLOUD_IMAGE_exact_digest_match"
       },
       requestIntent: "either_dedicated_header_requires_exactly_one_approval_id_and_one_capability_header_server_secret_configuration_alone_never_selects_dedicated_mode",
