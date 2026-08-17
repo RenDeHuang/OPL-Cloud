@@ -1843,9 +1843,12 @@ func newPostgresWorkspaceRenewalStoreWithDB(t *testing.T) (*postgresEntStateStor
 }
 
 func canonicalWorkspaceRenewalRow(autoRenew bool) map[string]any {
+	paidThrough := time.Now().UTC().Truncate(time.Second).AddDate(0, 1, 0)
+	periodStart := paidThrough.AddDate(0, -1, 0)
+	nextRenewalAt := paidThrough.Add(-monthlyRenewalLead)
 	authorizedBy, authorizedAt := "", ""
 	if autoRenew {
-		authorizedBy, authorizedAt = "usr-renewal", "2026-07-17T01:02:03Z"
+		authorizedBy, authorizedAt = "usr-renewal", periodStart.Format(time.RFC3339)
 	}
 	return map[string]any{
 		"id": "ws-renewal", "accountId": "acct-renewal", "ownerAccountId": "acct-renewal", "ownerUserId": "usr-renewal",
@@ -1853,8 +1856,8 @@ func canonicalWorkspaceRenewalRow(autoRenew bool) map[string]any {
 		"autoRenew": autoRenew, "authorizedBy": authorizedBy, "authorizedAt": authorizedAt,
 		"priceVersion": pricingCatalogVersion, "currency": pricingCurrency, "billingUnit": pricingBillingUnit,
 		"computeUsdMicros": int64(50_000_000), "storageUsdMicros": int64(2_580_000), "totalUsdMicros": int64(52_580_000),
-		"periodStart": "2026-07-17T01:02:03Z", "paidThrough": "2026-08-17T01:02:03Z", "nextRenewalAt": "2026-08-16T01:02:03Z",
-		"billingAnchorDay": int64(17), "renewalStatus": "active", "computeAllocationId": "compute-renewal",
+		"periodStart": periodStart.Format(time.RFC3339), "paidThrough": paidThrough.Format(time.RFC3339), "nextRenewalAt": nextRenewalAt.Format(time.RFC3339),
+		"billingAnchorDay": int64(paidThrough.Day()), "renewalStatus": "active", "computeAllocationId": "compute-renewal",
 	}
 }
 
