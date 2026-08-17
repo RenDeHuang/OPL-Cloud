@@ -10,10 +10,9 @@ import (
 	"time"
 )
 
-func replayResourceState(ctx context.Context, operations OperationStore) (map[string]ComputeAllocation, map[string]StorageVolume, map[string]StorageSnapshot, map[string]StorageAttachment, map[string]WorkspaceRuntime) {
+func replayResourceState(ctx context.Context, operations OperationStore) (map[string]ComputeAllocation, map[string]StorageVolume, map[string]StorageAttachment, map[string]WorkspaceRuntime) {
 	computes := map[string]ComputeAllocation{}
 	volumes := map[string]StorageVolume{}
-	snapshots := map[string]StorageSnapshot{}
 	attachments := map[string]StorageAttachment{}
 	runtimes := map[string]WorkspaceRuntime{}
 	attachmentRecords := map[string]bool{}
@@ -22,7 +21,7 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 	canonicalAttachmentConflicts := map[string]bool{}
 	records, err := operations.List(ctx)
 	if err != nil {
-		return computes, volumes, snapshots, attachments, runtimes
+		return computes, volumes, attachments, runtimes
 	}
 	for _, operation := range records {
 		if operation.ResourceKind == "storage_attachment" && operation.ResourceID != "" {
@@ -74,12 +73,6 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 				resource.Status = "quarantined"
 			}
 			volumes[resource.ID] = resource
-		case "storage_snapshot":
-			var resource StorageSnapshot
-			if operation.Status != "succeeded" || !decodeOperationResource(operation, &resource) {
-				continue
-			}
-			snapshots[resource.ID] = resource
 		case "storage_attachment":
 			var resource StorageAttachment
 			if operation.Status != "succeeded" || !decodeOperationResource(operation, &resource) {
@@ -103,7 +96,7 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 		}
 		attachments[attachmentID] = attachment
 	}
-	return computes, volumes, snapshots, attachments, runtimes
+	return computes, volumes, attachments, runtimes
 }
 
 func canonicalWorkspaceLaunchAttachment(operation FabricOperation) (StorageAttachment, string, bool, bool) {
@@ -207,13 +200,6 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 		operation.Provider = firstNonEmpty(value.Provider, operation.Provider)
 		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
 		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerResourceId": value.ProviderResourceID, "storageClass": value.StorageClass, "sizeGb": value.SizeGB, "costTags": value.CostTags}
-	case StorageSnapshot:
-		operation.ResourceID = firstNonEmpty(value.ID, operation.ResourceID)
-		operation.AccountID = firstNonEmpty(value.AccountID, operation.AccountID)
-		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)
-		operation.Provider = firstNonEmpty(value.Provider, operation.Provider)
-		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
-		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerSnapshotRef": value.ProviderSnapshotRef, "volumeId": value.VolumeID, "snapshotClass": value.SnapshotClass}
 	case StorageAttachment:
 		operation.ResourceID = firstNonEmpty(value.ID, operation.ResourceID)
 		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)
