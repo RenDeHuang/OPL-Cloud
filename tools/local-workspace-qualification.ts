@@ -1143,7 +1143,7 @@ export async function runLocalWorkspaceBrowserQualification({ origin, email, pas
       throw new Error("browser initial launch response is invalid");
     }
     onLaunchIdentity(initialLaunch);
-    await page.getByText("开通状态", { exact: true }).waitFor({ timeout: 30_000 });
+    await page.getByRole("heading", { name: "开通状态", exact: true }).waitFor({ timeout: 30_000 });
     await page.getByRole("button", { name: "读取 Workspace", exact: true }).waitFor({ timeout: 240_000 });
     const launchPayload = await page.evaluate(async (operationId) => {
       const response = await fetch(`/api/workspace-launches/${encodeURIComponent(operationId)}`);
