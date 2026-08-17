@@ -130,6 +130,7 @@ type remoteCredentialResponse struct {
 	Role               string `json:"role"`
 	Provider           string `json:"provider"`
 	SDKAppID           int64  `json:"sdk_app_id"`
+	PushBusinessID     int64  `json:"push_business_id,omitempty"`
 	ProviderUserID     string `json:"provider_user_id"`
 	PeerProviderUserID string `json:"peer_provider_user_id"`
 	UserSig            string `json:"usersig"`
@@ -191,6 +192,7 @@ type remoteCredentialHTTPResponse struct {
 	ProtocolVersion    string `json:"protocol_version"`
 	Provider           string `json:"provider"`
 	SDKAppID           int64  `json:"sdk_app_id"`
+	PushBusinessID     int64  `json:"push_business_id,omitempty"`
 	ProviderUserID     string `json:"provider_user_id"`
 	PeerProviderUserID string `json:"peer_provider_user_id"`
 	UserSig            string `json:"usersig"`
@@ -214,6 +216,7 @@ type remoteDeviceActivation struct {
 	PeerProviderUserID string `json:"peer_provider_user_id"`
 	PeerPublicKey      string `json:"peer_public_key"`
 	SDKAppID           int64  `json:"sdk_app_id"`
+	PushBusinessID     int64  `json:"push_business_id,omitempty"`
 	UserSig            string `json:"usersig"`
 	UserSigExpiresAt   string `json:"usersig_expires_at"`
 }
@@ -955,6 +958,7 @@ func (b *remoteCompanionBroker) deviceActivation(ctx context.Context, pairing *c
 		PeerProviderUserID: peerProviderUserID,
 		PeerPublicKey:      peerPublicKey,
 		SDKAppID:           remoteProviderSDKAppID(b.provider),
+		PushBusinessID:     remoteProviderPushBusinessID(b.provider),
 	}
 	switch device.Role {
 	case "desktop":
@@ -1268,6 +1272,7 @@ func (b *remoteCompanionBroker) issueUserSigWithIdempotency(ctx context.Context,
 		Role:               issue.Role,
 		Provider:           "tencent_cloud_im",
 		SDKAppID:           issue.SDKAppID,
+		PushBusinessID:     remoteProviderPushBusinessID(b.provider),
 		ProviderUserID:     issue.ProviderUserID,
 		PeerProviderUserID: issue.PeerProviderUserID,
 		UserSig:            sig,
@@ -1594,6 +1599,13 @@ func remoteBrokerURL() string {
 func remoteProviderSDKAppID(provider remoteCompanionProvider) int64 {
 	if tencent, ok := provider.(*tencentRemoteCompanionProvider); ok {
 		return tencent.config.SDKAppID
+	}
+	return 0
+}
+
+func remoteProviderPushBusinessID(provider remoteCompanionProvider) int64 {
+	if tencent, ok := provider.(*tencentRemoteCompanionProvider); ok {
+		return tencent.config.PushBusinessID
 	}
 	return 0
 }
@@ -1956,6 +1968,7 @@ func registerRemoteCompanionRoutes(mux *http.ServeMux, app *controlPlaneServer) 
 			ProtocolVersion:    credentials.ProtocolVersion,
 			Provider:           credentials.Provider,
 			SDKAppID:           credentials.SDKAppID,
+			PushBusinessID:     credentials.PushBusinessID,
 			ProviderUserID:     credentials.ProviderUserID,
 			PeerProviderUserID: credentials.PeerProviderUserID,
 			UserSig:            credentials.UserSig,

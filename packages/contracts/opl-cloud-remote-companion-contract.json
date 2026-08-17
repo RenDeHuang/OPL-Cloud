@@ -68,6 +68,14 @@
     "usersigIssuer": "Cloud broker with server-only Tencent secret",
     "usersigTtlMinutes": 60,
     "providerSecretInClient": false,
+    "pushBusinessId": {
+      "sourceEnv": "OPL_TENCENT_IM_APNS_BUSINESS_ID",
+      "wireField": "push_business_id",
+      "type": "positive_int32",
+      "secret": false,
+      "optional": true,
+      "projection": ["device_activation", "credential_refresh"]
+    },
     "unconfiguredProviderBehavior": "provider_not_configured_without_synthetic_signature",
     "idempotency": {
       "operationAuthority": "control_plane_runtime_operations",

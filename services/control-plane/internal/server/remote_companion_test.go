@@ -500,6 +500,141 @@ func TestTencentProvisionPairKeepsDeterministicIDsAfterPartialImport(t *testing.
 	}
 }
 
+func TestTencentRemoteCompanionConfigReadsOptionalPushBusinessID(t *testing.T) {
+	t.Setenv("OPL_TENCENT_IM_SDK_APP_ID", "1400000000")
+	t.Setenv("OPL_TENCENT_IM_APNS_BUSINESS_ID", "24680")
+	t.Setenv("OPL_TENCENT_IM_BASE_URL", "https://console.tim.qq.com")
+	t.Setenv("OPL_TENCENT_IM_ADMIN_IDENTIFIER", "administrator")
+	t.Setenv("OPL_TENCENT_IM_SECRET", "test-secret")
+
+	provider, ok := newTencentRemoteCompanionProviderFromEnv().(*tencentRemoteCompanionProvider)
+	if !ok {
+		t.Fatal("provider is not Tencent")
+	}
+	if !provider.config.Configured || provider.config.PushBusinessID != 24680 {
+		t.Fatalf("Tencent config = %#v", provider.config)
+	}
+	if got := remoteProviderPushBusinessID(provider); got != 24680 {
+		t.Fatalf("push business ID = %d, want 24680", got)
+	}
+
+	for _, value := range []string{"not-an-integer", "0", "2147483648"} {
+		t.Setenv("OPL_TENCENT_IM_APNS_BUSINESS_ID", value)
+		provider, ok = newTencentRemoteCompanionProviderFromEnv().(*tencentRemoteCompanionProvider)
+		if !ok {
+			t.Fatal("provider is not Tencent after invalid optional config")
+		}
+		if provider.config.PushBusinessID != 0 {
+			t.Fatalf("push business ID %q parsed as %d, want omitted", value, provider.config.PushBusinessID)
+		}
+	}
+}
+
+func TestRemoteCompanionPushBusinessIDWireIsOptionalAndNonSecret(t *testing.T) {
+	credential := remoteCredentialHTTPResponse{
+		ProtocolVersion:    remoteProtocolVersion,
+		Provider:           "tencent_cloud_im",
+		SDKAppID:           1400000000,
+		PushBusinessID:     24680,
+		ProviderUserID:     "ios-user",
+		PeerProviderUserID: "desktop-user",
+		UserSig:            "usersig",
+		UserSigExpiresAt:   time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano),
+	}
+	payload := mustMarshalJSON(t, credential)
+	assertExactJSONKeys(t, payload, "protocol_version", "provider", "sdk_app_id", "push_business_id", "provider_user_id", "peer_provider_user_id", "usersig", "usersig_expires_at")
+
+	activation := remoteDeviceActivation{
+		DeviceID:           "ios-device",
+		DeviceLabel:        "iPhone",
+		PeerDeviceID:       "desktop-device",
+		PeerDeviceLabel:    "Desktop",
+		ProviderUserID:     "ios-user",
+		PeerProviderUserID: "desktop-user",
+		PeerPublicKey:      "desktop-key",
+		SDKAppID:           1400000000,
+		PushBusinessID:     24680,
+		UserSig:            "usersig",
+		UserSigExpiresAt:   time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano),
+	}
+	assertExactJSONKeys(t, mustMarshalJSON(t, activation), "device_id", "device_label", "peer_device_id", "peer_device_label", "provider_user_id", "peer_provider_user_id", "peer_public_key", "sdk_app_id", "push_business_id", "usersig", "usersig_expires_at")
+
+	credential.PushBusinessID = 0
+	assertExactJSONKeys(t, mustMarshalJSON(t, credential), "protocol_version", "provider", "sdk_app_id", "provider_user_id", "peer_provider_user_id", "usersig", "usersig_expires_at")
+	activation.PushBusinessID = 0
+	assertExactJSONKeys(t, mustMarshalJSON(t, activation), "device_id", "device_label", "peer_device_id", "peer_device_label", "provider_user_id", "peer_provider_user_id", "peer_public_key", "sdk_app_id", "usersig", "usersig_expires_at")
+}
+
+func TestTencentPushBusinessIDFlowsFromProviderConfigToActivationAndCredentialHTTP(t *testing.T) {
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v4/im_open_login_svc/account_import":
+			_, _ = io.WriteString(w, `{"ActionStatus":"OK","ErrorCode":0}`)
+		case "/v4/im_open_login_svc/account_check":
+			_, _ = io.WriteString(w, `{"ActionStatus":"OK","ErrorCode":0,"CheckItem":[{"AccountStatus":"Imported"}]}`)
+		default:
+			t.Fatalf("unexpected Tencent provider path: %s", r.URL.Path)
+		}
+	}))
+	defer providerServer.Close()
+
+	t.Setenv("OPL_LINK_TOKEN_HASH_KEY", remoteTestHashKey)
+	t.Setenv("OPL_TENCENT_IM_SDK_APP_ID", "1400000000")
+	t.Setenv("OPL_TENCENT_IM_APNS_BUSINESS_ID", "24680")
+	t.Setenv("OPL_TENCENT_IM_BASE_URL", providerServer.URL)
+	t.Setenv("OPL_TENCENT_IM_ADMIN_IDENTIFIER", "administrator")
+	t.Setenv("OPL_TENCENT_IM_SECRET", "test-secret")
+	provider, ok := newTencentRemoteCompanionProviderFromEnv().(*tencentRemoteCompanionProvider)
+	if !ok {
+		t.Fatal("provider is not Tencent")
+	}
+	provider.client = providerServer.Client()
+	store := NewTestEntStateStore(t, t.TempDir()+"/remote-companion.sqlite").(*postgresEntStateStore)
+	broker, err := newRemoteCompanionBroker(store, provider)
+	if err != nil || broker == nil {
+		t.Fatalf("new Tencent broker = %#v, %v", broker, err)
+	}
+	created := createRemoteInviteAndPairing(t, broker)
+	claimed, err := broker.claimPairing(context.Background(), created.PairingID, created.ClaimSecret, "", "ios-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := broker.confirmPairing(context.Background(), created.PairingID, created.DesktopCredential, claimed.AuthenticationString); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &controlPlaneServer{remoteCompanion: broker}
+	mux := http.NewServeMux()
+	registerRemoteCompanionRoutes(mux, app)
+
+	activationRequest := httptest.NewRequest(http.MethodGet, remoteCompanionBasePath+"/pairings/"+created.PairingID, nil)
+	activationRequest.Header.Set("Authorization", "Bearer "+created.DesktopCredential)
+	activationRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(activationRecorder, activationRequest)
+	if activationRecorder.Code != http.StatusOK {
+		t.Fatalf("activation status = %d, body = %s", activationRecorder.Code, activationRecorder.Body.String())
+	}
+	activation := assertExactJSONKeys(t, activationRecorder.Body.Bytes(), "protocol_version", "pairing_id", "state", "authentication_string", "expires_at", "device_activation")
+	activationFields, ok := activation["device_activation"].(map[string]any)
+	if !ok || activationFields["push_business_id"] != float64(24680) {
+		t.Fatalf("activation push business ID = %#v", activation["device_activation"])
+	}
+
+	credentialRequest := httptest.NewRequest(http.MethodPost, remoteCompanionBasePath+"/pairings/"+created.PairingID+"/credentials", strings.NewReader(`{"protocol_version":"`+remoteProtocolVersion+`","device_id":""}`))
+	credentialRequest.Header.Set("Authorization", "Bearer "+created.DesktopCredential)
+	credentialRequest.Header.Set("Idempotency-Key", "tencent-push-business-id")
+	credentialRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(credentialRecorder, credentialRequest)
+	if credentialRecorder.Code != http.StatusOK {
+		t.Fatalf("credential status = %d, body = %s", credentialRecorder.Code, credentialRecorder.Body.String())
+	}
+	credential := assertExactJSONKeys(t, credentialRecorder.Body.Bytes(), "protocol_version", "provider", "sdk_app_id", "push_business_id", "provider_user_id", "peer_provider_user_id", "usersig", "usersig_expires_at")
+	if credential["push_business_id"] != float64(24680) {
+		t.Fatalf("credential push business ID = %#v", credential)
+	}
+}
+
 func TestTencentUserAbsentRecognizesImportedStates(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
