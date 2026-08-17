@@ -50,6 +50,12 @@ test("verify-local exposes one default gate across Node, builds, and every Go mo
   }
 });
 
+test("vertical lane uses the repository-owned JSON reporter", async () => {
+  const lane = productMatrixLaneSpecs[4];
+  assert.equal(lane.argsPrefix[1], "--test-reporter=./tools/test-json-reporter.mjs");
+  assert.match(await readFile("tools/test-json-reporter.mjs", "utf8"), /JSON\.stringify\(event\)/);
+});
+
 function completeProductMatrixResults({ includeVertical = true } = {}) {
   const results = postgresVerificationSpecs.map((spec, order) => {
     const lane = productMatrixLaneSpecs[order];
