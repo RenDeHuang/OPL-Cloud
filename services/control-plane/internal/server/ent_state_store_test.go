@@ -1351,10 +1351,18 @@ func TestPersistWorkspaceRenewalMergesPatchWithoutOverwritingConcurrentWorkspace
 				t.Fatalf("load concurrent Workspace: rows=%#v err=%v", rows, err)
 			}
 			concurrent = cloneMap(rows[0])
+			renewedThrough, err := time.Parse(time.RFC3339, operation.RenewedThrough)
+			if err != nil {
+				t.Fatal(err)
+			}
+			paidThrough, err := time.Parse(time.RFC3339, operation.PaidThrough)
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			workspacePatch := map[string]any{
 				"periodStart": operation.PaidThrough, "paidThrough": operation.RenewedThrough,
-				"nextRenewalAt": "2026-09-16T01:02:03Z", "renewalStatus": "active",
+				"nextRenewalAt": renewedThrough.Add(-monthlyRenewalLead).Format(time.RFC3339), "renewalStatus": "active",
 			}
 			operation.Status, operation.Phase, operation.EntitlementCommitted = "verifying", "receipt", true
 			update := workspaceRenewalPersistCAS{
@@ -1363,7 +1371,7 @@ func TestPersistWorkspaceRenewalMergesPatchWithoutOverwritingConcurrentWorkspace
 				ExpectedWorkspacePaidThrough: operation.PaidThrough, WorkspacePatch: workspacePatch,
 			}
 			conflict := update
-			conflict.ExpectedWorkspacePaidThrough = "2026-08-18T01:02:03Z"
+			conflict.ExpectedWorkspacePaidThrough = paidThrough.Add(time.Second).Format(time.RFC3339)
 			if err := store.PersistWorkspaceRenewal(ctx, conflict); !errors.Is(err, errWorkspaceRenewalCASConflict) {
 				t.Fatalf("stale paidThrough error=%v, want %v", err, errWorkspaceRenewalCASConflict)
 			}
@@ -1618,12 +1626,16 @@ func TestPostgresWorkspaceRenewalPersistAndOwnerDisableUseSameLockOrder(t *testi
 	}
 	attachWorkspaceRenewalIntentAuditForTest(&intent, workspace)
 	operation.Status, operation.Phase, operation.EntitlementCommitted = "verifying", "receipt", true
+	renewedThrough, err := time.Parse(time.RFC3339, operation.RenewedThrough)
+	if err != nil {
+		t.Fatal(err)
+	}
 	persist := workspaceRenewalPersistCAS{
 		OperationID: operation.ID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: workspaceRenewalOperationRow(operation),
 		WorkspaceID: operation.WorkspaceID, ExpectedWorkspacePaidThrough: operation.PaidThrough,
 		WorkspacePatch: map[string]any{
 			"periodStart": operation.PaidThrough, "paidThrough": operation.RenewedThrough,
-			"nextRenewalAt": "2026-09-16T01:02:03Z", "renewalStatus": "active",
+			"nextRenewalAt": renewedThrough.Add(-monthlyRenewalLead).Format(time.RFC3339), "renewalStatus": "active",
 		},
 	}
 
