@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 const root = new URL("../", import.meta.url);
 const workflowRoot = new URL(".github/workflows/", root);
 const allowedWorkflows = new Set([
+  "build-opl-cloud-candidate.yml",
   "clean-host-qualification.yml",
   "codeql.yml",
   "pull-request-ci.yml",
@@ -23,6 +24,14 @@ for (const forbidden of ["environment: production", "tencentyun.com", "workflow_
 }
 for (const required of ["ghcr.io/${{ github.repository }}", "linux/amd64,linux/arm64", "gh release create", "compose.yaml"]) {
   if (!release.includes(required)) throw new Error(`Cloud release is missing: ${required}`);
+}
+
+const candidate = await readFile(new URL(".github/workflows/build-opl-cloud-candidate.yml", root), "utf8");
+for (const forbidden of ["environment: production", "tencentyun.com", "medopl.cn", "gh release", "git tag", "kubectl"]) {
+  if (candidate.includes(forbidden)) throw new Error(`Cloud candidate owns a forbidden concern: ${forbidden}`);
+}
+for (const required of ["ghcr.io/${{ github.repository }}", "--platform linux/amd64", "--push", "tools/cloud-candidate-receipt.ts"]) {
+  if (!candidate.includes(required)) throw new Error(`Cloud candidate is missing: ${required}`);
 }
 
 const compose = await readFile(new URL("compose.yaml", root), "utf8");
