@@ -114,6 +114,13 @@ by this repository change.
   Kubernetes, or provider mutations. Cloud then removed the caller-zero Fabric
   Snapshot/Restore service, provider, HTTP, replay, and focused-test surfaces;
   historical migrations and data custody remain unchanged.
+- Fresh `npm run verify:local` passed all source, TypeScript, build, database-free
+  Go, and whitespace gates. `npm run verify:local:full` reached the temporary
+  PostgreSQL 16 lane and passed Ledger, Fabric, migration, and most Control
+  Plane tests, but the full baseline remains red on the pre-existing
+  `workspace_reactivation_required` auto-renew assertions; `origin/main` at
+  `c6e852c5` reproduces the same memory failures. This simplification does not
+  claim that unrelated renewal correctness gap as fixed.
 - Two further native-replacement candidates were rejected instead of merged.
   Converting the next two CLI parsers to `node:util.parseArgs` added 54 net
   lines, while using `http.ServeFile` only for uncompressed assets retained the
