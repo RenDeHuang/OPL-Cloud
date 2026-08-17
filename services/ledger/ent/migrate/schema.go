@@ -120,46 +120,11 @@ var (
 		Columns:    ReconciliationReportsColumns,
 		PrimaryKey: []*schema.Column{ReconciliationReportsColumns[0]},
 	}
-	// ReviewPoliciesColumns holds the columns for the "review_policies" table.
-	ReviewPoliciesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "organization_id", Type: field.TypeString, Default: ""},
-		{Name: "workspace_id", Type: field.TypeString},
-		{Name: "project_id", Type: field.TypeString},
-		{Name: "task_id", Type: field.TypeString},
-		{Name: "job_id", Type: field.TypeString},
-		{Name: "version", Type: field.TypeString},
-		{Name: "required_reviewers_json", Type: field.TypeString},
-		{Name: "status", Type: field.TypeString},
-		{Name: "supersedes_policy_id", Type: field.TypeString, Default: ""},
-		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
-		{Name: "request_hash", Type: field.TypeString},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// ReviewPoliciesTable holds the schema information for the "review_policies" table.
-	ReviewPoliciesTable = &schema.Table{
-		Name:       "review_policies",
-		Columns:    ReviewPoliciesColumns,
-		PrimaryKey: []*schema.Column{ReviewPoliciesColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "reviewpolicy_organization_id_workspace_id_project_id_task_id_job_id_created_at",
-				Unique:  false,
-				Columns: []*schema.Column{ReviewPoliciesColumns[1], ReviewPoliciesColumns[2], ReviewPoliciesColumns[3], ReviewPoliciesColumns[4], ReviewPoliciesColumns[5], ReviewPoliciesColumns[12]},
-			},
-			{
-				Name:    "reviewpolicy_status",
-				Unique:  false,
-				Columns: []*schema.Column{ReviewPoliciesColumns[8]},
-			},
-		},
-	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		EvidenceReceiptsTable,
 		IdempotencyKeysTable,
 		ReconciliationReportsTable,
-		ReviewPoliciesTable,
 	}
 )
 

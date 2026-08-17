@@ -104,30 +104,6 @@ func (f ComputeAllocationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ComputeAllocationMutation", m)
 }
 
-// The MembershipFunc type is an adapter to allow the use of ordinary
-// function as Membership mutator.
-type MembershipFunc func(context.Context, *ent.MembershipMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f MembershipFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.MembershipMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.MembershipMutation", m)
-}
-
-// The OrganizationFunc type is an adapter to allow the use of ordinary
-// function as Organization mutator.
-type OrganizationFunc func(context.Context, *ent.OrganizationMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f OrganizationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.OrganizationMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.OrganizationMutation", m)
-}
-
 // The ProductionE2ERecordFunc type is an adapter to allow the use of ordinary
 // function as ProductionE2ERecord mutator.
 type ProductionE2ERecordFunc func(context.Context, *ent.ProductionE2ERecordMutation) (ent.Value, error)

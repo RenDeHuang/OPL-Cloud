@@ -41,7 +41,6 @@ type Service struct {
 	readinessTimeout                 time.Duration
 	computes                         map[string]ComputeAllocation
 	volumes                          map[string]StorageVolume
-	snapshots                        map[string]StorageSnapshot
 	attachments                      map[string]StorageAttachment
 	destroying                       map[string]bool
 	reconciling                      map[string]bool
@@ -61,9 +60,9 @@ func NewServiceWithOperationStore(provider Provider, operations OperationStore) 
 	if operations == nil {
 		operations = NewMemoryOperationStore()
 	}
-	computes, volumes, snapshots, attachments, _ := replayResourceState(context.Background(), operations)
+	computes, volumes, attachments, _ := replayResourceState(context.Background(), operations)
 	return &Service{
-		provider: provider, computes: computes, volumes: volumes, snapshots: snapshots, attachments: attachments,
+		provider: provider, computes: computes, volumes: volumes, attachments: attachments,
 		destroying: map[string]bool{}, reconciling: map[string]bool{}, operations: operations,
 		now:                           func() time.Time { return time.Now().UTC() },
 		readinessTTL:                  readinessSuccessTTL,

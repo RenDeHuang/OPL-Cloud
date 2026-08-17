@@ -55,14 +55,6 @@ func (s *identityNoFullScanStore) ListSessions(context.Context) (controlPlaneRec
 	return nil, s.reject("sessions")
 }
 
-func (s *identityNoFullScanStore) ListOrganizations(context.Context) ([]map[string]any, error) {
-	return nil, s.reject("organizations")
-}
-
-func (s *identityNoFullScanStore) ListMemberships(context.Context) ([]map[string]any, error) {
-	return nil, s.reject("memberships")
-}
-
 func newIdentityTestSub2API() *identityTestSub2API {
 	return &identityTestSub2API{
 		testSub2APIClient: testSub2APIClient{balance: 1_000_000_000_000, charges: map[string]int64{}},
@@ -185,23 +177,10 @@ func TestCreateUserUsesRemoteIdentityAndDeterministicOneToOneFacts(t *testing.T)
 	app := server.(*controlPlaneHTTPHandler).app
 	accounts, _ := app.tables.ListAccounts(context.Background(), "acct-owner")
 	users, _ := app.tables.ListUsers(context.Background(), true)
-	organizations, _ := app.tables.ListOrganizations(context.Background())
-	memberships, _ := app.tables.ListMemberships(context.Background())
 	account := findRecord(accounts, "acct-owner")
 	user := findRecord(users, stringValue(firstUser["id"]))
-	ownerOrganizations, ownerMemberships := 0, 0
-	for _, organization := range organizations {
-		if organization["billingAccountId"] == "acct-owner" {
-			ownerOrganizations++
-		}
-	}
-	for _, membership := range memberships {
-		if membership["accountId"] == "acct-owner" {
-			ownerMemberships++
-		}
-	}
-	if account == nil || account["ownerUserId"] != firstUser["id"] || int64(numberField(account, "sub2apiUserId", 0)) != 71 || user == nil || user["passwordHash"] != nil || ownerOrganizations != 1 || ownerMemberships != 1 {
-		t.Fatalf("account=%#v user=%#v organizations=%#v memberships=%#v", account, user, organizations, memberships)
+	if account == nil || account["ownerUserId"] != firstUser["id"] || int64(numberField(account, "sub2apiUserId", 0)) != 71 || user == nil || user["passwordHash"] != nil {
+		t.Fatalf("account=%#v user=%#v", account, user)
 	}
 	if remote.resolveCalls != 2 || remote.remoteCreates != 1 {
 		t.Fatalf("resolveCalls=%d remoteCreates=%d", remote.resolveCalls, remote.remoteCreates)
@@ -212,12 +191,9 @@ func TestCreateUserRejectsKnownLocalIdentityConflictBeforeRemoteCreate(t *testin
 	store := newMemoryTableStore()
 	accountID, email := "acct-existing", "existing@example.com"
 	userID := "usr-" + stableID("customer", email)[:18]
-	organizationID := "org-" + stableID("account", accountID)[:18]
 	if err := store.CreateProvisionedAccount(context.Background(),
 		map[string]any{"id": accountID, "ownerUserId": userID, "status": "active", "sub2apiUserId": int64(71)},
 		map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"},
-		map[string]any{"id": organizationID, "name": "Organization " + accountID, "billingAccountId": accountID, "status": "active"},
-		map[string]any{"id": "mem-" + stableID(organizationID, userID)[:18], "accountId": accountID, "organizationId": organizationID, "userId": userID, "role": "owner", "status": "active"},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +213,7 @@ type failOnceProvisionStore struct {
 	failed bool
 }
 
-func (s *failOnceProvisionStore) CreateProvisionedAccount(ctx context.Context, account, user, organization, membership map[string]any) error {
+func (s *failOnceProvisionStore) CreateProvisionedAccount(ctx context.Context, account, user map[string]any) error {
 	s.mu.Lock()
 	if !s.failed {
 		s.failed = true
@@ -245,7 +221,7 @@ func (s *failOnceProvisionStore) CreateProvisionedAccount(ctx context.Context, a
 		return errors.New("injected local transaction failure")
 	}
 	s.mu.Unlock()
-	return s.memoryTableStore.CreateProvisionedAccount(ctx, account, user, organization, membership)
+	return s.memoryTableStore.CreateProvisionedAccount(ctx, account, user)
 }
 
 func TestCreateUserLocalFailureRetryDoesNotDuplicateRemoteOrLocalIdentity(t *testing.T) {
@@ -342,26 +318,14 @@ func TestCreateUserConcurrentDifferentEmailsForOneAccountCreatesOneRemoteIdentit
 	}
 	accounts, _ := app.tables.ListAccounts(context.Background(), accountID)
 	users, _ := app.tables.ListUsers(context.Background(), true)
-	organizations, _ := app.tables.ListOrganizations(context.Background())
-	memberships, _ := app.tables.ListMemberships(context.Background())
-	accountUsers, accountOrganizations, accountMemberships := 0, 0, 0
+	accountUsers := 0
 	for _, user := range users {
 		if user["accountId"] == accountID {
 			accountUsers++
 		}
 	}
-	for _, organization := range organizations {
-		if organization["billingAccountId"] == accountID {
-			accountOrganizations++
-		}
-	}
-	for _, membership := range memberships {
-		if membership["accountId"] == accountID {
-			accountMemberships++
-		}
-	}
-	if remote.remoteCreates != 1 || created != 1 || conflicts != 1 || len(accounts) != 1 || accountUsers != 1 || accountOrganizations != 1 || accountMemberships != 1 {
-		t.Fatalf("remoteCreates=%d created=%d conflicts=%d accounts=%#v users=%#v organizations=%#v memberships=%#v", remote.remoteCreates, created, conflicts, accounts, users, organizations, memberships)
+	if remote.remoteCreates != 1 || created != 1 || conflicts != 1 || len(accounts) != 1 || accountUsers != 1 {
+		t.Fatalf("remoteCreates=%d created=%d conflicts=%d accounts=%#v users=%#v", remote.remoteCreates, created, conflicts, accounts, users)
 	}
 }
 
@@ -483,8 +447,8 @@ func TestLoginAndSessionValidationNeverScanIdentityTablesAtScale(t *testing.T) {
 		accountID := fmt.Sprintf("acct-scale-%04d", index)
 		userID := fmt.Sprintf("usr-scale-%04d", index)
 		email := fmt.Sprintf("scale-%04d@example.com", index)
-		account, user, organization, membership := provisionedAccountRowsFor(accountID, userID, "org-"+accountID, email, int64(10_000+index))
-		if err := base.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
+		account, user := provisionedAccountRowsFor(accountID, userID, email, int64(10_000+index))
+		if err := base.CreateProvisionedAccount(context.Background(), account, user); err != nil {
 			t.Fatalf("seed identity %d: %v", index, err)
 		}
 		remote.identities[email] = clients.Sub2APIIdentity{ID: int64(10_000 + index), Email: email, Status: "active"}

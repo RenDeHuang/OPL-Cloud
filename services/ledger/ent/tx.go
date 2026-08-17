@@ -18,8 +18,6 @@ type Tx struct {
 	IdempotencyKey *IdempotencyKeyClient
 	// ReconciliationReport is the client for interacting with the ReconciliationReport builders.
 	ReconciliationReport *ReconciliationReportClient
-	// ReviewPolicy is the client for interacting with the ReviewPolicy builders.
-	ReviewPolicy *ReviewPolicyClient
 
 	// lazily loaded.
 	client     *Client
@@ -154,7 +152,6 @@ func (tx *Tx) init() {
 	tx.EvidenceReceipt = NewEvidenceReceiptClient(tx.config)
 	tx.IdempotencyKey = NewIdempotencyKeyClient(tx.config)
 	tx.ReconciliationReport = NewReconciliationReportClient(tx.config)
-	tx.ReviewPolicy = NewReviewPolicyClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.

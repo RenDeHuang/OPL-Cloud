@@ -53,12 +53,8 @@ func (app *controlPlaneServer) createUser(ctx context.Context, service *controlp
 	}
 	defer unlock()
 	id := "usr-" + stableID("customer", email)[:18]
-	organizationID := "org-" + stableID("account", accountID)[:18]
 	user := map[string]any{"id": id, "email": email, "accountId": accountID, "role": role, "status": "active"}
-	organization := map[string]any{"id": organizationID, "name": "Organization " + accountID, "billingAccountId": accountID, "status": "active"}
-	membership := map[string]any{"id": "mem-" + stableID(organizationID, id)[:18], "accountId": accountID, "organizationId": organizationID, "userId": id, "role": role, "status": "active"}
 	accounts, users := controlPlaneRecordSet{}, controlPlaneRecordSet{}
-	organizations, memberships := controlPlaneRecordSet{}, controlPlaneRecordSet{}
 	existingAccount, accountFound, err := app.tables.GetAccount(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -78,22 +74,12 @@ func (app *controlPlaneServer) createUser(ctx context.Context, service *controlp
 			users[stringValue(row["id"])] = row
 		}
 	}
-	if row, found, lookupErr := app.tables.GetOrganizationByAccount(ctx, accountID); lookupErr != nil {
-		return nil, lookupErr
-	} else if found {
-		organizations[stringValue(row["id"])] = row
-	}
-	if row, found, lookupErr := app.tables.GetMembershipByAccount(ctx, accountID); lookupErr != nil {
-		return nil, lookupErr
-	} else if found {
-		memberships[stringValue(row["id"])] = row
-	}
 	preflightSub2APIUserID := int64(1)
 	if accountFound {
 		preflightSub2APIUserID = int64(numberField(existingAccount, "sub2apiUserId", 0))
 	}
 	account := map[string]any{"id": accountID, "ownerUserId": id, "status": "active", "sub2apiUserId": preflightSub2APIUserID}
-	if err := stageProvisionedAccount(accounts, users, organizations, memberships, account, user, organization, membership); err != nil {
+	if err := stageProvisionedAccount(accounts, users, account, user); err != nil {
 		return nil, err
 	}
 	identity, err := service.ResolveOrCreateSub2APIUser(ctx, email, password)
@@ -104,7 +90,7 @@ func (app *controlPlaneServer) createUser(ctx context.Context, service *controlp
 		return nil, errSub2APIUserMappingUnverified
 	}
 	account["sub2apiUserId"] = identity.ID
-	if err := app.tables.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+	if err := app.tables.CreateProvisionedAccount(ctx, account, user); err != nil {
 		return nil, err
 	}
 	return sanitizeUser(user), nil
@@ -385,7 +371,7 @@ func (app *controlPlaneServer) session(r *http.Request) (map[string]any, session
 		return nil, sessionReauthenticationRequired
 	}
 	if !isOperatorUser(user) {
-		active, err := app.hasActiveCustomerMembership(r.Context(), user)
+		active, err := app.hasActiveCustomerAccount(r.Context(), user)
 		if err != nil {
 			return nil, sessionAuthenticationUnavailable
 		}
@@ -422,7 +408,7 @@ func ownsActiveAccount(account, user map[string]any) bool {
 	return ownsAccount(account, user) && stringValue(account["status"]) == "active" && stringValue(user["status"]) == "active"
 }
 
-func (app *controlPlaneServer) hasActiveCustomerMembership(ctx context.Context, user map[string]any) (bool, error) {
+func (app *controlPlaneServer) hasActiveCustomerAccount(ctx context.Context, user map[string]any) (bool, error) {
 	accountID := stringValue(user["accountId"])
 	account, found, err := app.tables.GetAccount(ctx, accountID)
 	if err != nil {
@@ -431,23 +417,7 @@ func (app *controlPlaneServer) hasActiveCustomerMembership(ctx context.Context, 
 	if !found || !ownsActiveAccount(account, user) {
 		return false, nil
 	}
-	organization, found, err := app.tables.GetOrganizationByAccount(ctx, accountID)
-	if err != nil {
-		return false, err
-	}
-	if !found {
-		return false, nil
-	}
-	membership, found, err := app.tables.GetMembershipByAccount(ctx, accountID)
-	if err != nil {
-		return false, err
-	}
-	if !found {
-		return false, nil
-	}
-	return stringValue(organization["status"]) == "active" && stringValue(membership["status"]) == "active" &&
-		stringValue(membership["organizationId"]) == stringValue(organization["id"]) && stringValue(membership["accountId"]) == accountID &&
-		stringValue(membership["userId"]) == stringValue(user["id"]) && stringValue(membership["role"]) == "owner", nil
+	return stringValue(user["status"]) == "active", nil
 }
 
 func (app *controlPlaneServer) sessionUserID(r *http.Request) string {

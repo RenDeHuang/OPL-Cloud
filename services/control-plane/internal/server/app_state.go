@@ -69,15 +69,12 @@ type loginFailure struct {
 }
 
 var (
-	errUserNotFound              = errors.New("user_not_found")
-	errUserExists                = errors.New("user_already_exists")
-	errLastActiveAdmin           = errors.New("last_active_admin")
-	errUserDeleted               = errors.New("user_deleted")
-	errInvalidRole               = errors.New("invalid_role")
-	errAccountNotFound           = errors.New("account_not_found")
-	errOrganizationNotFound      = errors.New("organization_not_found")
-	errMembershipUserNotFound    = errors.New("membership_user_not_found")
-	errMembershipAccountMismatch = errors.New("membership_account_mismatch")
+	errUserNotFound    = errors.New("user_not_found")
+	errUserExists      = errors.New("user_already_exists")
+	errLastActiveAdmin = errors.New("last_active_admin")
+	errUserDeleted     = errors.New("user_deleted")
+	errInvalidRole     = errors.New("invalid_role")
+	errAccountNotFound = errors.New("account_not_found")
 )
 
 func newControlPlaneAppWithStore(store StateStore) (*controlPlaneServer, error) {
@@ -118,24 +115,13 @@ func (app *controlPlaneServer) ensureBootstrapAdmin(ctx context.Context, service
 			}
 		}
 	}
-	organization, organizationFound, err := app.tables.GetOrganizationByAccount(ctx, "acct-admin")
-	if err != nil {
-		return err
-	}
-	membership, membershipFound, err := app.tables.GetMembershipByAccount(ctx, "acct-admin")
-	if err != nil {
-		return err
-	}
-	operatorPresent := accountFound || userFound || organizationFound || membershipFound
-	operatorComplete := accountFound && userFound && emailFound && organizationFound && membershipFound && stringValue(userByEmail["id"]) == "usr-admin"
+	operatorPresent := accountFound || userFound
+	operatorComplete := accountFound && userFound && emailFound && stringValue(userByEmail["id"]) == "usr-admin"
 	var localSub2APIUserID int64
 	if operatorComplete {
 		localSub2APIUserID, _ = positiveIntegerField(account, "sub2apiUserId")
 		operatorComplete = stringValue(account["id"]) == "acct-admin" && stringValue(account["ownerUserId"]) == "usr-admin" && localSub2APIUserID > 0 && stringValue(account["status"]) == "active" &&
-			isOperatorUser(user) && stringValue(user["email"]) == userEmail &&
-			stringValue(organization["id"]) != "" && stringValue(organization["status"]) == "active" &&
-			stringValue(membership["id"]) != "" && stringValue(membership["organizationId"]) == stringValue(organization["id"]) && stringValue(membership["userId"]) == "usr-admin" &&
-			stringValue(membership["accountId"]) == "acct-admin" && stringValue(membership["role"]) == "owner" && stringValue(membership["status"]) == "active"
+			isOperatorUser(user) && stringValue(user["email"]) == userEmail
 	}
 	if operatorPresent && !operatorComplete {
 		return errBootstrapUserIdentityConflict
@@ -156,9 +142,7 @@ func (app *controlPlaneServer) ensureBootstrapAdmin(ctx context.Context, service
 	}
 	bootstrapAccount := map[string]any{"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": identity.ID, "status": "active"}
 	bootstrapUser := map[string]any{"id": "usr-admin", "email": identityEmail, "accountId": "acct-admin", "role": "admin", "status": "active"}
-	bootstrapOrganization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
-	bootstrapMembership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
-	return app.tables.CreateProvisionedAccount(ctx, bootstrapAccount, bootstrapUser, bootstrapOrganization, bootstrapMembership)
+	return app.tables.CreateProvisionedAccount(ctx, bootstrapAccount, bootstrapUser)
 }
 
 func (app *controlPlaneServer) state(accountID string, computePools []any) map[string]any {

@@ -73,7 +73,7 @@ For Cloud, the authority surfaces are concrete products and services:
 | Console | Cloud Console and Control Plane own the account/control-plane product, Workspace policy, approval, quota and billing projection | Framework may expose operator/readiness/action projections; App owns local product interaction, neither owns Cloud policy or service state |
 | Workspace | Control Plane owns Cloud Workspace entitlement and Launch coordination; Fabric owns runtime/resource binding and readback | App/Workspace runtime owns project and workbench behavior; Framework owns only shared runtime composition |
 | Fabric | Fabric owns provider-neutral remote resource facts, mutation ports and provider adapters | Framework and App consume typed adapters and cannot acquire provider or deployment authority |
-| Ledger | Cloud Ledger owns Cloud receipts, evidence, review, reconciliation and continuation refs | Framework observers and product projections do not become the persistent Cloud Ledger |
+| Ledger | Cloud Ledger owns Cloud receipts, reconciliation, idempotency, and caller-owned opaque provenance refs | Framework observers and product projections do not become the persistent Cloud Ledger or a review/continuation authority |
 | Gateway / Wallet | Control Plane projects Gateway account data and coordinates settlement | Sub2API remains the external identity, spendable-wallet, Key, routing and usage authority |
 | Packages / Connect / Runway | Cloud consumes exact owner refs, connector capabilities and execution results where required | Package owners, native carriers and Framework retain discovery, carrier currentness, connector access and invocation lifecycle |
 
@@ -203,7 +203,7 @@ flowchart TB
 | OPL Serve | Agent Service, immutable Revision, Deployment, endpoint, traffic and Hosted UI projection | Package lifecycle, sandbox internals and domain verdicts |
 | OPL Console | Account onboarding, Workspace lifecycle, quota, approval, account-total billing view and managed-resource policy | Spendable wallet, package install/update/repair and resource execution |
 | OPL Fabric | Provider-neutral connector, compute, storage and environment capabilities; resource binding and execution adapters | Customer balance, package identity, carrier state and domain verdicts |
-| OPL Ledger | Receipt, provenance, review and continuation refs | Source data, package truth and domain verdicts |
+| OPL Ledger | Receipt, opaque provenance, reconciliation and idempotency | Source data, package truth, review policy, continuation authorization and domain verdicts |
 | Package owner | Stable identity, capabilities, entrypoints and exact publication revisions | Physical carrier state, Cloud policy and domain verdicts |
 | Native carrier | Physical install, update, remove and fresh installed/callable readback | Package identity, Cloud policy and domain verdicts |
 | OPL Packages | Carrier-neutral discovery, descriptor projection, configured-carrier delegation and fresh state aggregation | Parallel resolver/lock/currentness, account policy and domain truth |
@@ -330,9 +330,10 @@ Control Plane owns only the Launch cursor, attempt and lease state, CAS,
 account/settlement coordination, and customer projection. Fabric owns compute,
 storage, attachment, Secret binding, Runtime, its operation store, provider and
 Kubernetes mutation, and authoritative resource readback. Ledger retains
-append-only receipt, evidence, review, reconciliation, and continuation refs;
-those refs cannot authorize or advance Launch. Sub2API remains the external
-identity, wallet, Key, and Usage authority.
+append-only receipts, reconciliation, idempotency, and caller-owned opaque
+provenance refs; those refs cannot authorize or advance Launch. Control Plane's
+typed continuation authorization remains a separate owner-owned path. Sub2API
+remains the external identity, wallet, Key, and Usage authority.
 
 Each Control Plane-to-Fabric stage call uses an explicit, immutable,
 provider-neutral binding for the Launch operation, account and Workspace,

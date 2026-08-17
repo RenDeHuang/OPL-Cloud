@@ -300,13 +300,11 @@ func TestCustomerSupportScopeAllRemainsTenantScoped(t *testing.T) {
 	}
 }
 
-func seedTenantMember(t *testing.T, store controlPlaneTableStore, accountID, organizationID, userID, email string) {
+func seedTenantMember(t *testing.T, store controlPlaneTableStore, accountID, _ string, userID, email string) {
 	t.Helper()
 	account := map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": testSub2APIUserID(email), "status": "active"}
 	user := map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"}
-	organization := map[string]any{"id": organizationID, "name": "Organization " + accountID, "billingAccountId": accountID, "status": "active"}
-	membership := map[string]any{"id": "mem-" + userID, "organizationId": organizationID, "userId": userID, "accountId": accountID, "role": "owner", "status": "active"}
-	mustStore(t, store.CreateProvisionedAccount(context.Background(), account, user, organization, membership))
+	mustStore(t, store.CreateProvisionedAccount(context.Background(), account, user))
 }
 
 func TestCloudAdminSessionReportsAuthority(t *testing.T) {
@@ -336,7 +334,7 @@ func TestCloudAdminOwnsReservedCustomerAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, err := handler.app.hasActiveCustomerMembership(context.Background(), findRecord(users, "usr-admin"))
+	active, err := handler.app.hasActiveCustomerAccount(context.Background(), findRecord(users, "usr-admin"))
 	if err != nil || !active {
 		t.Fatalf("reserved admin owner active=%v err=%v", active, err)
 	}
@@ -359,31 +357,6 @@ func TestReservedCloudAdminAuthorityDoesNotDependOnInstanceEmail(t *testing.T) {
 		if isOperatorUser(user) {
 			t.Fatalf("non-cloud-admin received operator authority: %#v", user)
 		}
-	}
-}
-
-func TestStoresRejectOrphanOrganizationAndMembershipWrites(t *testing.T) {
-	stores := []struct {
-		name  string
-		store controlPlaneTableStore
-	}{
-		{"memory", newMemoryTableStore()},
-		{"ent", NewTestEntStateStore(t, t.TempDir()+"/tenant-truth.sqlite")},
-	}
-	for _, tc := range stores {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			if err := tc.store.SaveOrganization(ctx, map[string]any{"id": "org-orphan", "billingAccountId": "acct-missing", "status": "active"}); err == nil {
-				t.Fatal("orphan organization write succeeded")
-			}
-			seedTenantMember(t, tc.store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-			if err := tc.store.SaveMembership(ctx, map[string]any{"id": "mem-orphan", "organizationId": "org-missing", "userId": "usr-alpha", "accountId": "acct-alpha", "role": "owner", "status": "active"}); err == nil {
-				t.Fatal("membership with missing organization succeeded")
-			}
-			if err := tc.store.SaveMembership(ctx, map[string]any{"id": "mem-mismatch", "organizationId": "org-alpha", "userId": "usr-alpha", "accountId": "acct-other", "role": "owner", "status": "active"}); err == nil {
-				t.Fatal("membership with mismatched account succeeded")
-			}
-		})
 	}
 }
 
@@ -433,8 +406,8 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	if err := check.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'control-plane'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read control-plane migration journal: %v", err)
 	}
-	if migrationCount != 17 {
-		t.Fatalf("control-plane migration count = %d, want 17", migrationCount)
+	if migrationCount != 18 {
+		t.Fatalf("control-plane migration count = %d, want 18", migrationCount)
 	}
 	var autoRenewAuditMigration bool
 	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607170003_workspace_auto_renew_audit')`).Scan(&autoRenewAuditMigration); err != nil || !autoRenewAuditMigration {
@@ -463,6 +436,16 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	var remoteCompanionMigration bool
 	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202608170001_remote_companion_broker')`).Scan(&remoteCompanionMigration); err != nil || !remoteCompanionMigration {
 		t.Fatalf("remote companion broker migration missing: applied=%v err=%v", remoteCompanionMigration, err)
+	}
+	var legacyIdentityCustodyMigration bool
+	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202608170002_legacy_identity_table_custody')`).Scan(&legacyIdentityCustodyMigration); err != nil || !legacyIdentityCustodyMigration {
+		t.Fatalf("legacy identity table custody migration missing: applied=%v err=%v", legacyIdentityCustodyMigration, err)
+	}
+	for _, table := range []string{"control_plane_organizations", "control_plane_memberships"} {
+		var exists bool
+		if err := check.QueryRow(`SELECT to_regclass($1) IS NOT NULL`, "public."+table).Scan(&exists); err != nil || !exists {
+			t.Fatalf("legacy custody table %s missing: exists=%v err=%v", table, exists, err)
+		}
 	}
 	var announcementConstraints int
 	if err := check.QueryRow(`SELECT count(*) FROM pg_constraint WHERE conrelid IN ('control_plane_announcements'::regclass, 'control_plane_announcement_reads'::regclass) AND conname IN ('control_plane_announcements_status_check', 'control_plane_announcements_schedule_check', 'control_plane_announcement_reads_announcement_fk', 'control_plane_announcement_reads_user_unique')`).Scan(&announcementConstraints); err != nil || announcementConstraints != 4 {

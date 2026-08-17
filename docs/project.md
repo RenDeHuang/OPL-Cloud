@@ -12,10 +12,12 @@ It follows the development framework from `one-person-lab`. The short
 - Fabric resource catalog, provider-neutral resource operations, attachments,
   runtime operations, provider evidence, and provider adapters, including the
   default local-Docker and explicit Tencent/TKE paths. ContentTransfer
-  application runtime/API/schema is retired while historical migrations/data
-  remain; Snapshot/Restore remains an extension candidate, not MVP Core.
-- Ledger receipts and reconciliation evidence required by Core. Reviews,
-  artifacts, retention, and continuation are extension candidates.
+  and Snapshot/Restore application runtime/API/provider surfaces are retired
+  while historical migrations and data remain.
+- Ledger receipts, reconciliation evidence, idempotency, retention, and
+  caller-owned opaque provenance required by Core. Structured Artifact, Review,
+  ReviewPolicy, ReviewGate, and Continuation APIs are retired; historical rows
+  and receipt provenance columns remain retained without new writers.
 - Portable image, Compose installation assets, product release, readiness, and
   reusable provider-verification mechanisms.
 

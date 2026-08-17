@@ -14,6 +14,3 @@ type IdempotencyKey func(*sql.Selector)
 
 // ReconciliationReport is the predicate function for reconciliationreport builders.
 type ReconciliationReport func(*sql.Selector)
-
-// ReviewPolicy is the predicate function for reviewpolicy builders.
-type ReviewPolicy func(*sql.Selector)

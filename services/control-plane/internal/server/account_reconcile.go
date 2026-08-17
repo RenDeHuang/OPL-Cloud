@@ -332,16 +332,6 @@ func (app *controlPlaneServer) acceptanceBLocalGraph(ctx context.Context, accoun
 		return "unknown", nil, nil, err
 	}
 	if !accountFound && !userFound {
-		if _, found, err := app.tables.GetOrganizationByAccount(ctx, accountID); err != nil {
-			return "unknown", nil, nil, err
-		} else if found {
-			return "partial", account, user, nil
-		}
-		if _, found, err := app.tables.GetMembershipByAccount(ctx, accountID); err != nil {
-			return "unknown", nil, nil, err
-		} else if found {
-			return "partial", account, user, nil
-		}
 		return "absent", nil, nil, nil
 	}
 	if !accountFound || !userFound || stringValue(user["id"]) != userID || stringValue(user["accountId"]) != accountID ||
@@ -352,19 +342,6 @@ func (app *controlPlaneServer) acceptanceBLocalGraph(ctx context.Context, accoun
 	if owner, found, err := app.tables.GetUser(ctx, userID); err != nil {
 		return "unknown", nil, nil, err
 	} else if !found || stringValue(owner["id"]) != userID {
-		return "partial", account, user, nil
-	}
-	organization, organizationFound, err := app.tables.GetOrganizationByAccount(ctx, accountID)
-	if err != nil {
-		return "unknown", nil, nil, err
-	}
-	membership, membershipFound, err := app.tables.GetMembershipByAccount(ctx, accountID)
-	if err != nil {
-		return "unknown", nil, nil, err
-	}
-	if !organizationFound || stringValue(organization["billingAccountId"]) != accountID || stringValue(organization["status"]) != "active" ||
-		!membershipFound || stringValue(membership["accountId"]) != accountID || stringValue(membership["organizationId"]) != stringValue(organization["id"]) ||
-		stringValue(membership["userId"]) != userID || stringValue(membership["role"]) != "owner" || stringValue(membership["status"]) != "active" {
 		return "partial", account, user, nil
 	}
 	return "complete", account, user, nil

@@ -14,8 +14,6 @@ import (
 	"opl-cloud/services/control-plane/ent/authattempt"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
-	"opl-cloud/services/control-plane/ent/membership"
-	"opl-cloud/services/control-plane/ent/organization"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/projecttasksynchead"
 	"opl-cloud/services/control-plane/ent/remotedevicecredential"
@@ -104,8 +102,6 @@ func checkColumn(table, column string) error {
 			authattempt.Table:             authattempt.ValidColumn,
 			billingreconciliation.Table:   billingreconciliation.ValidColumn,
 			computeallocation.Table:       computeallocation.ValidColumn,
-			membership.Table:              membership.ValidColumn,
-			organization.Table:            organization.ValidColumn,
 			productione2erecord.Table:     productione2erecord.ValidColumn,
 			projecttasksynchead.Table:     projecttasksynchead.ValidColumn,
 			remotedevicecredential.Table:  remotedevicecredential.ValidColumn,

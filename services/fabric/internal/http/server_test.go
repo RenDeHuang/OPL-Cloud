@@ -313,21 +313,6 @@ func TestFabricProviderMutationScopesAreStrict(t *testing.T) {
 			operationID: "attachment-once", resourceKind: "storage_attachment", resourceID: "compute-alpha:volume-alpha", action: "create_storage_attachment", wantOK: true,
 		},
 		{
-			name: "snapshot create", path: "/fabric/storage-snapshots",
-			body:        `{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"volume-alpha"}`,
-			operationID: "snapshot-once", resourceKind: "storage_snapshot", resourceID: "volume-alpha", action: "create_storage_snapshot", wantOK: true,
-		},
-		{
-			name: "snapshot restore", path: "/fabric/storage-snapshots/snapshot-alpha/restore",
-			body:        `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`,
-			operationID: "restore-once", resourceKind: "storage_snapshot", resourceID: "snapshot-alpha", action: "restore_storage_snapshot", wantOK: true,
-		},
-		{
-			name: "snapshot destroy", path: "/fabric/storage-snapshots/snapshot-alpha/destroy",
-			body:        `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha"}`,
-			operationID: "destroy-once", resourceKind: "storage_snapshot", resourceID: "snapshot-alpha", action: "destroy_storage_snapshot", wantOK: true,
-		},
-		{
 			name: "runtime credential reveal", path: "/fabric/workspace-runtimes/ws-alpha/credentials/reveal",
 			body:        `{"accountId":"acct-alpha","workspaceId":"ws-alpha"}`,
 			operationID: "reveal-once", resourceKind: "workspace_runtime_credential", resourceID: "ws-alpha", action: "reveal_workspace_runtime_credential", wantOK: true,
@@ -341,11 +326,6 @@ func TestFabricProviderMutationScopesAreStrict(t *testing.T) {
 			name: "terminalization approval mismatch", path: "/fabric/compute-pool-head/terminalization",
 			body:        `{"nodePoolId":"np-basic","approvalId":"another-operation","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
 			operationID: "terminalize-operation",
-		},
-		{
-			name: "snapshot url body mismatch", path: "/fabric/storage-snapshots/snapshot-alpha/restore",
-			body:        `{"snapshotId":"snapshot-beta","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`,
-			operationID: "restore-once",
 		},
 		{
 			name: "attachment missing compute", path: "/fabric/storage-attachments",
@@ -389,9 +369,6 @@ func TestFabricProviderMutationsRequireCapabilityBeforeStateChange(t *testing.T)
 		body string
 	}{
 		{name: "attachment create", path: "/fabric/storage-attachments", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":"compute-alpha","volumeId":"volume-alpha"}`},
-		{name: "snapshot create", path: "/fabric/storage-snapshots", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"volume-alpha"}`},
-		{name: "snapshot restore", path: "/fabric/storage-snapshots/snapshot-alpha/restore", body: `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`},
-		{name: "snapshot destroy", path: "/fabric/storage-snapshots/snapshot-alpha/destroy", body: `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha"}`},
 		{name: "runtime credential reveal", path: "/fabric/workspace-runtimes/ws-alpha/credentials/reveal", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha"}`},
 		{name: "compute pool head terminalization", path: "/fabric/compute-pool-head/terminalization", body: `{"nodePoolId":"np-basic","approvalId":"operation-alpha","approvalDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`},
 	} {
@@ -475,21 +452,6 @@ func TestFabricProviderMutationCapabilitiesAcceptExactBodies(t *testing.T) {
 			body:   `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":"compute-alpha","volumeId":"volume-alpha"}`,
 			claims: fabricCapabilityClaimsForTest{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceKind: "storage_attachment", ResourceID: "compute-alpha:volume-alpha", Action: "create_storage_attachment"},
 		},
-		{
-			name: "snapshot create", path: "/fabric/storage-snapshots",
-			body:   `{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"volume-alpha"}`,
-			claims: fabricCapabilityClaimsForTest{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceKind: "storage_snapshot", ResourceID: "volume-alpha", Action: "create_storage_snapshot"},
-		},
-		{
-			name: "snapshot restore", path: "/fabric/storage-snapshots/snapshot-alpha/restore",
-			body:   `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"volume-restored"}`,
-			claims: fabricCapabilityClaimsForTest{AccountID: "acct-alpha", WorkspaceID: "ws-restored", ResourceKind: "storage_snapshot", ResourceID: "snapshot-alpha", Action: "restore_storage_snapshot"},
-		},
-		{
-			name: "snapshot destroy", path: "/fabric/storage-snapshots/snapshot-alpha/destroy",
-			body:   `{"snapshotId":"snapshot-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha"}`,
-			claims: fabricCapabilityClaimsForTest{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceKind: "storage_snapshot", ResourceID: "snapshot-alpha", Action: "destroy_storage_snapshot"},
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			called := false
@@ -537,7 +499,6 @@ func TestFabricProviderMutationSourceIdentityIsBoundBeforeOperation(t *testing.T
 		body string
 	}{
 		{name: "attachment account", path: "/fabric/storage-attachments", body: `{"accountId":"acct-other","workspaceId":"ws-alpha","computeId":"` + compute.ID + `","volumeId":"identity-volume"}`},
-		{name: "snapshot account", path: "/fabric/storage-snapshots", body: `{"accountId":"acct-other","workspaceId":"ws-alpha","volumeId":"identity-volume"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req := testRequest(http.MethodPost, test.path, strings.NewReader(test.body))
@@ -1298,47 +1259,6 @@ func TestCatalogHTTP(t *testing.T) {
 	}
 }
 
-func TestStorageSnapshotHTTPCreateRestoreAndDestroy(t *testing.T) {
-	service := fabric.NewService(testProvider{})
-	server := newTestServer(service, "internal-secret")
-	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "snapshot-compute")
-	createVolume := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(fmt.Sprintf(`{"id":"vol-source","accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)))
-	createVolume.Header.Set("Idempotency-Key", "volume-once")
-	volumeRec := httptest.NewRecorder()
-	server.ServeHTTP(volumeRec, createVolume)
-
-	create := testRequest(http.MethodPost, "/fabric/storage-snapshots", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"vol-source"}`))
-	create.Header.Set("Idempotency-Key", "snapshot-once")
-	createdRec := httptest.NewRecorder()
-	server.ServeHTTP(createdRec, create)
-	if createdRec.Code != http.StatusAccepted {
-		t.Fatalf("create status=%d body=%s", createdRec.Code, createdRec.Body.String())
-	}
-	var snapshot fabric.StorageSnapshot
-	if err := json.NewDecoder(createdRec.Body).Decode(&snapshot); err != nil {
-		t.Fatal(err)
-	}
-	getRec := httptest.NewRecorder()
-	server.ServeHTTP(getRec, testRequest(http.MethodGet, "/fabric/storage-snapshots/"+snapshot.ID, nil))
-	if getRec.Code != http.StatusOK {
-		t.Fatalf("get status=%d body=%s", getRec.Code, getRec.Body.String())
-	}
-	restore := testRequest(http.MethodPost, "/fabric/storage-snapshots/"+snapshot.ID+"/restore", bytes.NewBufferString(fmt.Sprintf(`{"snapshotId":%q,"accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"vol-restored"}`, snapshot.ID)))
-	restore.Header.Set("Idempotency-Key", "restore-once")
-	restoreRec := httptest.NewRecorder()
-	server.ServeHTTP(restoreRec, restore)
-	if restoreRec.Code != http.StatusAccepted {
-		t.Fatalf("restore status=%d body=%s", restoreRec.Code, restoreRec.Body.String())
-	}
-	destroy := testRequest(http.MethodPost, "/fabric/storage-snapshots/"+snapshot.ID+"/destroy", bytes.NewBufferString(fmt.Sprintf(`{"snapshotId":%q,"accountId":"acct-alpha","workspaceId":"ws-alpha"}`, snapshot.ID)))
-	destroy.Header.Set("Idempotency-Key", "destroy-once")
-	destroyRec := httptest.NewRecorder()
-	server.ServeHTTP(destroyRec, destroy)
-	if destroyRec.Code != http.StatusAccepted {
-		t.Fatalf("destroy status=%d body=%s", destroyRec.Code, destroyRec.Body.String())
-	}
-}
-
 func TestWriteComputeAllocationResultPreservesTerminalEvidence(t *testing.T) {
 	allocation := fabric.ComputeAllocation{
 		ID: "compute-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture", PackageID: "basic", Status: "quarantined",
@@ -1487,7 +1407,6 @@ func TestFabricSyncHTTPRoutesAreRetired(t *testing.T) {
 	for _, path := range []string{
 		"/fabric/compute-allocations/compute-alpha/sync",
 		"/fabric/storage-volumes/storage-alpha/sync",
-		"/fabric/storage-snapshots/snapshot-alpha/sync",
 	} {
 		req := testRequest(http.MethodPost, path, bytes.NewBufferString(`{}`))
 		rec := httptest.NewRecorder()
@@ -1901,23 +1820,6 @@ func (testProvider) RenewStorageVolume(_ context.Context, volume fabric.StorageV
 func (testProvider) DestroyStorageVolume(_ context.Context, volume fabric.StorageVolume) (fabric.StorageVolume, error) {
 	volume.Status = "destroyed"
 	return volume, nil
-}
-
-func (testProvider) CreateStorageSnapshot(_ context.Context, input fabric.StorageSnapshotInput, volume fabric.StorageVolume) (fabric.StorageSnapshot, error) {
-	return fabric.StorageSnapshot{ID: "snap-http", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, VolumeID: volume.ID, Status: "ready", Provider: "test", ProviderSnapshotRef: "volumesnapshot/snap-http", ProviderRequestID: "snapshot-request", SizeGB: volume.SizeGB, CreatedAt: time.Now().UTC()}, nil
-}
-
-func (testProvider) SyncStorageSnapshot(_ context.Context, snapshot fabric.StorageSnapshot) (fabric.StorageSnapshot, error) {
-	return snapshot, nil
-}
-
-func (testProvider) RestoreStorageSnapshot(_ context.Context, input fabric.StorageRestoreInput, snapshot fabric.StorageSnapshot) (fabric.StorageVolume, error) {
-	return fabric.StorageVolume{ID: input.TargetVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Provider: "test", ProviderResourceID: "pvc/" + input.TargetVolumeID, ProviderRequestID: "restore-request", SizeGB: snapshot.SizeGB, CreatedAt: time.Now().UTC()}, nil
-}
-
-func (testProvider) DestroyStorageSnapshot(_ context.Context, snapshot fabric.StorageSnapshot) (fabric.StorageSnapshot, error) {
-	snapshot.Status = "destroyed"
-	return snapshot, nil
 }
 
 func (testProvider) CreateStorageAttachment(_ context.Context, input fabric.StorageAttachmentInput, _ fabric.ComputeAllocation, _ fabric.StorageVolume) (fabric.StorageAttachment, error) {

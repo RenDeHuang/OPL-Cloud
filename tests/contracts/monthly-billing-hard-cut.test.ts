@@ -53,19 +53,31 @@ test("current contracts name Sub2API as the only spendable balance", async () =>
 test("management contract hard-cuts customer identity to Sub2API and one atomic owner graph", async () => {
   const management = await readJson("opl-cloud-management-contract.json");
 
-  assert.equal(management.schemaVersion, 19);
+  assert.equal(management.schemaVersion, 20);
   assert.deepEqual(management.entities.account.requiredFields, ["id", "ownerUserId", "status", "sub2apiUserId", "createdAt", "updatedAt"]);
   assert.deepEqual(management.entities.user, {
     requiredFields: ["id", "email", "accountId", "role", "status", "createdAt", "updatedAt"],
-    roles: ["owner"]
+    roles: ["owner", "admin"]
+  });
+  assert.deepEqual(management.entities.organization, {
+    requiredFields: ["id", "name", "billingAccountId", "status", "createdAt", "updatedAt"],
+    pilotRole: "historical_read_only_custody",
+    runtimeSurface: false,
+    writeAuthority: false,
+    authorizationAuthority: false
   });
   assert.deepEqual(management.entities.membership.requiredFields, ["id", "organizationId", "accountId", "userId", "role", "status", "createdAt", "updatedAt"]);
+  assert.deepEqual(management.entities.membership.roles, ["owner"]);
+  assert.equal(management.entities.membership.pilotRole, "historical_read_only_custody");
+  assert.equal(management.entities.membership.runtimeSurface, false);
+  assert.equal(management.entities.membership.writeAuthority, false);
+  assert.equal(management.entities.membership.authorizationAuthority, false);
   assert.deepEqual(management.customerIdentityGraph, {
     cardinality: "exactly_one_console_user_account_sub2api_user_wallet",
     accountUser: "account.ownerUserId_equals_user.id_and_user.accountId_equals_account.id",
     sub2apiIdentity: "account.sub2apiUserId_equals_the_single_remote_user_id_and_wallet_owner",
     normalizedEmail: "lower_trim_console_email_equals_lower_trim_sub2api_email",
-    customerRole: "owner_only",
+    customerRole: "owner_only_except_reserved_operator_admin",
     customerAccess: "session_user_owns_account_and_remote_identity_is_active",
     operatorException: "fixed_usr_admin_on_acct_admin_uses_admin_role_outside_customer_graph"
   });
@@ -75,8 +87,17 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
   });
   assert.equal(management.internalCompatibilityRecords.sharedBehavior, false);
   assert.equal(management.internalCompatibilityRecords.customerAuthorizationAuthority, false);
-  assert.deepEqual(management.identityProvisioning.atomicFacts, ["account", "user", "organization", "membership"]);
-  assert.deepEqual(management.entities.membership.roles, ["owner"]);
+  assert.deepEqual(management.internalCompatibilityRecords, {
+    organizationAndMembership: "historical_read_only_table_custody",
+    legacyCustody: "preserve_existing_rows_and_ids_for_migration_validation_only",
+    runtimeRead: false,
+    runtimeWrite: false,
+    customerAuthorizationAuthority: false,
+    browserProjection: false,
+    sharedBehavior: false,
+    mutationRoutes: "retired"
+  });
+  assert.deepEqual(management.identityProvisioning.atomicFacts, ["account", "user"]);
   assert.equal(management.identityProvisioning.onlyMutation, "POST /api/operator/accounts");
   assert.equal(management.identityProvisioning.requestType, "ProvisionAccountRequest");
   assert.deepEqual(management.identityProvisioning.semantics, {
@@ -86,7 +107,7 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
     operationIdPrefix: "account-provision"
   });
   assert.equal(management.identityProvisioning.callerSuppliedSub2apiUserId, "forbidden");
-  assert.equal(management.identityProvisioning.partialFailure, "rollback_all_four_facts");
+  assert.equal(management.identityProvisioning.partialFailure, "rollback_account_and_user");
   assert.equal(management.identityProvisioning.matchingReplay, "return_existing_graph_without_duplicate_facts");
   assert.equal(management.identityProvisioning.mismatch, "fail_closed_without_mutation");
 
@@ -257,7 +278,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		providerFacts: ["compute_renewal", "storage_renewal"],
 		receiptType: "billing.workspace_renewed.v1"
 	});
-	assert.equal(management.schemaVersion, 19);
+	assert.equal(management.schemaVersion, 20);
 	assert.equal(evidence.reconciliationReportV1.result.blockNewWorkspaces, "status_equals_mismatch");
 	assert.deepEqual(management.operatorBillingReviewProjection.included, [
 		"workspace.launch.v2_manual_review",

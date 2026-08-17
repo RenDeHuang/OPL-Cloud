@@ -9,28 +9,20 @@ import (
 	controlplaneent "opl-cloud/services/control-plane/ent"
 )
 
-func strictProvisionedAccountRows() (map[string]any, map[string]any, map[string]any, map[string]any) {
+func strictProvisionedAccountRows() (map[string]any, map[string]any) {
 	user := map[string]any{"id": "usr-provisioned", "email": "owner@provisioned.example", "accountId": "acct-provisioned", "role": "owner", "status": "active"}
 	account := map[string]any{"id": "acct-provisioned", "ownerUserId": user["id"], "status": "active", "sub2apiUserId": int64(73)}
-	organization := map[string]any{"id": "org-provisioned", "name": "Organization acct-provisioned", "billingAccountId": "acct-provisioned", "status": "active"}
-	membership := map[string]any{"id": "mem-provisioned", "accountId": "acct-provisioned", "organizationId": "org-provisioned", "userId": user["id"], "role": "owner", "status": "active"}
-	return account, user, organization, membership
+	return account, user
 }
 
 func TestMemoryIdentityFactsAreReciprocalOneToOne(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryTableStore()
-	account, user, organization, membership := strictProvisionedAccountRows()
+	account, user := strictProvisionedAccountRows()
 	if err := store.SaveAccount(ctx, account); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SaveUser(ctx, user); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveOrganization(ctx, organization); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveMembership(ctx, membership); err != nil {
 		t.Fatal(err)
 	}
 
@@ -38,15 +30,9 @@ func TestMemoryIdentityFactsAreReciprocalOneToOne(t *testing.T) {
 	secondUser["id"], secondUser["email"] = "usr-second", "second@provisioned.example"
 	secondAccount := cloneMap(account)
 	secondAccount["id"] = "acct-second"
-	secondOrganization := cloneMap(organization)
-	secondOrganization["id"] = "org-second"
-	secondMembership := cloneMap(membership)
-	secondMembership["id"] = "mem-second"
 	for name, attempt := range map[string]func() error{
-		"second user for account":         func() error { return store.SaveUser(ctx, secondUser) },
-		"owner reused by account":         func() error { return store.SaveAccount(ctx, secondAccount) },
-		"second organization for account": func() error { return store.SaveOrganization(ctx, secondOrganization) },
-		"second membership for account":   func() error { return store.SaveMembership(ctx, secondMembership) },
+		"second user for account": func() error { return store.SaveUser(ctx, secondUser) },
+		"owner reused by account": func() error { return store.SaveAccount(ctx, secondAccount) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := attempt(); err == nil {
@@ -58,27 +44,22 @@ func TestMemoryIdentityFactsAreReciprocalOneToOne(t *testing.T) {
 
 func TestIdentityStoresRejectNonOwnerRole(t *testing.T) {
 	for _, storeType := range []string{"memory", "ent"} {
-		for _, fact := range []string{"user", "membership"} {
-			for _, role := range []string{"member", "admin"} {
-				t.Run(storeType+" "+fact+" "+role, func(t *testing.T) {
-					var store controlPlaneTableStore = NewTestEntStateStore(t, t.TempDir()+"/role.sqlite")
-					if storeType == "memory" {
-						store = newMemoryTableStore()
-					}
-					account, user, organization, membership := strictProvisionedAccountRows()
-					if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
-						t.Fatal(err)
-					}
-					row, save := cloneMap(membership), store.SaveMembership
-					if fact == "user" {
-						row, save = cloneMap(user), store.SaveUser
-					}
-					row["role"] = role
-					if err := save(context.Background(), row); !errors.Is(err, errInvalidRole) {
-						t.Fatalf("%s role write error=%v, want=%v", role, err, errInvalidRole)
-					}
-				})
-			}
+		for _, role := range []string{"member", "admin"} {
+			t.Run(storeType+" "+role, func(t *testing.T) {
+				var store controlPlaneTableStore = NewTestEntStateStore(t, t.TempDir()+"/role.sqlite")
+				if storeType == "memory" {
+					store = newMemoryTableStore()
+				}
+				account, user := strictProvisionedAccountRows()
+				if err := store.CreateProvisionedAccount(context.Background(), account, user); err != nil {
+					t.Fatal(err)
+				}
+				row := cloneMap(user)
+				row["role"] = role
+				if err := store.SaveUser(context.Background(), row); !errors.Is(err, errInvalidRole) {
+					t.Fatalf("%s role write error=%v, want=%v", role, err, errInvalidRole)
+				}
+			})
 		}
 	}
 }
@@ -86,16 +67,16 @@ func TestIdentityStoresRejectNonOwnerRole(t *testing.T) {
 func TestMemoryProvisionedAccountReplayIsIdempotentAndConflictFailsClosed(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryTableStore()
-	account, user, organization, membership := strictProvisionedAccountRows()
-	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+	account, user := strictProvisionedAccountRows()
+	if err := store.CreateProvisionedAccount(ctx, account, user); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+	if err := store.CreateProvisionedAccount(ctx, account, user); err != nil {
 		t.Fatalf("matching replay: %v", err)
 	}
 	conflicting := cloneMap(user)
 	conflicting["id"], conflicting["email"] = "usr-other", "other@provisioned.example"
-	if err := store.CreateProvisionedAccount(ctx, account, conflicting, organization, membership); err == nil {
+	if err := store.CreateProvisionedAccount(ctx, account, conflicting); err == nil {
 		t.Fatal("second account user succeeded")
 	}
 	users, _ := store.ListUsers(ctx, true)
@@ -113,48 +94,45 @@ func TestMemoryProvisionedAccountReplayIsIdempotentAndConflictFailsClosed(t *tes
 func TestEntProvisionedAccountMatchingReplaySucceeds(t *testing.T) {
 	ctx := context.Background()
 	store := NewTestEntStateStore(t, t.TempDir()+"/identity-replay.sqlite").(*postgresEntStateStore)
-	account, user, organization, membership := strictProvisionedAccountRows()
-	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+	account, user := strictProvisionedAccountRows()
+	if err := store.CreateProvisionedAccount(ctx, account, user); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+	if err := store.CreateProvisionedAccount(ctx, account, user); err != nil {
 		t.Fatalf("matching replay: %v", err)
 	}
 	users, _ := store.ListUsers(ctx, true)
-	memberships, _ := store.ListMemberships(ctx)
-	if len(users) != 1 || len(memberships) != 1 {
-		t.Fatalf("users=%#v memberships=%#v", users, memberships)
+	if len(users) != 1 {
+		t.Fatalf("users=%#v", users)
 	}
 }
 
 func TestPostgresProvisionedAccountMatchingReplaySucceeds(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
-	account, user, organization, membership := strictProvisionedAccountRows()
-	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+	account, user := strictProvisionedAccountRows()
+	if err := store.CreateProvisionedAccount(ctx, account, user); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+	if err := store.CreateProvisionedAccount(ctx, account, user); err != nil {
 		t.Fatalf("matching replay: %v", err)
 	}
 	accounts, _ := store.ListAccounts(ctx, "")
 	users, _ := store.ListUsers(ctx, true)
-	organizations, _ := store.ListOrganizations(ctx)
-	memberships, _ := store.ListMemberships(ctx)
-	if len(accounts) != 1 || len(users) != 1 || len(organizations) != 1 || len(memberships) != 1 {
-		t.Fatalf("accounts=%#v users=%#v organizations=%#v memberships=%#v", accounts, users, organizations, memberships)
+	if len(accounts) != 1 || len(users) != 1 {
+		t.Fatalf("accounts=%#v users=%#v", accounts, users)
 	}
 }
 
-func TestPostgresIdentityDirectWritesRejectCrossAccountOwnerAndMembership(t *testing.T) {
+func TestPostgresIdentityDirectWritesRejectCrossAccountOwner(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
-	accountA, userA, organizationA, membershipA := provisionedAccountRowsFor("acct-a", "usr-a", "org-a", "a@example.com", 71)
-	accountB, userB, organizationB, membershipB := provisionedAccountRowsFor("acct-b", "usr-b", "org-b", "b@example.com", 72)
-	if err := store.CreateProvisionedAccount(ctx, accountA, userA, organizationA, membershipA); err != nil {
+	accountA, userA := provisionedAccountRowsFor("acct-a", "usr-a", "a@example.com", 71)
+	accountB, userB := provisionedAccountRowsFor("acct-b", "usr-b", "b@example.com", 72)
+	if err := store.CreateProvisionedAccount(ctx, accountA, userA); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateProvisionedAccount(ctx, accountB, userB, organizationB, membershipB); err != nil {
+	if err := store.CreateProvisionedAccount(ctx, accountB, userB); err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,24 +141,18 @@ func TestPostgresIdentityDirectWritesRejectCrossAccountOwnerAndMembership(t *tes
 	if err := store.SaveAccount(ctx, crossAccountOwner); err == nil {
 		t.Fatal("cross-account owner write succeeded")
 	}
-	crossAccountMembership := cloneMap(membershipA)
-	crossAccountMembership["userId"] = "usr-b"
-	if err := store.SaveMembership(ctx, crossAccountMembership); err == nil {
-		t.Fatal("cross-account membership write succeeded")
-	}
 
 	accounts, _ := store.ListAccounts(ctx, "acct-a")
-	memberships, _ := store.ListMemberships(ctx)
-	if findRecord(accounts, "acct-a")["ownerUserId"] != "usr-a" || findRecord(memberships, stringValue(membershipA["id"]))["userId"] != "usr-a" {
-		t.Fatalf("rejected writes changed identity graph: accounts=%#v memberships=%#v", accounts, memberships)
+	if findRecord(accounts, "acct-a")["ownerUserId"] != "usr-a" {
+		t.Fatalf("rejected write changed identity graph: accounts=%#v", accounts)
 	}
 }
 
 func TestEntSaveUserDoesNotPersistLocalPasswordHash(t *testing.T) {
 	ctx := context.Background()
 	store := NewTestEntStateStore(t, t.TempDir()+"/identity-password.sqlite").(*postgresEntStateStore)
-	account, user, organization, membership := strictProvisionedAccountRows()
-	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+	account, user := strictProvisionedAccountRows()
+	if err := store.CreateProvisionedAccount(ctx, account, user); err != nil {
 		t.Fatal(err)
 	}
 	user["passwordHash"] = "local-password-secret"
@@ -230,8 +202,8 @@ func TestIdentityStoresProvideEquivalentPointLookups(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			account, user, organization, membership := strictProvisionedAccountRows()
-			if err := tc.store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+			account, user := strictProvisionedAccountRows()
+			if err := tc.store.CreateProvisionedAccount(ctx, account, user); err != nil {
 				t.Fatal(err)
 			}
 			sessionID := sessionLookupKey("point-lookup-session")
@@ -252,14 +224,6 @@ func TestIdentityStoresProvideEquivalentPointLookups(t *testing.T) {
 			foundAccount, ok, err := tc.store.GetAccount(ctx, stringValue(account["id"]))
 			if err != nil || !ok || foundAccount["ownerUserId"] != user["id"] {
 				t.Fatalf("account by id=%#v ok=%v err=%v", foundAccount, ok, err)
-			}
-			foundOrganization, ok, err := tc.store.GetOrganizationByAccount(ctx, stringValue(account["id"]))
-			if err != nil || !ok || foundOrganization["id"] != organization["id"] {
-				t.Fatalf("organization by account=%#v ok=%v err=%v", foundOrganization, ok, err)
-			}
-			foundMembership, ok, err := tc.store.GetMembershipByAccount(ctx, stringValue(account["id"]))
-			if err != nil || !ok || foundMembership["id"] != membership["id"] {
-				t.Fatalf("membership by account=%#v ok=%v err=%v", foundMembership, ok, err)
 			}
 			sessions, err := tc.store.ListSessionsByUser(ctx, stringValue(user["id"]))
 			if err != nil || len(sessions) != 1 || sessions[sessionID] == nil {
@@ -287,26 +251,6 @@ func TestEntIdentitySchemaEnforcesOneToOneFields(t *testing.T) {
 		{name: "user account", run: func(ctx context.Context, client *controlplaneent.Client) error {
 			_, _ = client.User.Create().SetID("usr-one").SetAccountID("acct-one").SetEmail("one@example.com").Save(ctx)
 			_, err := client.User.Create().SetID("usr-two").SetAccountID("acct-one").SetEmail("two@example.com").Save(ctx)
-			return err
-		}},
-		{name: "organization account", run: func(ctx context.Context, client *controlplaneent.Client) error {
-			_, _ = client.Organization.Create().SetID("org-one").SetBillingAccountID("acct-one").Save(ctx)
-			_, err := client.Organization.Create().SetID("org-two").SetBillingAccountID("acct-one").Save(ctx)
-			return err
-		}},
-		{name: "membership account", run: func(ctx context.Context, client *controlplaneent.Client) error {
-			_, _ = client.Membership.Create().SetID("mem-one").SetAccountID("acct-one").SetUserID("usr-one").SetOrganizationID("org-one").Save(ctx)
-			_, err := client.Membership.Create().SetID("mem-two").SetAccountID("acct-one").SetUserID("usr-two").SetOrganizationID("org-two").Save(ctx)
-			return err
-		}},
-		{name: "membership user", run: func(ctx context.Context, client *controlplaneent.Client) error {
-			_, _ = client.Membership.Create().SetID("mem-one").SetAccountID("acct-one").SetUserID("usr-one").SetOrganizationID("org-one").Save(ctx)
-			_, err := client.Membership.Create().SetID("mem-two").SetAccountID("acct-two").SetUserID("usr-one").SetOrganizationID("org-two").Save(ctx)
-			return err
-		}},
-		{name: "membership organization", run: func(ctx context.Context, client *controlplaneent.Client) error {
-			_, _ = client.Membership.Create().SetID("mem-one").SetAccountID("acct-one").SetUserID("usr-one").SetOrganizationID("org-one").Save(ctx)
-			_, err := client.Membership.Create().SetID("mem-two").SetAccountID("acct-two").SetUserID("usr-two").SetOrganizationID("org-one").Save(ctx)
 			return err
 		}},
 	}

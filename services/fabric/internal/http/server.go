@@ -400,63 +400,6 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		volume, err := service.DestroyStorageVolume(r.Context(), strings.TrimSpace(r.PathValue("id")))
 		writeResult(w, volume, err)
 	})
-	mux.HandleFunc("POST /fabric/storage-snapshots", func(w http.ResponseWriter, r *http.Request) {
-		var input fabric.StorageSnapshotInput
-		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
-			return
-		}
-		if volume, ok := service.GetStorageVolume(r.Context(), input.VolumeID); !ok || volume.AccountID != input.AccountID || volume.WorkspaceID != input.WorkspaceID {
-			writeError(w, http.StatusBadRequest, "storage_snapshot_source_identity_mismatch")
-			return
-		}
-		snapshot, err := service.CreateStorageSnapshot(r.Context(), input)
-		writeResult(w, snapshot, err)
-	})
-	mux.HandleFunc("GET /fabric/storage-snapshots/{id}", func(w http.ResponseWriter, r *http.Request) {
-		snapshot, ok := service.GetStorageSnapshot(r.Context(), strings.TrimSpace(r.PathValue("id")))
-		if !ok {
-			writeError(w, http.StatusNotFound, "storage_snapshot_not_found")
-			return
-		}
-		writeJSON(w, http.StatusOK, snapshot)
-	})
-	mux.HandleFunc("POST /fabric/storage-snapshots/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
-		var input fabric.StorageRestoreInput
-		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
-			return
-		}
-		if input.SnapshotID != strings.TrimSpace(r.PathValue("id")) {
-			writeError(w, http.StatusBadRequest, "storage_snapshot_id_mismatch")
-			return
-		}
-		if existing, ok := service.GetStorageSnapshot(r.Context(), input.SnapshotID); !ok || existing.AccountID != input.AccountID {
-			writeError(w, http.StatusBadRequest, "storage_snapshot_source_identity_mismatch")
-			return
-		}
-		volume, err := service.RestoreStorageSnapshot(r.Context(), input)
-		writeResult(w, volume, err)
-	})
-	mux.HandleFunc("POST /fabric/storage-snapshots/{id}/destroy", func(w http.ResponseWriter, r *http.Request) {
-		var input struct {
-			AccountID      string `json:"accountId"`
-			WorkspaceID    string `json:"workspaceId"`
-			SnapshotID     string `json:"snapshotId"`
-			IdempotencyKey string `json:"-"`
-		}
-		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
-			return
-		}
-		if input.SnapshotID != strings.TrimSpace(r.PathValue("id")) {
-			writeError(w, http.StatusBadRequest, "storage_snapshot_id_mismatch")
-			return
-		}
-		if existing, ok := service.GetStorageSnapshot(r.Context(), input.SnapshotID); !ok || existing.AccountID != input.AccountID || existing.WorkspaceID != input.WorkspaceID {
-			writeError(w, http.StatusBadRequest, "storage_snapshot_identity_mismatch")
-			return
-		}
-		snapshot, err := service.DestroyStorageSnapshot(r.Context(), input.SnapshotID)
-		writeResult(w, snapshot, err)
-	})
 	mux.HandleFunc("POST /fabric/storage-attachments", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			AccountID      string `json:"accountId"`
@@ -673,7 +616,7 @@ func isFabricMutation(r *http.Request) bool {
 	}
 	if r.URL.Path == "/fabric/compute-allocations" || r.URL.Path == "/fabric/storage-volumes" || r.URL.Path == "/fabric/workspace-runtimes" ||
 		r.URL.Path == "/fabric/gateway-secrets" || r.URL.Path == "/fabric/workspace-launches/stages/ensure" ||
-		r.URL.Path == "/fabric/storage-snapshots" || r.URL.Path == "/fabric/storage-attachments" ||
+		r.URL.Path == "/fabric/storage-attachments" ||
 		r.URL.Path == "/fabric/compute-pool-head/terminalization" {
 		return true
 	}
@@ -685,7 +628,7 @@ func isFabricMutation(r *http.Request) bool {
 		return false
 	}
 	switch parts[1] + "/" + parts[3] {
-	case "compute-allocations/renew", "compute-allocations/destroy", "storage-volumes/renew", "storage-volumes/destroy", "storage-snapshots/restore", "storage-snapshots/destroy", "storage-attachments/detach", "workspace-runtimes/destroy", "workspace-runtimes/gateway-secret":
+	case "compute-allocations/renew", "compute-allocations/destroy", "storage-volumes/renew", "storage-volumes/destroy", "storage-attachments/detach", "workspace-runtimes/destroy", "workspace-runtimes/gateway-secret":
 		return true
 	default:
 		return false
@@ -716,8 +659,6 @@ func fabricMutationScopeForRequest(ctx context.Context, resolver fabricMutationS
 		}
 	case r.URL.Path == "/fabric/gateway-secrets":
 		scope.ResourceKind, scope.ResourceID, scope.Action = "gateway_secret", scope.WorkspaceID, "upsert_gateway_secret"
-	case r.URL.Path == "/fabric/storage-snapshots":
-		scope.ResourceKind, scope.ResourceID, scope.Action = "storage_snapshot", value("volumeId"), "create_storage_snapshot"
 	case r.URL.Path == "/fabric/storage-attachments":
 		computeID, volumeID := value("computeId"), value("volumeId")
 		if computeID != "" && volumeID != "" {
@@ -763,17 +704,6 @@ func fabricMutationScopeForRequest(ctx context.Context, resolver fabricMutationS
 		}
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "storage-attachments" && parts[2] != "" && parts[3] == "detach":
 		scope.ResourceKind, scope.ResourceID, scope.Action = "storage_attachment", parts[2], "detach_storage_attachment"
-	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "storage-snapshots" && parts[2] != "":
-		if value("snapshotId") != parts[2] {
-			return fabricMutationScope{}, false
-		}
-		scope.ResourceKind, scope.ResourceID = "storage_snapshot", parts[2]
-		switch parts[3] {
-		case "restore":
-			scope.Action = "restore_storage_snapshot"
-		case "destroy":
-			scope.Action = "destroy_storage_snapshot"
-		}
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "destroy":
 		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime", parts[2], "destroy_workspace_runtime"
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "gateway-secret":

@@ -317,23 +317,6 @@ func ledgerResourceKind(path string) string {
 	switch parts[1] {
 	case "reconciliation":
 		return "reconciliation"
-	case "review-policies":
-		if len(parts) == 2 && parsed.RawQuery != "" {
-			return "review_policy_collection"
-		}
-		return "review_policy"
-	case "review-gates":
-		return "review_gate"
-	case "artifacts":
-		if len(parts) == 2 && parsed.RawQuery != "" {
-			return "artifact_collection"
-		}
-		return "artifact"
-	case "reviews":
-		if len(parts) == 2 && parsed.RawQuery != "" {
-			return "review_collection"
-		}
-		return "review"
 	case "receipts":
 		if len(parts) == 2 && parsed.RawQuery != "" {
 			return "receipt_collection"
@@ -349,9 +332,6 @@ func ledgerResourceID(path string) string {
 	}
 	if strings.HasSuffix(strings.Trim(parsed.Path, "/"), "receipts") {
 		return parsed.Query().Get("accountId")
-	}
-	if strings.HasSuffix(strings.Trim(parsed.Path, "/"), "review-policies") {
-		return parsed.Query().Get("workspaceId")
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	if len(parts) >= 3 {
@@ -371,35 +351,9 @@ func ledgerAction(path string) string {
 	switch parts[1] {
 	case "reconciliation":
 		return "record_reconciliation"
-	case "review-gates":
-		return "evaluate_review_gate"
-	case "review-policies":
-		if len(parts) > 2 {
-			return "read_review_policy"
-		}
-		if parsed.RawQuery != "" {
-			return "list_review_policies"
-		}
-		return "create_review_policy"
-	case "artifacts":
-		if len(parts) > 2 {
-			return "read_artifact"
-		}
-		return "record_artifact"
-	case "reviews":
-		if len(parts) > 2 {
-			return "read_review"
-		}
-		if parsed.RawQuery != "" {
-			return "list_reviews"
-		}
-		return "record_review"
 	case "receipts":
 		if len(parts) == 2 && parsed.RawQuery != "" {
 			return "list_receipts"
-		}
-		if len(parts) == 4 && parts[3] == "continuation" {
-			return "read_continuation"
 		}
 		if len(parts) > 2 {
 			return "read_receipt"

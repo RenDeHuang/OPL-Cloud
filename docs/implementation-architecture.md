@@ -14,7 +14,7 @@ Browser Console
   -> Control Plane product API
        -> Sub2API management API: live balance, account Key/usage, idempotent debit/refund
        -> Fabric API: typed compute, storage, attachment, Secret, and runtime stages
-       -> Ledger API: receipts and review evidence
+       -> Ledger API: receipts and reconciliation evidence
 ```
 
 Sub2API is external and remains the only spendable-balance, API-key, routing,
@@ -106,7 +106,7 @@ packages/contracts -> CI and service-boundary verification only
 | Console UI | `apps/console-ui`, TypeScript build | presentation and customer interaction | Control Plane product APIs under `/api/*` | direct Fabric, Ledger, Sub2API, Tencent, Kubernetes, persistence, or server implementation imports |
 | Control Plane | independent `go.mod`, binary, Deployment and schema | session/account mapping, Workspace entitlement, Launch cursor/attempt/lease/CAS, account/settlement coordination and customer DTOs | typed HTTP clients for Fabric, Ledger and Sub2API; narrow PostgreSQL migration helper | resource-stage reducers, Fabric operation derivation, Fabric/Ledger implementation imports, provider fields/SDKs/Kubernetes, provider mutations, or downstream table writes |
 | Fabric | independent `go.mod`, binary, Deployment and schema | compute, storage, attachment, Secret binding, Runtime, provider-neutral operation bindings/store, provider mutations and authoritative readback | provider adapters, cloud SDKs and narrow PostgreSQL migration helper | wallet, customer billing policy, Console session state, or Ledger table writes |
-| Ledger | independent `go.mod`, binary, Deployment and schema | receipts, evidence, review, reconciliation and continuation refs; additional evidence verticals remain extensions | narrow PostgreSQL migration helper | Launch continuation authority, spendable balance mutation, provider SDKs, Fabric execution, or Control Plane table writes |
+| Ledger | independent `go.mod`, binary, Deployment and schema | receipts, reconciliation, idempotency, retention, and caller-owned opaque provenance refs | narrow PostgreSQL migration helper | review-policy or review-gate semantics, Launch continuation authority, spendable balance mutation, provider SDKs, Fabric execution, or Control Plane table writes |
 | PostgreSQL migration helper | independent narrow Go module under `services/internal/postgresmigrate` | advisory lock, migration journal and TLS validation mechanics | PostgreSQL driver only | any Console, Control Plane, Fabric or Ledger domain type |
 | Machine contracts | JSON under `packages/contracts` | executable ownership and protocol boundaries | tests, build and validation | runtime state, service implementation or a second status owner |
 
@@ -157,11 +157,11 @@ These are current implementation facts, not deletion authorization:
 
 | Cluster | Current implementation fact |
 | --- | --- |
-| Control Plane persistence | Archive, `ExecutionRequest`, and `WorkspaceBackup` application/Ent models are deleted while historical SQL/tables remain; Organization/Membership are one-to-one compatibility storage |
+| Control Plane persistence | Archive, `ExecutionRequest`, and `WorkspaceBackup` application/Ent models are deleted while historical SQL/tables remain; Organization/Membership application/Ent models and runtime store APIs are deleted, while raw tables remain only as read-only historical custody for migration validation |
 | Control Plane instance extension | The normal Launch/Resume path is provider-neutral. Instance-owned Provider Acceptance consumes one provider-neutral facts batch and a narrow Runtime path; it requires canonical compute/storage provider IDs and treats legacy node-pool and persistent-volume values as optional response-only projections. Instance deployment and production acceptance remain external |
-| Fabric optional verticals | ContentTransfer runtime/API/schema surfaces are retired while historical migrations and data remain; Snapshot/Restore still has provider/service/store/route/test surfaces but no current in-repo product caller and remains excluded from the Pilot |
+| Fabric optional verticals | ContentTransfer and Snapshot/Restore runtime/API/provider surfaces are retired while historical migrations and data remain; Instance inventory proved no live backup row, Fabric operation, `VolumeSnapshot`, `VolumeSnapshotContent`, or restored-PVC obligation before the Snapshot/Restore cut |
 | Fabric launch residue | Recovery proof/claim Service/provider/store mutation shells, unassigned legacy `LaunchBinding` branches, and the duplicate Tencent compute-ownership implementation are retired. Typed Tencent Launch has exact stage-chain readback/replay coverage; other operation-list consumers and the remaining mixed Fabric facade still require caller-led cohesion work |
-| Ledger optional verticals | Artifact, Review, ReviewPolicy, and Continuation Ledger APIs remain current, while the caller-zero Control Plane Artifact/Review/Continuation client adapter and its test-only DTOs are deleted; current Control Plane production callers consume receipts and reconciliation |
+| Ledger optional verticals | Artifact, Review, ReviewPolicy, ReviewGate, and Continuation APIs, stores, routes, and generated Ent code are retired. Receipt `artifactId`, `reviewId`, `outputRefs`, `reviewerChecks`, `continuationId`, and `continuation` remain caller-owned opaque provenance; historical `review_policies` rows and Receipt provenance columns remain without migration or deletion |
 | Machine contract ownership | Billing retains Control Plane orchestration policy but references the Ledger evidence contract as the single reconciliation-report and Workspace monthly-receipt schema owner. The completed aggregate deployment migration guard is deleted; portable distribution and Instance deployment gates remain with their focused owners |
 | Indirection and tooling | Three retained deployment tools use tool-local `node:util.parseArgs`, and Qualification reuses its stable setup and Go-test pipeline without changing job identities or zero-skip gates. Further CLI conversion is deferred where explicit native option schemas expand the surface; the large Control Plane facade and custom static-file/gzip behavior still create maintenance cost |
 | Active-tree residue | The retired staging verifier entry and its tombstone test are deleted, the unused `path-to-regexp` override is gone, and same-selector/same-responsive-scope Console declarations no longer shadow earlier generations. Cross-selector styling and dated execution or frozen QA provenance are not treated as caller-zero code |
@@ -233,14 +233,16 @@ immutable revision deployed and authoritatively read back in production.
 Fabric, Ledger, Tencent, Kubernetes, or Sub2API directly.
 
 `services/control-plane` owns local sessions, one-to-one Account-to-Sub2API
-mappings, N Workspace entitlements per Account, Workspace-level monthly
-operations, the Launch business cursor, attempts/leases/CAS, settlement
-coordination, selected provider-profile refs, and strict customer DTOs. It does
-not own a Fabric operation store, resource-stage reducer, live Compute, Storage,
-Attachment, Secret, or Runtime status, or provider mutation. Sub2API
-authenticates customer credentials. Organization and
-Membership rows remain internal one-to-one compatibility records only; they are
-not shared-account or customer-authorization surfaces.
+mappings, Account/User owner authorization, N Workspace entitlements per
+Account, Workspace-level monthly operations, the Launch business cursor,
+attempts/leases/CAS, settlement coordination, selected provider-profile refs,
+and strict customer DTOs. It does not own a Fabric operation store,
+resource-stage reducer, live Compute, Storage, Attachment, Secret, or Runtime
+status, or provider mutation. Sub2API authenticates customer credentials.
+Organization and Membership application/Ent models, runtime store APIs, and
+provisioning writes are retired; their raw PostgreSQL tables remain only to
+preserve historical rows and IDs for migration validation. They are not shared-
+account or customer-authorization surfaces.
 
 The login route admits JSON before credential processing. If a browser supplies
 an `Origin` or `Referer`, Control Plane compares its scheme, host, and effective
@@ -258,11 +260,13 @@ TKE/CVM/CBS and Kubernetes names do not enter the typed launch contract.
 Provider callbacks may update resource facts but cannot overwrite Control Plane
 entitlement state.
 
-`services/ledger` owns receipt, evidence, review, reconciliation, and
-continuation references. ReviewPolicy, Artifact, Continuation, retention, and
-related stores beyond the Core receipts remain implemented extension surfaces,
-not MVP prerequisites. Ledger never changes Sub2API balance and its refs cannot
-authorize or advance a Workspace Launch.
+`services/ledger` owns receipts, reconciliation, idempotency, retention, and
+caller-owned opaque provenance fields. Artifact, Review, ReviewPolicy, ReviewGate,
+and Continuation APIs and their stores are retired. Historical `review_policies`
+rows and Receipt provenance columns remain for data integrity; Ledger neither
+interprets these refs nor generates continuation identities, hides them on reads,
+or authorizes or advances a Workspace Launch. Control Plane's typed continuation
+authorization is a separate owner-owned path.
 
 `packages/contracts` contains narrow machine-enforced cross-module, interface,
 security, integrity, permission, and irreversible-side-effect boundaries; it is
@@ -371,11 +375,10 @@ read back through the Instance owner, so production adoption remains unproven.
 
 Ledger verifies capability signature, caller, resource, action, operation,
 expiry, and body digest before any owner lookup, then compares the claims with
-the persisted account and Workspace. Receipt and review-policy identities use
-their primary keys; artifact and review identities are promoted and indexed in
-the Ledger schema, and review-gate ID sets are bounded, so owner enrichment and
-review-gate reads do not scan all evidence payloads or issue unbounded `IN`
-queries.
+the persisted account and Workspace. Only Receipt identity is used for the
+capability owner lookup. Artifact and review identifiers remain provenance
+columns for historical compatibility, while `review_policies` remains a
+historical table with no current writer, API, or migration/delete operation.
 
 All three services serialize startup migrations with one database-wide PostgreSQL
 advisory lock. A migration is journaled in `opl_schema_migrations` by service and

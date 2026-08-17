@@ -69,38 +69,6 @@ func ledgerCapabilityScopeForRequest(r *http.Request, body []byte) (ledgerCapabi
 	case r.Method == http.MethodPost && len(parts) == 4 && parts[0] == "ledger" && parts[1] == "receipts" && parts[3] == "privacy-delete":
 		scope.AccountID, scope.WorkspaceID = strings.TrimSpace(r.URL.Query().Get("accountId")), strings.TrimSpace(r.URL.Query().Get("workspaceId"))
 		scope.ResourceKind, scope.ResourceID, scope.Action = "receipt", parts[2], "privacy_delete_receipt"
-	case r.Method == http.MethodGet && len(parts) == 4 && parts[0] == "ledger" && parts[1] == "receipts" && parts[3] == "continuation":
-		scope.AccountID, scope.WorkspaceID = strings.TrimSpace(r.URL.Query().Get("accountId")), strings.TrimSpace(r.URL.Query().Get("workspaceId"))
-		scope.ResourceKind, scope.ResourceID, scope.Action = "receipt", parts[2], "read_continuation"
-		scope.OperationID = requestOperationID(r)
-	case r.Method == http.MethodPost && r.URL.Path == "/ledger/artifacts":
-		scope.ResourceKind, scope.ResourceID, scope.Action = "artifact", scope.OperationID, "record_artifact"
-	case r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "ledger" && parts[1] == "artifacts":
-		scope.AccountID, scope.WorkspaceID = strings.TrimSpace(r.URL.Query().Get("accountId")), strings.TrimSpace(r.URL.Query().Get("workspaceId"))
-		scope.ResourceKind, scope.ResourceID, scope.Action = "artifact", parts[2], "read_artifact"
-		scope.OperationID = requestOperationID(r)
-	case r.Method == http.MethodPost && r.URL.Path == "/ledger/reviews":
-		scope.ResourceKind, scope.ResourceID, scope.Action = "review", scope.OperationID, "record_review"
-	case r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "ledger" && parts[1] == "reviews":
-		scope.AccountID, scope.WorkspaceID = strings.TrimSpace(r.URL.Query().Get("accountId")), strings.TrimSpace(r.URL.Query().Get("workspaceId"))
-		scope.ResourceKind, scope.ResourceID, scope.Action = "review", parts[2], "read_review"
-		scope.OperationID = requestOperationID(r)
-	case r.Method == http.MethodPost && r.URL.Path == "/ledger/review-policies":
-		scope.ResourceKind, scope.ResourceID, scope.Action = "review_policy", scope.OperationID, "create_review_policy"
-	case r.Method == http.MethodGet && r.URL.Path == "/ledger/review-policies":
-		scope.AccountID, scope.WorkspaceID = strings.TrimSpace(r.URL.Query().Get("accountId")), strings.TrimSpace(r.URL.Query().Get("workspaceId"))
-		scope.ResourceKind, scope.ResourceID, scope.Action = "review_policy_collection", scope.WorkspaceID, "list_review_policies"
-		scope.OperationID = requestOperationID(r)
-	case r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "ledger" && parts[1] == "review-policies":
-		scope.AccountID, scope.WorkspaceID = strings.TrimSpace(r.URL.Query().Get("accountId")), strings.TrimSpace(r.URL.Query().Get("workspaceId"))
-		scope.ResourceKind, scope.ResourceID, scope.Action = "review_policy", parts[2], "read_review_policy"
-		scope.OperationID = requestOperationID(r)
-	case r.Method == http.MethodPost && r.URL.Path == "/ledger/review-gates/evaluate":
-		scope.AccountID, scope.WorkspaceID = value("accountId"), value("workspaceId")
-		scope.ResourceKind, scope.ResourceID, scope.Action = "review_gate", scope.WorkspaceID, "evaluate_review_gate"
-		if scope.OperationID == "" {
-			scope.OperationID = requestOperationID(r)
-		}
 	case r.Method == http.MethodPost && r.URL.Path == "/ledger/reconciliation":
 		report, _ := input["report"].(map[string]any)
 		scope.AccountID, scope.WorkspaceID = strings.TrimSpace(stringValue(report, "accountId")), strings.TrimSpace(stringValue(report, "workspaceId"))

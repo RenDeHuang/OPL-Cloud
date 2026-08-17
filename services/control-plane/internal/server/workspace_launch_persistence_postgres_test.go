@@ -43,8 +43,8 @@ func seedPostgresWorkspaceLaunchFreshTypedPending(
 	ctx := context.Background()
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
 	accountID, ownerID := "acct-fresh-pending-"+suffix, "usr-fresh-pending-"+suffix
-	account, owner, organization, membership := provisionedAccountRowsFor(accountID, ownerID, "org-fresh-pending-"+suffix, "fresh-pending-"+suffix+"@example.com", 840)
-	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+	account, owner := provisionedAccountRowsFor(accountID, ownerID, "fresh-pending-"+suffix+"@example.com", 840)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner))
 	command := workspaceLaunchUnitCommand()
 	command.OperationID, command.AccountID, command.OwnerUserID = "workspace-launch-fresh-pending-"+suffix, accountID, ownerID
 	command.WorkspaceID, command.Sub2APIUserID = "ws-fresh-pending-"+suffix, 840
@@ -73,8 +73,8 @@ func seedPostgresWorkspaceLaunchFreshTypedPending(
 func TestPostgresWorkspaceLaunchClaimPersistAndActivate(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
-	account, owner, organization, membership := provisionedAccountRowsFor("acct-launch-pg", "usr-launch-pg", "org-launch-pg", "launch-pg@example.com", 41)
-	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+	account, owner := provisionedAccountRowsFor("acct-launch-pg", "usr-launch-pg", "launch-pg@example.com", 41)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner))
 
 	command := workspaceLaunchUnitCommand()
 	command.OperationID = "workspace-launch-pg"
@@ -173,9 +173,7 @@ func TestPostgresWorkspaceLaunchCanonicalOperatorActivationPersistsAuthoritative
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
 	account := map[string]any{"id": "acct-admin", "ownerUserId": "usr-admin", "status": "active", "sub2apiUserId": int64(1)}
 	owner := map[string]any{"id": "usr-admin", "email": "admin@opl.local", "accountId": "acct-admin", "role": "admin", "status": "active"}
-	organization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
-	membership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
-	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner))
 
 	row := workspaceLaunchUnitActivationProjectionRow(t, "ws-admin-pg", "acct-admin", "usr-admin")
 	activated, err := store.ActivateWorkspaceLaunchProjection(ctx, row)
@@ -196,8 +194,8 @@ func TestPostgresWorkspaceLaunchReplayClaimSurvivesReconcilerRestartWithoutSkip(
 			store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
 			suffix := strconv.Itoa(stageIndex)
 			accountID, ownerID := "acct-launch-restart-"+suffix, "usr-launch-restart-"+suffix
-			account, owner, organization, membership := provisionedAccountRowsFor(accountID, ownerID, "org-launch-restart-"+suffix, "launch-restart-"+suffix+"@example.com", int64(100+stageIndex))
-			mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+			account, owner := provisionedAccountRowsFor(accountID, ownerID, "launch-restart-"+suffix+"@example.com", int64(100+stageIndex))
+			mustStore(t, store.CreateProvisionedAccount(ctx, account, owner))
 
 			command := workspaceLaunchUnitCommand()
 			command.OperationID = "workspace-launch-restart-" + suffix
@@ -266,8 +264,8 @@ func TestPostgresWorkspaceLaunchConcurrentReplayResumeAllowsOneWriter(t *testing
 			store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
 			suffix := strconv.Itoa(stageIndex)
 			accountID, ownerID := "acct-launch-cas-"+suffix, "usr-launch-cas-"+suffix
-			account, owner, organization, membership := provisionedAccountRowsFor(accountID, ownerID, "org-launch-cas-"+suffix, "launch-cas-"+suffix+"@example.com", int64(200+stageIndex))
-			mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+			account, owner := provisionedAccountRowsFor(accountID, ownerID, "launch-cas-"+suffix+"@example.com", int64(200+stageIndex))
+			mustStore(t, store.CreateProvisionedAccount(ctx, account, owner))
 
 			command := workspaceLaunchUnitCommand()
 			command.OperationID = "workspace-launch-cas-" + suffix
@@ -414,10 +412,10 @@ func TestPostgresWorkspaceLaunchFreshPendingContinuationCASAllowsOneOwnerRead(t 
 func TestPostgresWorkspaceLaunchLegacyV3MissingFreshContinuationFieldsHasZeroBudget(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
-	account, owner, organization, membership := provisionedAccountRowsFor(
-		"acct-fresh-legacy", "usr-fresh-legacy", "org-fresh-legacy", "fresh-legacy@example.com", 841,
+	account, owner := provisionedAccountRowsFor(
+		"acct-fresh-legacy", "usr-fresh-legacy", "fresh-legacy@example.com", 841,
 	)
-	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner))
 	command := workspaceLaunchUnitCommand()
 	command.OperationID, command.AccountID, command.OwnerUserID = "workspace-launch-fresh-legacy", "acct-fresh-legacy", "usr-fresh-legacy"
 	command.WorkspaceID, command.Sub2APIUserID = "ws-fresh-legacy", 841

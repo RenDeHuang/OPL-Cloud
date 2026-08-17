@@ -93,6 +93,28 @@ by this repository change.
   `#345`-`#348`, the implementation and contract patches remove 2,412 more
   lines than they add. `npm run verify:local` and every required PR check pass
   after canonical absorption.
+- The current Ledger simplification slice retires the structured Artifact,
+  Review, ReviewPolicy, ReviewGate, and Continuation APIs, stores, routes, and
+  generated Ent code. Receipt `artifactId`, `reviewId`, `outputRefs`,
+  `reviewerChecks`, `continuationId`, and `continuation` remain caller-owned
+  opaque provenance; Ledger does not generate continuation identities, hide
+  provenance on reads, or authorize Workspace operations. Historical
+  `review_policies` rows and Receipt provenance columns remain retained without
+  migration or deletion. Focused Ledger Go tests and
+  `npm run verify:local:full` pass, including the retained Ledger PostgreSQL
+  path with zero skips and the complete local-Docker vertical.
+- Control Plane identity now uses `Account` and `User` as its only application
+  and Ent models. Organization/Membership runtime stores, provisioning,
+  authentication, reconcile paths, generated code, and test-only stores are
+  removed. The historical tables, rows, and IDs remain under the
+  `202608170002_legacy_identity_table_custody.sql` migration for read-only
+  migration custody; no historical table or row was dropped.
+- Protected Instance inventory run `31992269752` reported zero WorkspaceBackup
+  rows, zero matching Fabric operations, zero `VolumeSnapshot` objects, zero
+  `VolumeSnapshotContent` objects, and zero restored PVCs, with zero database,
+  Kubernetes, or provider mutations. Cloud then removed the caller-zero Fabric
+  Snapshot/Restore service, provider, HTTP, replay, and focused-test surfaces;
+  historical migrations and data custody remain unchanged.
 - Two further native-replacement candidates were rejected instead of merged.
   Converting the next two CLI parsers to `node:util.parseArgs` added 54 net
   lines, while using `http.ServeFile` only for uncompressed assets retained the
@@ -231,8 +253,8 @@ by this repository change.
 - ContentTransfer application runtime/API/Ent schema, Archive application models,
   `ExecutionRequest` application code, and Control Plane `WorkspaceBackup` Ent
   model are retired; historical migrations, tables, and data were not dropped.
-  Snapshot/Restore remains an extension surface pending owner-authoritative
-  resource disposition.
+  Snapshot/Restore application service, provider, HTTP, replay, and focused-test
+  surfaces are also retired after the protected zero inventory recorded above.
 - The Control Plane Session credential vault is process-local and single
   replica. Horizontal scaling is not supported until a secure shared vault and
   distributed wallet-mutation serialization boundary exist.
@@ -462,14 +484,13 @@ Acceptance B remains incomplete. This is Instance-owner evidence, not a Cloud
 deployment claim; current deployment, Runtime, billing, rollback, and receipt
 claims must still be read back from Instance for the exact candidate.
 
-The Cloud GitHub repository still carries residual legacy production settings.
-It has six non-release Environments in addition to `cloud-release`, and 2,086
-historical Deployment records; 2,079 records name the `production` environment,
-whose current configuration exposes 23 Secret names and 31 variables. These
-records include every Actions job that declared an environment and are not
-evidence of 2,079 server rollouts. The settings are external cleanup state, not
-an excuse to keep instance tool source in Cloud; the protected `cloud-release`
-environment remains product-release authority and is not a retirement target.
+Cloud GitHub no longer carries a medopl production Environment, Secret/variable
+surface, or historical medopl Deployment record. Fresh API readback lists only
+the current `cloud-release`, `github-pages`, and `whitepaper-production`
+Environments and 13 corresponding Deployment records: eight release records,
+three Pages records, and two whitepaper records. The protected `cloud-release`
+Environment remains the product-release authority; Pages and whitepaper retain
+their own publication evidence.
 
 Capacity evidence targets a 1000-provisioned-user data set. It does not claim
 1000 concurrent users, concurrent provisioning, multiple Control Plane

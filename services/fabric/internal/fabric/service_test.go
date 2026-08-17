@@ -1281,52 +1281,6 @@ func TestCreateStorageAttachmentOperationPersistsProviderResourceIdentity(t *tes
 	}
 }
 
-func TestStorageSnapshotRestorePersistsAndKeepsSourceVolume(t *testing.T) {
-	ctx := context.Background()
-	store := NewMemoryOperationStore()
-	service := NewServiceWithOperationStore(testProvider{}, store)
-	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "source-compute"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitForOperation(t, service, "create_compute_allocation", "compute_allocation", compute.ID, "succeeded")
-	volume, err := service.CreateStorageVolume(ctx, StorageVolumeInput{ID: "vol-source", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: compute.ID, Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "source-volume"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := service.CreateStorageSnapshot(ctx, StorageSnapshotInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", VolumeID: volume.ID, IdempotencyKey: "snapshot-once"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Status != "ready" || snapshot.VolumeID != volume.ID {
-		t.Fatalf("snapshot = %#v", snapshot)
-	}
-
-	restarted := NewServiceWithOperationStore(testProvider{}, store)
-	persisted, ok := restarted.GetStorageSnapshot(ctx, snapshot.ID)
-	if !ok || persisted.ProviderSnapshotRef == "" {
-		t.Fatalf("persisted snapshot = %#v, ok=%v", persisted, ok)
-	}
-	replayed, err := restarted.CreateStorageSnapshot(ctx, StorageSnapshotInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", VolumeID: volume.ID, IdempotencyKey: "snapshot-once"})
-	if err != nil || replayed.ID != snapshot.ID {
-		t.Fatalf("replayed snapshot = %#v, err=%v", replayed, err)
-	}
-	restored, err := restarted.RestoreStorageSnapshot(ctx, StorageRestoreInput{SnapshotID: snapshot.ID, AccountID: "acct-alpha", WorkspaceID: "ws-restored", TargetVolumeID: "vol-restored", IdempotencyKey: "restore-once"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if restored.ID != "vol-restored" || restored.WorkspaceID != "ws-restored" || restored.SizeGB != 10 {
-		t.Fatalf("restored volume = %#v", restored)
-	}
-	if source, ok := restarted.GetStorageVolume(ctx, volume.ID); !ok || source.Status != "ready" {
-		t.Fatalf("source volume changed: %#v, ok=%v", source, ok)
-	}
-	destroyed, err := restarted.DestroyStorageSnapshot(ctx, snapshot.ID)
-	if err != nil || destroyed.Status != "destroyed" {
-		t.Fatalf("destroyed snapshot = %#v, err=%v", destroyed, err)
-	}
-}
-
 func TestWorkspaceRuntimeCreationDoesNotReturnCredential(t *testing.T) {
 	store := NewMemoryOperationStore()
 	service := NewServiceWithOperationStore(testProvider{}, store)
@@ -3333,23 +3287,6 @@ func (testProvider) RenewStorageVolume(_ context.Context, volume StorageVolume) 
 func (testProvider) DestroyStorageVolume(_ context.Context, volume StorageVolume) (StorageVolume, error) {
 	volume.Status = "destroyed"
 	return volume, nil
-}
-
-func (testProvider) CreateStorageSnapshot(_ context.Context, input StorageSnapshotInput, volume StorageVolume) (StorageSnapshot, error) {
-	return StorageSnapshot{ID: "snap-test", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, VolumeID: volume.ID, Status: "ready", Provider: "test", ProviderSnapshotRef: "volumesnapshot/snap-test", ProviderRequestID: "snapshot-request", SizeGB: volume.SizeGB, CreatedAt: time.Now().UTC()}, nil
-}
-
-func (testProvider) SyncStorageSnapshot(_ context.Context, snapshot StorageSnapshot) (StorageSnapshot, error) {
-	return snapshot, nil
-}
-
-func (testProvider) RestoreStorageSnapshot(_ context.Context, input StorageRestoreInput, snapshot StorageSnapshot) (StorageVolume, error) {
-	return StorageVolume{ID: input.TargetVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Provider: "test", ProviderResourceID: "pvc/" + input.TargetVolumeID, ProviderRequestID: "restore-request", SizeGB: snapshot.SizeGB, CreatedAt: time.Now().UTC()}, nil
-}
-
-func (testProvider) DestroyStorageSnapshot(_ context.Context, snapshot StorageSnapshot) (StorageSnapshot, error) {
-	snapshot.Status = "destroyed"
-	return snapshot, nil
 }
 
 func (testProvider) CreateStorageAttachment(_ context.Context, input StorageAttachmentInput, _ ComputeAllocation, _ StorageVolume) (StorageAttachment, error) {

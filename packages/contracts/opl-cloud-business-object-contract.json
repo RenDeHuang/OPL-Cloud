@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "owner": "OPL Console",
   "purpose": "Machine-readable requirements for current commercial Console objects.",
   "state": "current",
@@ -39,7 +39,7 @@
     "Sub2API owns customer credential authentication; Control Plane stores only the verified mapping and local Session.",
     "Control Plane owns the account-to-Sub2API mapping, monthly charge operations, price snapshots, entitlement, renewal, and expiry policy.",
     "Workspace is the only customer monthly charge owner; new ComputeAllocation and StorageVolume rows are provider fulfillment facts without customer billing fields.",
-    "Ledger owns append-only evidence receipts, review evidence, and reconciliation reports; it does not own a spendable balance.",
+    "Ledger owns append-only evidence receipts, caller-owned opaque provenance, and reconciliation reports; it does not own review policy semantics or a spendable balance.",
     "Fabric owns live ComputeAllocation, StorageVolume, StorageAttachment, Workspace Runtime, provider execution evidence, and FabricOperation facts; unavailable live readback never falls back to a Control Plane status copy.",
     "Console presents Account, Session, Workspace lifecycle, AdminAuditEvent, SupportTicketMapping, and product DTOs; it calls only Control Plane product APIs.",
     "Frontend displays backend DTOs and must not derive pricing, billing, lifecycle, or provider state locally.",
@@ -49,7 +49,7 @@
     "one-person-lab-cloud is the single current product and implementation repository; opl-cloud is an internal artifact and service identifier only.",
     "Console owns UI and product presentation through Control Plane APIs only; Sub2API authenticates customer credentials.",
     "Fabric owns compute, storage, attachment, Workspace runtime, and provider execution boundaries.",
-    "Ledger owns evidence, audit, reconciliation, and review policy boundaries."
+    "Ledger owns receipt, opaque-provenance, idempotency, retention, and reconciliation boundaries; calling domains own review policy and continuation authorization."
   ],
   "objectKinds": [
     {

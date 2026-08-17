@@ -44,6 +44,15 @@ func newWorkspaceRenewalAPIFixture(t *testing.T) workspaceRenewalAPIFixture {
 	return newWorkspaceRenewalAPIFixtureWithStore(t, newMemoryTableStore())
 }
 
+func currentWorkspaceRenewalAPIRow() map[string]any {
+	workspace := canonicalWorkspaceRenewalRow(false)
+	periodStart := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	paidThrough := nextBillingMonth(periodStart, periodStart.Day())
+	workspace["periodStart"], workspace["paidThrough"] = periodStart.Format(time.RFC3339Nano), paidThrough.Format(time.RFC3339Nano)
+	workspace["nextRenewalAt"], workspace["billingAnchorDay"] = paidThrough.Add(-monthlyRenewalLead).Format(time.RFC3339Nano), int64(periodStart.Day())
+	return workspace
+}
+
 func newWorkspaceRenewalAPIFixtureWithStore(t *testing.T, store StateStore) workspaceRenewalAPIFixture {
 	t.Helper()
 	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
@@ -53,7 +62,7 @@ func newWorkspaceRenewalAPIFixtureWithStore(t *testing.T, store StateStore) work
 	handler := server.(*controlPlaneHTTPHandler)
 	owner := tenantOwnerSessionForTest(t, server)
 	ownerID := sessionUserIDForTest(t, server, owner)
-	workspace := canonicalWorkspaceRenewalRow(false)
+	workspace := currentWorkspaceRenewalAPIRow()
 	workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = "workspace-renewal-api", "acct-alpha", "acct-alpha", ownerID
 	workspace["state"], workspace["status"] = "running", "running"
 	mustStore(t, handler.app.tables.SaveWorkspace(context.Background(), workspace))
@@ -202,7 +211,7 @@ func TestCloudAdminCanManageOwnWorkspaceRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := server.(*controlPlaneHTTPHandler)
-	workspace := canonicalWorkspaceRenewalRow(false)
+	workspace := currentWorkspaceRenewalAPIRow()
 	workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = "workspace-admin", "acct-admin", "acct-admin", "usr-admin"
 	workspace["state"], workspace["status"] = "running", "running"
 	mustStore(t, handler.app.tables.SaveWorkspace(context.Background(), workspace))

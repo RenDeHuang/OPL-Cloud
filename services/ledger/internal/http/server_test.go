@@ -84,9 +84,6 @@ func TestLedgerCapabilityIsPreverifiedBeforeOwnerLookup(t *testing.T) {
 	server := NewServerWithAuth(store, "internal-secret", key)
 	for _, path := range []string{
 		"/ledger/receipts/receipt-alpha?accountId=acct-alpha&workspaceId=ws-alpha",
-		"/ledger/artifacts/artifact-alpha?workspaceId=ws-alpha",
-		"/ledger/reviews/review-alpha?workspaceId=ws-alpha",
-		"/ledger/review-policies/policy-alpha?workspaceId=ws-alpha",
 	} {
 		req := testRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
@@ -97,31 +94,6 @@ func TestLedgerCapabilityIsPreverifiedBeforeOwnerLookup(t *testing.T) {
 	}
 	if store.calls != 0 {
 		t.Fatalf("invalid capabilities reached owner lookup: calls=%d", store.calls)
-	}
-}
-
-func TestLedgerCapabilityComparesPersistedOwnerAfterPreverification(t *testing.T) {
-	const key = "ledger-capability-key-for-http-tests-32-chars"
-	store := ledger.NewMemoryStore()
-	artifact, err := store.RecordArtifact(context.Background(), ledger.ArtifactInput{
-		OrganizationID: "org-alpha", WorkspaceID: "ws-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", JobID: "job-alpha",
-		Digest: "sha256:artifact-alpha", MediaType: "application/json", SizeBytes: 42, StorageRef: "artifact-alpha", IdempotencyKey: "artifact-alpha",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := NewServerWithAuth(store, "internal-secret", key)
-	path := "/ledger/artifacts/" + artifact.ArtifactID + "?workspaceId=ws-alpha"
-	req := testRequest(http.MethodGet, path, nil)
-	claims := ledgerCapabilityClaims{
-		Version: 1, Caller: "control-plane", WorkspaceID: "ws-alpha", ResourceKind: "artifact", ResourceID: artifact.ArtifactID,
-		Action: "read_artifact", OperationID: requestOperationID(req), ExpiresAt: time.Now().Add(time.Minute).Unix(),
-	}
-	req.Header.Set(ledgerCapabilityHeader, testLedgerCapability(t, key, claims, nil))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), artifact.ArtifactID) {
-		t.Fatalf("valid capability status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -240,6 +212,27 @@ func TestRetiredCommercialRoutesAreAbsent(t *testing.T) {
 	}
 }
 
+func TestRetiredEvidenceRoutesAreAbsent(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/ledger/artifacts"},
+		{http.MethodGet, "/ledger/artifacts/artifact-alpha"},
+		{http.MethodPost, "/ledger/reviews"},
+		{http.MethodGet, "/ledger/reviews/review-alpha"},
+		{http.MethodPost, "/ledger/review-policies"},
+		{http.MethodGet, "/ledger/review-policies"},
+		{http.MethodGet, "/ledger/review-policies/policy-alpha"},
+		{http.MethodPost, "/ledger/review-gates/evaluate"},
+		{http.MethodGet, "/ledger/receipts/receipt-alpha/continuation"},
+	} {
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, testRequest(tc.method, tc.path, bytes.NewBufferString(`{}`)))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s %s status=%d body=%s", tc.method, tc.path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestReconciliationHTTP(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
 	req := testRequest(http.MethodPost, "/ledger/reconciliation", bytes.NewBufferString(`{"report":{"id":"recon-alpha","status":"mismatch","counts":{"billingOperations":1,"matched":0,"exceptions":1},"exceptions":[{"resourceType":"compute","resourceId":"compute-alpha","code":"ledger_receipt_missing"}]}}`))
@@ -304,21 +297,6 @@ func (s *callCountingStore) Receipt(ctx context.Context, id string) (ledger.Rece
 	return s.Store.Receipt(ctx, id)
 }
 
-func (s *callCountingStore) Artifact(ctx context.Context, id string) (ledger.Artifact, error) {
-	s.calls++
-	return s.Store.Artifact(ctx, id)
-}
-
-func (s *callCountingStore) Review(ctx context.Context, id string) (ledger.Review, error) {
-	s.calls++
-	return s.Store.Review(ctx, id)
-}
-
-func (s *callCountingStore) ReviewPolicy(ctx context.Context, id string) (ledger.ReviewPolicy, error) {
-	s.calls++
-	return s.Store.ReviewPolicy(ctx, id)
-}
-
 func (s *callCountingStore) RecordReceipt(context.Context, ledger.ReceiptInput) (ledger.Receipt, error) {
 	s.calls++
 	return ledger.Receipt{}, nil
@@ -332,26 +310,6 @@ func (s *callCountingStore) UpdateReceiptRetention(context.Context, ledger.Recei
 func (s *callCountingStore) PrivacyDeleteReceipt(context.Context, ledger.ReceiptPrivacyDeleteInput) (ledger.ReceiptRetentionResult, error) {
 	s.calls++
 	return ledger.ReceiptRetentionResult{}, nil
-}
-
-func (s *callCountingStore) RecordArtifact(context.Context, ledger.ArtifactInput) (ledger.Artifact, error) {
-	s.calls++
-	return ledger.Artifact{}, nil
-}
-
-func (s *callCountingStore) RecordReview(context.Context, ledger.ReviewInput) (ledger.Review, error) {
-	s.calls++
-	return ledger.Review{}, nil
-}
-
-func (s *callCountingStore) CreateReviewPolicy(context.Context, ledger.ReviewPolicyInput) (ledger.ReviewPolicy, error) {
-	s.calls++
-	return ledger.ReviewPolicy{}, nil
-}
-
-func (s *callCountingStore) EvaluateReviewGate(context.Context, ledger.ReviewGateInput) (ledger.ReviewGateResult, error) {
-	s.calls++
-	return ledger.ReviewGateResult{}, nil
 }
 
 func (s *callCountingStore) RecordReconciliation(context.Context, ledger.ReconciliationInput) (ledger.ReconciliationResult, error) {
@@ -368,10 +326,6 @@ func TestJSONBodyLimitAppliesBeforeLedgerStoreCall(t *testing.T) {
 		{name: "receipt", path: "/ledger/receipts"},
 		{name: "retention", path: "/ledger/receipts/receipt-alpha/retention"},
 		{name: "privacy delete", path: "/ledger/receipts/receipt-alpha/privacy-delete"},
-		{name: "artifact", path: "/ledger/artifacts"},
-		{name: "review", path: "/ledger/reviews"},
-		{name: "review policy", path: "/ledger/review-policies"},
-		{name: "review gate", path: "/ledger/review-gates/evaluate"},
 		{name: "reconciliation", path: "/ledger/reconciliation"},
 	}
 	for _, test := range tests {
@@ -700,28 +654,6 @@ func TestReceiptRetentionAndPrivacyHTTP(t *testing.T) {
 	}
 }
 
-func TestContinuationHTTP(t *testing.T) {
-	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
-	receipt := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"execution.receipt.v1","status":"completed","surface":"workspace","organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","continuation":{"continuationId":"continuation-alpha","taskVersion":2}}`))
-	receipt.Header.Set("Idempotency-Key", "http-continuation-receipt")
-	receiptRec := httptest.NewRecorder()
-	server.ServeHTTP(receiptRec, receipt)
-	if receiptRec.Code != http.StatusCreated {
-		t.Fatalf("receipt status = %d, want %d: %s", receiptRec.Code, http.StatusCreated, receiptRec.Body.String())
-	}
-	var receiptBody map[string]any
-	if err := json.NewDecoder(receiptRec.Body).Decode(&receiptBody); err != nil {
-		t.Fatalf("decode receipt: %v", err)
-	}
-
-	req := testRequest(http.MethodGet, "/ledger/receipts/"+receiptBody["receiptId"].(string)+"/continuation", nil)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("continuation status = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
-	}
-}
-
 func TestReceiptHTTPRejectsContinuationWithoutFullIdentity(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
 	req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"workspace.created","status":"completed","surface":"workspace","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","continuation":{"continuationId":"continuation-alpha"}}`))
@@ -790,114 +722,50 @@ func TestReceiptListHTTPRejectsInvalidPagination(t *testing.T) {
 	}
 }
 
-func TestContinuationHTTPReturnsNotFoundWhenReceiptHasNone(t *testing.T) {
+func TestReceiptHTTPPreservesOpaqueProvenance(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
-	receipt := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"execution.receipt.v1","status":"completed","surface":"workspace","workspaceId":"workspace-alpha"}`))
-	receipt.Header.Set("Idempotency-Key", "http-no-continuation-receipt")
-	receiptRec := httptest.NewRecorder()
-	server.ServeHTTP(receiptRec, receipt)
-	var receiptBody map[string]any
-	if err := json.NewDecoder(receiptRec.Body).Decode(&receiptBody); err != nil {
-		t.Fatalf("decode receipt: %v", err)
+	body := `{"type":"execution.receipt.v1","status":"completed","surface":"workspace","organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","artifactId":"artifact-alpha","reviewId":"review-alpha","outputRefs":{"digest":"sha256:output"},"reviewerChecks":{"decision":"accepted"},"continuationId":"continuation-alpha","continuation":{"taskVersion":2,"freeForm":"opaque"}}`
+	req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(body))
+	req.Header.Set("Idempotency-Key", "http-opaque-provenance")
+	createdRec := httptest.NewRecorder()
+	server.ServeHTTP(createdRec, req)
+	if createdRec.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", createdRec.Code, createdRec.Body.String())
 	}
+	var created ledger.Receipt
+	if err := json.NewDecoder(createdRec.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	assertProvenance := func(receipt ledger.Receipt) {
+		t.Helper()
+		if receipt.ArtifactID != "artifact-alpha" || receipt.ReviewID != "review-alpha" || receipt.OutputRefs["digest"] != "sha256:output" || receipt.ReviewerChecks["decision"] != "accepted" || receipt.ContinuationID != "continuation-alpha" || receipt.Continuation["freeForm"] != "opaque" {
+			t.Fatalf("opaque provenance changed: %#v", receipt)
+		}
+	}
+	assertProvenance(created)
 
-	req := testRequest(http.MethodGet, "/ledger/receipts/"+receiptBody["receiptId"].(string)+"/continuation", nil)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("continuation status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	detailRec := httptest.NewRecorder()
+	server.ServeHTTP(detailRec, testRequest(http.MethodGet, "/ledger/receipts/"+created.ReceiptID, nil))
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("detail status=%d body=%s", detailRec.Code, detailRec.Body.String())
 	}
-}
-
-func TestArtifactAndReviewHTTP(t *testing.T) {
-	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
-	artifactReq := testRequest(http.MethodPost, "/ledger/artifacts", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","digest":"sha256:abc123","mediaType":"application/json","sizeBytes":42,"storageRef":"storage-artifact-alpha"}`))
-	artifactReq.Header.Set("Idempotency-Key", "http-artifact-once")
-	artifactRec := httptest.NewRecorder()
-	server.ServeHTTP(artifactRec, artifactReq)
-	if artifactRec.Code != http.StatusCreated {
-		t.Fatalf("artifact status = %d, want %d: %s", artifactRec.Code, http.StatusCreated, artifactRec.Body.String())
+	var detail ledger.Receipt
+	if err := json.NewDecoder(detailRec.Body).Decode(&detail); err != nil {
+		t.Fatal(err)
 	}
-	var artifact ledger.Artifact
-	if err := json.NewDecoder(artifactRec.Body).Decode(&artifact); err != nil {
-		t.Fatalf("decode artifact: %v", err)
-	}
-	getArtifactRec := httptest.NewRecorder()
-	server.ServeHTTP(getArtifactRec, testRequest(http.MethodGet, "/ledger/artifacts/"+artifact.ArtifactID, nil))
-	if getArtifactRec.Code != http.StatusOK {
-		t.Fatalf("get artifact status = %d: %s", getArtifactRec.Code, getArtifactRec.Body.String())
-	}
-
-	reviewReq := testRequest(http.MethodPost, "/ledger/reviews", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","reviewerRef":"reviewer-rca","reviewerVersion":"1.0.0","inputArtifactDigests":["sha256:abc123"],"checks":{"schema":"passed"},"decision":"accepted"}`))
-	reviewReq.Header.Set("Idempotency-Key", "http-review-once")
-	reviewRec := httptest.NewRecorder()
-	server.ServeHTTP(reviewRec, reviewReq)
-	if reviewRec.Code != http.StatusCreated {
-		t.Fatalf("review status = %d, want %d: %s", reviewRec.Code, http.StatusCreated, reviewRec.Body.String())
-	}
-	var review ledger.Review
-	if err := json.NewDecoder(reviewRec.Body).Decode(&review); err != nil {
-		t.Fatalf("decode review: %v", err)
-	}
-	getReviewRec := httptest.NewRecorder()
-	server.ServeHTTP(getReviewRec, testRequest(http.MethodGet, "/ledger/reviews/"+review.ReviewID, nil))
-	if getReviewRec.Code != http.StatusOK {
-		t.Fatalf("get review status = %d: %s", getReviewRec.Code, getReviewRec.Body.String())
-	}
-}
-
-func TestReviewPolicyAndGateHTTP(t *testing.T) {
-	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
-	policyReq := testRequest(http.MethodPost, "/ledger/review-policies", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","version":"1","requiredReviewers":[{"reviewerRef":"reviewer-rca","reviewerVersion":"1.0.0"}]}`))
-	policyReq.Header.Set("Idempotency-Key", "policy-http")
-	policyRec := httptest.NewRecorder()
-	server.ServeHTTP(policyRec, policyReq)
-	if policyRec.Code != http.StatusCreated {
-		t.Fatalf("create policy status = %d body=%s", policyRec.Code, policyRec.Body.String())
-	}
-	var policy ledger.ReviewPolicy
-	if err := json.Unmarshal(policyRec.Body.Bytes(), &policy); err != nil || policy.PolicyID == "" {
-		t.Fatalf("decode policy = %#v, %v", policy, err)
-	}
+	assertProvenance(detail)
 
 	listRec := httptest.NewRecorder()
-	server.ServeHTTP(listRec, testRequest(http.MethodGet, "/ledger/review-policies?jobId=job-alpha&status=active", nil))
-	if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), policy.PolicyID) {
-		t.Fatalf("list policies status = %d body=%s", listRec.Code, listRec.Body.String())
+	server.ServeHTTP(listRec, testRequest(http.MethodGet, "/ledger/receipts?workspaceId=workspace-alpha&jobId=job-alpha", nil))
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", listRec.Code, listRec.Body.String())
 	}
-
-	gateRec := httptest.NewRecorder()
-	server.ServeHTTP(gateRec, testRequest(http.MethodPost, "/ledger/review-gates/evaluate", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","reviewIds":[]}`)))
-	if gateRec.Code != http.StatusOK || !strings.Contains(gateRec.Body.String(), `"status":"review_required"`) || !strings.Contains(gateRec.Body.String(), `"continuationEligible":false`) {
-		t.Fatalf("evaluate gate status = %d body=%s", gateRec.Code, gateRec.Body.String())
+	var page ledger.ReceiptPage
+	if err := json.NewDecoder(listRec.Body).Decode(&page); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestEvidenceHTTPMapsInputNotFoundAndConflict(t *testing.T) {
-	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
-	invalidReq := testRequest(http.MethodPost, "/ledger/artifacts", bytes.NewBufferString(`{"workspaceId":"workspace-alpha","storageRef":"https://example.test/result?token=secret"}`))
-	invalidReq.Header.Set("Idempotency-Key", "invalid-artifact")
-	invalidRec := httptest.NewRecorder()
-	server.ServeHTTP(invalidRec, invalidReq)
-	if invalidRec.Code != http.StatusBadRequest {
-		t.Fatalf("invalid artifact status = %d, want %d", invalidRec.Code, http.StatusBadRequest)
+	if len(page.Receipts) != 1 {
+		t.Fatalf("list page=%#v", page)
 	}
-
-	notFoundRec := httptest.NewRecorder()
-	server.ServeHTTP(notFoundRec, testRequest(http.MethodGet, "/ledger/reviews/missing", nil))
-	if notFoundRec.Code != http.StatusNotFound {
-		t.Fatalf("missing review status = %d, want %d", notFoundRec.Code, http.StatusNotFound)
-	}
-
-	body := `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","digest":"sha256:abc123","mediaType":"application/json","sizeBytes":42,"storageRef":"storage-artifact-alpha"}`
-	first := testRequest(http.MethodPost, "/ledger/artifacts", bytes.NewBufferString(body))
-	first.Header.Set("Idempotency-Key", "conflicting-artifact")
-	server.ServeHTTP(httptest.NewRecorder(), first)
-	second := testRequest(http.MethodPost, "/ledger/artifacts", bytes.NewBufferString(strings.Replace(body, "abc123", "different", 1)))
-	second.Header.Set("Idempotency-Key", "conflicting-artifact")
-	conflictRec := httptest.NewRecorder()
-	server.ServeHTTP(conflictRec, second)
-	if conflictRec.Code != http.StatusConflict {
-		t.Fatalf("conflicting artifact status = %d, want %d: %s", conflictRec.Code, http.StatusConflict, conflictRec.Body.String())
-	}
+	assertProvenance(page.Receipts[0])
 }

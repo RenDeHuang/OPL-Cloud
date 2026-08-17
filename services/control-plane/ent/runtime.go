@@ -11,8 +11,6 @@ import (
 	"opl-cloud/services/control-plane/ent/authattempt"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
-	"opl-cloud/services/control-plane/ent/membership"
-	"opl-cloud/services/control-plane/ent/organization"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/projecttasksynchead"
 	"opl-cloud/services/control-plane/ent/remotedevicecredential"
@@ -479,72 +477,6 @@ func init() {
 	computeallocationDescID := computeallocationFields[0].Descriptor()
 	// computeallocation.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	computeallocation.IDValidator = computeallocationDescID.Validators[0].(func(string) error)
-	membershipFields := schema.Membership{}.Fields()
-	_ = membershipFields
-	// membershipDescCreatedAt is the schema descriptor for created_at field.
-	membershipDescCreatedAt := membershipFields[1].Descriptor()
-	// membership.DefaultCreatedAt holds the default value on creation for the created_at field.
-	membership.DefaultCreatedAt = membershipDescCreatedAt.Default.(func() time.Time)
-	// membershipDescUpdatedAt is the schema descriptor for updated_at field.
-	membershipDescUpdatedAt := membershipFields[2].Descriptor()
-	// membership.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	membership.DefaultUpdatedAt = membershipDescUpdatedAt.Default.(func() time.Time)
-	// membership.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	membership.UpdateDefaultUpdatedAt = membershipDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// membershipDescAccountID is the schema descriptor for account_id field.
-	membershipDescAccountID := membershipFields[3].Descriptor()
-	// membership.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
-	membership.AccountIDValidator = membershipDescAccountID.Validators[0].(func(string) error)
-	// membershipDescOrganizationID is the schema descriptor for organization_id field.
-	membershipDescOrganizationID := membershipFields[4].Descriptor()
-	// membership.OrganizationIDValidator is a validator for the "organization_id" field. It is called by the builders before save.
-	membership.OrganizationIDValidator = membershipDescOrganizationID.Validators[0].(func(string) error)
-	// membershipDescUserID is the schema descriptor for user_id field.
-	membershipDescUserID := membershipFields[5].Descriptor()
-	// membership.UserIDValidator is a validator for the "user_id" field. It is called by the builders before save.
-	membership.UserIDValidator = membershipDescUserID.Validators[0].(func(string) error)
-	// membershipDescRole is the schema descriptor for role field.
-	membershipDescRole := membershipFields[6].Descriptor()
-	// membership.DefaultRole holds the default value on creation for the role field.
-	membership.DefaultRole = membershipDescRole.Default.(string)
-	// membership.RoleValidator is a validator for the "role" field. It is called by the builders before save.
-	membership.RoleValidator = membershipDescRole.Validators[0].(func(string) error)
-	// membershipDescStatus is the schema descriptor for status field.
-	membershipDescStatus := membershipFields[7].Descriptor()
-	// membership.DefaultStatus holds the default value on creation for the status field.
-	membership.DefaultStatus = membershipDescStatus.Default.(string)
-	// membershipDescID is the schema descriptor for id field.
-	membershipDescID := membershipFields[0].Descriptor()
-	// membership.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	membership.IDValidator = membershipDescID.Validators[0].(func(string) error)
-	organizationFields := schema.Organization{}.Fields()
-	_ = organizationFields
-	// organizationDescCreatedAt is the schema descriptor for created_at field.
-	organizationDescCreatedAt := organizationFields[1].Descriptor()
-	// organization.DefaultCreatedAt holds the default value on creation for the created_at field.
-	organization.DefaultCreatedAt = organizationDescCreatedAt.Default.(func() time.Time)
-	// organizationDescUpdatedAt is the schema descriptor for updated_at field.
-	organizationDescUpdatedAt := organizationFields[2].Descriptor()
-	// organization.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	organization.DefaultUpdatedAt = organizationDescUpdatedAt.Default.(func() time.Time)
-	// organization.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	organization.UpdateDefaultUpdatedAt = organizationDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// organizationDescBillingAccountID is the schema descriptor for billing_account_id field.
-	organizationDescBillingAccountID := organizationFields[3].Descriptor()
-	// organization.BillingAccountIDValidator is a validator for the "billing_account_id" field. It is called by the builders before save.
-	organization.BillingAccountIDValidator = organizationDescBillingAccountID.Validators[0].(func(string) error)
-	// organizationDescName is the schema descriptor for name field.
-	organizationDescName := organizationFields[4].Descriptor()
-	// organization.DefaultName holds the default value on creation for the name field.
-	organization.DefaultName = organizationDescName.Default.(string)
-	// organizationDescStatus is the schema descriptor for status field.
-	organizationDescStatus := organizationFields[5].Descriptor()
-	// organization.DefaultStatus holds the default value on creation for the status field.
-	organization.DefaultStatus = organizationDescStatus.Default.(string)
-	// organizationDescID is the schema descriptor for id field.
-	organizationDescID := organizationFields[0].Descriptor()
-	// organization.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	organization.IDValidator = organizationDescID.Validators[0].(func(string) error)
 	productione2erecordFields := schema.ProductionE2ERecord{}.Fields()
 	_ = productione2erecordFields
 	// productione2erecordDescCreatedAt is the schema descriptor for created_at field.

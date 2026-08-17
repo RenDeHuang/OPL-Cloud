@@ -9,49 +9,41 @@ import (
 )
 
 type memoryTableStore struct {
-	mu                    sync.Mutex
-	accounts              controlPlaneRecordSet
-	users                 controlPlaneRecordSet
-	userIDByEmail         map[string]string
-	sessions              controlPlaneRecordSet
-	sessionIDsByUser      map[string]map[string]struct{}
-	organizations         controlPlaneRecordSet
-	organizationByAccount map[string]string
-	memberships           controlPlaneRecordSet
-	membershipByAccount   map[string]string
-	computes              controlPlaneRecordSet
-	storages              controlPlaneRecordSet
-	attachments           controlPlaneRecordSet
-	workspaces            controlPlaneRecordSet
-	auditEvents           []map[string]any
-	announcements         controlPlaneRecordSet
-	announcementReads     controlPlaneRecordSet
-	support               controlPlaneRecordSet
-	runtimeOps            []map[string]any
-	productionE2E         controlPlaneRecordSet
-	reconciliation        map[string]any
+	mu                sync.Mutex
+	accounts          controlPlaneRecordSet
+	users             controlPlaneRecordSet
+	userIDByEmail     map[string]string
+	sessions          controlPlaneRecordSet
+	sessionIDsByUser  map[string]map[string]struct{}
+	computes          controlPlaneRecordSet
+	storages          controlPlaneRecordSet
+	attachments       controlPlaneRecordSet
+	workspaces        controlPlaneRecordSet
+	auditEvents       []map[string]any
+	announcements     controlPlaneRecordSet
+	announcementReads controlPlaneRecordSet
+	support           controlPlaneRecordSet
+	runtimeOps        []map[string]any
+	productionE2E     controlPlaneRecordSet
+	reconciliation    map[string]any
 }
 
 func newMemoryTableStore() *memoryTableStore {
 	const developmentOperatorEmail = "admin@opl.local"
 	return &memoryTableStore{
-		accounts:              controlPlaneRecordSet{"acct-admin": {"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": int64(1), "status": "active"}},
-		users:                 controlPlaneRecordSet{"usr-admin": {"id": "usr-admin", "email": developmentOperatorEmail, "accountId": "acct-admin", "role": "admin", "status": "active"}},
-		userIDByEmail:         map[string]string{developmentOperatorEmail: "usr-admin"},
-		sessions:              controlPlaneRecordSet{},
-		sessionIDsByUser:      map[string]map[string]struct{}{},
-		organizations:         controlPlaneRecordSet{"org-admin": {"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}},
-		organizationByAccount: map[string]string{"acct-admin": "org-admin"},
-		memberships:           controlPlaneRecordSet{"mem-admin": {"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}},
-		membershipByAccount:   map[string]string{"acct-admin": "mem-admin"},
-		computes:              controlPlaneRecordSet{},
-		storages:              controlPlaneRecordSet{},
-		attachments:           controlPlaneRecordSet{},
-		workspaces:            controlPlaneRecordSet{},
-		announcements:         controlPlaneRecordSet{},
-		announcementReads:     controlPlaneRecordSet{},
-		support:               controlPlaneRecordSet{},
-		productionE2E:         controlPlaneRecordSet{},
+		accounts:          controlPlaneRecordSet{"acct-admin": {"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": int64(1), "status": "active"}},
+		users:             controlPlaneRecordSet{"usr-admin": {"id": "usr-admin", "email": developmentOperatorEmail, "accountId": "acct-admin", "role": "admin", "status": "active"}},
+		userIDByEmail:     map[string]string{developmentOperatorEmail: "usr-admin"},
+		sessions:          controlPlaneRecordSet{},
+		sessionIDsByUser:  map[string]map[string]struct{}{},
+		computes:          controlPlaneRecordSet{},
+		storages:          controlPlaneRecordSet{},
+		attachments:       controlPlaneRecordSet{},
+		workspaces:        controlPlaneRecordSet{},
+		announcements:     controlPlaneRecordSet{},
+		announcementReads: controlPlaneRecordSet{},
+		support:           controlPlaneRecordSet{},
+		productionE2E:     controlPlaneRecordSet{},
 	}
 }
 
@@ -117,23 +109,18 @@ func (s *memoryTableStore) SaveAccount(_ context.Context, row map[string]any) er
 	return nil
 }
 
-func (s *memoryTableStore) CreateProvisionedAccount(_ context.Context, account, user, organization, membership map[string]any) error {
+func (s *memoryTableStore) CreateProvisionedAccount(_ context.Context, account, user map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	accounts := cloneStateTable(s.accounts)
 	users := cloneStateTable(s.users)
-	organizations := cloneStateTable(s.organizations)
-	memberships := cloneStateTable(s.memberships)
-
-	if err := stageProvisionedAccount(accounts, users, organizations, memberships, account, user, organization, membership); err != nil {
+	if err := stageProvisionedAccount(accounts, users, account, user); err != nil {
 		return err
 	}
 
-	s.accounts, s.users, s.organizations, s.memberships = accounts, users, organizations, memberships
+	s.accounts, s.users = accounts, users
 	s.userIDByEmail[normalizeEmail(stringValue(user["email"]))] = stringValue(user["id"])
-	s.organizationByAccount[stringValue(organization["billingAccountId"])] = stringValue(organization["id"])
-	s.membershipByAccount[stringValue(membership["accountId"])] = stringValue(membership["id"])
 	return nil
 }
 
@@ -313,99 +300,6 @@ func (s *memoryTableStore) DeleteSession(_ context.Context, id string) error {
 		delete(s.sessionIDsByUser[stringValue(row["userId"])], id)
 	}
 	delete(s.sessions, id)
-	return nil
-}
-
-func (s *memoryTableStore) ListOrganizations(_ context.Context) ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return filteredRecords(s.organizations, "")
-}
-
-func (s *memoryTableStore) GetOrganizationByAccount(_ context.Context, accountID string) (map[string]any, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	row := s.organizations[s.organizationByAccount[accountID]]
-	return cloneMap(row), row != nil, nil
-}
-
-func (s *memoryTableStore) SaveOrganization(_ context.Context, row map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	organizationID, accountID := stringValue(row["id"]), stringValue(row["billingAccountId"])
-	if organizationID == "" || s.accounts[accountID] == nil {
-		return errAccountNotFound
-	}
-	for _, existing := range s.organizations {
-		if stringValue(existing["id"]) != organizationID && stringValue(existing["billingAccountId"]) == accountID {
-			return errMembershipAccountMismatch
-		}
-		if stringValue(existing["id"]) == organizationID && stringValue(existing["billingAccountId"]) != accountID {
-			return errMembershipAccountMismatch
-		}
-	}
-	if previous := s.organizations[organizationID]; previous != nil {
-		delete(s.organizationByAccount, stringValue(previous["billingAccountId"]))
-	}
-	s.organizations[organizationID] = cloneMap(row)
-	s.organizationByAccount[accountID] = organizationID
-	return nil
-}
-
-func (s *memoryTableStore) ListMemberships(_ context.Context) ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return filteredRecords(s.memberships, "")
-}
-
-func (s *memoryTableStore) GetMembershipByAccount(_ context.Context, accountID string) (map[string]any, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	row := s.memberships[s.membershipByAccount[accountID]]
-	return cloneMap(row), row != nil, nil
-}
-
-func (s *memoryTableStore) SaveMembership(_ context.Context, row map[string]any) error {
-	if stringValue(row["role"]) != "owner" {
-		return errInvalidRole
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	accountID := stringValue(row["accountId"])
-	organization := s.organizations[stringValue(row["organizationId"])]
-	user := s.users[stringValue(row["userId"])]
-	if s.accounts[accountID] == nil {
-		return errAccountNotFound
-	}
-	if organization == nil {
-		return errOrganizationNotFound
-	}
-	if user == nil {
-		return errMembershipUserNotFound
-	}
-	if stringValue(organization["billingAccountId"]) != accountID || stringValue(user["accountId"]) != accountID {
-		return errMembershipAccountMismatch
-	}
-	if stringValue(s.accounts[accountID]["ownerUserId"]) != stringValue(user["id"]) || stringValue(row["role"]) != "owner" || stringValue(row["status"]) != "active" {
-		return errMembershipAccountMismatch
-	}
-	membershipID := stringValue(row["id"])
-	for _, existing := range s.memberships {
-		if stringValue(existing["id"]) == membershipID {
-			if stringValue(existing["accountId"]) != accountID || stringValue(existing["organizationId"]) != stringValue(row["organizationId"]) || stringValue(existing["userId"]) != stringValue(row["userId"]) {
-				return errMembershipExists
-			}
-			continue
-		}
-		if stringValue(existing["accountId"]) == accountID || stringValue(existing["organizationId"]) == stringValue(row["organizationId"]) || stringValue(existing["userId"]) == stringValue(row["userId"]) {
-			return errMembershipExists
-		}
-	}
-	if previous := s.memberships[membershipID]; previous != nil {
-		delete(s.membershipByAccount, stringValue(previous["accountId"]))
-	}
-	s.memberships[membershipID] = cloneMap(row)
-	s.membershipByAccount[accountID] = membershipID
 	return nil
 }
 

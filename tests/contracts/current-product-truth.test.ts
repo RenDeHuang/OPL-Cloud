@@ -57,7 +57,10 @@ test("identity contracts expose operator-provisioned owners and keep Organizatio
   assert.equal(management.identitySecurity.plaintextPasswordValidation, "non_empty_delegated_to_sub2api");
   assert.equal(management.identitySecurity.plaintextPasswordMinimumCharacters, undefined);
   assert.deepEqual(management.internalCompatibilityRecords, {
-    organizationAndMembership: "one_to_one_storage_only",
+    organizationAndMembership: "historical_read_only_table_custody",
+    legacyCustody: "preserve_existing_rows_and_ids_for_migration_validation_only",
+    runtimeRead: false,
+    runtimeWrite: false,
     customerAuthorizationAuthority: false,
     browserProjection: false,
     sharedBehavior: false,
@@ -144,10 +147,20 @@ test("Workspace owns renewal while retired machine contracts stay absent", async
       "billing.resource_renewed.v1",
       "billing.resource_expired.v1",
       "billing.resource_refunded.v1",
-      "billing.charge_review_required.v1"
+      "billing.charge_review_required.v1",
+      "artifact.manifest.v1",
+      "review.result.v1"
     ],
     existingReceiptsReadable: true,
     newWritesAllowed: false
+  });
+  assert.deepEqual(evidence.generalReceiptV1.opaqueProvenance, {
+    fields: ["artifactId", "reviewId", "inputRefs", "outputRefs", "reviewerChecks", "continuationId", "continuation"],
+    semantics: "caller_owned_opaque_values_are_persisted_and_returned_without_ledger_interpretation",
+    continuationIdentity: "caller_supplied_only_ledger_does_not_generate_or_resolve_identity",
+    workspaceAuthorization: "forbidden",
+    historicalReceiptTypes: ["artifact.manifest.v1", "review.result.v1"],
+    newStructuredWrites: false
   });
   assert.equal(evidence.receiptTypes.includes("workspace.storage_backup_created"), false);
   assert.equal(evidence.receiptTypes.includes("workspace.storage_restored"), false);

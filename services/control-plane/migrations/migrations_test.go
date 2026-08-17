@@ -73,6 +73,31 @@ func TestWorkspaceAPIKeyIDMigration(t *testing.T) {
 	}
 }
 
+func TestLegacyIdentityTableCustodyMigrationIsAdditiveAndIdempotent(t *testing.T) {
+	raw, err := os.ReadFile("202608170002_legacy_identity_table_custody.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := string(raw)
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS control_plane_organizations",
+		"CREATE TABLE IF NOT EXISTS control_plane_memberships",
+		"billing_account_id TEXT NOT NULL DEFAULT ''",
+		"organization_id TEXT NOT NULL DEFAULT ''",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("legacy identity custody migration missing %q", required)
+		}
+	}
+	driver := &recordingDriver{}
+	if err := ApplyLegacyIdentityTableCustody(context.Background(), driver); err != nil {
+		t.Fatal(err)
+	}
+	if driver.query != sqlText {
+		t.Fatal("ApplyLegacyIdentityTableCustody did not execute the embedded migration")
+	}
+}
+
 func TestWorkspacePurchaseReceiptIDMigrationIsAdditiveAndIdempotent(t *testing.T) {
 	raw, err := os.ReadFile("202607230001_workspace_purchase_receipt_id.sql")
 	if err != nil {

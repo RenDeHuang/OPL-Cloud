@@ -11,7 +11,7 @@ async function readJson(path) {
 test("business object contract defines the current commercial object boundary", async () => {
   const contract = await readJson(businessObjectContractPath);
 
-  assert.equal(contract.schemaVersion, 8);
+  assert.equal(contract.schemaVersion, 9);
   assert.equal(contract.owner, "OPL Console");
   assert.equal(contract.purpose, "Machine-readable requirements for current commercial Console objects.");
   assert.deepEqual(contract.repositoryBoundaries, ["one-person-lab-cloud"]);
@@ -26,7 +26,7 @@ test("business object contract defines the current commercial object boundary", 
   assert.ok(contract.repoBoundaryRules.includes("one-person-lab-cloud is the single current product and implementation repository; opl-cloud is an internal artifact and service identifier only."));
   assert.ok(contract.repoBoundaryRules.includes("Console owns UI and product presentation through Control Plane APIs only; Sub2API authenticates customer credentials."));
   assert.ok(contract.repoBoundaryRules.includes("Fabric owns compute, storage, attachment, Workspace runtime, and provider execution boundaries."));
-  assert.ok(contract.repoBoundaryRules.includes("Ledger owns evidence, audit, reconciliation, and review policy boundaries."));
+  assert.ok(contract.repoBoundaryRules.includes("Ledger owns receipt, opaque-provenance, idempotency, retention, and reconciliation boundaries; calling domains own review policy and continuation authorization."));
 });
 
 test("business object contract contains only current OPL Cloud business facts", async () => {

@@ -38,10 +38,6 @@ type storageProvider interface {
 	SyncStorageVolume(context.Context, StorageVolume) (StorageVolume, error)
 	RenewStorageVolume(context.Context, StorageVolume) (StorageVolume, error)
 	DestroyStorageVolume(context.Context, StorageVolume) (StorageVolume, error)
-	CreateStorageSnapshot(context.Context, StorageSnapshotInput, StorageVolume) (StorageSnapshot, error)
-	SyncStorageSnapshot(context.Context, StorageSnapshot) (StorageSnapshot, error)
-	RestoreStorageSnapshot(context.Context, StorageRestoreInput, StorageSnapshot) (StorageVolume, error)
-	DestroyStorageSnapshot(context.Context, StorageSnapshot) (StorageSnapshot, error)
 }
 
 type attachmentProvider interface {
@@ -59,8 +55,7 @@ type runtimeProvider interface {
 	WorkspaceRuntimeStatus(context.Context, string) (WorkspaceRuntime, error)
 }
 
-// Provider is the retained live Fabric port. Snapshot/restore remains on the
-// existing interface until its separate read-only admission is complete.
+// Provider is the retained live Fabric port.
 type Provider interface {
 	computeProvider
 	storageProvider

@@ -110,9 +110,6 @@ func TestLedgerScopedDetailCapabilityUsesStructuredPathIdentity(t *testing.T) {
 
 	for _, test := range []struct{ path, want string }{
 		{path: "/ledger/receipts/receipt-alpha?accountId=acct-alpha", want: "receipt-alpha"},
-		{path: "/ledger/artifacts/artifact-alpha?accountId=acct-alpha&workspaceId=ws-alpha", want: "artifact-alpha"},
-		{path: "/ledger/reviews/review-alpha?accountId=acct-alpha&workspaceId=ws-alpha", want: "review-alpha"},
-		{path: "/ledger/review-policies/policy-alpha?accountId=acct-alpha&workspaceId=ws-alpha", want: "policy-alpha"},
 	} {
 		if got := ledgerResourceID(test.path); got != test.want {
 			t.Errorf("ledgerResourceID(%q)=%q want %q", test.path, got, test.want)

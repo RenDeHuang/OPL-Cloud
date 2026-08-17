@@ -9,7 +9,6 @@ import (
 	"opl-cloud/services/ledger/ent/evidencereceipt"
 	"opl-cloud/services/ledger/ent/idempotencykey"
 	"opl-cloud/services/ledger/ent/reconciliationreport"
-	"opl-cloud/services/ledger/ent/reviewpolicy"
 	"reflect"
 	"sync"
 
@@ -79,7 +78,6 @@ func checkColumn(table, column string) error {
 			evidencereceipt.Table:      evidencereceipt.ValidColumn,
 			idempotencykey.Table:       idempotencykey.ValidColumn,
 			reconciliationreport.Table: reconciliationreport.ValidColumn,
-			reviewpolicy.Table:         reviewpolicy.ValidColumn,
 		})
 	})
 	return columnCheck(table, column)

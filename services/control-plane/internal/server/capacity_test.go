@@ -112,8 +112,8 @@ func seedCapacityAccount(ctx context.Context, store controlPlaneTableStore, now 
 	userID := fmt.Sprintf("usr-capacity-%04d", index)
 	workspaceID := fmt.Sprintf("workspace-capacity-%04d", index)
 	email := fmt.Sprintf("capacity-%04d@example.com", index)
-	account, user, organization, membership := provisionedAccountRowsFor(accountID, userID, "org-"+accountID, email, int64(10_000+index))
-	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+	account, user := provisionedAccountRowsFor(accountID, userID, email, int64(10_000+index))
+	if err := store.CreateProvisionedAccount(ctx, account, user); err != nil {
 		return fmt.Errorf("seed account %d: %w", index, err)
 	}
 	if err := store.SaveSession(ctx, map[string]any{

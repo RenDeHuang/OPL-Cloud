@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,8 +11,6 @@ import (
 	"strings"
 	"time"
 )
-
-var ErrLocalDockerSnapshotUnsupported = errors.New("local_docker_snapshot_unsupported")
 
 const defaultLocalDockerWorkspaceImageRepository = "ghcr.io/gaofeng21cn/one-person-lab-app"
 
@@ -651,22 +648,6 @@ func (*LocalDockerProvider) DetachStorageAttachment(_ context.Context, attachmen
 	attachment.Status = "detached"
 	attachment.ProviderRequestID = providerRequestID("docker-attachment-detach", attachment.OperationID)
 	return attachment, nil
-}
-
-func (*LocalDockerProvider) CreateStorageSnapshot(context.Context, StorageSnapshotInput, StorageVolume) (StorageSnapshot, error) {
-	return StorageSnapshot{}, ErrLocalDockerSnapshotUnsupported
-}
-
-func (*LocalDockerProvider) SyncStorageSnapshot(context.Context, StorageSnapshot) (StorageSnapshot, error) {
-	return StorageSnapshot{}, ErrLocalDockerSnapshotUnsupported
-}
-
-func (*LocalDockerProvider) RestoreStorageSnapshot(context.Context, StorageRestoreInput, StorageSnapshot) (StorageVolume, error) {
-	return StorageVolume{}, ErrLocalDockerSnapshotUnsupported
-}
-
-func (*LocalDockerProvider) DestroyStorageSnapshot(context.Context, StorageSnapshot) (StorageSnapshot, error) {
-	return StorageSnapshot{}, ErrLocalDockerSnapshotUnsupported
 }
 
 func (p *LocalDockerProvider) Readiness(ctx context.Context) (map[string]any, error) {
