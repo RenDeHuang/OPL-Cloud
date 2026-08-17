@@ -16,8 +16,9 @@ import (
 )
 
 type workspaceLaunchUnitStore struct {
-	mu  sync.Mutex
-	row map[string]any
+	mu                sync.Mutex
+	row               map[string]any
+	persistenceWrites int
 }
 
 func (s *workspaceLaunchUnitStore) GetRuntimeOperation(_ context.Context, id string) (map[string]any, bool, error) {
@@ -35,6 +36,7 @@ func (s *workspaceLaunchUnitStore) ClaimWorkspaceLaunchReconcile(_ context.Conte
 	if s.row != nil {
 		return errWorkspaceLaunchCASConflict
 	}
+	s.persistenceWrites++
 	s.row = cloneMap(claim.DesiredOperation)
 	return nil
 }
@@ -45,6 +47,7 @@ func (s *workspaceLaunchUnitStore) PersistWorkspaceLaunchReconcile(_ context.Con
 	if s.row == nil || stringValue(s.row["result"]) != update.ExpectedOperationResult {
 		return errWorkspaceLaunchCASConflict
 	}
+	s.persistenceWrites++
 	s.row = cloneMap(update.DesiredOperation)
 	return nil
 }

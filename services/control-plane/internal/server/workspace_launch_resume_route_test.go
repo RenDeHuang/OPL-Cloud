@@ -411,13 +411,12 @@ func TestAcceptanceBResumePrepareRouteRequiresOperatorAndCapability(t *testing.T
 	server.ServeHTTP(response, req)
 	var approval productionAcceptanceBResumeExistingApproval
 	persisted, found, readErr := store.GetRuntimeOperation(context.Background(), operation.ID)
-	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &approval) != nil || approval.OperationMode != "acceptance_b_resume_existing" ||
-		approval.Authorization.OperationID != operation.ID || approval.Reconciliation.AuthoritativeStageState != workspaceLaunchStageReady ||
-		readErr != nil || !found || stringValue(persisted["result"]) != persistedBefore || client.convergenceReads != 1 || client.createCalls != 0 {
-		t.Fatalf("prepare route status=%d body=%s reads=%d creates=%d found=%v err=%v", response.Code, response.Body.String(), client.convergenceReads, client.createCalls, found, readErr)
+	if response.Code != http.StatusConflict || json.Unmarshal(response.Body.Bytes(), &approval) != nil ||
+		readErr != nil || !found || stringValue(persisted["result"]) != persistedBefore || client.convergenceReads != 0 || client.createCalls != 0 {
+		t.Fatalf("non-debit prepare route status=%d body=%s reads=%d creates=%d found=%v err=%v", response.Code, response.Body.String(), client.convergenceReads, client.createCalls, found, readErr)
 	}
-	if strings.Contains(response.Body.String(), "prepare-route-key-secret") || response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("prepare route leaked owner fact or omitted no-store: headers=%v", response.Header())
+	if strings.Contains(response.Body.String(), "prepare-route-key-secret") {
+		t.Fatalf("prepare route leaked owner fact: headers=%v", response.Header())
 	}
 }
 

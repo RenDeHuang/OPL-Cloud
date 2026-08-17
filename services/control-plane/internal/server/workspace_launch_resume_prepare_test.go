@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"opl-cloud/services/control-plane/internal/clients"
+	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 func canonicalResumePrepareRequest(_ workspaceLaunchReconcileOperation, _ string) productionAcceptanceBResumeExistingPrepareRequest {
@@ -39,6 +42,21 @@ func configureResumePrepareRelease(t *testing.T) {
 	t.Setenv("OPL_CLOUD_IMAGE", "registry.example/opl-cloud@sha256:"+strings.Repeat("b", 64))
 }
 
+type workspaceLaunchResumePrepareLedger struct {
+	fakeLedgerClient
+	mutationCalls int
+}
+
+func (l *workspaceLaunchResumePrepareLedger) RecordReceipt(ctx context.Context, input clients.ReceiptInput, idempotencyKey string) (clients.Receipt, error) {
+	l.mutationCalls++
+	return l.fakeLedgerClient.RecordReceipt(ctx, input, idempotencyKey)
+}
+
+func (l *workspaceLaunchResumePrepareLedger) RecordReconciliation(ctx context.Context, input clients.ReconciliationInput, idempotencyKey string) (clients.ReconciliationResult, error) {
+	l.mutationCalls++
+	return l.fakeLedgerClient.RecordReconciliation(ctx, input, idempotencyKey)
+}
+
 func TestProductionAcceptanceBResumePrepareBuildsExactReadOnlyCandidate(t *testing.T) {
 	configureResumePrepareRelease(t)
 	store, adapter, operation := reservedResumePrepareFixture(t)
@@ -59,8 +77,8 @@ func TestProductionAcceptanceBResumePrepareBuildsExactReadOnlyCandidate(t *testi
 		approval.Reconciliation.AuthoritativeStageState != workspaceLaunchStageAbsent || approval.IdentityDigests != workspaceLaunchAcceptanceBIdentityDigests(operation) {
 		t.Fatalf("unexpected candidate: %#v", approval)
 	}
-	if adapter.reads != 1 || adapter.mutations != 0 || stringValue(store.row["result"]) != before {
-		t.Fatalf("prepare mutated authority: reads=%d mutations=%d changed=%v", adapter.reads, adapter.mutations, stringValue(store.row["result"]) != before)
+	if adapter.reads != 1 || adapter.mutations != 0 || store.persistenceWrites != 0 || stringValue(store.row["result"]) != before {
+		t.Fatalf("prepare mutated authority: reads=%d mutations=%d persistenceWrites=%d changed=%v", adapter.reads, adapter.mutations, store.persistenceWrites, stringValue(store.row["result"]) != before)
 	}
 	authorization := workspaceLaunchResumeAuthorization{
 		AuthorizationID: request.AuthorizationID, LaunchVersion: operation.Version, AuthorizedStage: operation.Stage,
@@ -108,6 +126,57 @@ func TestProductionAcceptanceBResumePrepareBuildsExactReadOnlyCandidate(t *testi
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("candidate leaked raw owner fact %q: %s", forbidden, encoded)
 		}
+	}
+}
+
+func TestProductionAcceptanceBResumePrepareDebitReadHasZeroOwnerMutations(t *testing.T) {
+	configureResumePrepareRelease(t)
+	store, _, operation := reservedResumePrepareFixture(t)
+	var fabricCalls []string
+	fabric := &fakeFabricClient{calls: &fabricCalls}
+	ledger := &workspaceLaunchResumePrepareLedger{}
+	sub2API := &workspaceLaunchDebitReadbackStub{
+		testSub2APIClient: &testSub2APIClient{charges: map[string]int64{}},
+		history:           map[string]clients.Sub2APIBalanceHistoryEntry{},
+	}
+	service := controlplane.NewService(ledger, fabric, sub2API)
+	adapter := &controlPlaneWorkspaceLaunchStageAdapter{app: &controlPlaneServer{}, service: service}
+	request := canonicalResumePrepareRequest(operation, workspaceLaunchStagePending)
+
+	approval, err := prepareProductionAcceptanceBResumeExisting(context.Background(), store, adapter, operation.ID, request, time.Now())
+	if err != nil || approval.Reconciliation.AuthoritativeStageState != workspaceLaunchStagePending {
+		t.Fatalf("debit read-only prepare failed: approval=%#v err=%v", approval, err)
+	}
+	if sub2API.historyReads != 1 || store.persistenceWrites != 0 || sub2API.chargeCalls != 0 || len(fabricCalls) != 0 || ledger.mutationCalls != 0 {
+		t.Fatalf("prepare crossed an owner mutation boundary: sub2APIHistoryReads=%d persistenceWrites=%d sub2APIDebitMutations=%d fabricCalls=%v ledgerMutations=%d", sub2API.historyReads, store.persistenceWrites, sub2API.chargeCalls, fabricCalls, ledger.mutationCalls)
+	}
+}
+
+func TestProductionAcceptanceBResumePrepareRejectsNonDebitStagesBeforeOwnerRead(t *testing.T) {
+	configureResumePrepareRelease(t)
+	for _, stage := range []string{"key", "ensure_compute_allocation", "storage", "attachment", "secret", "runtime", "activation", "receipt"} {
+		t.Run(stage, func(t *testing.T) {
+			store, adapter, operation := reservedResumePrepareFixture(t)
+			operation.Stage = stage
+			attempt := operation.Attempts[stage]
+			attempt.Attempted, attempt.Status = 1, "reserved"
+			attempt.IdempotencyKey = workspaceLaunchStageIdempotencyKey(operation, 1)
+			operation.Attempts[stage] = attempt
+			row, err := workspaceLaunchReconcileOperationRow(operation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.row = row
+			request := canonicalResumePrepareRequest(operation, workspaceLaunchStageReady)
+			before := stringValue(store.row["result"])
+			if _, err := prepareProductionAcceptanceBResumeExisting(context.Background(), store, adapter, operation.ID, request, time.Now()); err == nil {
+				t.Fatal("non-debit stage was admitted")
+			}
+			// The rejected stage must stop before any owner read or write-capable path.
+			if adapter.reads != 0 || adapter.mutations != 0 || store.persistenceWrites != 0 || stringValue(store.row["result"]) != before {
+				t.Fatalf("non-debit prepare crossed a mutation boundary: reads=%d mutations=%d persistenceWrites=%d changed=%v", adapter.reads, adapter.mutations, store.persistenceWrites, stringValue(store.row["result"]) != before)
+			}
+		})
 	}
 }
 

@@ -20,12 +20,14 @@ type workspaceLaunchDebitReadbackStub struct {
 	balance         clients.Sub2APIBalance
 	balanceErr      error
 	balanceErrors   []error
+	historyReads    int
 	chargeCalls     int
 }
 
 func (s *workspaceLaunchDebitReadbackStub) FinancialBalanceHistoryByCodes(_ context.Context, _ int64, codes []string) (map[string]clients.Sub2APIBalanceHistoryEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.historyReads++
 	if s.historyErr != nil {
 		return nil, s.historyErr
 	}

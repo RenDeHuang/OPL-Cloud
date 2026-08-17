@@ -11,7 +11,7 @@ test("Control Plane owns the launch identity and recovery authorization", async 
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
   assert.equal(contract.owner, "services/control-plane");
-  assert.equal(contract.schemaVersion, 5);
+  assert.equal(contract.schemaVersion, 6);
   assert.equal(contract.launchOperation.action, "workspace.launch.v2");
   assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
@@ -126,6 +126,9 @@ test("Control Plane owns the launch identity and recovery authorization", async 
         mode: "read_only_non_persistent",
         requestHeaders: ["x-opl-acceptance-b-capability", "x-opl-acceptance-b-approval-id", "x-opl-resume-authorization-id", "x-opl-resume-reason-sha256", "x-opl-resume-release-sha", "x-opl-resume-release-tree", "x-opl-resume-image-digest"],
         derivedFields: ["operationId", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget", "reconciliation.attempt", "identityDigests", "expiresAt"],
+        allowedStages: ["debit"],
+        stageAdmission: "exact_current_historical_debit_only",
+        pureReadProof: "sub2api_financial_balance_history_and_balance_get_only",
         releaseAuthority: ["OPL_RELEASE_SHA", "OPL_RELEASE_TREE", "OPL_CLOUD_IMAGE"],
         expirySeconds: 900,
         externalMutationCount: 0,

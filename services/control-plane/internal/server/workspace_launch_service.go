@@ -183,6 +183,9 @@ func prepareProductionAcceptanceBResumeExisting(
 	if err != nil {
 		return productionAcceptanceBResumeExistingApproval{}, err
 	}
+	if operation.Stage != productionAcceptanceBResumePrepareStage {
+		return productionAcceptanceBResumeExistingApproval{}, errWorkspaceLaunchGrantConflict
+	}
 	observation, err := adapter.ReadStage(ctx, operation)
 	if err != nil || observation.State == workspaceLaunchStageUnknown {
 		return productionAcceptanceBResumeExistingApproval{}, errWorkspaceLaunchGrantConflict

@@ -33,6 +33,7 @@ const (
 	productionAcceptanceBResumeReleaseSHA          = "x-opl-resume-release-sha"
 	productionAcceptanceBResumeReleaseTree         = "x-opl-resume-release-tree"
 	productionAcceptanceBResumeImageDigest         = "x-opl-resume-image-digest"
+	productionAcceptanceBResumePrepareStage        = "debit"
 )
 
 var productionAcceptanceBAllowedWrites = []string{
@@ -404,7 +405,7 @@ func productionAcceptanceBResumeExistingCandidate(
 	now time.Time,
 ) (productionAcceptanceBResumeExistingApproval, bool) {
 	if !productionAcceptanceBResumeExistingPrepareRequestValid(request) || !productionAcceptanceBReleaseCurrent(request.Release) || operation.Status != "manual_review" ||
-		!workspaceLaunchReconcileStageValid(operation.Stage) || operation.Stage == "succeeded" ||
+		operation.Stage != productionAcceptanceBResumePrepareStage ||
 		(observation.State != workspaceLaunchStageReady && observation.State != workspaceLaunchStageAbsent && observation.State != workspaceLaunchStagePending) ||
 		operation.ResumeAuthorization != nil && operation.ResumeAuthorizationConsumedAt == "" {
 		return productionAcceptanceBResumeExistingApproval{}, false

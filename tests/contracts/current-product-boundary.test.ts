@@ -40,7 +40,7 @@ test("current launch and settlement facts have four focused owners", async () =>
 test("Control Plane durable launch chain keeps preflight outside mutation stages", async () => {
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
-  assert.equal(contract.schemaVersion, 5);
+  assert.equal(contract.schemaVersion, 6);
   assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
     "launchOperationId", "accountId", "ownerUserId", "workspaceId", "requestHash"
@@ -122,6 +122,9 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
     mode: "read_only_non_persistent",
     requestHeaders: ["x-opl-acceptance-b-capability", "x-opl-acceptance-b-approval-id", "x-opl-resume-authorization-id", "x-opl-resume-reason-sha256", "x-opl-resume-release-sha", "x-opl-resume-release-tree", "x-opl-resume-image-digest"],
     derivedFields: ["operationId", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget", "reconciliation.attempt", "identityDigests", "expiresAt"],
+    allowedStages: ["debit"],
+    stageAdmission: "exact_current_historical_debit_only",
+    pureReadProof: "sub2api_financial_balance_history_and_balance_get_only",
     releaseAuthority: ["OPL_RELEASE_SHA", "OPL_RELEASE_TREE", "OPL_CLOUD_IMAGE"],
     expirySeconds: 900,
     externalMutationCount: 0,
