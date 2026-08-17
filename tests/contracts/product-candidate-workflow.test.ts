@@ -54,6 +54,16 @@ test("Cloud candidate workflow builds one non-Release linux/amd64 candidate", as
 
   const readback = step("Read back candidate digest platform and revision").run || "";
   assert.match(readback, /docker buildx imagetools inspect/);
+  assert.match(readback, /--format '\{\{json \.Manifest\}\}'/);
+  assert.doesNotMatch(readback, /--format '\{\{\.Manifest\.Digest\}\}'/);
+  assert.match(readback, /jq -r '\.digest \/\/ empty'/);
+  assert.match(readback, /application\/vnd\.oci\.image\.index\.v1\+json/);
+  assert.match(readback, /\.platform\.os == "linux" and \.platform\.architecture == "amd64"/);
+  assert.match(readback, /\.platform\.os == "unknown" and \.platform\.architecture == "unknown"/);
+  assert.match(readback, /vnd\.docker\.reference\.type/);
+  assert.match(readback, /attestation-manifest/);
+  assert.match(readback, /IMAGE_REPOSITORY@\$platform_digest/);
+  assert.match(readback, /--format '\{\{json \.Image\}\}'/);
   assert.match(readback, /org\.opencontainers\.image\.revision/);
   assert.match(readback, /linux/);
   assert.match(readback, /amd64/);

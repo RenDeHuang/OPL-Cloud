@@ -127,12 +127,27 @@ jobs:
           EXPECTED_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
-          observed_digest="$(docker buildx imagetools inspect "$CANDIDATE_TAG" --format '{{.Manifest.Digest}}')"
+          manifest="$(docker buildx imagetools inspect "$CANDIDATE_TAG" --format '{{json .Manifest}}')"
+          observed_digest="$(jq -r '.digest // empty' <<< "$manifest")"
           if [ "$observed_digest" != "$EXPECTED_DIGEST" ]; then
             echo "Candidate registry digest readback mismatch." >&2
             exit 1
           fi
-          image="$(docker buildx imagetools inspect "$CANDIDATE_TAG" --format '{{json .Image}}')"
+          jq -e '
+            .mediaType == "application/vnd.oci.image.index.v1+json" and
+            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1 and
+            all(.manifests[];
+              (.platform.os == "linux" and .platform.architecture == "amd64") or
+              (.platform.os == "unknown" and .platform.architecture == "unknown" and
+               .annotations["vnd.docker.reference.type"] == "attestation-manifest")
+            )
+          ' <<< "$manifest" >/dev/null
+          platform_digest="$(jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' <<< "$manifest")"
+          if ! [[ "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Candidate linux/amd64 manifest digest readback failed." >&2
+            exit 1
+          fi
+          image="$(docker buildx imagetools inspect "$IMAGE_REPOSITORY@$platform_digest" --format '{{json .Image}}')"
           jq -e --arg revision "$PRODUCT_SHA" '
             .os == "linux" and .architecture == "amd64" and
             .config.Labels["org.opencontainers.image.revision"] == $revision
