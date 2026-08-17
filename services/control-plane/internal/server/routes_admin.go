@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -25,6 +26,50 @@ const (
 )
 
 func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/resume-approval-candidates", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		capabilities := r.Header.Values(productionAcceptanceBCapability)
+		if len(capabilities) != 1 || !secureHeaderMatches(strings.TrimSpace(capabilities[0]), strings.TrimSpace(os.Getenv("OPL_INTERNAL_SERVICE_TOKEN"))) {
+			writeError(w, http.StatusUnauthorized, "acceptance_b_capability_invalid")
+			return
+		}
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		approvalID, approvalOK := singleHeaderValue(r.Header, productionAcceptanceBApprovalID)
+		authorizationID, authorizationOK := singleHeaderValue(r.Header, productionAcceptanceBResumeAuthorizationID)
+		reasonSHA256, reasonOK := singleHeaderValue(r.Header, productionAcceptanceBResumeReasonSHA256)
+		releaseSHA, releaseSHAOK := singleHeaderValue(r.Header, productionAcceptanceBResumeReleaseSHA)
+		releaseTree, releaseTreeOK := singleHeaderValue(r.Header, productionAcceptanceBResumeReleaseTree)
+		imageDigest, imageOK := singleHeaderValue(r.Header, productionAcceptanceBResumeImageDigest)
+		launchVersionRaw, launchVersionOK := singleHeaderValue(r.Header, productionAcceptanceBResumeLaunchVersion)
+		stage, stageOK := singleHeaderValue(r.Header, productionAcceptanceBResumeStage)
+		operationStatus, statusOK := singleHeaderValue(r.Header, productionAcceptanceBResumeOperationStatus)
+		stageState, stateOK := singleHeaderValue(r.Header, productionAcceptanceBResumeStageState)
+		launchVersion, versionErr := strconv.Atoi(launchVersionRaw)
+		if operationID == "" || !approvalOK || !authorizationOK || !reasonOK || !releaseSHAOK || !releaseTreeOK || !imageOK ||
+			!launchVersionOK || !stageOK || !statusOK || !stateOK || versionErr != nil {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		var request productionAcceptanceBResumeExistingPrepareRequest
+		request.ApprovalID, request.AuthorizationID, request.ReasonSHA256 = approvalID, authorizationID, reasonSHA256
+		request.Release.CanonicalCloudSHA, request.Release.CanonicalCloudTree, request.Release.DeployedCloudImageDigest = releaseSHA, releaseTree, imageDigest
+		request.Expected.LaunchVersion, request.Expected.AuthorizedStage = launchVersion, stage
+		request.Expected.OperationStatus, request.Expected.AuthoritativeStageState = operationStatus, stageState
+		if !productionAcceptanceBResumeExistingPrepareRequestValid(request) {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		approval, err := app.prepareProductionAcceptanceBResumeExisting(r.Context(), service, operationID, request, time.Now())
+		if err != nil {
+			if errors.Is(err, errBillingReviewNotFound) {
+				writeError(w, http.StatusNotFound, "workspace_launch_not_found")
+			} else {
+				writeError(w, http.StatusConflict, errWorkspaceLaunchGrantConflict.Error())
+			}
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, approval)
+	}))
 	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/resume", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		key, ok := requiredMutationKey(w, r)
 		if !ok {
@@ -310,6 +355,15 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeJSON(w, http.StatusOK, result)
 	}))
+}
+
+func singleHeaderValue(header http.Header, name string) (string, bool) {
+	values := header.Values(name)
+	if len(values) != 1 {
+		return "", false
+	}
+	value := strings.TrimSpace(values[0])
+	return value, value != ""
 }
 
 func exactWorkspaceComputeClaimKeys(input map[string]any, want []string) bool {

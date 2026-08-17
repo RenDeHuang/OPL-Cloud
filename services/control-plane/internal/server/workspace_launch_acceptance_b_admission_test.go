@@ -96,6 +96,7 @@ func configureProductionAcceptanceBEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "acceptance-b-capability")
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_RELEASE_TREE", strings.Repeat("d", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
 	t.Setenv("OPL_WORKSPACE_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:"+strings.Repeat("c", 64))
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-basic-acceptance")

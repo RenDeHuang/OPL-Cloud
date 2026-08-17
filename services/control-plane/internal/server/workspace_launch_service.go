@@ -150,6 +150,50 @@ func (app *controlPlaneServer) bindProductionAcceptanceBResumeExisting(
 	return authorization, nil
 }
 
+func (app *controlPlaneServer) prepareProductionAcceptanceBResumeExisting(
+	ctx context.Context,
+	service *controlplane.Service,
+	operationID string,
+	request productionAcceptanceBResumeExistingPrepareRequest,
+	now time.Time,
+) (productionAcceptanceBResumeExistingApproval, error) {
+	adapter := app.workspaceLaunchReconciler(service, clients.SessionDelegatedCredential{}, 0).adapter
+	return prepareProductionAcceptanceBResumeExisting(ctx, app.tables, adapter, operationID, request, now)
+}
+
+func prepareProductionAcceptanceBResumeExisting(
+	ctx context.Context,
+	store workspaceLaunchReconcileStore,
+	adapter workspaceLaunchStageAdapter,
+	operationID string,
+	request productionAcceptanceBResumeExistingPrepareRequest,
+	now time.Time,
+) (productionAcceptanceBResumeExistingApproval, error) {
+	if store == nil || adapter == nil {
+		return productionAcceptanceBResumeExistingApproval{}, errWorkspaceLaunchGrantConflict
+	}
+	row, found, err := store.GetRuntimeOperation(ctx, operationID)
+	if err != nil {
+		return productionAcceptanceBResumeExistingApproval{}, err
+	}
+	if !found {
+		return productionAcceptanceBResumeExistingApproval{}, errBillingReviewNotFound
+	}
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		return productionAcceptanceBResumeExistingApproval{}, err
+	}
+	observation, err := adapter.ReadStage(ctx, operation)
+	if err != nil || observation.State == workspaceLaunchStageUnknown {
+		return productionAcceptanceBResumeExistingApproval{}, errWorkspaceLaunchGrantConflict
+	}
+	approval, ok := productionAcceptanceBResumeExistingCandidate(request, operation, observation, now)
+	if !ok {
+		return productionAcceptanceBResumeExistingApproval{}, errWorkspaceLaunchGrantConflict
+	}
+	return approval, nil
+}
+
 func (app *controlPlaneServer) runWorkspaceLaunchesOnce(ctx context.Context, service *controlplane.Service) error {
 	rows, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
 		Action: workspaceLaunchAction, ExcludedStatuses: []string{"succeeded", "refunded", "failed", "manual_review"},
