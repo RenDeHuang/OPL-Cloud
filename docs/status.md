@@ -100,8 +100,9 @@ by this repository change.
   opaque provenance; Ledger does not generate continuation identities, hide
   provenance on reads, or authorize Workspace operations. Historical
   `review_policies` rows and Receipt provenance columns remain retained without
-  migration or deletion. Focused Ledger Go tests pass on this source slice;
-  aggregate verification and canonical integration remain separate evidence.
+  migration or deletion. Focused Ledger Go tests and
+  `npm run verify:local:full` pass, including the retained Ledger PostgreSQL
+  path with zero skips and the complete local-Docker vertical.
 - Control Plane identity now uses `Account` and `User` as its only application
   and Ent models. Organization/Membership runtime stores, provisioning,
   authentication, reconcile paths, generated code, and test-only stores are
