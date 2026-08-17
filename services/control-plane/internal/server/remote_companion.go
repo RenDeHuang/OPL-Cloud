@@ -137,6 +137,24 @@ type remoteCredentialResponse struct {
 	State              string `json:"state"`
 }
 
+const remoteCredentialOperationAction = "remote_companion.credentials"
+
+// remoteCredentialIssue records the non-secret facts needed to reproduce a
+// provider signature after a process restart. The signature itself remains
+// provider-derived and is never written to the operation result.
+type remoteCredentialIssue struct {
+	PairingID          string `json:"pairing_id"`
+	DeviceID           string `json:"device_id"`
+	Role               string `json:"role"`
+	RequestHash        string `json:"request_hash"`
+	IdempotencyKeyHash string `json:"idempotency_key_hash"`
+	ProviderUserID     string `json:"provider_user_id"`
+	PeerProviderUserID string `json:"peer_provider_user_id"`
+	SDKAppID           int64  `json:"sdk_app_id"`
+	IssuedAt           string `json:"issued_at"`
+	UserSigExpiresAt   string `json:"usersig_expires_at"`
+}
+
 // Internal pairing responses retain provider and seat details for broker
 // operations. Route-specific responses below are the only HTTP wire shapes.
 type remoteCreateHTTPResponse struct {
@@ -1091,40 +1109,169 @@ func (b *remoteCompanionBroker) persistProviderReclaimPending(ctx context.Contex
 	})
 }
 
-func (b *remoteCompanionBroker) credentials(ctx context.Context, pairingID, credential string) (remoteCredentialResponse, error) {
-	pairing, device, err := b.authenticate(ctx, pairingID, credential)
-	if err != nil {
-		return remoteCredentialResponse{}, err
-	}
-	if pairing.State != "active" {
-		return remoteCredentialResponse{}, errRemoteNotConfirmed
-	}
-	return b.issueUserSig(ctx, pairing, device)
+func remoteCredentialOperationID(pairingID, deviceID, idempotencyKey string) string {
+	return remoteStableID("remote-credential", pairingID+"\x00"+deviceID+"\x00"+idempotencyKey)
 }
 
-func (b *remoteCompanionBroker) issueUserSig(ctx context.Context, pairing *controlplaneent.RemotePairing, device *controlplaneent.RemoteDeviceCredential) (remoteCredentialResponse, error) {
+func remoteCredentialRequestHash(pairingID, deviceID, role string) string {
+	return remoteRequestHash(remoteProtocolVersion, pairingID, deviceID, role)
+}
+
+func decodeRemoteCredentialIssue(operation *controlplaneent.RuntimeOperation, operationID string) (remoteCredentialIssue, error) {
+	if operation.OperationID != operationID || operation.Action != remoteCredentialOperationAction || operation.ResourceKind != "remote_device_credential" {
+		return remoteCredentialIssue{}, errRemoteInvalidRequest
+	}
+	var issue remoteCredentialIssue
+	if err := json.Unmarshal([]byte(operation.Result), &issue); err != nil {
+		return remoteCredentialIssue{}, errRemoteInvalidRequest
+	}
+	issuedAt, issuedErr := time.Parse(time.RFC3339Nano, issue.IssuedAt)
+	expiresAt, expiresErr := time.Parse(time.RFC3339Nano, issue.UserSigExpiresAt)
+	if issuedErr != nil || expiresErr != nil || !expiresAt.Equal(issuedAt.Add(remoteUserSigTTL)) {
+		return remoteCredentialIssue{}, errRemoteInvalidRequest
+	}
+	return issue, nil
+}
+
+func validateRemoteCredentialIssue(issue remoteCredentialIssue, pairing *controlplaneent.RemotePairing, device *controlplaneent.RemoteDeviceCredential, requestHash, idempotencyKey string, providerUserID, peerProviderUserID string, sdkAppID int64) error {
+	if issue.PairingID != pairing.ID || issue.DeviceID != device.DeviceID || issue.Role != device.Role ||
+		issue.RequestHash != requestHash || issue.IdempotencyKeyHash != remoteCredentialHash(idempotencyKey) ||
+		issue.ProviderUserID != providerUserID || issue.PeerProviderUserID != peerProviderUserID || issue.SDKAppID != sdkAppID {
+		return errRemoteInvalidRequest
+	}
+	return nil
+}
+
+func (b *remoteCompanionBroker) prepareRemoteCredentialIssue(ctx context.Context, pairing *controlplaneent.RemotePairing, device *controlplaneent.RemoteDeviceCredential, idempotencyKey string) (remoteCredentialIssue, error) {
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if idempotencyKey == "" {
+		return remoteCredentialIssue{}, errRemoteInvalidRequest
+	}
 	providerUserID, peerProviderUserID, _, err := remoteProviderIdentity(pairing, device)
 	if err != nil {
-		return remoteCredentialResponse{}, err
+		return remoteCredentialIssue{}, err
 	}
 	if providerUserID == "" {
-		return remoteCredentialResponse{}, errRemoteNotConfirmed
+		return remoteCredentialIssue{}, errRemoteNotConfirmed
 	}
-	sig, expires, err := b.provider.SignUserSig(ctx, providerUserID, b.now(), remoteUserSigTTL)
+	requestHash := remoteCredentialRequestHash(pairing.ID, device.DeviceID, device.Role)
+	sdkAppID := remoteProviderSDKAppID(b.provider)
+	operationID := remoteCredentialOperationID(pairing.ID, device.DeviceID, idempotencyKey)
+	now := b.now().UTC().Truncate(time.Second)
+	var issue remoteCredentialIssue
+	err = b.withTx(ctx, func(tx *controlplaneent.Tx) error {
+		currentPairing, pairingErr := tx.RemotePairing.Get(ctx, pairing.ID)
+		if pairingErr != nil {
+			return pairingErr
+		}
+		if currentPairing.State == "revoked" || currentPairing.SeatReleased {
+			return errRemoteRevoked
+		}
+		if currentPairing.State != "active" {
+			return errRemoteNotConfirmed
+		}
+		current, getErr := tx.RemoteDeviceCredential.Get(ctx, device.ID)
+		if getErr != nil {
+			return getErr
+		}
+		if current.PairingID != pairing.ID || current.DeviceID != device.DeviceID || current.Role != device.Role || current.Status != "active" {
+			return errRemoteCredentialDenied
+		}
+		currentProviderUserID, currentPeerProviderUserID, _, identityErr := remoteProviderIdentity(currentPairing, current)
+		if identityErr != nil || currentProviderUserID != providerUserID || currentPeerProviderUserID != peerProviderUserID {
+			return errRemoteInvalidRequest
+		}
+		if existing, getErr := tx.RuntimeOperation.Get(ctx, operationID); getErr == nil {
+			issue, err = decodeRemoteCredentialIssue(existing, operationID)
+			if err != nil {
+				return err
+			}
+			return validateRemoteCredentialIssue(issue, pairing, current, requestHash, idempotencyKey, providerUserID, peerProviderUserID, sdkAppID)
+		} else if !controlplaneent.IsNotFound(getErr) {
+			return getErr
+		}
+
+		issue = remoteCredentialIssue{
+			PairingID:          pairing.ID,
+			DeviceID:           device.DeviceID,
+			Role:               device.Role,
+			RequestHash:        requestHash,
+			IdempotencyKeyHash: remoteCredentialHash(idempotencyKey),
+			ProviderUserID:     providerUserID,
+			PeerProviderUserID: peerProviderUserID,
+			SDKAppID:           sdkAppID,
+			IssuedAt:           now.Format(time.RFC3339Nano),
+			UserSigExpiresAt:   now.Add(remoteUserSigTTL).Format(time.RFC3339Nano),
+		}
+		result, marshalErr := json.Marshal(issue)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		_, err = tx.RuntimeOperation.Create().
+			SetID(operationID).
+			SetCreatedAt(now).
+			SetUpdatedAt(now).
+			SetOperationID(operationID).
+			SetResourceID(pairing.ID).
+			SetResourceKind("remote_device_credential").
+			SetAction(remoteCredentialOperationAction).
+			SetProvider("tencent_cloud_im").
+			SetStatus("prepared").
+			SetResult(string(result)).
+			Save(ctx)
+		return err
+	})
+	if err == nil {
+		return issue, nil
+	}
+	// A concurrent request can win the stable operation ID between the query
+	// and insert. Reload that winner and apply the same binding checks.
+	if controlplaneent.IsConstraintError(err) {
+		if existing, getErr := b.store.client.RuntimeOperation.Get(ctx, operationID); getErr == nil {
+			issue, decodeErr := decodeRemoteCredentialIssue(existing, operationID)
+			if decodeErr != nil {
+				return remoteCredentialIssue{}, decodeErr
+			}
+			if validateErr := validateRemoteCredentialIssue(issue, pairing, device, requestHash, idempotencyKey, providerUserID, peerProviderUserID, sdkAppID); validateErr != nil {
+				return remoteCredentialIssue{}, validateErr
+			}
+			return issue, nil
+		}
+	}
+	return remoteCredentialIssue{}, err
+}
+
+func (b *remoteCompanionBroker) issueUserSigWithIdempotency(ctx context.Context, pairing *controlplaneent.RemotePairing, device *controlplaneent.RemoteDeviceCredential, idempotencyKey string) (remoteCredentialResponse, error) {
+	issue, err := b.prepareRemoteCredentialIssue(ctx, pairing, device, idempotencyKey)
 	if err != nil {
 		return remoteCredentialResponse{}, err
+	}
+	issuedAt, err := time.Parse(time.RFC3339Nano, issue.IssuedAt)
+	if err != nil {
+		return remoteCredentialResponse{}, errRemoteInvalidRequest
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, issue.UserSigExpiresAt)
+	if err != nil {
+		return remoteCredentialResponse{}, errRemoteInvalidRequest
+	}
+	sig, providerExpires, err := b.provider.SignUserSig(ctx, issue.ProviderUserID, issuedAt, remoteUserSigTTL)
+	if err != nil {
+		return remoteCredentialResponse{}, err
+	}
+	if !providerExpires.UTC().Equal(expiresAt) {
+		return remoteCredentialResponse{}, errRemoteProviderUnavailable
 	}
 	return remoteCredentialResponse{
 		ProtocolVersion:    remoteProtocolVersion,
-		PairingID:          pairing.ID,
-		DeviceID:           device.DeviceID,
-		Role:               device.Role,
+		PairingID:          issue.PairingID,
+		DeviceID:           issue.DeviceID,
+		Role:               issue.Role,
 		Provider:           "tencent_cloud_im",
-		SDKAppID:           remoteProviderSDKAppID(b.provider),
-		ProviderUserID:     providerUserID,
-		PeerProviderUserID: peerProviderUserID,
+		SDKAppID:           issue.SDKAppID,
+		ProviderUserID:     issue.ProviderUserID,
+		PeerProviderUserID: issue.PeerProviderUserID,
 		UserSig:            sig,
-		UserSigExpiresAt:   expires.UTC().Format(time.RFC3339Nano),
+		UserSigExpiresAt:   issue.UserSigExpiresAt,
 		State:              pairing.State,
 	}, nil
 }
@@ -1800,12 +1947,11 @@ func registerRemoteCompanionRoutes(mux *http.ServeMux, app *controlPlaneServer) 
 			writeRemoteError(w, errRemoteNotConfirmed)
 			return
 		}
-		credentials, err := app.remoteCompanion.issueUserSig(r.Context(), pairing, device)
+		credentials, err := app.remoteCompanion.issueUserSigWithIdempotency(r.Context(), pairing, device, idempotencyKey)
 		if err != nil {
 			writeRemoteError(w, err)
 			return
 		}
-		_ = idempotencyKey
 		writeJSON(w, http.StatusOK, remoteCredentialHTTPResponse{
 			ProtocolVersion:    credentials.ProtocolVersion,
 			Provider:           credentials.Provider,

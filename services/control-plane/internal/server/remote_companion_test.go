@@ -17,6 +17,7 @@ import (
 	"time"
 
 	controlplaneent "opl-cloud/services/control-plane/ent"
+	"opl-cloud/services/control-plane/ent/runtimeoperation"
 )
 
 const remoteTestHashKey = "01234567890123456789012345678901"
@@ -44,6 +45,19 @@ func createRemoteInviteAndPairing(t *testing.T, broker *remoteCompanionBroker) r
 	}
 	created, err := broker.createPairing(context.Background(), invite.Secret, "desktop-key")
 	if err != nil {
+		t.Fatal(err)
+	}
+	return created
+}
+
+func createRemoteConfirmedPairing(t *testing.T, broker *remoteCompanionBroker) remotePairingCreateResponse {
+	t.Helper()
+	created := createRemoteInviteAndPairing(t, broker)
+	claimed, err := broker.claimPairing(context.Background(), created.PairingID, created.ClaimSecret, "", "ios-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := broker.confirmPairing(context.Background(), created.PairingID, created.DesktopCredential, claimed.AuthenticationString); err != nil {
 		t.Fatal(err)
 	}
 	return created
@@ -582,6 +596,133 @@ func TestRemoteCompanionPairingIdempotencyReplaysWithoutAnotherSeat(t *testing.T
 	}
 }
 
+func TestRemoteCompanionCredentialIdempotencyReplaysAcrossRestart(t *testing.T) {
+	broker, provider := newRemoteBrokerTest(t)
+	created := createRemoteConfirmedPairing(t, broker)
+	pairing, device, err := broker.authenticate(context.Background(), created.PairingID, created.DesktopCredential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixedNow := time.Date(2026, 8, 17, 3, 4, 5, 678000000, time.UTC)
+	broker.now = func() time.Time { return fixedNow }
+	first, err := broker.issueUserSigWithIdempotency(context.Background(), pairing, device, "credentials-replay-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationID := remoteCredentialOperationID(created.PairingID, device.DeviceID, "credentials-replay-1")
+	operation, err := broker.store.client.RuntimeOperation.Get(context.Background(), operationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(operation.Result, first.UserSig) {
+		t.Fatal("raw UserSig was persisted in the operation result")
+	}
+
+	restarted, err := newRemoteCompanionBroker(broker.store, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted == nil {
+		t.Fatal("broker did not restart with stable hash key")
+	}
+	restartedPairing, restartedDevice, err := restarted.authenticate(context.Background(), created.PairingID, created.DesktopCredential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := restarted.issueUserSigWithIdempotency(context.Background(), restartedPairing, restartedDevice, "credentials-replay-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("credential replay changed response: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestRemoteCompanionCredentialIdempotencyRejectsPersistedRequestDrift(t *testing.T) {
+	broker, _ := newRemoteBrokerTest(t)
+	created := createRemoteConfirmedPairing(t, broker)
+	pairing, device, err := broker.authenticate(context.Background(), created.PairingID, created.DesktopCredential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const key = "credentials-drift-1"
+	if _, err := broker.issueUserSigWithIdempotency(context.Background(), pairing, device, key); err != nil {
+		t.Fatal(err)
+	}
+	operationID := remoteCredentialOperationID(created.PairingID, device.DeviceID, key)
+	operation, err := broker.store.client.RuntimeOperation.Get(context.Background(), operationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var issue remoteCredentialIssue
+	if err := json.Unmarshal([]byte(operation.Result), &issue); err != nil {
+		t.Fatal(err)
+	}
+	issue.RequestHash = "request-hash-drift"
+	result, err := json.Marshal(issue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := broker.store.client.RuntimeOperation.UpdateOneID(operationID).SetResult(string(result)).Save(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := broker.issueUserSigWithIdempotency(context.Background(), pairing, device, key); err == nil || !strings.Contains(err.Error(), errRemoteInvalidRequest.Error()) {
+		t.Fatalf("request drift error = %v, want invalid request", err)
+	}
+}
+
+func TestRemoteCompanionCredentialIdempotencyHasOneOperationUnderConcurrency(t *testing.T) {
+	broker, _ := newRemoteBrokerTest(t)
+	created := createRemoteConfirmedPairing(t, broker)
+	pairing, device, err := broker.authenticate(context.Background(), created.PairingID, created.DesktopCredential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const key = "credentials-concurrent-1"
+	const attempts = 12
+	responses := make(chan remoteCredentialResponse, attempts)
+	errorsCh := make(chan error, attempts)
+	var wait sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			response, issueErr := broker.issueUserSigWithIdempotency(context.Background(), pairing, device, key)
+			if issueErr != nil {
+				errorsCh <- issueErr
+				return
+			}
+			responses <- response
+		}()
+	}
+	wait.Wait()
+	close(responses)
+	close(errorsCh)
+	for issueErr := range errorsCh {
+		t.Fatalf("concurrent credential issue failed: %v", issueErr)
+	}
+	var first remoteCredentialResponse
+	count := 0
+	for response := range responses {
+		if count == 0 {
+			first = response
+		} else if response != first {
+			t.Fatalf("concurrent replay changed response: first=%#v response=%#v", first, response)
+		}
+		count++
+	}
+	if count != attempts {
+		t.Fatalf("successful credential issues = %d, want %d", count, attempts)
+	}
+	operations, err := broker.store.client.RuntimeOperation.Query().Where(runtimeoperation.ActionEQ(remoteCredentialOperationAction)).All(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations) != 1 {
+		t.Fatalf("credential operations = %d, want one stable winner", len(operations))
+	}
+}
+
 func TestRemoteCompanionInvitationHTTPResponseIsNarrow(t *testing.T) {
 	broker, _ := newRemoteBrokerTest(t)
 	app := newControlPlaneAppEmpty()
@@ -827,6 +968,14 @@ func TestRemoteCompanionCanonicalHTTPLifecycle(t *testing.T) {
 	assertExactJSONKeys(t, credentialsRecorder.Body.Bytes(), "protocol_version", "provider", "sdk_app_id", "provider_user_id", "peer_provider_user_id", "usersig", "usersig_expires_at")
 	if credentials["usersig"] == nil || credentials["provider"] != "tencent_cloud_im" || credentials["peer_provider_user_id"] != tencentPairUserID(pairingID, "ios") {
 		t.Fatalf("credentials response = %#v", credentials)
+	}
+	credentialsReplayRequest := httptest.NewRequest(http.MethodPost, remoteCompanionBasePath+"/pairings/"+pairingID+"/credentials", strings.NewReader(credentialsBody))
+	credentialsReplayRequest.Header.Set("Authorization", "Bearer "+desktopToken)
+	credentialsReplayRequest.Header.Set("Idempotency-Key", "canonical-http-credentials")
+	credentialsReplayRecorder := httptest.NewRecorder()
+	mux.ServeHTTP(credentialsReplayRecorder, credentialsReplayRequest)
+	if credentialsReplayRecorder.Code != http.StatusOK || credentialsReplayRecorder.Body.String() != credentialsRecorder.Body.String() {
+		t.Fatalf("credential replay changed response: first=%s replay=%s", credentialsRecorder.Body.String(), credentialsReplayRecorder.Body.String())
 	}
 
 	revokeRequest := httptest.NewRequest(http.MethodDelete, remoteCompanionBasePath+"/pairings/"+pairingID, nil)
