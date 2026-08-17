@@ -1070,16 +1070,16 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
 }
 
 export async function runLocalWorkspaceBrowserQualification({ origin, email, password, workspaceName, evidenceDir, onLaunchIdentity = () => {} }) {
-  const exactEvidenceDir = resolve(String(evidenceDir || ""));
-  if (!isAbsolute(String(evidenceDir || "")) || exactEvidenceDir === root || exactEvidenceDir.startsWith(`${root}${sep}`)) {
+  const requestedEvidenceDir = resolve(String(evidenceDir || ""));
+  if (!isAbsolute(String(evidenceDir || "")) || requestedEvidenceDir === root || requestedEvidenceDir.startsWith(`${root}${sep}`)) {
     throw new Error("browser evidence directory must be an external absolute path");
   }
-  await mkdir(exactEvidenceDir, { recursive: true, mode: 0o700 });
-  const evidenceStat = await lstat(exactEvidenceDir);
-  const canonicalEvidenceDir = await realpath(exactEvidenceDir);
-  if (!evidenceStat.isDirectory() || evidenceStat.isSymbolicLink() || canonicalEvidenceDir !== exactEvidenceDir) {
+  await mkdir(requestedEvidenceDir, { recursive: true, mode: 0o700 });
+  const evidenceStat = await lstat(requestedEvidenceDir);
+  if (!evidenceStat.isDirectory() || evidenceStat.isSymbolicLink()) {
     throw new Error("browser evidence directory is invalid");
   }
+  const exactEvidenceDir = await realpath(requestedEvidenceDir);
   await chmod(exactEvidenceDir, 0o700);
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
