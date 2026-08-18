@@ -2652,6 +2652,80 @@ func TestCreateWorkspaceRuntimeReplaysIdempotentlyBeforeProvider(t *testing.T) {
 	}
 }
 
+func TestRepairWorkspaceRuntimeRejectsMissingPredecessorBeforeProvider(t *testing.T) {
+	provider := &countingRuntimeRepairProvider{}
+	store := NewMemoryOperationStore()
+	service := runtimeTestService(provider, store)
+	input := runtimeTestInput("replacement-runtime-operation")
+	input.PreviousRuntimeOperationID = "missing-runtime-operation"
+	input.IdempotencyKey = "runtime-repair-once"
+
+	if _, err := service.RepairWorkspaceRuntime(context.Background(), input); !errors.Is(err, ErrLaunchStageBindingConflict) {
+		t.Fatalf("repair without predecessor error=%v, want ErrLaunchStageBindingConflict", err)
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 0 || provider.repairCalls.Load() != 0 {
+		t.Fatalf("repair without predecessor operations=%#v listErr=%v providerCalls=%d", operations, err, provider.repairCalls.Load())
+	}
+}
+
+func TestRepairWorkspaceRuntimeReplaysAndPublishesSingleCanonicalReplacement(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	predecessor := WorkspaceRuntime{
+		ID: "rt_runtime-alpha", OperationID: "original-runtime-operation", WorkspaceID: "workspace-alpha",
+		ServiceName: "opl-compute-alpha", ImageID: testWorkspaceRuntimeImageID(), Status: "running", Ready: true,
+	}
+	operation := newOperation(
+		"create_workspace_runtime", "workspace_runtime", predecessor.WorkspaceID, "acct-alpha", predecessor.WorkspaceID,
+		predecessor.OperationID, hashInput(predecessor), time.Now().UTC(),
+	)
+	operation.ID, operation.Status, operation.FinishedAt = "fop_original-runtime-operation", "succeeded", operation.StartedAt
+	fillOperationResource(&operation, predecessor)
+	if err := store.Append(ctx, operation); err != nil {
+		t.Fatalf("seed predecessor: %v", err)
+	}
+
+	replacementImage := workspaceImageRepository + "@sha256:" + strings.Repeat("b", 64)
+	provider := &countingRuntimeRepairProvider{result: predecessor}
+	service := runtimeTestService(provider, store)
+	input := runtimeTestInput("replacement-runtime-operation")
+	input.PreviousRuntimeOperationID = predecessor.OperationID
+	input.IdempotencyKey = "runtime-repair-once"
+	input.ImageID = replacementImage
+
+	repaired, err := service.RepairWorkspaceRuntime(ctx, input)
+	if err != nil {
+		t.Fatalf("repair runtime: %v", err)
+	}
+	if repaired.ID != predecessor.ID || repaired.ServiceName != predecessor.ServiceName ||
+		repaired.OperationID != input.RuntimeOperationID || repaired.ImageID != replacementImage {
+		t.Fatalf("replacement runtime identity=%#v predecessor=%#v", repaired, predecessor)
+	}
+	replayed, err := service.RepairWorkspaceRuntime(ctx, input)
+	if err != nil || !reflect.DeepEqual(replayed, repaired) || provider.repairCalls.Load() != 1 {
+		t.Fatalf("repair replay=%#v err=%v providerCalls=%d", replayed, err, provider.repairCalls.Load())
+	}
+
+	otherAuthorization := input
+	otherAuthorization.IdempotencyKey = "runtime-repair-other-authorization"
+	if _, err := service.RepairWorkspaceRuntime(ctx, otherAuthorization); !errors.Is(err, ErrRuntimeIdempotencyConflict) {
+		t.Fatalf("different repair authorization error=%v, want ErrRuntimeIdempotencyConflict", err)
+	}
+	if provider.repairCalls.Load() != 1 {
+		t.Fatalf("different repair authorization providerCalls=%d, want 1", provider.repairCalls.Load())
+	}
+
+	candidates, err := store.WorkspaceRuntimeIdentityCandidates(ctx, predecessor.WorkspaceID)
+	if err != nil || len(candidates) != 1 || candidates[0].Action != "repair_workspace_runtime" {
+		t.Fatalf("replacement runtime candidates=%#v err=%v", candidates, err)
+	}
+	var candidate WorkspaceRuntime
+	if !decodeOperationResource(candidates[0], &candidate) || !reflect.DeepEqual(candidate, repaired) {
+		t.Fatalf("canonical replacement runtime=%#v repaired=%#v", candidate, repaired)
+	}
+}
+
 func TestDestroyWorkspaceRuntimeReplaysIdempotentlyBeforeProvider(t *testing.T) {
 	provider := &countingRuntimeProvider{}
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
@@ -3137,6 +3211,20 @@ type countingRuntimeProvider struct {
 	calls        atomic.Int32
 	destroyCalls atomic.Int32
 	input        WorkspaceRuntimeInput
+}
+
+type countingRuntimeRepairProvider struct {
+	countingRuntimeProvider
+	repairCalls atomic.Int32
+	result      WorkspaceRuntime
+}
+
+func (p *countingRuntimeRepairProvider) RepairWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
+	p.repairCalls.Add(1)
+	result := p.result
+	result.OperationID = input.RuntimeOperationID
+	result.ImageID = input.ImageID
+	return result, nil
 }
 
 type convergingRuntimeProvider struct {

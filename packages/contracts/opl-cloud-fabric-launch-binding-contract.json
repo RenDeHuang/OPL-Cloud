@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "owner": "services/fabric",
   "purpose": "Bind one Control Plane Workspace launch stage to one explicit Fabric operation and its expected provider-neutral resource binding.",
   "state": "current",
@@ -263,6 +263,20 @@
       "action": "ensure_runtime"
     }
   ],
+  "runtimeRepair": {
+    "route": "POST /fabric/workspace-runtimes/{workspaceId}/repair",
+    "action": "repair_workspace_runtime",
+    "adapterPolicy": "explicit_opt_in_or_fail_closed",
+    "requestFields": ["workspaceId", "computeId", "volumeId", "attachmentId", "attachmentOperationId", "runtimeOperationId", "previousRuntimeOperationId", "imageId", "gatewaySecretRef"],
+    "idempotencyHeader": "Idempotency-Key",
+    "preMutationEvidence": "persisted_succeeded_original_runtime_operation_matching_workspaceId_and_previousRuntimeOperationId",
+    "preserved": ["computeId", "volumeId", "attachmentId", "attachmentOperationId", "gatewaySecretRef", "runtimeId", "serviceName"],
+    "replaced": ["runtimeOperationId", "imageId", "runtimeUrl"],
+    "providerMutation": "replace_runtime_only_without_destroying_gateway_secret_compute_storage_or_attachment",
+    "operationBindingFields": ["previousRuntimeOperationId", "replacementRuntimeOperationId", "imageId"],
+    "exactReplay": "same_idempotency_key_and_request_hash_returns_the_persisted_replacement_runtime",
+    "canonicalReadback": "successful_repair_operation_supersedes_the_failed_original_runtime_candidate_for_workspace_status"
+  },
   "readback": {
     "identityField": "fabricOperationId",
     "matchFields": [

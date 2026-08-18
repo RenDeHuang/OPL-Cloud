@@ -250,10 +250,106 @@ type canonicalWorkspaceRuntimeParent struct {
 	record    workspaceLaunchStageRecord
 }
 
+func workspaceRuntimePredecessorEvidence(operations []FabricOperation, workspaceID, runtimeOperationID string) (WorkspaceRuntime, bool) {
+	var match WorkspaceRuntime
+	found := false
+	for _, operation := range operations {
+		if operation.WorkspaceID != workspaceID || operation.ResourceKind != "workspace_runtime" || operation.Status != "succeeded" ||
+			operation.Action == "repair_workspace_runtime" {
+			continue
+		}
+		var runtime WorkspaceRuntime
+		if !decodeOperationResource(operation, &runtime) || runtime.OperationID != runtimeOperationID || runtime.WorkspaceID != workspaceID ||
+			runtime.ID == "" || runtime.ServiceName == "" || runtime.ImageID == "" {
+			continue
+		}
+		if found && (match.ID != runtime.ID || match.OperationID != runtime.OperationID || match.ServiceName != runtime.ServiceName || match.ImageID != runtime.ImageID) {
+			return WorkspaceRuntime{}, false
+		}
+		match, found = runtime, true
+	}
+	return match, found
+}
+
+func workspaceRuntimeRepairCandidateFromOperations(operations []FabricOperation, workspaceID string) (FabricOperation, bool, error) {
+	var candidate FabricOperation
+	found := false
+	for _, operation := range operations {
+		if operation.WorkspaceID != workspaceID || operation.Action != "repair_workspace_runtime" {
+			continue
+		}
+		if operation.Status != "succeeded" {
+			continue
+		}
+		if found || operation.ResourceKind != "workspace_runtime" || operation.ResourceID != workspaceID || operation.ID == "" ||
+			operation.IdempotencyKey == "" || operation.RequestHash == "" {
+			return FabricOperation{}, false, ErrLaunchStageBindingConflict
+		}
+		var runtime WorkspaceRuntime
+		if !decodeOperationResource(operation, &runtime) || runtime.WorkspaceID != workspaceID || runtime.ID == "" || runtime.ServiceName == "" {
+			return FabricOperation{}, false, ErrLaunchStageBindingConflict
+		}
+		binding, err := workspaceRuntimeRepairBindingFromOperation(operation, runtime, operations)
+		if err != nil {
+			return FabricOperation{}, false, err
+		}
+		if runtime.OperationID != binding.ReplacementRuntimeOperationID || runtime.ImageID != binding.ImageID {
+			return FabricOperation{}, false, ErrLaunchStageBindingConflict
+		}
+		predecessor, predecessorFound := workspaceRuntimePredecessorEvidence(operations, workspaceID, binding.PreviousRuntimeOperationID)
+		if !predecessorFound || predecessor.ID != runtime.ID || predecessor.ServiceName != runtime.ServiceName ||
+			operation.AccountID == "" || predecessor.OperationID != binding.PreviousRuntimeOperationID {
+			return FabricOperation{}, false, ErrLaunchStageBindingConflict
+		}
+		candidate, found = operation, true
+	}
+	return candidate, found, nil
+}
+
+// workspaceRuntimeRepairBindingFromOperation preserves authoritative readback
+// for the first repair implementation, which persisted the replacement
+// Runtime resource but omitted the redacted repair binding. The replacement
+// operation identity and predecessor resource are both required before the
+// binding is derived; malformed or ambiguous records still fail closed.
+func workspaceRuntimeRepairBindingFromOperation(operation FabricOperation, runtime WorkspaceRuntime, operations []FabricOperation) (workspaceRuntimeRepairBinding, error) {
+	value, present := operation.RedactedProviderPayload[workspaceRuntimeRepairPayloadKey]
+	if present {
+		body, err := json.Marshal(value)
+		var binding workspaceRuntimeRepairBinding
+		if err != nil || json.Unmarshal(body, &binding) != nil || binding.SchemaVersion != 1 || binding.PreviousRuntimeOperationID == "" ||
+			binding.ReplacementRuntimeOperationID == "" || binding.ReplacementRuntimeOperationID == binding.PreviousRuntimeOperationID || binding.ImageID == "" {
+			return workspaceRuntimeRepairBinding{}, ErrLaunchStageBindingConflict
+		}
+		return binding, nil
+	}
+	if operation.IdempotencyKey == "" || !strings.HasSuffix(runtime.OperationID, ":create") ||
+		operation.IdempotencyKey != strings.TrimSuffix(runtime.OperationID, ":create") {
+		return workspaceRuntimeRepairBinding{}, ErrLaunchStageBindingConflict
+	}
+	launchID, _, found := strings.Cut(operation.IdempotencyKey, ":runtime-repair:")
+	if !found || launchID == "" || strings.Contains(launchID, ":") {
+		return workspaceRuntimeRepairBinding{}, ErrLaunchStageBindingConflict
+	}
+	previousRuntimeOperationID := launchID + ":runtime"
+	predecessor, found := workspaceRuntimePredecessorEvidence(operations, operation.WorkspaceID, previousRuntimeOperationID)
+	if !found || predecessor.ID != runtime.ID || predecessor.ServiceName != runtime.ServiceName || predecessor.OperationID != previousRuntimeOperationID {
+		return workspaceRuntimeRepairBinding{}, ErrLaunchStageBindingConflict
+	}
+	return workspaceRuntimeRepairBinding{
+		SchemaVersion: 1, PreviousRuntimeOperationID: previousRuntimeOperationID,
+		ReplacementRuntimeOperationID: runtime.OperationID, ImageID: runtime.ImageID,
+	}, nil
+}
+
 func workspaceRuntimeIdentityCandidatesFromOperations(operations []FabricOperation, workspaceID string) ([]FabricOperation, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID == "" {
 		return nil, ErrLaunchStageBindingConflict
+	}
+	if repair, found, err := workspaceRuntimeRepairCandidateFromOperations(operations, workspaceID); err != nil {
+		return nil, err
+	} else if found {
+		return []FabricOperation{repair}, nil
 	}
 	byID := make(map[string]FabricOperation, len(operations))
 	parents := map[string]canonicalWorkspaceRuntimeParent{}

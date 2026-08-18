@@ -439,6 +439,18 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		runtime, err := service.CreateWorkspaceRuntime(r.Context(), input)
 		writeResult(w, runtime, err)
 	})
+	mux.HandleFunc("POST /fabric/workspace-runtimes/{workspaceId}/repair", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.WorkspaceRuntimeInput
+		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
+			return
+		}
+		if input.WorkspaceID != strings.TrimSpace(r.PathValue("workspaceId")) {
+			writeError(w, http.StatusBadRequest, "workspace_runtime_repair_identity_required")
+			return
+		}
+		runtime, err := service.RepairWorkspaceRuntime(r.Context(), input)
+		writeResult(w, runtime, err)
+	})
 	mux.HandleFunc("POST /fabric/workspace-runtimes/{workspaceId}/destroy", func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("Idempotency-Key")
 		if key == "" {
@@ -628,7 +640,7 @@ func isFabricMutation(r *http.Request) bool {
 		return false
 	}
 	switch parts[1] + "/" + parts[3] {
-	case "compute-allocations/renew", "compute-allocations/destroy", "storage-volumes/renew", "storage-volumes/destroy", "storage-attachments/detach", "workspace-runtimes/destroy", "workspace-runtimes/gateway-secret":
+	case "compute-allocations/renew", "compute-allocations/destroy", "storage-volumes/renew", "storage-volumes/destroy", "storage-attachments/detach", "workspace-runtimes/repair", "workspace-runtimes/destroy", "workspace-runtimes/gateway-secret":
 		return true
 	default:
 		return false
@@ -706,6 +718,11 @@ func fabricMutationScopeForRequest(ctx context.Context, resolver fabricMutationS
 		scope.ResourceKind, scope.ResourceID, scope.Action = "storage_attachment", parts[2], "detach_storage_attachment"
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "destroy":
 		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime", parts[2], "destroy_workspace_runtime"
+	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "repair":
+		if value("workspaceId") != parts[2] {
+			return fabricMutationScope{}, false
+		}
+		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime", parts[2], "repair_workspace_runtime"
 	case len(parts) == 4 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "gateway-secret":
 		scope.ResourceKind, scope.ResourceID, scope.Action = "workspace_runtime_gateway_secret", parts[2], "bind_workspace_runtime_gateway_secret"
 	case len(parts) == 5 && parts[0] == "fabric" && parts[1] == "workspace-runtimes" && parts[2] != "" && parts[3] == "credentials" && parts[4] == "reveal":

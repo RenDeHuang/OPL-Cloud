@@ -741,6 +741,41 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 	return resource, nil
 }
 
+func (p *LocalDockerProvider) RepairWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) (WorkspaceRuntime, error) {
+	name := localRuntimeName(input.WorkspaceID)
+	container, exists, err := p.inspectContainer(ctx, name)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	if exists {
+		current, readErr := p.runtimeFromContainer(container)
+		if readErr != nil {
+			return WorkspaceRuntime{}, readErr
+		}
+		if current.OperationID == input.RuntimeOperationID && current.ImageID == input.ImageID {
+			return p.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
+		}
+		labels := container.Config.Labels
+		previousOperationMatches := current.OperationID == input.PreviousRuntimeOperationID || failedRepairRuntimeOperationForLaunch(current.OperationID, input.PreviousRuntimeOperationID)
+		if !previousOperationMatches || current.WorkspaceID != input.WorkspaceID || current.ID != localRuntimeID(input.WorkspaceID) ||
+			labels["opl.account.id"] != compute.AccountID || labels["opl.compute.id"] != input.ComputeID || labels["opl.storage.id"] != input.VolumeID ||
+			labels["opl.attachment.id"] != input.AttachmentID || labels["opl.attachment.operation.id"] != input.AttachmentOperationID ||
+			labels["opl.secret.ref"] != input.GatewaySecretRef || (current.OperationID != input.PreviousRuntimeOperationID && labels["opl.image.ref"] != input.ImageID) {
+			return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_repair_ownership_mismatch")
+		}
+		if _, err := p.runner.Run(ctx, nil, "container", "rm", "-f", name); err != nil {
+			return WorkspaceRuntime{}, err
+		}
+	}
+	return p.CreateWorkspaceRuntime(ctx, input, compute, volume)
+}
+
+func failedRepairRuntimeOperationForLaunch(candidateOperationID, previousRuntimeOperationID string) bool {
+	marker := ":runtime-repair:"
+	launchID, _, found := strings.Cut(candidateOperationID, marker)
+	return found && launchID != "" && previousRuntimeOperationID == launchID+":runtime"
+}
+
 func ensureLocalDockerCodexHome(dataPath string) error {
 	path := filepath.Join(dataPath, ".codex")
 	if err := os.Mkdir(path, 0700); err != nil && !errors.Is(err, os.ErrExist) {
