@@ -355,6 +355,12 @@ cannot own a business stage, rewrite a resource identity, create a successor
 Launch, or call a provider directly. The exact public binding shape is admitted
 only with a real caller, source implementation in both owners, and focused
 tests; this architecture does not freeze a speculative universal JSON contract.
+For a resource-billed Launch whose Runtime exhausted its read budget and later
+became ready, an operator may authorize a zero-mutation, zero-replay read of the
+exact original Fabric binding. Only an authoritative `ready` result confirms the
+existing attempt and advances the same Launch; `pending`, `absent`, `unknown`,
+read failure, or identity drift leaves the operation unchanged in
+`manual_review`.
 
 Fresh mutation continuation is a separate Control Plane system authorization,
 never an operator Resume authorization. It exists only when the mandatory first

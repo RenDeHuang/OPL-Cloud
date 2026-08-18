@@ -253,6 +253,38 @@ func workspaceLaunchReservedStageAuthorization(t *testing.T, row map[string]any,
 	}
 }
 
+func workspaceLaunchUnknownStageManualReviewRow(t *testing.T, stage string) map[string]any {
+	t.Helper()
+	row := workspaceLaunchReservedStageManualReviewRow(t, stage)
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := operation.Attempts[stage]
+	attempt.Unknown, attempt.Status = 1, "unknown"
+	attempt.PendingReadbacks, attempt.MaxPendingReadbacks = workspaceLaunchAuthoritativeReadBudget, workspaceLaunchAuthoritativeReadBudget
+	operation.Attempts[stage] = attempt
+	operation.Observations[stage] = workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}
+	row, err = workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
+func workspaceLaunchUnknownRuntimeReadAuthorization(t *testing.T, row map[string]any, authorizationID string) workspaceLaunchResumeAuthorization {
+	t.Helper()
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workspaceLaunchResumeAuthorization{
+		AuthorizationID: authorizationID, LaunchVersion: operation.Version, AuthorizedStage: operation.Stage, AuthorizedBy: "usr-admin",
+		AuthorizedAt: "2026-08-18T06:00:00Z", Reason: "runtime became ready after the original authoritative read budget expired",
+		MutationBudget: 0, IdempotentReplayBudget: 0, AuthoritativeReadBudget: workspaceLaunchAuthoritativeReadBudget,
+	}
+}
+
 func TestWorkspaceLaunchReservedStageReplayMatrix(t *testing.T) {
 	for _, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-1] {
 		t.Run(stage+"/absent replays one logical claim", func(t *testing.T) {
@@ -279,6 +311,87 @@ func TestWorkspaceLaunchReservedStageReplayMatrix(t *testing.T) {
 			got, err := NewWorkspaceLaunchReconciler(&workspaceLaunchUnitStore{row: row}, adapter).Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, authorization)
 			if err != nil || got.Attempts[stage].Confirmed != 1 || adapter.mutations != 0 {
 				t.Fatalf("ready stage did not converge read-only: operation=%s mutations=%d err=%v", workspaceLaunchReconcileResultSummary(got), adapter.mutations, err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchUnknownRuntimeRecoveryConvergesReadyReadOnly(t *testing.T) {
+	row := workspaceLaunchUnknownStageManualReviewRow(t, "runtime")
+	store := &workspaceLaunchUnitStore{row: row}
+	adapter := &workspaceLaunchUnitAdapter{readyStages: map[string]bool{"runtime": true}, replayableStages: map[string]bool{"runtime": true}}
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	authorization := workspaceLaunchUnknownRuntimeReadAuthorization(t, row, "resume-unknown-runtime-ready")
+
+	got, err := reconciler.Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, authorization)
+	if err != nil || got.Status != "pending" || got.Stage != "activation" || got.Attempts["runtime"].Confirmed != 1 ||
+		got.Attempts["runtime"].Unknown != 0 || got.Attempts["runtime"].Status != "confirmed" ||
+		got.ResumeAuthorization == nil || got.ResumeAuthorizationConsumedAt == "" || adapter.reads != 1 || adapter.mutations != 0 {
+		t.Fatalf("unknown Runtime did not converge read-only: operation=%s reads=%d mutations=%d err=%v", workspaceLaunchReconcileResultSummary(got), adapter.reads, adapter.mutations, err)
+	}
+
+	readsBefore, persistedBefore := adapter.reads, stringValue(store.row["result"])
+	replayed, err := reconciler.Resume(context.Background(), got.ID, authorization)
+	if err != nil || replayed.Version != got.Version || adapter.reads != readsBefore || adapter.mutations != 0 || stringValue(store.row["result"]) != persistedBefore {
+		t.Fatalf("consumed Runtime recovery repeated work: operation=%s reads=%d/%d mutations=%d err=%v", workspaceLaunchReconcileResultSummary(replayed), adapter.reads, readsBefore, adapter.mutations, err)
+	}
+}
+
+func TestWorkspaceLaunchUnknownRuntimeRecoveryRefusesUnconfirmedAuthority(t *testing.T) {
+	tests := []struct {
+		name    string
+		adapter *workspaceLaunchUnitAdapter
+	}{
+		{name: "pending", adapter: &workspaceLaunchUnitAdapter{stageObservations: map[string]workspaceLaunchStageObservation{"runtime": {State: workspaceLaunchStagePending}}}},
+		{name: "absent", adapter: &workspaceLaunchUnitAdapter{}},
+		{name: "unknown", adapter: &workspaceLaunchUnitAdapter{unknownStages: map[string]bool{"runtime": true}}},
+		{name: "read error", adapter: &workspaceLaunchUnitAdapter{readErrors: map[string]error{"runtime": errors.New("read failed")}}},
+		{name: "invalid ready facts", adapter: &workspaceLaunchUnitAdapter{stageObservations: map[string]workspaceLaunchStageObservation{"runtime": {State: workspaceLaunchStageReady, Facts: map[string]any{}}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			row := workspaceLaunchUnknownStageManualReviewRow(t, "runtime")
+			persistedBefore := stringValue(row["result"])
+			store := &workspaceLaunchUnitStore{row: row}
+			authorization := workspaceLaunchUnknownRuntimeReadAuthorization(t, row, "resume-unknown-runtime-"+strings.ReplaceAll(tc.name, " ", "-"))
+			_, err := NewWorkspaceLaunchReconciler(store, tc.adapter).Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, authorization)
+			if !errors.Is(err, errWorkspaceLaunchGrantConflict) || tc.adapter.reads != 1 || tc.adapter.mutations != 0 || stringValue(store.row["result"]) != persistedBefore {
+				t.Fatalf("unconfirmed Runtime authority changed operation: reads=%d mutations=%d err=%v", tc.adapter.reads, tc.adapter.mutations, err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchUnknownRuntimeRecoveryIsBillingAndStageScoped(t *testing.T) {
+	tests := []struct {
+		name      string
+		stage     string
+		configure func(*workspaceLaunchReconcileOperation)
+	}{
+		{name: "non Runtime stage", stage: "debit"},
+		{name: "customer owned Runtime", stage: "runtime", configure: func(operation *workspaceLaunchReconcileOperation) {
+			operation.raw["resourceBillingEnabled"] = json.RawMessage("false")
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			row := workspaceLaunchUnknownStageManualReviewRow(t, tc.stage)
+			operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.configure != nil {
+				tc.configure(&operation)
+			}
+			row, err = workspaceLaunchReconcileOperationRow(operation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			adapter := &workspaceLaunchUnitAdapter{readyStages: map[string]bool{tc.stage: true}}
+			authorization := workspaceLaunchUnknownRuntimeReadAuthorization(t, row, "resume-unknown-scope-"+strings.ReplaceAll(tc.name, " ", "-"))
+			_, err = NewWorkspaceLaunchReconciler(&workspaceLaunchUnitStore{row: row}, adapter).Resume(context.Background(), operation.ID, authorization)
+			if !errors.Is(err, errWorkspaceLaunchGrantConflict) || adapter.reads != 0 || adapter.mutations != 0 {
+				t.Fatalf("out-of-scope recovery reached owner: reads=%d mutations=%d err=%v", adapter.reads, adapter.mutations, err)
 			}
 		})
 	}
