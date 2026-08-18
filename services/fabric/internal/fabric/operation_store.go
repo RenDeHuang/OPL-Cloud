@@ -324,7 +324,7 @@ func workspaceRuntimeIdentityCandidatesFromOperations(operations []FabricOperati
 			runtime.ID != parent.record.Resources.RuntimeID || runtime.WorkspaceID != workspaceID ||
 			runtime.OperationID != parent.operation.ID || runtime.ServiceName == "" ||
 			runtime.ServiceName != binding.ExpectedResourceBinding || runtime.ServiceName != parent.record.Resources.RuntimeServiceName ||
-			runtime.URL == "" || runtime.URL != parent.record.Resources.RuntimeURL {
+			runtime.URL == "" {
 			return nil, ErrLaunchStageBindingConflict
 		}
 		childCounts[parent.operation.ID]++

@@ -1408,10 +1408,17 @@ func TestPostgresWorkspaceRuntimeIdentityCandidatesCanonicalRestart(t *testing.T
 	driftBinding := driftChild.RedactedProviderPayload[providerMutationBindingPayloadKey].(persistedProviderMutationBinding)
 	driftBinding.Digest += "-drift"
 	driftChild.RedactedProviderPayload[providerMutationBindingPayloadKey] = driftBinding
+	dynamicURLParent, dynamicURLChild, _ := canonicalRuntimeOperationGraph(t, "workspace-dynamic-url-pg", "dynamic-url-pg", now.Add(4*time.Minute))
+	dynamicURLRecord, ok := decodeWorkspaceLaunchStageRecord(dynamicURLParent)
+	if !ok {
+		t.Fatal("decode dynamic URL runtime stage record")
+	}
+	dynamicURLRecord.Resources.RuntimeURL = "http://127.0.0.1:63118/"
+	setWorkspaceLaunchStageRecord(&dynamicURLParent, dynamicURLRecord)
 	legacy := legacyWorkspaceRuntimeOperation("workspace-legacy-pg", "legacy-pg", now.Add(-time.Minute))
 	for _, operation := range []FabricOperation{
 		legacy, canonicalParent, canonicalChild, duplicateFirstParent, duplicateFirstChild,
-		duplicateSecondParent, duplicateSecondChild, driftParent, driftChild,
+		duplicateSecondParent, duplicateSecondChild, driftParent, driftChild, dynamicURLParent, dynamicURLChild,
 	} {
 		if err := first.Append(ctx, operation); err != nil {
 			t.Fatal(err)
@@ -1437,6 +1444,7 @@ func TestPostgresWorkspaceRuntimeIdentityCandidatesCanonicalRestart(t *testing.T
 		{name: "canonical restart", workspaceID: canonicalParent.WorkspaceID, wantID: canonicalChild.ID, wantCount: 1},
 		{name: "duplicate canonical", workspaceID: duplicateFirstParent.WorkspaceID, wantCount: 2},
 		{name: "canonical binding drift", workspaceID: driftParent.WorkspaceID, wantErr: ErrLaunchStageBindingConflict},
+		{name: "dynamic URL restart", workspaceID: dynamicURLParent.WorkspaceID, wantID: dynamicURLChild.ID, wantCount: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			candidates, err := restarted.WorkspaceRuntimeIdentityCandidates(ctx, test.workspaceID)

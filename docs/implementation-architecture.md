@@ -299,6 +299,9 @@ persistent-volume fields are optional response-only projections and do not
 participate in readiness or continuity comparison. The Local Docker adapter also
 validates an immutable Workspace image against its trusted repository or exact
 release-manifest source before Docker access or Fabric operation persistence.
+Its running container ID, service identity, and provider binding are immutable
+Runtime identity facts; Docker-assigned HostPort and URL are live routing facts
+that authoritative Runtime readback refreshes after a restart.
 
 ## Launch Boundary Integration
 
@@ -322,6 +325,16 @@ read, child replay CAS, owner read again, then reuse the exact original key only
 for still-absent resources. Budget exhaustion records `unknown/manual_review`.
 Schema-v3 rows missing the new fields decode with zero authorization and cannot
 read or mutate until explicitly reviewed.
+
+A resource-billed Runtime already parked as `unknown/manual_review` has one
+narrow operator recovery path in the same Reconciler. It accepts only the
+original `Max=1` attempt and exact idempotency identity with zero mutation and
+zero replay budget, then performs the typed Fabric stage read. Exact `ready`
+facts confirm that attempt and advance to activation; every other observation
+or read error returns a conflict without persisting authorization, changing the
+operation, or calling Fabric ensure. If the exhausted Runtime read budget was
+owned by a failed fresh typed-pending continuation, the same READY transition
+also marks that continuation consumed so its persisted state remains coherent.
 
 Fresh post-mutation typed `pending` uses a distinct system continuation record,
 not the operator Resume record. The mutation's mandatory owner read persists

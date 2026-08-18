@@ -155,11 +155,6 @@ func TestMemoryWorkspaceRuntimeIdentityCandidatesFailClosedOnCanonicalDrift(t *t
 			record.Resources.RuntimeServiceName += "-drift"
 			setWorkspaceLaunchStageRecord(parent, record)
 		}},
-		{name: "parent runtime url", mutate: func(parent, _ *FabricOperation, _ WorkspaceRuntime) {
-			record, _ := decodeWorkspaceLaunchStageRecord(*parent)
-			record.Resources.RuntimeURL += "drift/"
-			setWorkspaceLaunchStageRecord(parent, record)
-		}},
 		{name: "child status", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.Status = "failed" }},
 		{name: "child resource kind", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.ResourceKind = "storage_volume" }},
 		{name: "child id", mutate: func(_, child *FabricOperation, _ WorkspaceRuntime) { child.ID += "-drift" }},
@@ -211,10 +206,6 @@ func TestMemoryWorkspaceRuntimeIdentityCandidatesFailClosedOnCanonicalDrift(t *t
 			runtime.ServiceName += "-drift"
 			fillOperationResource(child, runtime)
 		}},
-		{name: "decoded runtime url", mutate: func(_, child *FabricOperation, runtime WorkspaceRuntime) {
-			runtime.URL += "drift/"
-			fillOperationResource(child, runtime)
-		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -235,6 +226,32 @@ func TestMemoryWorkspaceRuntimeIdentityCandidatesFailClosedOnCanonicalDrift(t *t
 				t.Fatalf("canonical drift observation=%#v", observation)
 			}
 		})
+	}
+}
+
+func TestMemoryWorkspaceRuntimeIdentityCandidatesAllowDynamicURLReadback(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	parent, child, expected := canonicalRuntimeOperationGraph(t, "workspace-alpha", "dynamic-url", time.Date(2026, 8, 18, 1, 0, 0, 0, time.UTC))
+	record, ok := decodeWorkspaceLaunchStageRecord(parent)
+	if !ok {
+		t.Fatal("decode canonical runtime stage record")
+	}
+	record.Resources.RuntimeURL = "http://127.0.0.1:63118/"
+	setWorkspaceLaunchStageRecord(&parent, record)
+	for _, operation := range []FabricOperation{parent, child} {
+		if err := store.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	candidates, err := store.WorkspaceRuntimeIdentityCandidates(ctx, expected.WorkspaceID)
+	if err != nil || len(candidates) != 1 || candidates[0].ID != child.ID {
+		t.Fatalf("dynamic URL candidates=%#v err=%v", candidates, err)
+	}
+	status, err := runtimeTestService(liveRuntimeWithoutIDProvider{}, store).WorkspaceRuntimeStatus(ctx, expected.WorkspaceID)
+	if err != nil || status.ID != expected.ID || status.OperationID != expected.OperationID || !status.Ready {
+		t.Fatalf("dynamic URL runtime status=%#v err=%v", status, err)
 	}
 }
 

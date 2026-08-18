@@ -50,19 +50,49 @@ tokens are not retained.
 The local `platform_owned` entry point is
 `/Users/huangrende/Desktop/opl-cloud/sub2api-local_platform_owned.yaml` with
 `OPL_DEPLOYMENT_MODE=platform_owned`, `OPL_FABRIC_PROVIDER=local-docker`, and
-Console at `http://127.0.0.1:8788`. Its historical launch record proves one
-Sub2API resource Debit and one Workspace Key, but is parked at
-`runtime unknown/manual_review` before Receipt because the runtime network was
-created before the current Fabric gateway was recreated. No Receipt is claimed
-for that parked record and no synthetic billing evidence is accepted. A fresh
-platform-owned clean-host run remains a follow-up acceptance item; it is not
-required to change the customer-owned billing semantics above.
+Console at `http://127.0.0.1:8788`. Its Cloud services currently run the
+`linux/arm64` candidate
+`local/opl-cloud@sha256:ea40ad981839e6a65bf8d77e53d8f6e88c60b7fedb6ecbdd9dfdc407722cd4fb`
+built from `ab34b5793f48c83e3a28fd8f3778f41bd3afc074`; its Workspace App is
+the same exact v26.8.16 arm64 image stated above.
+
+The verified platform-owned Workspace is
+`ws-9b09960b8f1edd6f35` (`Platform Workspace ARM 1`). It read back as
+`READY/running` with Runtime `rt_c358deba02e8971928`, container
+`opl-runtime-73e98b594ce0fee3`, network `opl-compute-68441bb5198de6b3`, and
+the dynamically allocated URL `http://127.0.0.1:63118/`. The independent
+host-owned `data` and `projects` directories, Workspace Secret, and `/recovery`
+tmpfs remain attached. The runtime's dynamic Docker HostPort is a live routing
+fact and is therefore authoritatively re-read after restart; it is not part of
+the immutable Runtime identity.
+
+The one original create command produced exactly one Workspace Key `166`, one
+Sub2API resource Debit of `-52.58 USD` (`matchCount=1` in authoritative admin
+balance-history readback), and one Ledger Purchase Receipt
+`receipt_1787037825939535675` for `52,580,000` USD micros. The receipt links the
+same Workspace, Runtime, Key, compute allocation, 10 GB storage allocation,
+and `autoRenew=false`. An exact replay kept the Key, Debit, and Receipt counts
+at one. A Control Plane restart followed by a new authenticated session read
+back the same Workspace and Runtime, Key, Receipt, Sub2API usage, and matching
+host/container SHA-256 for
+`data/.official-profile-first-install-complete`. The recovery fix consumes an
+otherwise failed fresh continuation when its authoritative Runtime read reports
+READY, preserving the persisted recovery invariant without a second provider
+mutation.
+
+From this real Workspace UI, `OPL_PLATFORM_OWNED_OK` completed successfully.
+Current Sub2API usage readback is two requests, `27,502` input tokens, `55`
+output tokens, and `143,000` USD micros. This total includes one Runtime-side
+diagnostic request and the successful UI request. Evidence is retained outside
+Git at
+`/Users/huangrende/Desktop/opl-cloud/evidence/2026-08-18-v2/platform-owned-rerun`;
+its publishable screenshots show the Console login/list/detail, Runtime READY,
+and the Workspace UI result without session credentials.
 
 `managed_tke` and `tencent-tke` are implemented as independent selection
 overlays and are contract-tested, but no live TKE mutation or readiness was run
-on this Mac. The two local runtime paths actually exercised here are therefore
-`customer_owned + local-docker`, plus the platform-owned configuration and
-Sub2API Debit boundary described above.
+on this Mac. The two local runtime paths actually exercised here are
+`customer_owned + local-docker` and `platform_owned + local-docker`.
 
 ## Product Boundary
 
