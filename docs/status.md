@@ -294,9 +294,18 @@ Sub2API management origin and credentials are never exposed to the browser.
   action/idempotency or approval/idempotency owner lookups, fail closed on an
   exact-identity conflict, and retain historical recovery-binding and mutation-
   ledger read compatibility. Other Fabric operation-list consumers remain.
-- Workspace file bodies stay in provider-owned storage: a local Docker volume for
-  the local adapter or CBS for the Tencent adapter. Platform PostgreSQL stores
-  identity, operation, reference, and evidence facts rather than file bodies.
+- Workspace file bodies stay in provider-owned storage: a Linux project-quota-
+  backed host directory for the local adapter or CBS for the Tencent adapter.
+  The local Runtime maps the admitted package to exact Docker CPU/memory cgroup
+  limits and validates `HostConfig`; storage validates kernel project ID and
+  hard-limit readback for the admitted `SizeGB`. The quota path requires Linux
+  5.14+ and a unique, dedicated project-quota ext4/XFS mount; unsupported hosts,
+  shared/subdirectory mounts, foreign root inventory, and legacy schema-1 roots
+  fail readiness/preflight. fd-relative quota mutation rejects symlink and nested
+  mount traversal, while durable deletion tombstones make quota cleanup
+  restart-safe before a project ID can be reused. Platform PostgreSQL
+  stores identity, operation, reference, and evidence facts rather than file
+  bodies.
 - Create and Resume now enter one durable Control Plane Reconciler. Its resource
   stages call the typed Fabric HTTP contract and consume the same six-field
   request-hash vectors as Fabric. Activation readback uses the canonical

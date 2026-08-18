@@ -8,6 +8,7 @@ require (
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm v1.3.127
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke v1.3.123
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc v1.3.127
+	golang.org/x/sys v0.45.0
 	k8s.io/apimachinery v0.31.4
 	opl-cloud/services/internal/postgresmigrate v0.0.0
 )

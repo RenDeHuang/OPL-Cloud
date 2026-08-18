@@ -177,7 +177,7 @@ func (p *LocalDockerProvider) ReadWorkspaceLaunchStage(ctx context.Context, requ
 		state.Compute = &readback
 		resources.ComputeAllocationID, resources.ComputeBindingRef = readback.ID, binding.FabricOperationID
 	case "storage":
-		volume := StorageVolume{ID: firstNonEmpty(resources.StorageID, workspaceLaunchStorageID(binding)), AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID}
+		volume := StorageVolume{ID: firstNonEmpty(resources.StorageID, workspaceLaunchStorageID(binding)), AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, SizeGB: input.SizeGB}
 		if stateErr == nil && state.Storage != nil {
 			volume = *state.Storage
 		}

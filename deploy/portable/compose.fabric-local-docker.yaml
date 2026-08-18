@@ -1,6 +1,8 @@
 services:
   fabric:
     user: root
+    cap_add:
+      - SYS_ADMIN
     labels:
       opl.cloud.fabric-provider: local-docker
     environment:
