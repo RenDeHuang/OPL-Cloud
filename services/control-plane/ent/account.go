@@ -28,8 +28,10 @@ type Account struct {
 	// Name holds the value of the "name" field.
 	Name string `json:"name,omitempty"`
 	// Status holds the value of the "status" field.
-	Status       string `json:"status,omitempty"`
-	selectValues sql.SelectValues
+	Status string `json:"status,omitempty"`
+	// WorkspacePurchaseEnabled holds the value of the "workspace_purchase_enabled" field.
+	WorkspacePurchaseEnabled bool `json:"workspace_purchase_enabled,omitempty"`
+	selectValues             sql.SelectValues
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -37,6 +39,8 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case account.FieldWorkspacePurchaseEnabled:
+			values[i] = new(sql.NullBool)
 		case account.FieldSub2apiUserID:
 			values[i] = new(sql.NullInt64)
 		case account.FieldID, account.FieldOwnerUserID, account.FieldName, account.FieldStatus:
@@ -100,6 +104,12 @@ func (a *Account) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				a.Status = value.String
 			}
+		case account.FieldWorkspacePurchaseEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field workspace_purchase_enabled", values[i])
+			} else if value.Valid {
+				a.WorkspacePurchaseEnabled = value.Bool
+			}
 		default:
 			a.selectValues.Set(columns[i], values[i])
 		}
@@ -153,6 +163,9 @@ func (a *Account) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(a.Status)
+	builder.WriteString(", ")
+	builder.WriteString("workspace_purchase_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", a.WorkspacePurchaseEnabled))
 	builder.WriteByte(')')
 	return builder.String()
 }

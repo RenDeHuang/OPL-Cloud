@@ -591,6 +591,7 @@ export interface OperatorAccount {
   sub2apiUserId: string;
   email: string;
   status: "active" | "disabled";
+  workspacePurchaseEnabled: boolean;
 }
 
 export interface OperatorAccountsData {
@@ -627,10 +628,12 @@ export interface ProvisionAccountRequest {
   email: string;
   password: string;
   name?: string;
+  admission?: "full_cloud_customer" | "gateway_only";
 }
 
 export interface OperatorAccountCommandDTO extends OperationStatusDTO {
   accountId: string;
+  workspacePurchaseEnabled?: boolean;
 }
 
 export interface ResourceFact {

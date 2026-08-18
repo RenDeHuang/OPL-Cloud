@@ -25,6 +25,8 @@ const (
 	FieldName = "name"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
+	// FieldWorkspacePurchaseEnabled holds the string denoting the workspace_purchase_enabled field in the database.
+	FieldWorkspacePurchaseEnabled = "workspace_purchase_enabled"
 	// Table holds the table name of the account in the database.
 	Table = "control_plane_accounts"
 )
@@ -38,6 +40,7 @@ var Columns = []string{
 	FieldSub2apiUserID,
 	FieldName,
 	FieldStatus,
+	FieldWorkspacePurchaseEnabled,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -65,6 +68,8 @@ var (
 	DefaultName string
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
+	// DefaultWorkspacePurchaseEnabled holds the default value on creation for the "workspace_purchase_enabled" field.
+	DefaultWorkspacePurchaseEnabled bool
 	// IDValidator is a validator for the "id" field. It is called by the builders before save.
 	IDValidator func(string) error
 )
@@ -105,4 +110,9 @@ func ByName(opts ...sql.OrderTermOption) OrderOption {
 // ByStatus orders the results by the status field.
 func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
+}
+
+// ByWorkspacePurchaseEnabled orders the results by the workspace_purchase_enabled field.
+func ByWorkspacePurchaseEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldWorkspacePurchaseEnabled, opts...).ToFunc()
 }

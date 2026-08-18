@@ -98,6 +98,25 @@ func TestLegacyIdentityTableCustodyMigrationIsAdditiveAndIdempotent(t *testing.T
 	}
 }
 
+func TestWorkspacePurchaseEligibilityMigrationDefaultsHistoricalAccountsDisabled(t *testing.T) {
+	raw, err := os.ReadFile("202608180001_workspace_purchase_eligibility.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `ALTER TABLE control_plane_accounts
+  ADD COLUMN IF NOT EXISTS workspace_purchase_enabled BOOLEAN NOT NULL DEFAULT FALSE;`
+	if strings.TrimSpace(string(raw)) != want {
+		t.Fatalf("Workspace purchase eligibility migration=%q, want fail-closed additive statement", strings.TrimSpace(string(raw)))
+	}
+	driver := &recordingDriver{}
+	if err := ApplyWorkspacePurchaseEligibility(context.Background(), driver); err != nil {
+		t.Fatal(err)
+	}
+	if driver.query != string(raw) {
+		t.Fatal("ApplyWorkspacePurchaseEligibility did not execute the embedded migration")
+	}
+}
+
 func TestWorkspacePurchaseReceiptIDMigrationIsAdditiveAndIdempotent(t *testing.T) {
 	raw, err := os.ReadFile("202607230001_workspace_purchase_receipt_id.sql")
 	if err != nil {

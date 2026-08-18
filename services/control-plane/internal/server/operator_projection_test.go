@@ -439,7 +439,7 @@ func newOperatorProjectionClient(users ...clients.Sub2APIUser) *operatorProjecti
 func seedOperatorProjectionAccount(t *testing.T, store controlPlaneTableStore, accountID, userID, email string, remoteID int64) {
 	t.Helper()
 	mustStore(t, store.CreateProvisionedAccount(context.Background(),
-		map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": remoteID, "status": "active", "updatedAt": operatorProjectionTime.Add(-2 * time.Hour).Format(time.RFC3339)},
+		map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": remoteID, "status": "active", "workspacePurchaseEnabled": true, "updatedAt": operatorProjectionTime.Add(-2 * time.Hour).Format(time.RFC3339)},
 		map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"},
 	))
 }
@@ -1475,6 +1475,69 @@ func TestOperatorAccountProvisionUsesCanonicalRouteAndTerminology(t *testing.T) 
 	legacy := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/operator/accounts/invitations", `{"email":"legacy@example.com","password":"CorrectHorseBatteryStaple!"}`, "legacy-invite")
 	if legacy.Code != http.StatusNotFound {
 		t.Fatalf("legacy invitation route status=%d body=%s", legacy.Code, legacy.Body.String())
+	}
+}
+
+func TestOperatorGatewayOnlyProvisionDisablesWorkspacePurchase(t *testing.T) {
+	store := newMemoryTableStore()
+	client := newOperatorProjectionClient()
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := requestWithMutationKeyForTest(t, server, reservedOperatorSessionForTest(t, server), http.MethodPost, "/api/operator/accounts", `{"email":"gateway-only@example.com","password":"CorrectHorseBatteryStaple!","admission":"gateway_only"}`, "provision-gateway-only")
+	if response.Code != http.StatusCreated {
+		t.Fatalf("gateway-only provision = %d: %s", response.Code, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["workspacePurchaseEnabled"] != false {
+		t.Fatalf("gateway-only provision response = %#v", body)
+	}
+	account, found, err := store.GetAccount(context.Background(), stringValue(body["accountId"]))
+	if err != nil || !found || workspacePurchaseEnabled(account) {
+		t.Fatalf("gateway-only account = %#v found=%v err=%v", account, found, err)
+	}
+	audits, err := store.ListAuditEvents(context.Background(), stringValue(body["accountId"]))
+	if err != nil || len(audits) != 1 || stringValue(audits[0]["action"]) != "account.provision" || stringValue(mapField(audits[0], "after")["admission"]) != "gateway_only" {
+		t.Fatalf("gateway-only audit = %#v err=%v", audits, err)
+	}
+}
+
+func TestOperatorWorkspacePurchaseEligibilityIsAuditedAndIdempotent(t *testing.T) {
+	store := newMemoryTableStore()
+	seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
+	client := newOperatorProjectionClient(operatorProjectionUser(41, "alpha@example.com", "active", 1_000_000))
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := reservedOperatorSessionForTest(t, server)
+	revoke := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/operator/accounts/acct-alpha/workspace-purchase-eligibility", `{"confirmationAccountId":"acct-alpha","enabled":false,"reason":"gateway_only_scope"}`, "eligibility-revoke")
+	if revoke.Code != http.StatusOK || !strings.Contains(revoke.Body.String(), `"workspacePurchaseEnabled":false`) {
+		t.Fatalf("eligibility revoke = %d: %s", revoke.Code, revoke.Body.String())
+	}
+	replay := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/operator/accounts/acct-alpha/workspace-purchase-eligibility", `{"confirmationAccountId":"acct-alpha","enabled":false,"reason":"gateway_only_scope"}`, "eligibility-revoke")
+	if replay.Code != http.StatusOK || !strings.Contains(replay.Body.String(), `"workspacePurchaseEnabled":false`) {
+		t.Fatalf("eligibility replay = %d: %s", replay.Code, replay.Body.String())
+	}
+	conflict := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/operator/accounts/acct-alpha/workspace-purchase-eligibility", `{"confirmationAccountId":"acct-alpha","enabled":true,"reason":"changed_request"}`, "eligibility-revoke")
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), errIdempotencyConflict.Error()) {
+		t.Fatalf("eligibility conflict = %d: %s", conflict.Code, conflict.Body.String())
+	}
+	grant := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/operator/accounts/acct-alpha/workspace-purchase-eligibility", `{"confirmationAccountId":"acct-alpha","enabled":true,"reason":"full_cloud_admission"}`, "eligibility-grant")
+	if grant.Code != http.StatusOK || !strings.Contains(grant.Body.String(), `"workspacePurchaseEnabled":true`) {
+		t.Fatalf("eligibility grant = %d: %s", grant.Code, grant.Body.String())
+	}
+	account, found, err := store.GetAccount(context.Background(), "acct-alpha")
+	if err != nil || !found || !workspacePurchaseEnabled(account) {
+		t.Fatalf("eligibility account readback = %#v found=%v err=%v", account, found, err)
+	}
+	audits, err := store.ListAuditEvents(context.Background(), "acct-alpha")
+	if err != nil || len(audits) != 2 {
+		t.Fatalf("eligibility audits = %#v err=%v", audits, err)
 	}
 }
 

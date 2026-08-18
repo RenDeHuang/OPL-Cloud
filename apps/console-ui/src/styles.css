@@ -2535,10 +2535,6 @@ tbody tr:last-child td {
   align-items: center;
 }
 
-.operator-account-table .operator-card-actions > :nth-child(3) {
-  grid-column: 1 / -1;
-}
-
 @media (max-width: 820px) {
   .gateway-usage-toolbar {
     grid-template-columns: minmax(0, 1fr);
@@ -2622,6 +2618,23 @@ tbody tr:last-child td {
   display: grid;
   min-width: 0;
   gap: 6px;
+}
+
+.account-status-stack {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.provision-admission-field {
+  display: grid;
+  gap: 8px;
+}
+
+.provision-admission-field > span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .account-fact-unavailable {

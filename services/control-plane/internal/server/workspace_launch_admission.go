@@ -211,6 +211,10 @@ func (admission controlledBasicPilotAdmission) rejectNewLaunch(accountID, packag
 	return ""
 }
 
+func workspacePurchaseEnabled(account map[string]any) bool {
+	return boolValue(account["workspacePurchaseEnabled"])
+}
+
 func exactStringSlice(actual, expected []string) bool {
 	if len(actual) != len(expected) {
 		return false
@@ -671,7 +675,7 @@ func controlledBasicPilotMetrics(ctx context.Context, store controlPlaneTableSto
 		return stringValue(alerts[i].(map[string]any)["code"]) < stringValue(alerts[j].(map[string]any)["code"])
 	})
 	return map[string]any{
-		"enabled": admission.Enabled, "configured": admission.Configured, "packageId": "basic", "accountAllowlistCount": len(admission.AccountIDs),
+		"enabled": admission.Enabled, "configured": admission.Configured, "packageId": "basic", "accountAllowlistCount": len(admission.AccountIDs), "accountEligibilityAuthority": "control-plane-account",
 		"maxInFlight": admission.MaxInFlight, "inFlight": inFlight, "availableCapacity": availableCapacity, "manualReview": manualReview,
 		"stages": stages, "failures": failures, "disableRequired": len(failures) > 0 || manualReview > 0 || !admission.Configured,
 		"alerts": alerts,

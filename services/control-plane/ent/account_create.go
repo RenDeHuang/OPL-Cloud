@@ -88,6 +88,20 @@ func (ac *AccountCreate) SetNillableStatus(s *string) *AccountCreate {
 	return ac
 }
 
+// SetWorkspacePurchaseEnabled sets the "workspace_purchase_enabled" field.
+func (ac *AccountCreate) SetWorkspacePurchaseEnabled(b bool) *AccountCreate {
+	ac.mutation.SetWorkspacePurchaseEnabled(b)
+	return ac
+}
+
+// SetNillableWorkspacePurchaseEnabled sets the "workspace_purchase_enabled" field if the given value is not nil.
+func (ac *AccountCreate) SetNillableWorkspacePurchaseEnabled(b *bool) *AccountCreate {
+	if b != nil {
+		ac.SetWorkspacePurchaseEnabled(*b)
+	}
+	return ac
+}
+
 // SetID sets the "id" field.
 func (ac *AccountCreate) SetID(s string) *AccountCreate {
 	ac.mutation.SetID(s)
@@ -145,6 +159,10 @@ func (ac *AccountCreate) defaults() {
 		v := account.DefaultStatus
 		ac.mutation.SetStatus(v)
 	}
+	if _, ok := ac.mutation.WorkspacePurchaseEnabled(); !ok {
+		v := account.DefaultWorkspacePurchaseEnabled
+		ac.mutation.SetWorkspacePurchaseEnabled(v)
+	}
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -176,6 +194,9 @@ func (ac *AccountCreate) check() error {
 	}
 	if _, ok := ac.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Account.status"`)}
+	}
+	if _, ok := ac.mutation.WorkspacePurchaseEnabled(); !ok {
+		return &ValidationError{Name: "workspace_purchase_enabled", err: errors.New(`ent: missing required field "Account.workspace_purchase_enabled"`)}
 	}
 	if v, ok := ac.mutation.ID(); ok {
 		if err := account.IDValidator(v); err != nil {
@@ -240,6 +261,10 @@ func (ac *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := ac.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
 		_node.Status = value
+	}
+	if value, ok := ac.mutation.WorkspacePurchaseEnabled(); ok {
+		_spec.SetField(account.FieldWorkspacePurchaseEnabled, field.TypeBool, value)
+		_node.WorkspacePurchaseEnabled = value
 	}
 	return _node, _spec
 }

@@ -568,3 +568,9 @@ The durable definitions of `code-complete`, `pilot-ready`, and
 live in source, test, and workflow owners. Product and structural gaps live in
 [the roadmap](./roadmap.md); this snapshot does not maintain a second action
 list.
+
+The current Account model also carries the Control Plane-owned
+`workspacePurchaseEnabled` fact. Full Cloud provisioning enables it, explicit
+Gateway-only provisioning disables it, and operator grant/revoke is audited;
+historical migration and Instance allowlist retirement remain unclaimed until
+product-approved evidence is available.

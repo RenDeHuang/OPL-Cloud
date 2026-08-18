@@ -7,6 +7,7 @@ import (
 
 	controlplaneent "opl-cloud/services/control-plane/ent"
 	"opl-cloud/services/control-plane/ent/account"
+	"opl-cloud/services/control-plane/ent/adminauditevent"
 	"opl-cloud/services/control-plane/ent/computeallocation"
 	"opl-cloud/services/control-plane/ent/session"
 	"opl-cloud/services/control-plane/ent/storagevolume"
@@ -20,6 +21,7 @@ var (
 		intField("Sub2apiUserID", "SetSub2apiUserID", "sub2apiUserId"),
 		textField("Name", "SetName", "name"),
 		textField("Status", "SetStatus", "status"),
+		boolField("WorkspacePurchaseEnabled", "SetWorkspacePurchaseEnabled", "workspacePurchaseEnabled"),
 	}
 	userEntFields = []entRecordField{
 		textField("AccountID", "SetAccountID", "accountId"),
@@ -223,6 +225,81 @@ func (s *postgresEntStateStore) SaveAccount(ctx context.Context, row map[string]
 		return rollback(err)
 	}
 	return tx.Commit()
+}
+
+func (s *postgresEntStateStore) ApplyWorkspacePurchaseEligibility(ctx context.Context, mutation workspacePurchaseEligibilityMutation) (map[string]any, error) {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rollback := func(err error) (map[string]any, error) {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	client := tx.Client()
+	auditID := stringValue(mutation.AuditEvent["id"])
+	if auditID == "" || mutation.AccountID == "" {
+		return rollback(errIdempotencyConflict)
+	}
+	if existing, auditErr := client.AdminAuditEvent.Query().Where(adminauditevent.IDEQ(auditID), lockRowForUpdate).Only(ctx); auditErr == nil {
+		accountEntity, accountErr := client.Account.Query().Where(account.IDEQ(mutation.AccountID), lockRowForUpdate).Only(ctx)
+		if accountErr != nil || !workspacePurchaseEligibilityAuditMatches(recordFromEnt(existing, auditEntFields), mutation.AuditEvent) ||
+			accountEntity.WorkspacePurchaseEnabled != mutation.Enabled {
+			return rollback(errIdempotencyConflict)
+		}
+		row := recordFromEnt(accountEntity, accountEntFields)
+		_ = tx.Rollback()
+		return row, nil
+	} else if !controlplaneent.IsNotFound(auditErr) {
+		return rollback(auditErr)
+	}
+
+	accountEntity, err := client.Account.Query().Where(account.IDEQ(mutation.AccountID), lockRowForUpdate).Only(ctx)
+	if err != nil {
+		return rollback(err)
+	}
+	if existing, auditErr := client.AdminAuditEvent.Query().Where(adminauditevent.IDEQ(auditID), lockRowForUpdate).Only(ctx); auditErr == nil {
+		if !workspacePurchaseEligibilityAuditMatches(recordFromEnt(existing, auditEntFields), mutation.AuditEvent) || accountEntity.WorkspacePurchaseEnabled != mutation.Enabled {
+			return rollback(errIdempotencyConflict)
+		}
+		row := recordFromEnt(accountEntity, accountEntFields)
+		_ = tx.Rollback()
+		return row, nil
+	} else if !controlplaneent.IsNotFound(auditErr) {
+		return rollback(auditErr)
+	}
+	audit := cloneMap(mutation.AuditEvent)
+	audit["before"] = map[string]any{"workspacePurchaseEnabled": accountEntity.WorkspacePurchaseEnabled}
+	if _, err := client.Account.UpdateOneID(mutation.AccountID).SetWorkspacePurchaseEnabled(mutation.Enabled).Save(ctx); err != nil {
+		return rollback(err)
+	}
+	if err := saveRecord(ctx, auditID, audit, client.AdminAuditEvent.Create(), auditEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			_ = tx.Rollback()
+			return s.replayWorkspacePurchaseEligibility(ctx, mutation)
+		}
+		return rollback(err)
+	}
+	saved, err := client.Account.Get(ctx, mutation.AccountID)
+	if err != nil {
+		return rollback(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return recordFromEnt(saved, accountEntFields), nil
+}
+
+func (s *postgresEntStateStore) replayWorkspacePurchaseEligibility(ctx context.Context, mutation workspacePurchaseEligibilityMutation) (map[string]any, error) {
+	existing, err := s.client.AdminAuditEvent.Get(ctx, stringValue(mutation.AuditEvent["id"]))
+	if err != nil {
+		return nil, errIdempotencyConflict
+	}
+	accountEntity, err := s.client.Account.Get(ctx, mutation.AccountID)
+	if err != nil || !workspacePurchaseEligibilityAuditMatches(recordFromEnt(existing, auditEntFields), mutation.AuditEvent) || accountEntity.WorkspacePurchaseEnabled != mutation.Enabled {
+		return nil, errIdempotencyConflict
+	}
+	return recordFromEnt(accountEntity, accountEntFields), nil
 }
 
 func (s *postgresEntStateStore) CreateProvisionedAccount(ctx context.Context, accountRow, userRow map[string]any) error {

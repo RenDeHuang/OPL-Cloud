@@ -57,6 +57,10 @@ func init() {
 	accountDescStatus := accountFields[6].Descriptor()
 	// account.DefaultStatus holds the default value on creation for the status field.
 	account.DefaultStatus = accountDescStatus.Default.(string)
+	// accountDescWorkspacePurchaseEnabled is the schema descriptor for workspace_purchase_enabled field.
+	accountDescWorkspacePurchaseEnabled := accountFields[7].Descriptor()
+	// account.DefaultWorkspacePurchaseEnabled holds the default value on creation for the workspace_purchase_enabled field.
+	account.DefaultWorkspacePurchaseEnabled = accountDescWorkspacePurchaseEnabled.Default.(bool)
 	// accountDescID is the schema descriptor for id field.
 	accountDescID := accountFields[0].Descriptor()
 	// account.IDValidator is a validator for the "id" field. It is called by the builders before save.

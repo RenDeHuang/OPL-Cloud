@@ -10,6 +10,8 @@ import {
   RefreshCw,
   Server,
   ShieldAlert,
+  ShieldCheck,
+  ShieldOff,
   WalletCards
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
@@ -28,7 +30,7 @@ import type {
   WalletAdjustmentRequest
 } from "../api/dtos.ts";
 import { SourceState } from "../components/source/SourceState.tsx";
-import { Badge, Button, Field, Modal, Select } from "../components/ui/index.ts";
+import { Badge, Button, Field, Modal, SegmentedControl, Select } from "../components/ui/index.ts";
 import { formatCount, formatDate, formatUsdMicros } from "../console-model.ts";
 
 type BadgeTone = "danger" | "info" | "secondary" | "success" | "warning";
@@ -308,7 +310,13 @@ function AccountActions({ account, controller, openAccount }: {
       {reservedAdmin
         ? <span className="account-read-only">保留管理员账户仅查看</span>
         : account.status === "active"
-          ? <Button color="danger" onClick={() => void controller.disableOperatorAccount(account.accountId)} size="sm" variant="ghost"><Ban aria-hidden size={15} />停用</Button>
+          ? <>
+            <Button color={account.workspacePurchaseEnabled ? "danger" : "primary"} onClick={() => void controller.setOperatorWorkspacePurchaseEligibility(account.accountId, !account.workspacePurchaseEnabled)} size="sm" variant="ghost">
+              {account.workspacePurchaseEnabled ? <ShieldOff aria-hidden size={15} /> : <ShieldCheck aria-hidden size={15} />}
+              {account.workspacePurchaseEnabled ? "撤销新购" : "授予新购"}
+            </Button>
+            <Button color="danger" onClick={() => void controller.disableOperatorAccount(account.accountId)} size="sm" variant="ghost"><Ban aria-hidden size={15} />停用</Button>
+          </>
           : <span className="account-read-only">账户已停用</span>}
     </div>
   );
@@ -329,7 +337,7 @@ function OperatorAccountMobileCard({ account, controller, openAccount }: {
         <div><dt>余额</dt><dd><AccountFact source={account.wallet}>{(wallet) => <span className="account-balance-stack"><strong>{formatUsdMicros(wallet.usdMicros)}</strong><small>{statusLabel(wallet.status)}</small></span>}</AccountFact></dd></div>
         <div><dt>API 费用</dt><dd><AccountFact source={account.usage}>{(usage) => <span className="account-cost-stack"><span><small>今日</small><strong>{formatUsdMicros(usage.todayActualCostUsdMicros)}</strong></span><span><small>累计</small><strong>{formatUsdMicros(usage.totalActualCostUsdMicros)}</strong></span></span>}</AccountFact></dd></div>
         <div><dt>资源</dt><dd><span className="account-resource-stack"><span><small>Key</small><strong><AccountFact source={account.keyCount}>{formatCount}</AccountFact></strong></span><span><small>Workspace</small><strong><AccountFact source={account.workspaceCount}>{formatCount}</AccountFact></strong></span></span></dd></div>
-        <div><dt>状态</dt><dd><Badge color={statusTone(account.status)}>{statusLabel(account.status)}</Badge></dd></div>
+        <div><dt>状态</dt><dd><span className="account-status-stack"><Badge color={statusTone(account.status)}>{statusLabel(account.status)}</Badge><Badge color={account.workspacePurchaseEnabled ? "success" : "secondary"}>{account.workspacePurchaseEnabled ? "可新购 Workspace" : "不可新购 Workspace"}</Badge></span></dd></div>
       </dl>
       <AccountActions account={account} controller={controller} openAccount={openAccount} />
     </article>
@@ -337,7 +345,7 @@ function OperatorAccountMobileCard({ account, controller, openAccount }: {
 }
 
 function ProvisionAccountModal({ controller, onClose, open }: { controller: ConsoleController; onClose: () => void; open: boolean }) {
-  const [form, setForm] = useState({ email: "", password: "", name: "" });
+  const [form, setForm] = useState({ email: "", password: "", name: "", admission: "full_cloud_customer" as "full_cloud_customer" | "gateway_only" });
   const [submittedEmail, setSubmittedEmail] = useState("");
   const [completed, setCompleted] = useState(false);
   const [account, setAccount] = useState<OperatorAccountDTO | null>(null);
@@ -347,7 +355,7 @@ function ProvisionAccountModal({ controller, onClose, open }: { controller: Cons
     if (!form.email.trim() || !form.password) return;
     const email = form.email.trim();
     controller.setOperatorProvisionOperation(null);
-    const operation = await controller.provisionAccount({ email, password: form.password, ...(form.name.trim() ? { name: form.name.trim() } : {}) });
+    const operation = await controller.provisionAccount({ email, password: form.password, admission: form.admission, ...(form.name.trim() ? { name: form.name.trim() } : {}) });
     if (operation) {
       setSubmittedEmail(email);
       setAccount(operation.account);
@@ -356,7 +364,7 @@ function ProvisionAccountModal({ controller, onClose, open }: { controller: Cons
     }
   };
   const close = () => {
-    setForm({ email: "", password: "", name: "" });
+    setForm({ email: "", password: "", name: "", admission: "full_cloud_customer" });
     setSubmittedEmail("");
     setCompleted(false);
     setAccount(null);
@@ -366,7 +374,7 @@ function ProvisionAccountModal({ controller, onClose, open }: { controller: Cons
   return (
     <Modal
       className="modal"
-      description="将创建 Account、Console User、Sub2API 身份及一对一映射；成功后以账户列表读回为准。"
+      description="将创建 Account、Console User、Sub2API 身份及一对一映射；产品范围由本次准入选择决定。"
       footer={completed ? <Button onClick={close} variant="outline">完成</Button> : <><Button disabled={controller.commandBusy} onClick={close} variant="outline">取消</Button><Button busy={controller.commandBusy} color="primary" form="provision-account-form" type="submit">开通用户</Button></>}
       onClose={close}
       open={open}
@@ -391,6 +399,19 @@ function ProvisionAccountModal({ controller, onClose, open }: { controller: Cons
           <Field autoComplete="email" autoFocus label="登录邮箱" onChange={(event) => updateForm("email", event.currentTarget.value)} required type="email" value={form.email} />
           <Field autoComplete="new-password" label="初始密码" onChange={(event) => updateForm("password", event.currentTarget.value)} required type="password" value={form.password} />
           <Field label="姓名" onChange={(event) => updateForm("name", event.currentTarget.value)} optional value={form.name} />
+          <div className="provision-admission-field">
+            <span>产品范围</span>
+            <SegmentedControl
+              ariaLabel="账户产品范围"
+              block
+              onChange={(value) => updateForm("admission", value)}
+              options={[
+                { value: "full_cloud_customer", label: "完整 Cloud 客户" },
+                { value: "gateway_only", label: "仅 Gateway" }
+              ]}
+              value={form.admission}
+            />
+          </div>
         </form>
       )}
     </Modal>
@@ -408,7 +429,7 @@ function AccountDetailModal({ account, onClose }: { account: OperatorAccountDTO 
             <div><dt>Sub2API User 记录</dt><dd>{account.sub2apiUserId}</dd></div>
             <div><dt>登录邮箱</dt><dd>{account.email}</dd></div>
             <div><dt>角色</dt><dd>{account.role}</dd></div>
-            <div><dt>状态</dt><dd><Badge color={statusTone(account.status)}>{statusLabel(account.status)}</Badge></dd></div>
+            <div><dt>状态</dt><dd><span className="account-status-stack"><Badge color={statusTone(account.status)}>{statusLabel(account.status)}</Badge><Badge color={account.workspacePurchaseEnabled ? "success" : "secondary"}>{account.workspacePurchaseEnabled ? "可新购 Workspace" : "不可新购 Workspace"}</Badge></span></dd></div>
           </dl></section>
           <section className="data-section"><h2>Gateway 与 Workspace 权威读回</h2><dl className="data-list">
             <div><dt>Sub2API 实时映射</dt><dd><SourceValue source={account.gatewayIdentity}>{(data) => `${data.userId} · ${data.email} · ${data.status}`}</SourceValue></dd></div>
@@ -526,7 +547,7 @@ function AccountsPage({ controller }: { controller: ConsoleController }) {
               <td><AccountFact source={account.wallet}>{(wallet) => <span className="account-balance-stack"><strong>{formatUsdMicros(wallet.usdMicros)}</strong><small>{statusLabel(wallet.status)}</small></span>}</AccountFact></td>
               <td><AccountFact source={account.usage}>{(usage) => <span className="account-cost-stack"><span><small>今日</small><strong>{formatUsdMicros(usage.todayActualCostUsdMicros)}</strong></span><span><small>累计</small><strong>{formatUsdMicros(usage.totalActualCostUsdMicros)}</strong></span></span>}</AccountFact></td>
               <td><span className="account-resource-stack"><span><small>Key</small><strong><AccountFact source={account.keyCount}>{formatCount}</AccountFact></strong></span><span><small>Workspace</small><strong><AccountFact source={account.workspaceCount}>{formatCount}</AccountFact></strong></span></span></td>
-              <td><Badge color={statusTone(account.status)}>{statusLabel(account.status)}</Badge></td>
+              <td><span className="account-status-stack"><Badge color={statusTone(account.status)}>{statusLabel(account.status)}</Badge><Badge color={account.workspacePurchaseEnabled ? "success" : "secondary"}>{account.workspacePurchaseEnabled ? "可新购 Workspace" : "不可新购 Workspace"}</Badge></span></td>
               <td className="table-actions"><AccountActions account={account} controller={controller} openAccount={openAccount} /></td>
             </tr>
           ))}</tbody></table></div>

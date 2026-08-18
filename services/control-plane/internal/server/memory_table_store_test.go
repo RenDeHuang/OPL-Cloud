@@ -31,7 +31,7 @@ type memoryTableStore struct {
 func newMemoryTableStore() *memoryTableStore {
 	const developmentOperatorEmail = "admin@opl.local"
 	return &memoryTableStore{
-		accounts:          controlPlaneRecordSet{"acct-admin": {"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": int64(1), "status": "active"}},
+		accounts:          controlPlaneRecordSet{"acct-admin": {"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": int64(1), "status": "active", "workspacePurchaseEnabled": true}},
 		users:             controlPlaneRecordSet{"usr-admin": {"id": "usr-admin", "email": developmentOperatorEmail, "accountId": "acct-admin", "role": "admin", "status": "active"}},
 		userIDByEmail:     map[string]string{developmentOperatorEmail: "usr-admin"},
 		sessions:          controlPlaneRecordSet{},
@@ -107,6 +107,32 @@ func (s *memoryTableStore) SaveAccount(_ context.Context, row map[string]any) er
 	}
 	s.accounts[accountID] = cloneMap(row)
 	return nil
+}
+
+func (s *memoryTableStore) ApplyWorkspacePurchaseEligibility(_ context.Context, mutation workspacePurchaseEligibilityMutation) (map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.auditEvents {
+		if stringValue(existing["id"]) != stringValue(mutation.AuditEvent["id"]) {
+			continue
+		}
+		account := s.accounts[mutation.AccountID]
+		if account == nil || !workspacePurchaseEligibilityAuditMatches(existing, mutation.AuditEvent) || workspacePurchaseEnabled(account) != mutation.Enabled {
+			return nil, errIdempotencyConflict
+		}
+		return cloneMap(account), nil
+	}
+	account := s.accounts[mutation.AccountID]
+	if account == nil {
+		return nil, errors.New("account_not_found")
+	}
+	updated := cloneMap(account)
+	updated["workspacePurchaseEnabled"] = mutation.Enabled
+	audit := cloneMap(mutation.AuditEvent)
+	audit["before"] = map[string]any{"workspacePurchaseEnabled": workspacePurchaseEnabled(account)}
+	s.accounts[mutation.AccountID] = updated
+	s.auditEvents = append(s.auditEvents, audit)
+	return cloneMap(updated), nil
 }
 
 func (s *memoryTableStore) CreateProvisionedAccount(_ context.Context, account, user map[string]any) error {

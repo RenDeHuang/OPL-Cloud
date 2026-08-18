@@ -151,7 +151,7 @@ func provisionedAccountRows() (map[string]any, map[string]any) {
 }
 
 func provisionedAccountRowsFor(accountID, userID, email string, sub2APIUserID int64) (map[string]any, map[string]any) {
-	account := map[string]any{"id": accountID, "ownerUserId": userID, "status": "active", "sub2apiUserId": sub2APIUserID}
+	account := map[string]any{"id": accountID, "ownerUserId": userID, "status": "active", "sub2apiUserId": sub2APIUserID, "workspacePurchaseEnabled": true}
 	user := map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"}
 	return account, user
 }

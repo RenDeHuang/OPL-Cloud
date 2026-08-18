@@ -32,6 +32,7 @@ import {
   publishOperatorAnnouncement,
   recoverWalletAdjustment,
   revealGatewayKey,
+  setOperatorWorkspacePurchaseEligibility as setOperatorWorkspacePurchaseEligibilityCommand,
   withdrawOperatorAnnouncement
 } from "../api/console-read-api.ts";
 import type {
@@ -117,6 +118,7 @@ function friendlyError(error: unknown) {
   const messages: Record<string, string> = {
     not_authenticated: "登录已失效，请重新登录",
     account_scope_forbidden: "没有权限访问该资源",
+    workspace_purchase_not_enabled: "该账户尚未获得 Workspace 新购资格",
     insufficient_balance: "可用余额不足",
     gateway_key_missing: "API Key 尚未就绪",
     gateway_key_ambiguous: "API Key 状态异常，请联系管理员",
@@ -217,6 +219,7 @@ export function useConsoleController() {
   const operatorProvisionIntent = useRef<{ input: ProvisionAccountRequest; idempotencyKey: string } | null>(null);
   const supportCreateIntent = useRef<{ input: CreateSupportTicketMappingRequest; idempotencyKey: string } | null>(null);
   const operatorDisableIntents = useRef(new Map<string, string>());
+  const operatorWorkspaceEligibilityIntents = useRef(new Map<string, { enabled: boolean; idempotencyKey: string }>());
   const announcementCreateIntent = useRef<{ input: AnnouncementDraftRequest; idempotencyKey: string } | null>(null);
   const announcementPublishIntents = useRef(new Map<string, { input: AnnouncementScheduleRequest; idempotencyKey: string }>());
   const announcementWithdrawIntents = useRef(new Map<string, string>());
@@ -1217,6 +1220,29 @@ export function useConsoleController() {
     }
   };
 
+  const setOperatorWorkspacePurchaseEligibility = async (accountId: string, enabled: boolean) => {
+    const confirmation = enabled
+      ? "确认授予该账户新购 Workspace 的资格？"
+      : "确认撤销该账户新购 Workspace 的资格？已有 Workspace 不会受影响。";
+    if (!session || !window.confirm(confirmation)) return;
+    const requestStillCurrent = currentMutationRequest();
+    const current = operatorWorkspaceEligibilityIntents.current.get(accountId);
+    const intent = current?.enabled === enabled
+      ? current
+      : { enabled, idempotencyKey: `workspace-purchase-eligibility:${accountId}:${crypto.randomUUID()}` };
+    operatorWorkspaceEligibilityIntents.current.set(accountId, intent);
+    try {
+      await setOperatorWorkspacePurchaseEligibilityCommand(accountId, enabled, "operator_requested", session.csrfToken, intent.idempotencyKey);
+      if (!requestStillCurrent()) return;
+      operatorWorkspaceEligibilityIntents.current.delete(accountId);
+      flash(enabled ? "已授予 Workspace 新购资格" : "已撤销 Workspace 新购资格");
+      await loadOperatorAccounts(requestGeneration.current, session, operatorAccountPage);
+    } catch (error) {
+      if (!requestStillCurrent()) return;
+      flash(mutationError(error), "danger");
+    }
+  };
+
   const submitWalletAdjustment = async (accountId: string, input: WalletAdjustmentRequest) => {
     if (!session || commandBusy || input.confirmationAccountId !== accountId || !input.amountUsd || !input.reason.trim()) return;
     if (!window.confirm("请再次确认这笔余额操作：提交后会写入客户账户并保留操作记录。")) return;
@@ -1506,6 +1532,7 @@ export function useConsoleController() {
     setSelectedOperatorWorkspaceId,
     openOperatorWorkspace,
     disableOperatorAccount,
+    setOperatorWorkspacePurchaseEligibility,
     walletAdjustmentOperation,
     setWalletAdjustmentOperation,
     submitWalletAdjustment,

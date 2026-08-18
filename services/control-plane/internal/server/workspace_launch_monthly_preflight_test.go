@@ -237,6 +237,43 @@ func continueWorkspaceLaunchKeyForMonthlyPreflightTest(t *testing.T, server http
 	return reconciler.Reconcile(context.Background(), operationID)
 }
 
+func TestWorkspaceLaunchMissingPurchaseEligibilityFailsClosedBeforeMutation(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+	server, store, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	account, found, err := store.GetAccount(context.Background(), "acct-alpha")
+	if err != nil || !found {
+		t.Fatalf("seed account readback = %#v found=%v err=%v", account, found, err)
+	}
+	delete(account, "workspacePurchaseEnabled")
+	if err := store.SaveAccount(context.Background(), account); err != nil {
+		t.Fatal(err)
+	}
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Missing eligibility","packageId":"basic","sizeGb":10,"autoRenew":false}`, "missing-eligibility")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_purchase_not_enabled") {
+		t.Fatalf("missing eligibility response = %d: %s", response.Code, response.Body.String())
+	}
+	if len(client.charges) != 0 || len(*events) != 0 {
+		t.Fatalf("missing eligibility crossed mutation boundary: charges=%#v events=%#v", client.charges, *events)
+	}
+}
+
+func TestWorkspaceLaunchRetainsInstancePilotAllowlistUntilMigrationReadback(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv(controlledBasicPilotAccountsEnv, "")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+	server, _, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Pilot allowlist pending","packageId":"basic","sizeGb":10,"autoRenew":false}`, "pilot-allowlist-pending")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_launch_admission_invalid") {
+		t.Fatalf("pilot allowlist transition response = %d: %s", response.Code, response.Body.String())
+	}
+	if len(client.charges) != 0 || len(*events) != 0 {
+		t.Fatalf("pilot allowlist transition crossed mutation boundary: charges=%#v events=%#v", client.charges, *events)
+	}
+}
+
 func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *testing.T) {
 	t.Setenv(controlledBasicPilotEnabledEnv, "1")
 	t.Setenv(controlledBasicPilotAccountsEnv, "acct-alpha")

@@ -47,10 +47,23 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusBadRequest, "client_pricing_forbidden")
 			return
 		}
+		ownerUserID := stringValue(user["id"])
+		account, found, err := app.tables.GetAccount(r.Context(), accountID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		if !found || stringValue(account["status"]) != "active" || stringValue(account["ownerUserId"]) != ownerUserID {
+			writeError(w, http.StatusForbidden, "account_scope_forbidden")
+			return
+		}
+		if !workspacePurchaseEnabled(account) {
+			writeError(w, http.StatusConflict, "workspace_purchase_not_enabled")
+			return
+		}
 
 		unlock := app.lockResource("workspace-launch", accountID)
 		defer unlock()
-		ownerUserID := stringValue(user["id"])
 		operationID := workspaceLaunchOperationID(accountID, key)
 		row, found, err := app.tables.GetRuntimeOperation(r.Context(), operationID)
 		if err != nil {

@@ -28,6 +28,7 @@ func accountFields() []ent.Field {
 		field.Int64("sub2api_user_id").Positive().Unique(),
 		field.String("name").Default(""),
 		field.String("status").Default("active"),
+		field.Bool("workspace_purchase_enabled").Default(false),
 	)
 }
 
