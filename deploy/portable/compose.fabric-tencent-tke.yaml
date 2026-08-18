@@ -1,0 +1,16 @@
+services:
+  fabric:
+    labels:
+      opl.cloud.fabric-provider: tencent-tke
+    environment:
+      OPL_FABRIC_PROVIDER: tencent-tke
+      OPL_TENCENT_ZONE: ${OPL_TENCENT_ZONE:?Set OPL_TENCENT_ZONE}
+      OPL_TENCENT_REGION: ${OPL_TENCENT_REGION:?Set OPL_TENCENT_REGION}
+
+  control-plane:
+    labels:
+      opl.cloud.fabric-provider: tencent-tke
+    environment:
+      OPL_FABRIC_PROVIDER: tencent-tke
+      OPL_TENCENT_ZONE: ${OPL_TENCENT_ZONE:?Set OPL_TENCENT_ZONE}
+      OPL_TENCENT_REGION: ${OPL_TENCENT_REGION:?Set OPL_TENCENT_REGION}

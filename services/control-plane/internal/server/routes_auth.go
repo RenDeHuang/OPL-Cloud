@@ -56,7 +56,22 @@ func registerAuthRoutes(mux *http.ServeMux, app *controlPlaneServer, service *co
 			writeSourceEnvelope(w, http.StatusInternalServerError, "sub2api", "unavailable", nil)
 			return
 		}
-		identity, err := service.Sub2APIUser(r.Context(), userID)
+		var identity clients.Sub2APIIdentity
+		if app.deployment.customerOwned() {
+			cookie, cookieErr := r.Cookie(sessionCookieName)
+			if cookieErr != nil {
+				writeError(w, http.StatusUnauthorized, "reauthentication_required")
+				return
+			}
+			credential, credentialOK := app.sessionCredentials.Get(sessionLookupKey(cookie.Value))
+			if !credentialOK {
+				writeError(w, http.StatusUnauthorized, "reauthentication_required")
+				return
+			}
+			identity, err = service.Sub2APIUserWithCredential(r.Context(), credential, userID, stringValue(user["email"]))
+		} else {
+			identity, err = service.Sub2APIUser(r.Context(), userID)
+		}
 		if err != nil {
 			writeSourceEnvelope(w, http.StatusBadGateway, "sub2api", "unavailable", nil)
 			return

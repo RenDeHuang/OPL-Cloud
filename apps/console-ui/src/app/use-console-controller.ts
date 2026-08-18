@@ -1389,9 +1389,10 @@ export function useConsoleController() {
   };
 
   const selectedPlan = sources.catalog.value?.packages.find((plan) => plan.id === launchPlan && plan.available) || null;
-  const selectedPrice = selectedPlan ? previews[selectedPlan.id]?.totalChargeUsdMicros ?? null : null;
+  const customerOwned = sources.catalog.value?.resourceBillingMode === "none";
+  const selectedPrice = selectedPlan ? (customerOwned ? 0 : previews[selectedPlan.id]?.totalChargeUsdMicros ?? null) : null;
   const wallet = sources.wallet.value?.available ? sources.wallet.value.data : null;
-  const balanceSufficient = wallet && selectedPrice !== null
+  const balanceSufficient = customerOwned ? true : wallet && selectedPrice !== null
     ? hasSufficientWorkspaceLaunchBalance(wallet.usdMicros, selectedPrice)
     : wallet ? false : null;
   const workspaceRows = sources.workspaces.value?.available ? sources.workspaces.value.data.items : [];

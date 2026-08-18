@@ -83,11 +83,11 @@ var workspaceLaunchStageCanonicalFacts = map[string]map[string]workspaceLaunchCa
 		"workspaceKeyFingerprint": {Kind: workspaceLaunchCanonicalFactString, Required: true},
 	},
 	"debit": {
-		"chargeAttempted":            {Kind: workspaceLaunchCanonicalFactBool, Required: true, Exact: true},
+		"chargeAttempted":            {Kind: workspaceLaunchCanonicalFactBool, Required: true},
 		"chargeConfirmation":         {Kind: workspaceLaunchCanonicalFactObject, Required: true},
 		"preChargeBalanceUsdMicros":  {Kind: workspaceLaunchCanonicalFactInteger, Required: true},
 		"postChargeBalanceUsdMicros": {Kind: workspaceLaunchCanonicalFactInteger, Required: true},
-		"postChargeBalanceKnown":     {Kind: workspaceLaunchCanonicalFactBool, Required: true, Exact: true},
+		"postChargeBalanceKnown":     {Kind: workspaceLaunchCanonicalFactBool, Required: true},
 		"billingPeriodState":         {Kind: workspaceLaunchCanonicalFactString},
 		"periodStart":                {Kind: workspaceLaunchCanonicalFactString},
 		"paidThrough":                {Kind: workspaceLaunchCanonicalFactString},
@@ -248,6 +248,7 @@ type workspaceLaunchReconcileCreate struct {
 	WorkspaceImageDigest    string
 	PreChargeBalanceMicros  int64
 	AcceptanceBCapacitySlot bool
+	ResourceBillingEnabled  *bool
 	CreatedAt               time.Time
 }
 
@@ -338,6 +339,24 @@ func (r *WorkspaceLaunchReconciler) Reconcile(ctx context.Context, operationID s
 	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
 	if err != nil {
 		return workspaceLaunchReconcileOperation{}, err
+	}
+	if operation.Status == "manual_review" && !operation.boolFact("resourceBillingEnabled") &&
+		(operation.Stage == "key" || operation.Stage == "storage" || operation.Stage == "attachment" || operation.Stage == "secret" || operation.Stage == "runtime" || operation.Stage == "activation") && operation.Observations[operation.Stage].State == workspaceLaunchStageUnknown {
+		attempt := operation.Attempts[operation.Stage]
+		attempt.Attempted, attempt.Confirmed, attempt.Unknown, attempt.Status, attempt.IdempotencyKey = 0, 0, 0, "", ""
+		attempt.PendingReadbacks = 0
+		operation.Attempts[operation.Stage] = attempt
+		delete(operation.FreshContinuationAuthorizations, operation.Stage)
+		for claimID, claim := range operation.ContinuationReadClaims {
+			if claim.Stage == operation.Stage {
+				delete(operation.ContinuationReadClaims, claimID)
+			}
+		}
+		operation.Status = "pending"
+		operation, err = r.persist(ctx, operation)
+		if err != nil {
+			return workspaceLaunchReconcileOperation{}, err
+		}
 	}
 	if operation.Status == "manual_review" || operation.Status == "succeeded" {
 		return operation, nil
@@ -891,7 +910,7 @@ func newWorkspaceLaunchReconcileOperation(command workspaceLaunchReconcileCreate
 	if strings.TrimSpace(command.OperationID) == "" || strings.TrimSpace(command.RequestHash) == "" || strings.TrimSpace(command.AccountID) == "" ||
 		strings.TrimSpace(command.OwnerUserID) == "" || strings.TrimSpace(command.WorkspaceID) == "" || strings.TrimSpace(command.Name) == "" ||
 		command.Sub2APIUserID <= 0 || command.WorkspaceKeyGroupID <= 0 || strings.TrimSpace(command.PackageID) == "" || command.StorageGB <= 0 ||
-		strings.TrimSpace(command.PriceVersion) == "" || command.TotalChargeUSDMicros <= 0 || strings.TrimSpace(command.ProviderProfileRef) == "" ||
+		strings.TrimSpace(command.PriceVersion) == "" || command.TotalChargeUSDMicros < 0 || command.ResourceBillingEnabled != nil && *command.ResourceBillingEnabled && command.TotalChargeUSDMicros <= 0 || strings.TrimSpace(command.ProviderProfileRef) == "" ||
 		strings.TrimSpace(command.PreflightBindingRef) == "" || strings.TrimSpace(command.WorkspaceImageDigest) == "" {
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 	}
@@ -917,6 +936,7 @@ func newWorkspaceLaunchReconcileOperation(command workspaceLaunchReconcileCreate
 		"sub2apiRedeemCode":         monthlyRedeemCode(monthlyEnvironment(), command.OperationID),
 		"preChargeBalanceUsdMicros": command.PreChargeBalanceMicros,
 		"acceptanceBCapacitySlot":   command.AcceptanceBCapacitySlot,
+		"resourceBillingEnabled":    command.ResourceBillingEnabled == nil || *command.ResourceBillingEnabled,
 	}
 	attempts := make(map[string]workspaceLaunchStageAttempt, len(workspaceLaunchReconcileStages)-1)
 	for _, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-1] {
@@ -1127,7 +1147,7 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 	if operation.ID == "" || operation.stringFact("requestHash") == "" || operation.stringFact("accountId") == "" || operation.stringFact("ownerUserId") == "" ||
 		operation.int64Fact("sub2apiUserId") <= 0 || operation.int64Fact("workspaceKeyGroupId") <= 0 ||
 		operation.stringFact("workspaceId") == "" || operation.stringFact("name") == "" || operation.stringFact("packageId") == "" ||
-		operation.stringFact("priceVersion") == "" || operation.intFact("sizeGb") <= 0 || operation.int64Fact("totalChargeUsdMicros") <= 0 ||
+		operation.stringFact("priceVersion") == "" || operation.intFact("sizeGb") <= 0 || operation.int64Fact("totalChargeUsdMicros") < 0 || operation.boolFact("resourceBillingEnabled") && operation.int64Fact("totalChargeUsdMicros") <= 0 ||
 		operation.stringFact("providerProfileRef") == "" || operation.stringFact("preflightBindingRef") == "" ||
 		operation.stringFact("workspaceImageDigest") == "" || operation.stringFact("sub2apiRedeemCode") == "" ||
 		stringValue(row["action"]) != "" && stringValue(row["action"]) != workspaceLaunchAction ||

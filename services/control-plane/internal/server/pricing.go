@@ -61,6 +61,9 @@ func pricingCatalogResponse() map[string]any { return pricingCatalogDTO(defaultP
 func (app *controlPlaneServer) pricingCatalogResponse(_ context.Context, computePools []any) (map[string]any, error) {
 	response := pricingCatalogResponse()
 	response["packages"] = packageRowsForComputePools(defaultPricingCatalog(), computePools)
+	response["deploymentMode"] = string(app.deployment.Mode)
+	response["fabricProvider"] = string(app.deployment.FabricProvider)
+	response["resourceBillingMode"] = map[bool]string{true: "enabled", false: "none"}[app.deployment.resourceBillingEnabled()]
 	return response, nil
 }
 
@@ -104,7 +107,30 @@ func (app *controlPlaneServer) pricingPreviewResponse(_ context.Context, input m
 			return nil, errPackageUnavailable
 		}
 	}
-	return customerPricingPreviewDTO(preview), nil
+	return app.applyResourceBillingQuote(customerPricingPreviewDTO(preview)), nil
+}
+
+func (app *controlPlaneServer) applyResourceBillingQuote(preview map[string]any) map[string]any {
+	if app == nil || app.deployment.resourceBillingEnabled() {
+		return preview
+	}
+	zero := func(value map[string]any) {
+		if value == nil {
+			return
+		}
+		value["chargeUsdMicros"] = int64(0)
+	}
+	for _, key := range []string{"compute", "storage"} {
+		component, _ := preview[key].(map[string]any)
+		zero(component)
+		if snapshot, _ := component["priceSnapshot"].(map[string]any); snapshot != nil {
+			zero(snapshot)
+		}
+	}
+	preview["chargeUsdMicros"] = int64(0)
+	preview["totalChargeUsdMicros"] = int64(0)
+	preview["resourceBillingMode"] = "none"
+	return preview
 }
 
 func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any) (map[string]any, error) {

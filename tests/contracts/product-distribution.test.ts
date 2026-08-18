@@ -10,6 +10,11 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   assert.deepEqual(contract.distribution.platforms, ["linux/amd64", "linux/arm64"]);
   assert.deepEqual(contract.distribution.releaseAssets, [
     "compose.yaml",
+    "compose.deployment-platform-owned.yaml",
+    "compose.deployment-managed-tke.yaml",
+    "compose.deployment-customer-owned.yaml",
+    "compose.fabric-local-docker.yaml",
+    "compose.fabric-tencent-tke.yaml",
     "compose.local-workspace.yaml",
     "opl-cloud.env.example",
     "opl-cloud-release.json",
@@ -108,7 +113,11 @@ test("portable distribution is product-owned and instance-neutral", async () => 
     exampleTokens.push(match[1]);
   }
   assert.equal(new Set(exampleTokens).size, 5);
-  assert.match(portableEnvironment, /^OPL_WORKSPACE_IMAGE=registry\.example\.com\/your-owner\/opl-workspace@sha256:<64-hex-digest>$/m);
+  assert.match(
+    portableEnvironment,
+    /^OPL_WORKSPACE_IMAGE=ghcr\.io\/gaofeng21cn\/one-person-lab-webui@sha256:caff36778d8e39ca23682445d8734d6c335ed01e337e9e86dbba9e56657db501$/m
+  );
+  assert.match(portableEnvironment, /current stable Workspace release is linux\/amd64 only/);
   assert.match(portableEnvironment, /^OPL_DOCKER_SOCKET_PATH=\/var\/run\/docker\.sock$/m);
   const postgresInit = compose.configs["opl-postgres-init"].content as string;
   assert.match(postgresInit, /PostgreSQL passwords must contain at least 32 characters/);
@@ -123,34 +132,12 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   assert.match(composeSource, /subnet: \$\{OPL_DOCKER_SUBNET:-172\.30\.0\.0\/24\}/);
   assert.doesNotMatch(composeSource, /medopl\.cn|TENCENT_DEPLOY_|tencentyun\.com/);
   assert.doesNotMatch(composeSource, /local-docker|docker\.sock|\/var\/run\/docker\.sock/);
-  assert.deepEqual(Object.keys(localWorkspaceCompose.services).sort(), ["control-plane", "fabric"]);
-  assert.equal(localWorkspaceCompose.services.fabric.user, "root");
-  assert.equal(localWorkspaceCompose.services.fabric.environment.OPL_FABRIC_PROVIDER, "local-docker");
-  assert.equal(
-    localWorkspaceCompose.services.fabric.environment.OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT,
-    "${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}"
-  );
-  assert.deepEqual(localWorkspaceCompose.services.fabric.volumes, [
-    {
-      type: "bind",
-      source: "${OPL_DOCKER_SOCKET_PATH:-/var/run/docker.sock}",
-      target: "/var/run/docker.sock"
-    },
-    {
-      type: "bind",
-      source: "${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}",
-      target: "${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}"
-    }
-  ]);
+  assert.deepEqual(Object.keys(localWorkspaceCompose.services).sort(), ["control-plane", "postgres"]);
   assert.equal(
     localWorkspaceCompose.services["control-plane"].environment.OPL_WORKSPACE_IMAGE,
     "${OPL_WORKSPACE_IMAGE:?Set OPL_WORKSPACE_IMAGE to an immutable Workspace image digest}"
   );
   assert.equal(localWorkspaceCompose.services["control-plane"].environment.OPL_WORKSPACE_LAUNCH_WORKER_ENABLED, "1");
-  assert.equal(
-    localWorkspaceCompose.services.fabric.environment.OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES,
-    "${OPL_WORKSPACE_IMAGE:?Set OPL_WORKSPACE_IMAGE to an immutable Workspace image digest}"
-  );
   assert.match(dockerfile, /^FROM docker:27\.5\.1-cli@sha256:[a-f0-9]{64} AS docker-cli$/m);
   assert.match(dockerfile, /^COPY --from=docker-cli \/usr\/local\/bin\/docker \/usr\/local\/bin\/docker$/m);
   assert.match(dockerfile, /apt-get install[^\n]*ca-certificates curl/);
@@ -241,15 +228,18 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
   assert.doesNotMatch(source, /environment:\s*production|tencentyun\.com|:latest|:stable/);
   assert.doesNotMatch(source, /--tag "\$IMAGE_REPOSITORY:sha-/);
 
-  assert.match(
-    validationRun,
-    /docker compose --env-file deploy\/portable\/opl-cloud\.env\.example -f compose\.yaml -f deploy\/portable\/compose\.local-workspace\.yaml config --quiet/
-  );
+  assert.match(validationRun, /compose\.deployment-customer-owned\.yaml/);
+  assert.match(validationRun, /compose\.fabric-local-docker\.yaml/);
 
   const manifestAssets = manifestRun.match(/assets:(\[[^\]]+\])/);
   assert.ok(manifestAssets);
   assert.deepEqual(JSON.parse(manifestAssets[1]), [
     "compose.yaml",
+    "compose.deployment-platform-owned.yaml",
+    "compose.deployment-managed-tke.yaml",
+    "compose.deployment-customer-owned.yaml",
+    "compose.fabric-local-docker.yaml",
+    "compose.fabric-tencent-tke.yaml",
     "compose.local-workspace.yaml",
     "opl-cloud.env.example",
     "SHA256SUMS"
@@ -262,6 +252,11 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
     .filter((line) => /^artifacts\/release\//.test(line));
   assert.deepEqual(publishedAssetPaths, [
     "artifacts/release/compose.yaml",
+    "artifacts/release/compose.deployment-platform-owned.yaml",
+    "artifacts/release/compose.deployment-managed-tke.yaml",
+    "artifacts/release/compose.deployment-customer-owned.yaml",
+    "artifacts/release/compose.fabric-local-docker.yaml",
+    "artifacts/release/compose.fabric-tencent-tke.yaml",
     "artifacts/release/compose.local-workspace.yaml",
     "artifacts/release/opl-cloud.env.example",
     "artifacts/release/opl-cloud-release.json",
@@ -272,6 +267,11 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
   assert.ok(readbackAssets);
   assert.deepEqual(JSON.parse(readbackAssets[1].slice(1, -8)), [
     "SHA256SUMS",
+    "compose.deployment-customer-owned.yaml",
+    "compose.deployment-managed-tke.yaml",
+    "compose.deployment-platform-owned.yaml",
+    "compose.fabric-local-docker.yaml",
+    "compose.fabric-tencent-tke.yaml",
     "compose.local-workspace.yaml",
     "compose.yaml",
     "opl-cloud-release.json",

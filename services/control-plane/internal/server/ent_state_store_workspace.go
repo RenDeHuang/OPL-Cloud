@@ -49,25 +49,28 @@ var (
 )
 
 type workspaceBillingState struct {
-	AutoRenew           bool   `json:"autoRenew"`
-	AuthorizedBy        string `json:"authorizedBy"`
-	AuthorizedAt        string `json:"authorizedAt"`
-	PackageID           string `json:"packageId"`
-	StorageGB           int64  `json:"storageGb"`
-	PriceVersion        string `json:"priceVersion"`
-	Currency            string `json:"currency"`
-	BillingUnit         string `json:"billingUnit"`
-	ComputeUSDMicros    int64  `json:"computeUsdMicros"`
-	StorageUSDMicros    int64  `json:"storageUsdMicros"`
-	TotalUSDMicros      int64  `json:"totalUsdMicros"`
-	PeriodStart         string `json:"periodStart"`
-	PaidThrough         string `json:"paidThrough"`
-	NextRenewalAt       string `json:"nextRenewalAt"`
-	BillingAnchorDay    int64  `json:"billingAnchorDay"`
-	RenewalStatus       string `json:"renewalStatus"`
-	ComputeAllocationID string `json:"computeAllocationId"`
-	StorageID           string `json:"storageId"`
-	ManualReviewReason  string `json:"-"`
+	// Legacy paid states omit this field. An explicit false value marks a
+	// customer-owned workspace whose compute/storage are not billed by Cloud.
+	ResourceBillingEnabled *bool  `json:"resourceBillingEnabled,omitempty"`
+	AutoRenew              bool   `json:"autoRenew"`
+	AuthorizedBy           string `json:"authorizedBy"`
+	AuthorizedAt           string `json:"authorizedAt"`
+	PackageID              string `json:"packageId"`
+	StorageGB              int64  `json:"storageGb"`
+	PriceVersion           string `json:"priceVersion"`
+	Currency               string `json:"currency"`
+	BillingUnit            string `json:"billingUnit"`
+	ComputeUSDMicros       int64  `json:"computeUsdMicros"`
+	StorageUSDMicros       int64  `json:"storageUsdMicros"`
+	TotalUSDMicros         int64  `json:"totalUsdMicros"`
+	PeriodStart            string `json:"periodStart"`
+	PaidThrough            string `json:"paidThrough"`
+	NextRenewalAt          string `json:"nextRenewalAt"`
+	BillingAnchorDay       int64  `json:"billingAnchorDay"`
+	RenewalStatus          string `json:"renewalStatus"`
+	ComputeAllocationID    string `json:"computeAllocationId"`
+	StorageID              string `json:"storageId"`
+	ManualReviewReason     string `json:"-"`
 }
 
 var workspaceBillingStateRequiredKeys = []string{
@@ -82,6 +85,7 @@ var workspaceBillingStateExclusiveKeys = []string{
 }
 
 const workspaceBillingLegacyMismatch = "legacy_billing_state_mismatch"
+const workspaceBillingNotApplicable = "not_applicable"
 
 func validateWorkspaceBillingState(row map[string]any) error {
 	_, _, err := normalizeWorkspaceBillingStateForWorkspace(row, row)
@@ -177,6 +181,15 @@ func normalizeWorkspaceBillingState(row map[string]any, expectedComputeID, expec
 		}
 		return workspaceBillingState{RenewalStatus: "manual_review", ManualReviewReason: reason}, true, nil
 	}
+	if resourceBillingEnabled, ok := row["resourceBillingEnabled"]; ok {
+		enabled, valid := resourceBillingEnabled.(bool)
+		if !valid {
+			return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
+		}
+		if !enabled {
+			return normalizeWorkspaceNonBillingState(row, expectedComputeID, expectedStorageID)
+		}
+	}
 	for _, key := range workspaceBillingStateRequiredKeys {
 		if _, ok := row[key]; !ok {
 			return workspaceBillingState{}, false, fmt.Errorf("%w: missing %s", errInvalidWorkspaceBillingState, key)
@@ -246,7 +259,8 @@ func normalizeWorkspaceBillingState(row map[string]any, expectedComputeID, expec
 		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
 	}
 	return workspaceBillingState{
-		AutoRenew: autoRenew, AuthorizedBy: authorizedBy, AuthorizedAt: authorizedAt,
+		ResourceBillingEnabled: boolPtr(true),
+		AutoRenew:              autoRenew, AuthorizedBy: authorizedBy, AuthorizedAt: authorizedAt,
 		PackageID: packageID, StorageGB: storageGB, PriceVersion: priceVersion, Currency: currency, BillingUnit: billingUnit,
 		ComputeUSDMicros: computeUSDMicros, StorageUSDMicros: storageUSDMicros, TotalUSDMicros: totalUSDMicros,
 		PeriodStart: periodStart.UTC().Format(time.RFC3339Nano), PaidThrough: paidThrough.UTC().Format(time.RFC3339Nano), NextRenewalAt: nextRenewal.UTC().Format(time.RFC3339Nano),
@@ -254,7 +268,77 @@ func normalizeWorkspaceBillingState(row map[string]any, expectedComputeID, expec
 	}, true, nil
 }
 
+func normalizeWorkspaceNonBillingState(row map[string]any, expectedComputeID, expectedStorageID string) (workspaceBillingState, bool, error) {
+	for _, key := range workspaceBillingStateRequiredKeys {
+		if _, ok := row[key]; !ok {
+			return workspaceBillingState{}, false, fmt.Errorf("%w: missing %s", errInvalidWorkspaceBillingState, key)
+		}
+	}
+	autoRenew, autoRenewOK := row["autoRenew"].(bool)
+	resourceBillingEnabled, resourceBillingOK := row["resourceBillingEnabled"].(bool)
+	renewalStatus, renewalOK := row["renewalStatus"].(string)
+	packageID, packageOK := row["packageId"].(string)
+	priceVersion, priceVersionOK := row["priceVersion"].(string)
+	currency, currencyOK := row["currency"].(string)
+	billingUnit, billingUnitOK := row["billingUnit"].(string)
+	periodStartText, periodStartOK := row["periodStart"].(string)
+	paidThroughText, paidThroughOK := row["paidThrough"].(string)
+	nextRenewalText, nextRenewalOK := row["nextRenewalAt"].(string)
+	computeID, computeIDOK := row["computeAllocationId"].(string)
+	storageID, storageIDOK := row["storageId"].(string)
+	if !autoRenewOK || autoRenew || !resourceBillingOK || resourceBillingEnabled || !renewalOK || renewalStatus != workspaceBillingNotApplicable ||
+		!packageOK || strings.TrimSpace(packageID) == "" || !priceVersionOK || strings.TrimSpace(priceVersion) == "" || !currencyOK || currency != pricingCurrency || !billingUnitOK || billingUnit != pricingBillingUnit ||
+		!periodStartOK || !paidThroughOK || !nextRenewalOK || !computeIDOK || !storageIDOK || strings.TrimSpace(computeID) == "" || strings.TrimSpace(storageID) == "" ||
+		(expectedComputeID != "" && computeID != expectedComputeID) || (expectedStorageID != "" && storageID != expectedStorageID) {
+		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
+	}
+	storageGB, storageOK := requiredNonNegativeWorkspaceInteger(row, "storageGb")
+	computePrice, computePriceOK := requiredNonNegativeWorkspaceInteger(row, "computeUsdMicros")
+	storagePrice, storagePriceOK := requiredNonNegativeWorkspaceInteger(row, "storageUsdMicros")
+	totalPrice, totalPriceOK := requiredNonNegativeWorkspaceInteger(row, "totalUsdMicros")
+	billingAnchorDay, anchorOK := requiredNonNegativeWorkspaceInteger(row, "billingAnchorDay")
+	if !storageOK || !computePriceOK || !storagePriceOK || !totalPriceOK || !anchorOK || computePrice != 0 || storagePrice != 0 || totalPrice != 0 || billingAnchorDay > 31 {
+		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
+	}
+	periodStart, startErr := time.Parse(time.RFC3339, periodStartText)
+	paidThrough, paidErr := time.Parse(time.RFC3339, paidThroughText)
+	nextRenewal, nextErr := time.Parse(time.RFC3339, nextRenewalText)
+	if startErr != nil || paidErr != nil || nextErr != nil || !paidThrough.After(periodStart) || !nextRenewal.Equal(paidThrough.Add(-24*time.Hour)) {
+		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
+	}
+	if stringValue(row["authorizedBy"]) != "" || stringValue(row["authorizedAt"]) != "" {
+		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
+	}
+	return workspaceBillingState{
+		ResourceBillingEnabled: boolPtr(false), AutoRenew: false, PackageID: packageID, StorageGB: storageGB,
+		PriceVersion: priceVersion, Currency: currency, BillingUnit: billingUnit, PeriodStart: periodStart.UTC().Format(time.RFC3339Nano),
+		PaidThrough: paidThrough.UTC().Format(time.RFC3339Nano), NextRenewalAt: nextRenewal.UTC().Format(time.RFC3339Nano),
+		BillingAnchorDay: billingAnchorDay, RenewalStatus: workspaceBillingNotApplicable, ComputeAllocationID: computeID, StorageID: storageID,
+	}, true, nil
+}
+
+func requiredNonNegativeWorkspaceInteger(row map[string]any, key string) (int64, bool) {
+	value, ok := positiveIntegerField(row, key)
+	if ok {
+		return value, true
+	}
+	if numberField(row, key, -1) == 0 {
+		return 0, true
+	}
+	return 0, false
+}
+
 func (state workspaceBillingState) record() map[string]any {
+	if state.ResourceBillingEnabled != nil && !*state.ResourceBillingEnabled {
+		return map[string]any{
+			"resourceBillingEnabled": false, "autoRenew": false, "authorizedBy": "", "authorizedAt": "",
+			"packageId": state.PackageID, "storageGb": state.StorageGB, "priceVersion": state.PriceVersion,
+			"currency": state.Currency, "billingUnit": state.BillingUnit, "computeUsdMicros": int64(0),
+			"storageUsdMicros": int64(0), "totalUsdMicros": int64(0), "periodStart": state.PeriodStart,
+			"paidThrough": state.PaidThrough, "nextRenewalAt": state.NextRenewalAt, "billingAnchorDay": state.BillingAnchorDay,
+			"renewalStatus": workspaceBillingNotApplicable, "computeAllocationId": state.ComputeAllocationID, "storageId": state.StorageID,
+		}
+	}
 	if state.RenewalStatus == "manual_review" {
 		return map[string]any{"autoRenew": false, "renewalStatus": state.RenewalStatus, "manualReviewReason": state.ManualReviewReason}
 	}
@@ -313,6 +397,9 @@ func decodeWorkspaceBillingState(encoded string, workspace map[string]any) (map[
 		return normalized.record(), nil
 	}
 	allowed := map[string]bool{}
+	if _, ok := shape["resourceBillingEnabled"]; ok {
+		allowed["resourceBillingEnabled"] = true
+	}
 	for _, key := range workspaceBillingStateRequiredKeys {
 		allowed[key] = true
 		if _, ok := shape[key]; !ok {

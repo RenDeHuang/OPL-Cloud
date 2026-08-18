@@ -117,6 +117,10 @@ type Sub2APIUserReadClient interface {
 	User(context.Context, int64) (Sub2APIIdentity, error)
 }
 
+type Sub2APIUserCredentialReadClient interface {
+	UserWithCredential(context.Context, SessionDelegatedCredential, int64, string) (Sub2APIIdentity, error)
+}
+
 type Sub2APIAdminUsersClient interface {
 	AdminUsers(context.Context, Sub2APIUserPageQuery) (Sub2APIUserPage, error)
 }
@@ -141,6 +145,8 @@ type Sub2APIConfig struct {
 	BaseURL       string
 	AdminEmail    string
 	AdminPassword string
+	UserEmail     string
+	UserPassword  string
 	Timeout       time.Duration
 }
 
@@ -457,6 +463,8 @@ type Sub2APIHTTPClient struct {
 	baseURL       string
 	adminEmail    string
 	adminPassword string
+	userEmail     string
+	userPassword  string
 	timeout       time.Duration
 	client        *http.Client
 
@@ -474,8 +482,8 @@ func NewSub2APIHTTPClient(config Sub2APIConfig, client *http.Client) (*Sub2APIHT
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, errors.New("invalid Sub2API base URL")
 	}
-	if strings.TrimSpace(config.AdminEmail) == "" || config.AdminPassword == "" {
-		return nil, errors.New("Sub2API admin credentials are required")
+	if (strings.TrimSpace(config.AdminEmail) == "" || config.AdminPassword == "") && (strings.TrimSpace(config.UserEmail) == "" || config.UserPassword == "") {
+		return nil, errors.New("Sub2API credentials are required")
 	}
 	if config.Timeout <= 0 || config.Timeout > maxSub2APIRequestTimeout {
 		return nil, fmt.Errorf("Sub2API timeout must be between 1ns and %s", maxSub2APIRequestTimeout)
@@ -487,6 +495,8 @@ func NewSub2APIHTTPClient(config Sub2APIConfig, client *http.Client) (*Sub2APIHT
 		baseURL:       normalizedBaseURL,
 		adminEmail:    config.AdminEmail,
 		adminPassword: config.AdminPassword,
+		userEmail:     config.UserEmail,
+		userPassword:  config.UserPassword,
 		timeout:       config.Timeout,
 		client:        client,
 		identityGate:  make(chan struct{}, 1),
@@ -517,6 +527,29 @@ func (c *Sub2APIHTTPClient) Version(ctx context.Context) (string, error) {
 func (c *Sub2APIHTTPClient) Balance(ctx context.Context, userID int64) (Sub2APIBalance, error) {
 	if userID <= 0 {
 		return Sub2APIBalance{}, errors.New("sub2api user ID must be positive")
+	}
+	if strings.TrimSpace(c.userEmail) != "" {
+		token, err := c.token(ctx)
+		if err != nil {
+			return Sub2APIBalance{}, err
+		}
+		body, err := c.request(ctx, http.MethodGet, "/api/v1/auth/me", nil, token, "")
+		if err != nil {
+			return Sub2APIBalance{}, err
+		}
+		var data struct {
+			ID      int64       `json:"id"`
+			Balance json.Number `json:"balance"`
+			Status  string      `json:"status"`
+		}
+		if err := decodeSub2APIEnvelope(body, &data); err != nil || data.ID != userID || data.Status != "active" {
+			return Sub2APIBalance{}, ErrSub2APIIdentityConflict
+		}
+		micros, err := floorUSDDecimalToSpendableMicros(data.Balance)
+		if err != nil {
+			return Sub2APIBalance{}, err
+		}
+		return Sub2APIBalance{UserID: data.ID, USDMicros: micros, Status: data.Status}, nil
 	}
 	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10), nil, "")
 	if err != nil {
@@ -658,6 +691,29 @@ func (c *Sub2APIHTTPClient) User(ctx context.Context, userID int64) (Sub2APIIden
 	}
 	identity.Email = normalizeSub2APIEmail(identity.Email)
 	if identity.ID != userID || identity.ID <= 0 || identity.Email == "" || (identity.Status != "active" && identity.Status != "disabled") {
+		return Sub2APIIdentity{}, ErrSub2APIIdentityConflict
+	}
+	return identity, nil
+}
+
+func (c *Sub2APIHTTPClient) UserWithCredential(ctx context.Context, credential SessionDelegatedCredential, userID int64, email string) (Sub2APIIdentity, error) {
+	if err := validateDelegatedKeyRequest(credential, userID); err != nil {
+		return Sub2APIIdentity{}, err
+	}
+	email = normalizeSub2APIEmail(email)
+	if email == "" {
+		return Sub2APIIdentity{}, ErrSub2APIIdentityUnknown
+	}
+	body, err := c.request(ctx, http.MethodGet, "/api/v1/auth/me", nil, credential.Bearer, "")
+	if err != nil {
+		return Sub2APIIdentity{}, err
+	}
+	var identity Sub2APIIdentity
+	if err := decodeSub2APIEnvelope(body, &identity); err != nil {
+		return Sub2APIIdentity{}, err
+	}
+	identity.Email = normalizeSub2APIEmail(identity.Email)
+	if identity.ID != userID || identity.Email != email || identity.Status != "active" {
 		return Sub2APIIdentity{}, ErrSub2APIIdentityConflict
 	}
 	return identity, nil
@@ -929,6 +985,18 @@ func (c *Sub2APIHTTPClient) AdminIdentity(ctx context.Context) (Sub2APIIdentity,
 	}
 	identity := authentication.Identity
 	return c.UserIdentity(ctx, identity.ID, c.adminEmail)
+}
+
+func (c *Sub2APIHTTPClient) ConfiguredUserIdentity(ctx context.Context) (Sub2APIIdentity, error) {
+	email, password := c.adminEmail, c.adminPassword
+	if strings.TrimSpace(c.userEmail) != "" {
+		email, password = c.userEmail, c.userPassword
+	}
+	authentication, err := c.AuthenticateUser(ctx, email, password)
+	if err != nil {
+		return Sub2APIIdentity{}, err
+	}
+	return authentication.Identity, nil
 }
 
 func (c *Sub2APIHTTPClient) usersByEmail(ctx context.Context, email string) ([]Sub2APIIdentity, error) {
@@ -1593,7 +1661,24 @@ func (c *Sub2APIHTTPClient) Usage(ctx context.Context, query Sub2APIUsageQuery) 
 		"timezone":   {sub2APIUsageTimezone},
 		"user_id":    {strconv.FormatInt(query.UserID, 10)},
 	}
-	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/usage?"+values.Encode(), nil, "")
+	path := "/api/v1/admin/usage?" + values.Encode()
+	var body []byte
+	var err error
+	if strings.TrimSpace(c.userEmail) != "" {
+		values.Set("page", strconv.Itoa(query.Page))
+		values.Set("page_size", strconv.Itoa(query.PageSize))
+		values.Set("period", period)
+		delete(values, "user_id")
+		delete(values, "api_key_id")
+		path = "/api/v1/usage?" + values.Encode()
+		token, tokenErr := c.token(ctx)
+		if tokenErr != nil {
+			return Sub2APIUsagePage{}, tokenErr
+		}
+		body, err = c.request(ctx, http.MethodGet, path, nil, token, "")
+	} else {
+		body, err = c.doAuthenticated(ctx, http.MethodGet, path, nil, "")
+	}
 	if err != nil {
 		return Sub2APIUsagePage{}, err
 	}
@@ -1685,7 +1770,17 @@ func (c *Sub2APIHTTPClient) UsageStats(ctx context.Context, query Sub2APIUsageSt
 	if query.APIKeyID > 0 {
 		values.Set("api_key_id", strconv.FormatInt(query.APIKeyID, 10))
 	}
-	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/usage/stats?"+values.Encode(), nil, "")
+	var body []byte
+	var err error
+	if strings.TrimSpace(c.userEmail) != "" {
+		token, tokenErr := c.token(ctx)
+		if tokenErr != nil {
+			return Sub2APIUsageStats{}, tokenErr
+		}
+		body, err = c.request(ctx, http.MethodGet, "/api/v1/usage/stats?"+values.Encode(), nil, token, "")
+	} else {
+		body, err = c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/usage/stats?"+values.Encode(), nil, "")
+	}
 	if err != nil {
 		return Sub2APIUsageStats{}, err
 	}
@@ -1938,7 +2033,11 @@ func (c *Sub2APIHTTPClient) token(ctx context.Context) (string, error) {
 }
 
 func (c *Sub2APIHTTPClient) loginLocked(ctx context.Context) (string, error) {
-	body, err := c.request(ctx, http.MethodPost, "/api/v1/auth/login", map[string]string{"email": c.adminEmail, "password": c.adminPassword}, "", "")
+	email, password := c.adminEmail, c.adminPassword
+	if strings.TrimSpace(c.userEmail) != "" {
+		email, password = c.userEmail, c.userPassword
+	}
+	body, err := c.request(ctx, http.MethodPost, "/api/v1/auth/login", map[string]string{"email": email, "password": password}, "", "")
 	if err != nil {
 		return "", err
 	}

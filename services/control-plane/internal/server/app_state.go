@@ -30,6 +30,7 @@ type controlPlaneServer struct {
 	sessionCredentials     *SessionCredentialVault
 	// ponytail: per-process limiter; move to Redis when login traffic spans multiple replicas.
 	loginRateLimits map[string]loginFailure
+	deployment      deploymentProfile
 }
 
 func (app *controlPlaneServer) lockResource(resourceType, id string) func() {
@@ -145,6 +146,40 @@ func (app *controlPlaneServer) ensureBootstrapAdmin(ctx context.Context, service
 	return app.tables.CreateProvisionedAccount(ctx, bootstrapAccount, bootstrapUser)
 }
 
+func (app *controlPlaneServer) ensureDeploymentIdentity(ctx context.Context, service *controlplane.Service) error {
+	if !app.deployment.customerOwned() {
+		return app.ensureBootstrapAdmin(ctx, service)
+	}
+	identity, err := service.ConfiguredSub2APIIdentity(ctx)
+	if err != nil {
+		return err
+	}
+	identityEmail, emailErr := canonicalEmail(identity.Email)
+	if identity.ID <= 0 || emailErr != nil || identity.Status != "active" {
+		return clients.ErrSub2APIIdentityConflict
+	}
+	accountID := "acct-customer-" + stableID("customer-account", identityEmail)[:18]
+	userID := "usr-customer-" + stableID("customer-user", identityEmail)[:18]
+	account, accountFound, err := app.tables.GetAccount(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	user, userFound, err := app.tables.GetUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if accountFound || userFound {
+		remoteID, _ := positiveIntegerField(account, "sub2apiUserId")
+		if !accountFound || !userFound || stringValue(account["ownerUserId"]) != userID || remoteID != identity.ID || stringValue(account["status"]) != "active" || stringValue(user["email"]) != identityEmail || stringValue(user["accountId"]) != accountID || stringValue(user["role"]) != "owner" || stringValue(user["status"]) != "active" {
+			return clients.ErrSub2APIIdentityConflict
+		}
+		return nil
+	}
+	return app.tables.CreateProvisionedAccount(ctx,
+		map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": identity.ID, "status": "active"},
+		map[string]any{"id": userID, "email": identityEmail, "accountId": accountID, "role": "owner", "status": "active"})
+}
+
 func (app *controlPlaneServer) state(accountID string, computePools []any) map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
@@ -156,7 +191,10 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 		}
 	}
 	return map[string]any{
-		"product":                map[string]any{"name": "OPL Cloud", "console": "OPL Console", "workspace": "OPL Workspace"},
+		"product": map[string]any{
+			"name": "OPL Cloud", "console": "OPL Console", "workspace": "OPL Workspace",
+			"deploymentMode": string(app.deployment.Mode), "fabricProvider": string(app.deployment.FabricProvider),
+		},
 		"packages":               packageList(computePools),
 		"computePools":           computePools,
 		"workspaces":             workspaces,

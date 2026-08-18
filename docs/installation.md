@@ -15,14 +15,16 @@ removed and must not be used as installation or rollback targets.
 
 - Linux or macOS with Docker Engine and Docker Compose v2;
 - an `amd64` or `arm64` host;
-- a reachable Sub2API installation and its administrator credentials;
+- a reachable Sub2API installation; `platform_owned` and `managed_tke` require
+  administrator credentials, while `customer_owned` requires one ordinary
+  Sub2API user account;
 - a TLS reverse proxy when the Console is exposed beyond localhost.
 
 ## Start A Release
 
-Download all five assets from Release `v0.1.7`: `compose.yaml`,
-`compose.local-workspace.yaml`, `opl-cloud.env.example`,
-`opl-cloud-release.json`, and `SHA256SUMS`. Verify the downloaded bytes and
+Download the Compose base, the three deployment overlays, the two Fabric
+overlays, the local workspace overlay, `opl-cloud.env.example`,
+`opl-cloud-release.json`, and `SHA256SUMS` from Release `v0.1.7`. Verify the downloaded bytes and
 their GitHub-hosted provenance before trusting the manifest:
 
 ```bash
@@ -31,7 +33,7 @@ if command -v sha256sum >/dev/null; then
 else
   shasum -a 256 -c SHA256SUMS
 fi
-for asset in compose.yaml compose.local-workspace.yaml opl-cloud.env.example opl-cloud-release.json SHA256SUMS; do
+for asset in compose.yaml compose.deployment-platform-owned.yaml compose.deployment-managed-tke.yaml compose.deployment-customer-owned.yaml compose.fabric-local-docker.yaml compose.fabric-tencent-tke.yaml compose.local-workspace.yaml opl-cloud.env.example opl-cloud-release.json SHA256SUMS; do
   gh attestation verify "$asset" \
     --repo gaofeng21cn/one-person-lab-cloud \
     --signer-workflow gaofeng21cn/one-person-lab-cloud/.github/workflows/release-opl-cloud-image.yml \
@@ -50,8 +52,14 @@ are `v0.1.7`, product SHA
 `sha256:e64504731f8b61c0864cf59faa647a1150e8a2a5eada34b26faf3a5487d28e8f`.
 
 ```bash
-docker compose --env-file .env pull
-docker compose --env-file .env up -d
+docker compose --env-file .env -f compose.yaml \
+  -f compose.deployment-customer-owned.yaml \
+  -f compose.fabric-local-docker.yaml \
+  -f compose.local-workspace.yaml pull
+docker compose --env-file .env -f compose.yaml \
+  -f compose.deployment-customer-owned.yaml \
+  -f compose.fabric-local-docker.yaml \
+  -f compose.local-workspace.yaml up -d
 docker compose --env-file .env ps
 curl --fail http://127.0.0.1:8787/api/healthz
 ```
@@ -73,18 +81,18 @@ places PostgreSQL at `OPL_POSTGRES_HOST` inside `OPL_DOCKER_SUBNET`. If the
 default network overlaps another Docker or host network, choose an unused
 RFC1918 subnet and update both values together before startup.
 
-On first start, Control Plane binds its reserved operator account to the active
-Sub2API administrator identity returned for `OPL_SUB2API_ADMIN_EMAIL`. The
-email is installation-owned rather than product-coded; a later ID or email
-mismatch fails closed instead of silently changing operator authority.
+On first start, Control Plane binds its Cloud identity to the configured
+Sub2API identity. In `platform_owned` and `managed_tke`, that identity is an
+administrator and owns resource billing. In `customer_owned`, it is an ordinary
+owner account; compute and storage are customer-owned and the Cloud resource
+quote and debit are zero.
 
-This is not yet a complete Workspace installation. Fabric includes a real
-`local-docker` provider, but the portable Compose profile leaves Workspace launch
-workers disabled, does not grant Fabric access to a Docker authority, and does
-not select an immutable OPL App/WebUI Workspace image. A healthy Compose stack
-therefore proves only that the Cloud control services start; it cannot yet create,
-read back, access, or delete a Workspace. See [current capability](status.md) and
-the [P0 gap](roadmap.md).
+The deployment and Fabric choices are independent. Select exactly one deployment
+overlay (`platform_owned`, `managed_tke`, or `customer_owned`) and exactly one
+Fabric overlay (`local-docker` or `tencent-tke`). The local workspace overlay
+adds the customer-owned PostgreSQL bind and enables Workspace launch; the
+Fabric overlay supplies only the provider authority and provider-specific
+mounts/credentials.
 
 ## Upgrade And Rollback
 
@@ -96,14 +104,12 @@ target. Mutable `latest` and `stable` tags are not published.
 
 ## Provider Boundary
 
-The current source includes both the default local-Docker adapter and the
-explicit Tencent TKE adapter, but the portable Compose profile intentionally
-starts control services only. Console, Control Plane, Fabric, Ledger,
-persistence, and health checks can run on any supported Docker host. Workspace
-delivery remains disabled until an installation profile supplies the selected
-provider authority and an immutable Workspace image; managed providers also need
-their credentials and network/storage settings. A successful Compose health
-check is not evidence that any provider-backed Workspace delivery is ready.
+The current source includes both a customer-Docker adapter and an explicit
+Tencent TKE adapter. The provider overlay owns its authority, storage/network
+settings, and display label; the deployment overlay owns only account mode and
+billing policy. A successful Compose health check is not evidence that any
+provider-backed Workspace delivery is ready until the selected workspace
+profile's provider health check passes.
 
 `opl-instance-medopl` is the separate private instance owner for medopl.cn. It
 selects Tencent/TKE, owns production Secrets and deployment workflows, deploys

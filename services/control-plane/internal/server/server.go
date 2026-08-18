@@ -54,7 +54,12 @@ func newPersistentServerWithRemoteProvider(service *controlplane.Service, store 
 		return nil, err
 	}
 	app.remoteCompanion = remoteCompanion
-	if err := app.ensureBootstrapAdmin(context.Background(), service); err != nil {
+	profile, err := deploymentProfileFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	app.deployment = profile
+	if err := app.ensureDeploymentIdentity(context.Background(), service); err != nil {
 		return nil, err
 	}
 	if monthlyBillingWorkerEnabled() {

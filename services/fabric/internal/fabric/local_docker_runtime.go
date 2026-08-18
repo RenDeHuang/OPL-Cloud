@@ -10,16 +10,27 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
-	localDockerGatewayKeyFile                = "opl_gateway_api_key"
-	localDockerGatewayMetaFile               = "opl_gateway_metadata.json"
-	localDockerRuntimeSecretMountPath        = "/run/secrets"
-	maxLocalDockerRuntimeSecretArchiveBytes  = 64 << 10
-	maxLocalDockerRuntimeSecretKeyBytes      = 16 << 10
-	maxLocalDockerRuntimeSecretMetadataBytes = 4 << 10
+	localDockerGatewayKeyFile                 = "opl_gateway_api_key"
+	localDockerGatewayMetaFile                = "opl_gateway_metadata.json"
+	localDockerWebUIPasswordFile              = "opl_webui_password"
+	localDockerWebUISessionSecretFile         = "webui_session_secret"
+	localDockerRuntimeSecretMountPath         = "/run/secrets"
+	maxLocalDockerRuntimeSecretArchiveBytes   = 64 << 10
+	maxLocalDockerRuntimeSecretKeyBytes       = 16 << 10
+	maxLocalDockerRuntimeSecretMetadataBytes  = 4 << 10
+	maxLocalDockerRuntimeWebUICredentialBytes = 1 << 10
+	localDockerRuntimeHealthCommand           = `node -e 'fetch("http://127.0.0.1:3000/").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'`
+	localDockerRuntimeHealthInterval          = int64(5 * time.Second)
+	localDockerRuntimeHealthTimeout           = int64(3 * time.Second)
+	localDockerRuntimeHealthStartPeriod       = int64(10 * time.Second)
+	localDockerRuntimeHealthRetries           = 120
 )
 
 type localDockerGatewayMetadata struct {
@@ -34,6 +45,35 @@ type localDockerGatewayMetadata struct {
 func (p *LocalDockerProvider) gatewayMetadata(ctx context.Context, secretRef string) (localDockerGatewayMetadata, error) {
 	_, metadata, err := p.readGatewaySecretFiles(secretRef)
 	return metadata, err
+}
+
+type localDockerWebUICredentials struct {
+	Password      []byte
+	SessionSecret []byte
+}
+
+func localDockerWebUICredentialsFor(metadata localDockerGatewayMetadata) (localDockerWebUICredentials, error) {
+	seed := strings.TrimSpace(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"))
+	if seed == "" {
+		return localDockerWebUICredentials{}, fmt.Errorf("local_docker_webui_credential_seed_required")
+	}
+	password := deriveAionUIAdminPassword(seed, metadata.WorkspaceID, metadata.Version)
+	sessionSecret := deriveWebUISessionSecret(seed, metadata.WorkspaceID, metadata.Version)
+	if metadata.WorkspaceID == "" || metadata.Version == "" || password == "" || sessionSecret == "" {
+		return localDockerWebUICredentials{}, fmt.Errorf("local_docker_webui_credential_identity_invalid")
+	}
+	return localDockerWebUICredentials{Password: []byte(password), SessionSecret: []byte(sessionSecret)}, nil
+}
+
+func localDockerRuntimeAccess(metadata localDockerGatewayMetadata) (RuntimeAccess, error) {
+	credentials, err := localDockerWebUICredentialsFor(metadata)
+	if err != nil {
+		return RuntimeAccess{}, err
+	}
+	return RuntimeAccess{
+		Username: webuiUsername, Password: string(credentials.Password), CredentialStatus: "configured",
+		CredentialVersion: metadata.Version, SecretRef: metadata.SecretRef,
+	}, nil
 }
 
 func (p *LocalDockerProvider) UpsertGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
@@ -148,8 +188,15 @@ type dockerContainerInspect struct {
 	Name   string `json:"Name"`
 	Image  string `json:"Image"`
 	Config struct {
-		Image  string            `json:"Image"`
-		Labels map[string]string `json:"Labels"`
+		Image       string            `json:"Image"`
+		Labels      map[string]string `json:"Labels"`
+		Healthcheck *struct {
+			Test        []string `json:"Test"`
+			Interval    int64    `json:"Interval"`
+			Timeout     int64    `json:"Timeout"`
+			Retries     int      `json:"Retries"`
+			StartPeriod int64    `json:"StartPeriod"`
+		} `json:"Healthcheck"`
 	} `json:"Config"`
 	State struct {
 		Status  string `json:"Status"`
@@ -291,6 +338,9 @@ type dockerHostMount struct {
 	BindOptions struct {
 		Propagation string `json:"Propagation"`
 	} `json:"BindOptions"`
+	TmpfsOptions struct {
+		Mode uint32 `json:"Mode"`
+	} `json:"TmpfsOptions"`
 }
 
 type dockerRuntimeMount struct {
@@ -326,13 +376,34 @@ func (p *LocalDockerProvider) inspectContainer(ctx context.Context, name string)
 	return values[0], true, nil
 }
 
-func runtimeMountPresent(container dockerContainerInspect, name, destination string) bool {
-	for _, mount := range container.Mounts {
-		if mount.Type == "volume" && mount.Name == name && mount.Destination == destination {
-			return true
+func runtimeWritableBindPresent(container dockerContainerInspect, source, destination string) bool {
+	hostMatches, runtimeMatches := 0, 0
+	for _, mount := range container.HostConfig.Mounts {
+		if mount.Type == "bind" && mount.Source == source && mount.Target == destination && !mount.ReadOnly && mount.BindOptions.Propagation == "rprivate" {
+			hostMatches++
 		}
 	}
-	return false
+	for _, mount := range container.Mounts {
+		if mount.Type == "bind" && mount.Destination == destination && mount.RW && mount.Propagation == "rprivate" {
+			runtimeMatches++
+		}
+	}
+	return hostMatches == 1 && runtimeMatches == 1
+}
+
+func runtimeTmpfsPresent(container dockerContainerInspect, destination string) bool {
+	hostMatches, runtimeMatches := 0, 0
+	for _, mount := range container.HostConfig.Mounts {
+		if mount.Type == "tmpfs" && mount.Source == "" && mount.Target == destination && !mount.ReadOnly && mount.TmpfsOptions.Mode == 0700 {
+			hostMatches++
+		}
+	}
+	for _, mount := range container.Mounts {
+		if mount.Type == "tmpfs" && mount.Destination == destination && mount.RW {
+			runtimeMatches++
+		}
+	}
+	return hostMatches == 1 && runtimeMatches == 1
 }
 
 func mountTargetsOverlap(left, right string) bool {
@@ -346,7 +417,7 @@ func validRuntimeSecretMountViews(container dockerContainerInspect) bool {
 	hostTargets := make(map[string]struct{}, len(container.HostConfig.Mounts))
 	runtimeTargets := make(map[string]struct{}, len(container.Mounts))
 	for _, mount := range container.HostConfig.Mounts {
-		if mount.Type == "" || mount.Source == "" || mount.Target == "" {
+		if mount.Type == "" || mount.Target == "" || mount.Type != "tmpfs" && mount.Source == "" || mount.Type == "tmpfs" && mount.Source != "" {
 			return false
 		}
 		if _, exists := hostTargets[mount.Target]; exists {
@@ -355,7 +426,7 @@ func validRuntimeSecretMountViews(container dockerContainerInspect) bool {
 		hostTargets[mount.Target] = struct{}{}
 	}
 	for _, mount := range container.Mounts {
-		if mount.Type == "" || mount.Source == "" || mount.Destination == "" {
+		if mount.Type == "" || mount.Destination == "" || mount.Type != "tmpfs" && mount.Source == "" || mount.Type == "tmpfs" && mount.Source != "" {
 			return false
 		}
 		if _, exists := runtimeTargets[mount.Destination]; exists {
@@ -415,6 +486,21 @@ func validRuntimeSecretMountViews(container dockerContainerInspect) bool {
 	return true
 }
 
+func validRuntimeWorkspaceMountViews(container dockerContainerInspect, paths localDockerStoragePaths) bool {
+	return validRuntimeSecretMountViews(container) &&
+		runtimeWritableBindPresent(container, paths.Data, "/data") &&
+		runtimeWritableBindPresent(container, paths.Projects, "/projects") &&
+		runtimeTmpfsPresent(container, "/recovery")
+}
+
+func validRuntimeHealthcheck(container dockerContainerInspect) bool {
+	healthcheck := container.Config.Healthcheck
+	return healthcheck != nil && len(healthcheck.Test) == 2 && healthcheck.Test[0] == "CMD-SHELL" &&
+		healthcheck.Test[1] == localDockerRuntimeHealthCommand && healthcheck.Interval == localDockerRuntimeHealthInterval &&
+		healthcheck.Timeout == localDockerRuntimeHealthTimeout && healthcheck.StartPeriod == localDockerRuntimeHealthStartPeriod &&
+		healthcheck.Retries == localDockerRuntimeHealthRetries
+}
+
 func validateRuntimeGatewaySecretArchive(body []byte, expected localDockerGatewayMetadata) error {
 	fail := func() error { return fmt.Errorf("local_docker_runtime_secret_archive_mismatch") }
 	if len(body) == 0 || len(body) > maxLocalDockerRuntimeSecretArchiveBytes || expected.AccountID == "" || expected.WorkspaceID == "" ||
@@ -422,7 +508,7 @@ func validateRuntimeGatewaySecretArchive(body []byte, expected localDockerGatewa
 		return fail()
 	}
 	reader := tar.NewReader(bytes.NewReader(body))
-	var key, metadataBody []byte
+	var key, metadataBody, password, sessionSecret []byte
 	rootSeen := false
 	for {
 		header, err := reader.Next()
@@ -454,11 +540,27 @@ func validateRuntimeGatewaySecretArchive(body []byte, expected localDockerGatewa
 			if err != nil || int64(len(metadataBody)) != header.Size {
 				return fail()
 			}
+		case "./" + localDockerWebUIPasswordFile:
+			if password != nil || header.Typeflag != tar.TypeReg || header.Mode&0777 != 0400 || header.Size <= 0 || header.Size > maxLocalDockerRuntimeWebUICredentialBytes {
+				return fail()
+			}
+			password, err = io.ReadAll(io.LimitReader(reader, maxLocalDockerRuntimeWebUICredentialBytes+1))
+			if err != nil || int64(len(password)) != header.Size {
+				return fail()
+			}
+		case "./" + localDockerWebUISessionSecretFile:
+			if sessionSecret != nil || header.Typeflag != tar.TypeReg || header.Mode&0777 != 0400 || header.Size <= 0 || header.Size > maxLocalDockerRuntimeWebUICredentialBytes {
+				return fail()
+			}
+			sessionSecret, err = io.ReadAll(io.LimitReader(reader, maxLocalDockerRuntimeWebUICredentialBytes+1))
+			if err != nil || int64(len(sessionSecret)) != header.Size {
+				return fail()
+			}
 		default:
 			return fail()
 		}
 	}
-	if !rootSeen || key == nil || metadataBody == nil {
+	if !rootSeen || key == nil || metadataBody == nil || password == nil || sessionSecret == nil {
 		return fail()
 	}
 	decoder := json.NewDecoder(bytes.NewReader(metadataBody))
@@ -469,6 +571,10 @@ func validateRuntimeGatewaySecretArchive(body []byte, expected localDockerGatewa
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(key))
 	if expected.Fingerprint != "sha256:"+digest || expected.Version != digest[:16] {
+		return fail()
+	}
+	credentials, err := localDockerWebUICredentialsFor(expected)
+	if err != nil || !bytes.Equal(password, credentials.Password) || !bytes.Equal(sessionSecret, credentials.SessionSecret) {
 		return fail()
 	}
 	return nil
@@ -487,6 +593,20 @@ func (p *LocalDockerProvider) verifyRuntimeGatewaySecret(ctx context.Context, co
 	return validateRuntimeGatewaySecretArchive(body, expected)
 }
 
+func (p *LocalDockerProvider) configureRuntimeGateway(ctx context.Context, containerName, secretPath string) error {
+	if !p.configureRuntimeGatewayEnabled {
+		return nil
+	}
+	key, err := os.ReadFile(filepath.Join(secretPath, localDockerGatewayKeyFile))
+	if err != nil || len(bytes.TrimSpace(key)) == 0 {
+		return fmt.Errorf("local_docker_runtime_gateway_key_unavailable")
+	}
+	if _, err := p.runner.Run(ctx, key, "container", "exec", "-i", containerName, "opl", "system", "configure-codex", "--api-key-stdin", "--json"); err != nil {
+		return fmt.Errorf("local_docker_runtime_gateway_configuration_failed")
+	}
+	return nil
+}
+
 func localRuntimeID(workspaceID string) string {
 	return "rt_" + stableSuffix("local-docker", workspaceID)[:18]
 }
@@ -500,6 +620,13 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 	}
 	volumeReadback, err := p.ReadStorageVolume(ctx, volume)
 	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	storagePaths, err := p.readStorageDirectories(volumeReadback)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	if err := ensureLocalDockerCodexHome(storagePaths.Data); err != nil {
 		return WorkspaceRuntime{}, err
 	}
 	secretMetadata, err := p.gatewayMetadata(ctx, input.GatewaySecretRef)
@@ -543,17 +670,24 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 			if dispatchErr := attempt.markReplayDispatch(ctx); dispatchErr != nil {
 				return WorkspaceRuntime{}, dispatchErr
 			}
-			volumeName := localDockerName("opl-storage", volumeReadback.ID)
 			args := append([]string{"run", "-d", "--name", name}, dockerLabelArgs(labels)...)
 			args = append(args,
+				"--health-cmd", localDockerRuntimeHealthCommand,
+				"--health-interval", "5s", "--health-timeout", "3s", "--health-start-period", "10s", "--health-retries", "120",
 				"--network", localDockerName("opl-compute", computeReadback.ID),
-				"--mount", "type=volume,source="+volumeName+",target=/data",
+				"--mount", "type=bind,source="+storagePaths.Data+",target=/data,bind-propagation=rprivate",
+				"--mount", "type=bind,source="+storagePaths.Projects+",target=/projects,bind-propagation=rprivate",
+				"--mount", "type=tmpfs,target=/recovery,tmpfs-mode=0700",
 				"--mount", "type=bind,source="+secretPath+",target=/run/secrets,readonly,bind-propagation=rprivate",
 				"-p", p.runtimeHost+"::3000",
-				"-e", "OPL_WEBUI_DEPLOYMENT_MODE=cloud", "-e", "OPL_GATEWAY_API_KEY_FILE=/run/secrets/"+localDockerGatewayKeyFile,
+				"-e", "OPL_WEBUI_DEPLOYMENT_MODE=cloud", "-e", "OPL_WEBUI_AUTH_MODE=password", "-e", "OPL_WEBUI_USERNAME="+webuiUsername,
+				"-e", "OPL_WEBUI_PASSWORD_FILE=/run/secrets/"+localDockerWebUIPasswordFile,
+				"-e", "OPL_WEBUI_SESSION_SECRET_FILE=/run/secrets/"+localDockerWebUISessionSecretFile,
 				"-e", "OPL_WORKSPACE_ID="+input.WorkspaceID, "-e", "OPL_COMPUTE_ALLOCATION_ID="+input.ComputeID,
 				"-e", "OPL_OWNER_ACCOUNT_ID="+compute.AccountID, "-e", "DATA_DIR=/data", "-e", "AIONUI_DATA_DIR=/data",
-				"-e", "OPL_PROJECTS_DIR=/data/projects", input.ImageID,
+				"-e", "OPL_PROJECTS_DIR=/projects", "-e", "OPL_WORKSPACE_ROOT=/projects", "-e", "OPL_WEBUI_RECOVERY_DIR=/recovery",
+				"-e", "AIONUI_ALLOW_REMOTE=true", "-e", "ALLOW_REMOTE=true", "-e", "HOME=/data", "-e", "CODEX_HOME=/data/.codex",
+				input.ImageID,
 			)
 			if _, err := p.runner.Run(ctx, nil, args...); err != nil {
 				_ = attempt.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, err)
@@ -562,8 +696,8 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 			container, exists, inspectErr = p.inspectContainer(ctx, name)
 		}
 	}
-	if inspectErr != nil || !exists || !exactDockerLabels(container.Config.Labels, labels) ||
-		!runtimeMountPresent(container, strings.TrimPrefix(volumeReadback.ProviderResourceID, "volume/"), "/data") {
+	if inspectErr != nil || !exists || !exactDockerLabels(container.Config.Labels, labels) || !validRuntimeHealthcheck(container) ||
+		!validRuntimeWorkspaceMountViews(container, storagePaths) {
 		readErr := fmt.Errorf("local_docker_runtime_readback_mismatch")
 		_ = attempt.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, readErr)
 		return WorkspaceRuntime{}, readErr
@@ -587,13 +721,36 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 	if err != nil {
 		return WorkspaceRuntime{}, err
 	}
+	resource.Access, err = localDockerRuntimeAccess(secretMetadata)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	if !resource.Ready {
+		if completeErr := attempt.complete(ctx, resource.ProviderRequestID, resource, nil); completeErr != nil {
+			return WorkspaceRuntime{}, completeErr
+		}
+		return resource, ErrWorkspaceLaunchPending
+	}
+	if err := p.configureRuntimeGateway(ctx, container.Name, secretPath); err != nil {
+		_ = attempt.complete(ctx, resource.ProviderRequestID, resource, err)
+		return WorkspaceRuntime{}, err
+	}
 	if completeErr := attempt.complete(ctx, resource.ProviderRequestID, resource, nil); completeErr != nil {
 		return WorkspaceRuntime{}, completeErr
 	}
-	if !resource.Ready {
-		return resource, ErrWorkspaceLaunchPending
-	}
 	return resource, nil
+}
+
+func ensureLocalDockerCodexHome(dataPath string) error {
+	path := filepath.Join(dataPath, ".codex")
+	if err := os.Mkdir(path, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
+		return ErrLaunchStageBindingConflict
+	}
+	return nil
 }
 
 func (p *LocalDockerProvider) runtimeFromContainer(container dockerContainerInspect) (WorkspaceRuntime, error) {
@@ -611,7 +768,8 @@ func (p *LocalDockerProvider) runtimeFromContainer(container dockerContainerInsp
 		}
 		url = "http://" + net.JoinHostPort(host, bindings[0].HostPort) + "/"
 	}
-	ready := container.State.Running && url != "" && (container.State.Health == nil || container.State.Health.Status == "healthy")
+	ready := container.State.Running && url != "" && validRuntimeHealthcheck(container) &&
+		container.State.Health != nil && container.State.Health.Status == "healthy"
 	status := "unready"
 	if ready {
 		status = "running"
@@ -642,13 +800,34 @@ func (p *LocalDockerProvider) WorkspaceRuntimeStatus(ctx context.Context, worksp
 	if metadata.WorkspaceID != workspaceID || metadata.SecretRef != secretRef {
 		return WorkspaceRuntime{}, ErrLaunchStageBindingConflict
 	}
+	storage, err := p.ReadStorageVolume(ctx, StorageVolume{
+		ID: container.Config.Labels["opl.storage.id"], AccountID: container.Config.Labels["opl.account.id"], WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	paths, err := p.readStorageDirectories(storage)
+	if err != nil || !validRuntimeWorkspaceMountViews(container, paths) {
+		return WorkspaceRuntime{}, firstNonNil(err, fmt.Errorf("local_docker_runtime_storage_binding_mismatch"))
+	}
+	if !validRuntimeHealthcheck(container) {
+		return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_healthcheck_binding_mismatch")
+	}
 	if err := p.verifyRuntimeGatewaySecret(ctx, container, metadata); err != nil {
 		return WorkspaceRuntime{}, err
 	}
 	if err := p.verifyRuntimeGatewayNetwork(ctx, container); err != nil {
 		return WorkspaceRuntime{}, err
 	}
-	return p.runtimeFromContainer(container)
+	runtime, err := p.runtimeFromContainer(container)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	runtime.Access, err = localDockerRuntimeAccess(metadata)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	return runtime, nil
 }
 
 func (*LocalDockerProvider) WorkspaceRuntimeProviderFacts(runtime WorkspaceRuntime) ProviderResourceFacts {

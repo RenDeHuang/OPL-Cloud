@@ -82,10 +82,17 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 }
 
 func sub2APIConfigFromEnv(getenv func(string) string) (clients.Sub2APIConfig, error) {
+	mode := strings.TrimSpace(getenv("OPL_DEPLOYMENT_MODE"))
+	if mode == "" {
+		mode = "platform_owned"
+	}
 	required := []string{
 		"OPL_SUB2API_BASE_URL",
-		"OPL_SUB2API_ADMIN_EMAIL",
-		"OPL_SUB2API_ADMIN_PASSWORD",
+	}
+	if mode == "customer_owned" {
+		required = append(required, "OPL_SUB2API_USER_EMAIL", "OPL_SUB2API_USER_PASSWORD")
+	} else {
+		required = append(required, "OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD")
 	}
 	missing := make([]string, 0, len(required))
 	configured := 0
@@ -114,6 +121,8 @@ func sub2APIConfigFromEnv(getenv func(string) string) (clients.Sub2APIConfig, er
 		BaseURL:       strings.TrimSpace(getenv("OPL_SUB2API_BASE_URL")),
 		AdminEmail:    strings.TrimSpace(getenv("OPL_SUB2API_ADMIN_EMAIL")),
 		AdminPassword: getenv("OPL_SUB2API_ADMIN_PASSWORD"),
+		UserEmail:     strings.TrimSpace(getenv("OPL_SUB2API_USER_EMAIL")),
+		UserPassword:  getenv("OPL_SUB2API_USER_PASSWORD"),
 		Timeout:       time.Duration(timeoutMS) * time.Millisecond,
 	}, nil
 }

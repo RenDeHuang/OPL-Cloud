@@ -19,6 +19,8 @@ import (
 
 const qualificationWorkspaceDockerfilePath = "../../../../deploy/portable/qualification-workspace.Dockerfile"
 
+const localDockerTestWebUISeed = "local-docker-workspace-secret-2026"
+
 var exactDockerfileImagePattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 
 func qualificationWorkspaceDockerfile(t *testing.T) string {
@@ -50,6 +52,7 @@ func TestQualificationWorkspaceDockerfileUsesExactImageReferences(t *testing.T) 
 
 func localDockerSecretTestRoot(t *testing.T) string {
 	t.Helper()
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", localDockerTestWebUISeed)
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -221,19 +224,26 @@ func (r *localDockerRuntimeReplayRunner) Run(_ context.Context, _ []byte, args .
 	}
 }
 
-func localDockerReadyRuntimeContainer(t *testing.T, name, id, image string, labels map[string]string, volumeName, secretPath string) dockerContainerInspect {
+func localDockerReadyRuntimeContainer(t *testing.T, name, id, image string, labels map[string]string, storage localDockerStoragePaths, secretPath string) dockerContainerInspect {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"Id": id, "Name": "/" + name,
-		"Config":          map[string]any{"Image": image, "Labels": labels},
+		"Config": map[string]any{"Image": image, "Labels": labels, "Healthcheck": map[string]any{
+			"Test": []string{"CMD-SHELL", localDockerRuntimeHealthCommand}, "Interval": localDockerRuntimeHealthInterval,
+			"Timeout": localDockerRuntimeHealthTimeout, "StartPeriod": localDockerRuntimeHealthStartPeriod, "Retries": localDockerRuntimeHealthRetries,
+		}},
 		"State":           map[string]any{"Status": "running", "Running": true, "Health": map[string]any{"Status": "healthy"}},
 		"NetworkSettings": map[string]any{"Ports": map[string]any{"3000/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": "30123"}}}},
 		"HostConfig": map[string]any{"Mounts": []map[string]any{
-			{"Type": "volume", "Source": volumeName, "Target": "/data"},
+			{"Type": "bind", "Source": storage.Data, "Target": "/data", "BindOptions": map[string]any{"Propagation": "rprivate"}},
+			{"Type": "bind", "Source": storage.Projects, "Target": "/projects", "BindOptions": map[string]any{"Propagation": "rprivate"}},
+			{"Type": "tmpfs", "Target": "/recovery", "TmpfsOptions": map[string]any{"Mode": 448}},
 			{"Type": "bind", "Source": secretPath, "Target": "/run/secrets", "ReadOnly": true, "BindOptions": map[string]any{"Propagation": "rprivate"}},
 		}},
 		"Mounts": []map[string]any{
-			{"Type": "volume", "Name": volumeName, "Source": "/var/lib/docker/volumes/" + volumeName + "/_data", "Destination": "/data", "RW": true},
+			{"Type": "bind", "Source": storage.Data, "Destination": "/data", "RW": true, "Propagation": "rprivate"},
+			{"Type": "bind", "Source": storage.Projects, "Destination": "/projects", "RW": true, "Propagation": "rprivate"},
+			{"Type": "tmpfs", "Destination": "/recovery", "RW": true},
 			{"Type": "bind", "Source": secretPath, "Destination": "/run/secrets", "RW": false, "Propagation": "rprivate"},
 		},
 	})
@@ -255,7 +265,7 @@ func localDockerRuntimeReplayFixture(t *testing.T, visibleOnRead int) (*LocalDoc
 	input := WorkspaceRuntimeInput{
 		WorkspaceID: workspaceID, ComputeID: compute.ID, VolumeID: volume.ID, AttachmentID: "attachment-runtime",
 		AttachmentOperationID: "attachment-operation", RuntimeOperationID: "runtime-operation",
-		ImageID: "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64), GatewaySecretRef: gatewaySecretName(workspaceID),
+		ImageID: "ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:" + strings.Repeat("a", 64), GatewaySecretRef: gatewaySecretName(workspaceID),
 		IdempotencyKey: "runtime-idempotency", OperationID: "runtime-operation",
 	}
 	root := localDockerSecretTestRoot(t)
@@ -280,8 +290,15 @@ func localDockerRuntimeReplayFixture(t *testing.T, visibleOnRead int) (*LocalDoc
 		containerVisibleOnRead: visibleOnRead,
 		secretArchive:          validRuntimeSecretArchive(t, key, metadata),
 	}
-	runner.container = localDockerReadyRuntimeContainer(t, localRuntimeName(workspaceID), "container-runtime", input.ImageID, labels, runner.volume.Name, secretPath)
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root, RuntimeHost: "127.0.0.1"}, runner)
+	storageRoot := localDockerStorageTestRoot(t)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root, HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1"}, runner)
+	storagePaths, err := provider.ensureStorageDirectories(localDockerStorageMetadata{
+		SchemaVersion: 1, StorageID: volume.ID, AccountID: accountID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.container = localDockerReadyRuntimeContainer(t, localRuntimeName(workspaceID), "container-runtime", input.ImageID, labels, storagePaths, secretPath)
 	if err := provider.writeGatewaySecret(input.GatewaySecretRef, key, metadata); err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +393,7 @@ func localDockerDestroyRuntimeContainer(workspaceID string) dockerContainerInspe
 		ID:   "container-" + stableSuffix(workspaceID)[:12],
 		Name: localRuntimeName(workspaceID),
 	}
-	container.Config.Image = "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	container.Config.Image = "ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:" + strings.Repeat("a", 64)
 	container.Config.Labels = map[string]string{
 		"opl.fabric.provider": "local-docker",
 		"opl.fabric.kind":     "runtime",
@@ -473,12 +490,6 @@ func (r *bindingCheckingDockerRunner) Run(ctx context.Context, stdin []byte, arg
 	if len(args) == 3 && args[0] == "network" && args[1] == "rm" {
 		r.networkRemoveCalls++
 	}
-	if len(args) >= 2 && args[0] == "volume" && args[1] == "create" {
-		stage, mutation = "storage", "local_docker_volume_create"
-		if strings.Contains(args[len(args)-1], "gateway") {
-			stage, mutation = "secret", "local_docker_secret_volume_create"
-		}
-	}
 	if len(args) > 0 && args[0] == "run" {
 		for _, value := range args {
 			if value == "-d" {
@@ -544,7 +555,9 @@ func localDockerImageTrustPreflight(t *testing.T, image string) (WorkspaceLaunch
 	t.Helper()
 	runner := &recordingDockerRunner{}
 	store := NewMemoryOperationStore()
-	service := NewServiceWithOperationStore(newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t)}, runner), store)
+	service := NewServiceWithOperationStore(newLocalDockerProvider(LocalDockerProviderConfig{
+		GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: localDockerStorageTestRoot(t),
+	}, runner), store)
 	result, err := service.PreflightWorkspaceLaunch(context.Background(), WorkspaceLaunchPreflightInput{
 		SchemaVersion: 1, LaunchOperationID: "local-image-trust", AccountID: "acct-local", WorkspaceID: "ws-local",
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image, RequestHash: strings.Repeat("b", 64),
@@ -561,10 +574,10 @@ func localDockerImageTrustPreflight(t *testing.T, image string) (WorkspaceLaunch
 
 func TestLocalDockerRejectsUnapprovedWorkspaceImageBeforeDockerOrOperationMutation(t *testing.T) {
 	for _, image := range []string{
-		"ghcr.io/gaofeng21cn/one-person-lab-app-attacker@sha256:" + strings.Repeat("a", 64),
+		"ghcr.io/gaofeng21cn/one-person-lab-webui-attacker@sha256:" + strings.Repeat("a", 64),
 		"GHCR.IO/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64),
-		"ghcr.io/gaofeng21cn/one-person-lab-app:stable@sha256:" + strings.Repeat("a", 64),
-		"ghcr.io/gaofeng21cn/one-person-lab-app@other@sha256:" + strings.Repeat("a", 64),
+		"ghcr.io/gaofeng21cn/one-person-lab-webui:stable@sha256:" + strings.Repeat("a", 64),
+		"ghcr.io/gaofeng21cn/one-person-lab-webui@other@sha256:" + strings.Repeat("a", 64),
 		"sha256:" + strings.Repeat("a", 64),
 	} {
 		t.Run(stableSuffix(image)[:12], func(t *testing.T) {
@@ -600,13 +613,13 @@ func TestLocalDockerConfiguredReleaseManifestReplacesDefaultRepositoryTrust(t *t
 	if !provider.ValidateWorkspaceImageReference(approved) {
 		t.Fatal("configured release manifest image rejected")
 	}
-	if provider.ValidateWorkspaceImageReference("ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("b", 64)) {
+	if provider.ValidateWorkspaceImageReference("ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:" + strings.Repeat("b", 64)) {
 		t.Fatal("configured release manifest retained default repository trust")
 	}
 }
 
 func TestLocalDockerAcceptsApprovedImmutableWorkspaceImage(t *testing.T) {
-	image := "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	image := "ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:" + strings.Repeat("a", 64)
 	preflight, runner, operations := localDockerImageTrustPreflight(t, image)
 	if !preflight.Available || preflight.Reason != "none" || preflight.BindingRef == "" {
 		t.Fatalf("approved image preflight=%#v", preflight)
@@ -670,6 +683,16 @@ func TestLocalDockerGatewaySecretLifecycleMaterializesExactModesUnderRestrictive
 	assertMode(versionPath, 0711)
 	assertMode(filepath.Join(versionPath, localDockerGatewayKeyFile), 0444)
 	assertMode(filepath.Join(versionPath, localDockerGatewayMetaFile), 0400)
+	assertMode(filepath.Join(versionPath, localDockerWebUIPasswordFile), 0400)
+	assertMode(filepath.Join(versionPath, localDockerWebUISessionSecretFile), 0400)
+	wantPassword := deriveAionUIAdminPassword(localDockerTestWebUISeed, workspaceID, metadata.Version)
+	wantSessionSecret := deriveWebUISessionSecret(localDockerTestWebUISeed, workspaceID, metadata.Version)
+	if password, err := os.ReadFile(filepath.Join(versionPath, localDockerWebUIPasswordFile)); err != nil || string(password) != wantPassword {
+		t.Fatalf("webui password=%q err=%v", password, err)
+	}
+	if sessionSecret, err := os.ReadFile(filepath.Join(versionPath, localDockerWebUISessionSecretFile)); err != nil || string(sessionSecret) != wantSessionSecret {
+		t.Fatalf("webui session secret=%q err=%v", sessionSecret, err)
+	}
 	if current, err := os.Readlink(filepath.Join(root, secretRef, "current")); err != nil || current != localDockerGatewayVersionsDir+"/sha256-"+digest {
 		t.Fatalf("current=%q err=%v", current, err)
 	}
@@ -696,17 +719,48 @@ func TestLocalDockerGatewaySecretLifecycleMaterializesExactModesUnderRestrictive
 	assertMode(rotatedVersionPath, 0711)
 	assertMode(filepath.Join(rotatedVersionPath, localDockerGatewayKeyFile), 0444)
 	assertMode(filepath.Join(rotatedVersionPath, localDockerGatewayMetaFile), 0400)
+	assertMode(filepath.Join(rotatedVersionPath, localDockerWebUIPasswordFile), 0400)
+	assertMode(filepath.Join(rotatedVersionPath, localDockerWebUISessionSecretFile), 0400)
+	if password, err := os.ReadFile(filepath.Join(rotatedVersionPath, localDockerWebUIPasswordFile)); err != nil || string(password) != deriveAionUIAdminPassword(localDockerTestWebUISeed, workspaceID, rotatedMetadata.Version) {
+		t.Fatalf("rotated webui password=%q err=%v", password, err)
+	}
+	if sessionSecret, err := os.ReadFile(filepath.Join(rotatedVersionPath, localDockerWebUISessionSecretFile)); err != nil || string(sessionSecret) != deriveWebUISessionSecret(localDockerTestWebUISeed, workspaceID, rotatedMetadata.Version) {
+		t.Fatalf("rotated webui session secret=%q err=%v", sessionSecret, err)
+	}
 	if _, err := provider.ReadGatewaySecretByDigest(context.Background(), GatewaySecretReadbackInput{
 		AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: 2,
 		SecretRef: secretRef, Fingerprint: rotatedMetadata.Fingerprint, KeyDigest: rotatedDigest,
 	}); err != nil {
 		t.Fatalf("rotated authoritative read: %v", err)
 	}
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "foreign-local-docker-seed")
+	if _, err := provider.ReadGatewaySecretByDigest(context.Background(), GatewaySecretReadbackInput{
+		AccountID: accountID, WorkspaceID: workspaceID, WorkspaceAPIKeyID: 2,
+		SecretRef: secretRef, Fingerprint: rotatedMetadata.Fingerprint, KeyDigest: rotatedDigest,
+	}); !errors.Is(err, ErrLaunchStageBindingConflict) {
+		t.Fatalf("WebUI credential seed drift read err=%v", err)
+	}
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", localDockerTestWebUISeed)
 	if err := provider.RemoveGatewaySecret(context.Background(), workspaceID); err != nil {
 		t.Fatalf("remove Secret: %v", err)
 	}
 	if _, _, err := provider.readGatewaySecretFiles(secretRef); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
 		t.Fatalf("removed Secret readback err=%v", err)
+	}
+}
+
+func TestLocalDockerGatewaySecretFailsClosedWithoutWebUISeed(t *testing.T) {
+	root := localDockerSecretTestRoot(t)
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "")
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, &recordingDockerRunner{})
+	key := []byte("key-ws-missing-seed")
+	digest := fmt.Sprintf("%x", sha256.Sum256(key))
+	err := provider.writeGatewaySecret("opl-gateway-ws-missing-seed", key, localDockerGatewayMetadata{
+		AccountID: "acct-missing-seed", WorkspaceID: "ws-missing-seed", WorkspaceAPIKeyID: 1,
+		SecretRef: "opl-gateway-ws-missing-seed", Fingerprint: "sha256:" + digest, Version: digest[:16],
+	})
+	if err == nil || !strings.Contains(err.Error(), "local_docker_webui_credential_seed_required") {
+		t.Fatalf("missing WebUI seed err=%v", err)
 	}
 }
 
@@ -808,7 +862,9 @@ func TestLocalDockerComputeStageSurvivesPostgresJSONBRoundTrip(t *testing.T) {
 			ctx := context.Background()
 			runner := &localDockerComputeRoundTripRunner{}
 			store := NewMemoryOperationStore()
-			provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t)}, runner)
+			provider := newLocalDockerProvider(LocalDockerProviderConfig{
+				GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: localDockerStorageTestRoot(t),
+			}, runner)
 			service := NewServiceWithOperationStore(provider, store)
 			image := defaultLocalDockerWorkspaceImageRepository + "@sha256:" + strings.Repeat("a", 64)
 			launchID, accountID, workspaceID := fmt.Sprintf("launch-jsonb-v%d", schemaVersion), "acct-jsonb", "ws-jsonb"
@@ -926,15 +982,16 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		base: execDockerRunner{binary: "docker"}, store: store, parents: bindings, mutationIDs: mutationIDs,
 		loseGatewayConnectResponse: true, loseGatewayCleanupResponse: true, t: t,
 	}
+	storageRoot := localDockerStorageTestRoot(t)
 	provider := newLocalDockerProvider(LocalDockerProviderConfig{
-		GatewaySecretRoot: localDockerSecretTestRoot(t), RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
+		GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
 		TrustedWorkspaceImageSources: []string{imageID},
 	}, runner)
 	service := NewServiceWithOperationStore(provider, store)
 	t.Cleanup(func() {
 		_, _ = provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
 		_ = provider.RemoveGatewaySecret(context.Background(), workspaceID)
-		_, _ = provider.DestroyStorageVolume(context.Background(), StorageVolume{ID: storageID})
+		_, _ = provider.DestroyStorageVolume(context.Background(), StorageVolume{ID: storageID, AccountID: accountID, WorkspaceID: workspaceID})
 		_, _ = provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{ID: computeID})
 	})
 	launchRequestHash := stableSuffix("workspace-launch", launchID, accountID, workspaceID, imageID)
@@ -969,7 +1026,6 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	storageInput := base
 	storageInput.Binding, storageInput.Resources = bindings["storage"], compute.Resources
 	bindInput(&storageInput)
-	mutationIDs["local_docker_volume_create"] = providerMutationOperationID(storageInput.Binding, "local_docker_volume_create", "storage_volume", storageID, localDockerName("opl-storage", storageID))
 	storage, err := service.EnsureWorkspaceLaunchStage(ctx, storageInput)
 	if err != nil || storage.State != "ready" {
 		t.Fatalf("storage=%#v err=%v", storage, err)
@@ -1009,24 +1065,26 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if err := waitForLocalRuntime(ctx, runtime.Resources.RuntimeURL); err != nil {
 		t.Fatal(err)
 	}
-	opened, err := exec.CommandContext(ctx, "docker", "exec", gatewayName, "wget", "-qO-", "http://"+runtime.Resources.RuntimeServiceName+":3000/").CombinedOutput()
+	runtimeURL := "http://" + runtime.Resources.RuntimeServiceName + ":3000/"
+	fetchRuntime := `fetch(process.argv[1]).then(async response => { if (!response.ok) process.exit(1); process.stdout.write(await response.text()) }).catch(() => process.exit(1))`
+	opened, err := exec.CommandContext(ctx, "docker", "exec", gatewayName, "node", "-e", fetchRuntime, runtimeURL).CombinedOutput()
 	if err != nil || !strings.Contains(string(opened), "OPL Workspace READY") {
 		t.Fatalf("gateway runtime open: %v: %s", err, opened)
 	}
 	if output, err := exec.CommandContext(ctx, "docker", "restart", gatewayName).CombinedOutput(); err != nil {
 		t.Fatalf("restart gateway container: %v: %s", err, output)
 	}
-	opened, err = exec.CommandContext(ctx, "docker", "exec", gatewayName, "wget", "-qO-", "http://"+runtime.Resources.RuntimeServiceName+":3000/").CombinedOutput()
+	opened, err = exec.CommandContext(ctx, "docker", "exec", gatewayName, "node", "-e", fetchRuntime, runtimeURL).CombinedOutput()
 	if err != nil || !strings.Contains(string(opened), "OPL Workspace READY") {
 		t.Fatalf("gateway runtime open after restart: %v: %s", err, opened)
 	}
 	restartedProvider := newLocalDockerProvider(LocalDockerProviderConfig{
-		GatewaySecretRoot: provider.gatewaySecretRoot, RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
+		GatewaySecretRoot: provider.gatewaySecretRoot, HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
 		TrustedWorkspaceImageSources: []string{imageID},
 	}, runner)
 	restartedService := NewServiceWithOperationStore(restartedProvider, store)
 	status, err := restartedService.WorkspaceRuntimeStatus(ctx, workspaceID)
-	if err != nil || status.ID != runtime.Resources.RuntimeID || status.OperationID != runtimeInput.Binding.FabricOperationID || !status.Ready {
+	if err != nil || status.ID != runtime.Resources.RuntimeID || status.OperationID != runtimeInput.Binding.FabricOperationID || !status.Ready || status.Access.Password != "" {
 		t.Fatalf("canonical runtime status=%#v err=%v", status, err)
 	}
 	observation := restartedService.ObserveWorkspaceRuntime(ctx, workspaceID)
@@ -1034,7 +1092,9 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		t.Fatalf("canonical runtime observation=%#v", observation)
 	}
 	credentials, err := restartedService.WorkspaceRuntimeCredentials(ctx, accountID, workspaceID)
-	if err != nil || credentials.ID != status.ID || credentials.OperationID != status.OperationID {
+	if err != nil || credentials.ID != status.ID || credentials.OperationID != status.OperationID ||
+		credentials.Access.Username != webuiUsername || credentials.Access.Password != deriveAionUIAdminPassword(localDockerTestWebUISeed, workspaceID, digest[:16]) ||
+		credentials.Access.CredentialStatus != "configured" || credentials.Access.CredentialVersion != digest[:16] || credentials.Access.SecretRef != secretRef {
 		t.Fatalf("canonical runtime credentials=%#v err=%v", credentials, err)
 	}
 	if _, err := restartedService.WorkspaceRuntimeCredentials(ctx, accountID+"-other", workspaceID); err == nil {
@@ -1352,6 +1412,8 @@ func TestLocalDockerGatewaySecretConfigurationAndModeDriftFailClosed(t *testing.
 	}{
 		{name: "key_file_mode", file: localDockerGatewayKeyFile, mode: 0644},
 		{name: "metadata_file_mode", file: localDockerGatewayMetaFile, mode: 0600},
+		{name: "webui_password_file_mode", file: localDockerWebUIPasswordFile, mode: 0600},
+		{name: "webui_session_secret_file_mode", file: localDockerWebUISessionSecretFile, mode: 0600},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			root := localDockerSecretTestRoot(t)
@@ -1427,6 +1489,20 @@ func TestLocalDockerGatewaySecretCrashCutRotationAndRestart(t *testing.T) {
 	if err := os.Chmod(metadataPath, 0400); err != nil {
 		t.Fatal(err)
 	}
+	passwordPath := filepath.Join(versionPath, localDockerWebUIPasswordFile)
+	if err := os.WriteFile(passwordPath, []byte(deriveAionUIAdminPassword(localDockerTestWebUISeed, metadata.WorkspaceID, metadata.Version)), 0400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(passwordPath, 0400); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(versionPath, localDockerWebUISessionSecretFile)
+	if err := os.WriteFile(sessionPath, []byte(deriveWebUISessionSecret(localDockerTestWebUISeed, metadata.WorkspaceID, metadata.Version)), 0400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sessionPath, 0400); err != nil {
+		t.Fatal(err)
+	}
 	currentTarget, _ := localDockerGatewayCurrentTarget(digest)
 	if err := os.Symlink(currentTarget, filepath.Join(root, secretRef, ".current-.staging-crash")); err != nil {
 		t.Fatal(err)
@@ -1450,6 +1526,14 @@ func TestLocalDockerGatewaySecretCrashCutRotationAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	oldPassword, err := os.ReadFile(filepath.Join(versionPath, localDockerWebUIPasswordFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSessionSecret, err := os.ReadFile(filepath.Join(versionPath, localDockerWebUISessionSecretFile))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	rotatedKey := []byte("gateway-key-v2")
 	rotatedDigest := fmt.Sprintf("%x", sha256.Sum256(rotatedKey))
@@ -1463,6 +1547,12 @@ func TestLocalDockerGatewaySecretCrashCutRotationAndRestart(t *testing.T) {
 	}
 	if preserved, err := os.ReadFile(filepath.Join(versionPath, localDockerGatewayKeyFile)); err != nil || string(preserved) != string(oldKey) {
 		t.Fatalf("immutable old version changed body=%q err=%v", preserved, err)
+	}
+	if preserved, err := os.ReadFile(filepath.Join(versionPath, localDockerWebUIPasswordFile)); err != nil || string(preserved) != string(oldPassword) {
+		t.Fatalf("immutable old WebUI password changed body=%q err=%v", preserved, err)
+	}
+	if preserved, err := os.ReadFile(filepath.Join(versionPath, localDockerWebUISessionSecretFile)); err != nil || string(preserved) != string(oldSessionSecret) {
+		t.Fatalf("immutable old WebUI session secret changed body=%q err=%v", preserved, err)
 	}
 	finalProvider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, &recordingDockerRunner{})
 	if readKey, readMetadata, err := finalProvider.readGatewaySecretFiles(secretRef); err != nil || string(readKey) != string(rotatedKey) || readMetadata != rotatedMetadata {
@@ -1487,16 +1577,41 @@ func TestLocalDockerRuntimeUsesExactReadOnlySecretBindAndIdentityLabels(t *testi
 		}
 	}
 	joined := strings.Join(run, " ")
-	secretPath := runner.container.Mounts[1].Source
+	secretPath := runner.container.Mounts[3].Source
+	storagePaths, storageErr := provider.storagePaths(input.WorkspaceID)
+	if storageErr != nil {
+		t.Fatal(storageErr)
+	}
 	for _, required := range []string{
+		`--health-cmd node -e 'fetch("http://127.0.0.1:3000/").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'`,
+		"--health-interval 5s",
+		"--health-timeout 3s",
+		"--health-start-period 10s",
+		"--health-retries 120",
+		"type=bind,source=" + storagePaths.Data + ",target=/data,bind-propagation=rprivate",
+		"type=bind,source=" + storagePaths.Projects + ",target=/projects,bind-propagation=rprivate",
+		"type=tmpfs,target=/recovery,tmpfs-mode=0700",
 		"type=bind,source=" + secretPath + ",target=/run/secrets,readonly,bind-propagation=rprivate",
-		"OPL_GATEWAY_API_KEY_FILE=/run/secrets/" + localDockerGatewayKeyFile,
+		"OPL_PROJECTS_DIR=/projects",
+		"OPL_WORKSPACE_ROOT=/projects",
+		"OPL_WEBUI_RECOVERY_DIR=/recovery",
+		"OPL_WEBUI_AUTH_MODE=password",
+		"OPL_WEBUI_USERNAME=opl",
+		"OPL_WEBUI_PASSWORD_FILE=/run/secrets/opl_webui_password",
+		"OPL_WEBUI_SESSION_SECRET_FILE=/run/secrets/webui_session_secret",
+		"AIONUI_ALLOW_REMOTE=true",
+		"ALLOW_REMOTE=true",
+		"HOME=/data",
+		"CODEX_HOME=/data/.codex",
 		"opl.secret.ref=" + input.GatewaySecretRef,
 		"opl.secret.version=" + runner.container.Config.Labels["opl.secret.version"],
 		"opl.secret.fingerprint=" + runner.container.Config.Labels["opl.secret.fingerprint"],
 	} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("docker run=%q missing %q", run, required)
+		}
+		if strings.Contains(joined, "OPL_GATEWAY_API_KEY_FILE=") {
+			t.Fatalf("runtime must configure the Gateway key after WebUI health, not during App startup: %q", run)
 		}
 	}
 	if strings.Contains(joined, "type=volume,source="+input.GatewaySecretRef) || strings.Contains(joined, " tar ") {
@@ -1533,7 +1648,9 @@ func TestLocalDockerRuntimeCreateKeepsStartingHealthPendingUntilAuthoritativeRea
 
 func TestLocalDockerRuntimeStatusFailsClosedOnSecretIdentityOrMountDrift(t *testing.T) {
 	provider, runner, _, _, input, _, _ := localDockerRuntimeReplayFixture(t, 1)
-	if runtime, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err != nil || !runtime.Ready {
+	if runtime, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err != nil || !runtime.Ready ||
+		runtime.Access.Username != webuiUsername || runtime.Access.Password != deriveAionUIAdminPassword(localDockerTestWebUISeed, input.WorkspaceID, runner.container.Config.Labels["opl.secret.version"]) ||
+		runtime.Access.CredentialStatus != "configured" || runtime.Access.CredentialVersion != runner.container.Config.Labels["opl.secret.version"] || runtime.Access.SecretRef != input.GatewaySecretRef {
 		t.Fatalf("baseline runtime=%#v err=%v", runtime, err)
 	}
 
@@ -1547,10 +1664,28 @@ func TestLocalDockerRuntimeStatusFailsClosedOnSecretIdentityOrMountDrift(t *test
 	})
 
 	t.Run("writable_mount", func(t *testing.T) {
-		runner.container.Mounts[1].RW = true
-		t.Cleanup(func() { runner.container.Mounts[1].RW = false })
+		runner.container.Mounts[3].RW = true
+		t.Cleanup(func() { runner.container.Mounts[3].RW = false })
 		if runtime, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err == nil || runtime.Ready {
 			t.Fatalf("writable mount runtime=%#v err=%v", runtime, err)
+		}
+	})
+
+	t.Run("projects_source", func(t *testing.T) {
+		original := runner.container.HostConfig.Mounts[1].Source
+		runner.container.HostConfig.Mounts[1].Source = filepath.Join(provider.hostStorageRoot, "foreign", "projects")
+		t.Cleanup(func() { runner.container.HostConfig.Mounts[1].Source = original })
+		if runtime, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err == nil || runtime.Ready {
+			t.Fatalf("drifted projects mount runtime=%#v err=%v", runtime, err)
+		}
+	})
+
+	t.Run("healthcheck", func(t *testing.T) {
+		original := runner.container.Config.Healthcheck.Test[1]
+		runner.container.Config.Healthcheck.Test[1] = "exit 0"
+		t.Cleanup(func() { runner.container.Config.Healthcheck.Test[1] = original })
+		if runtime, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err == nil || runtime.Ready {
+			t.Fatalf("drifted healthcheck runtime=%#v err=%v", runtime, err)
 		}
 	})
 }

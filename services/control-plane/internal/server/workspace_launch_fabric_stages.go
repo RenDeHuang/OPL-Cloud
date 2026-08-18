@@ -68,7 +68,46 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) workspaceLaunchFabricStageInpu
 	input.Binding.RequestHash = workspaceLaunchFabricRequestHash(input, operation.stringFact("requestHash"))
 	if includeCredential {
 		keyID := operation.int64Fact("workspaceApiKeyId")
-		keys, err := a.service.WorkspaceKeysForConvergence(ctx, operation.int64Fact("sub2apiUserId"), workspaceReservedKeyName(operation.stringFact("workspaceId")))
+		if !operation.boolFact("resourceBillingEnabled") {
+			// The delegated list endpoint may expose the one-time key on
+			// Sub2API installations that support customer-owned reveals. If it
+			// does not, the key-stage materialization has already written the
+			// Fabric secret and only the key identity is required for readback.
+			input.GatewayCredential = &clients.WorkspaceLaunchGatewayCredential{KeyID: keyID}
+			if keys, err := a.service.GatewayWorkspaceKeysForConvergence(ctx, a.keyCredential, operation.int64Fact("sub2apiUserId"), workspaceReservedKeyName(operation.stringFact("workspaceId"))); err == nil {
+				for _, key := range keys {
+					if key.ID == keyID && key.Status == "active" && strings.TrimSpace(key.Key) != "" && workspaceLaunchCredentialFingerprint(key.Key) == operation.stringFact("workspaceKeyFingerprint") {
+						input.GatewayCredential.Value = key.Key
+						break
+					}
+				}
+			}
+			if strings.TrimSpace(input.GatewayCredential.Value) == "" {
+				key, err := a.service.GatewayUserKey(ctx, a.keyCredential, operation.int64Fact("sub2apiUserId"), keyID)
+				if err == nil && key.Status == "active" && strings.TrimSpace(key.Key) != "" && workspaceLaunchCredentialFingerprint(key.Key) == operation.stringFact("workspaceKeyFingerprint") {
+					input.GatewayCredential.Value = key.Key
+				}
+			}
+			return input, nil
+		}
+		if a.workspaceLaunchKeyMutationCredentialValid(operation) {
+			key, err := a.service.GatewayUserKey(ctx, a.keyCredential, operation.int64Fact("sub2apiUserId"), keyID)
+			if err != nil {
+				return clients.WorkspaceLaunchStageInput{}, err
+			}
+			if key.Status != "active" || strings.TrimSpace(key.Key) == "" || workspaceLaunchCredentialFingerprint(key.Key) != operation.stringFact("workspaceKeyFingerprint") {
+				return clients.WorkspaceLaunchStageInput{}, errInvalidWorkspaceLaunchOperation
+			}
+			input.GatewayCredential = &clients.WorkspaceLaunchGatewayCredential{KeyID: key.ID, Value: key.Key}
+			return input, nil
+		}
+		var keys []clients.Sub2APIWorkspaceKey
+		var err error
+		if a.workspaceLaunchKeyMutationCredentialValid(operation) {
+			keys, err = a.service.GatewayWorkspaceKeysForConvergence(ctx, a.keyCredential, operation.int64Fact("sub2apiUserId"), workspaceReservedKeyName(operation.stringFact("workspaceId")))
+		} else {
+			keys, err = a.service.WorkspaceKeysForConvergence(ctx, operation.int64Fact("sub2apiUserId"), workspaceReservedKeyName(operation.stringFact("workspaceId")))
+		}
 		if err != nil {
 			return clients.WorkspaceLaunchStageInput{}, err
 		}

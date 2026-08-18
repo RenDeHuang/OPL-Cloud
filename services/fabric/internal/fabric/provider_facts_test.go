@@ -153,7 +153,7 @@ func TestLocalDockerProviderFactsParityAndReadOnly(t *testing.T) {
 	}
 	volume := StorageVolume{
 		ID: "storage-local", OperationID: "op-storage-local", AccountID: "acct-local", WorkspaceID: "workspace-local",
-		DiskType: "local-volume", StorageClass: "docker-volume", Deadline: "2026-09-12T00:00:00Z", Zone: "local",
+		DiskType: "local-directory", StorageClass: "host-directory", Deadline: "2026-09-12T00:00:00Z", Zone: "local",
 	}
 	attachment := StorageAttachment{ID: "attachment-local", OperationID: "op-attachment-local", WorkspaceID: "workspace-local", ComputeID: compute.ID, VolumeID: volume.ID}
 	runner := &providerFactsDockerRunner{
@@ -161,7 +161,13 @@ func TestLocalDockerProviderFactsParityAndReadOnly(t *testing.T) {
 		networkLabels: localDockerLabels(compute.AccountID, compute.WorkspaceID, compute.ID, "", "compute"),
 		volumeLabels:  localDockerLabels(volume.AccountID, volume.WorkspaceID, volume.ID, "", "storage"),
 	}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{}, runner)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{HostStorageRoot: localDockerStorageTestRoot(t)}, runner)
+	paths, err := provider.ensureStorageDirectories(localDockerStorageMetadata{
+		SchemaVersion: 1, StorageID: volume.ID, AccountID: volume.AccountID, WorkspaceID: volume.WorkspaceID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	computeFacts, computeErr := provider.ReadComputeProviderFacts(context.Background(), compute)
 	storageFacts, storageErr := provider.ReadStorageProviderFacts(context.Background(), volume)
@@ -171,14 +177,14 @@ func TestLocalDockerProviderFactsParityAndReadOnly(t *testing.T) {
 		t.Fatalf("local facts errors: compute=%v storage=%v attachment=%v", computeErr, storageErr, attachmentErr)
 	}
 	wantCompute := ProviderResourceFacts{PackageOrSpec: "local-2c4g", ProviderID: "network/network-live", Zone: "local", Status: "running", ExpiresAt: compute.Deadline}
-	wantStorage := ProviderResourceFacts{PackageOrSpec: "local-volume", ProviderID: "volume/" + runner.volumeName, Zone: "local", Status: "ready", ExpiresAt: volume.Deadline}
-	wantAttachment := ProviderResourceFacts{PackageOrSpec: "/data", ProviderID: "docker/" + localDockerName("opl-compute", compute.ID) + "/" + runner.volumeName, Status: "attached"}
+	wantStorage := ProviderResourceFacts{PackageOrSpec: "local-directory", ProviderID: "directory/" + paths.WorkspaceName, Zone: "local", Status: "ready", ExpiresAt: volume.Deadline}
+	wantAttachment := ProviderResourceFacts{PackageOrSpec: "/data", ProviderID: "docker/" + localDockerName("opl-compute", compute.ID) + "/" + paths.WorkspaceName, Status: "attached"}
 	wantRuntime := ProviderResourceFacts{ProviderID: "opl-local-runtime", Status: "running"}
 	if !reflect.DeepEqual(computeFacts, wantCompute) || !reflect.DeepEqual(storageFacts, wantStorage) || !reflect.DeepEqual(attachmentFacts, wantAttachment) || !reflect.DeepEqual(runtimeFacts, wantRuntime) {
 		t.Fatalf("local facts: compute=%#v storage=%#v attachment=%#v runtime=%#v", computeFacts, storageFacts, attachmentFacts, runtimeFacts)
 	}
 	for _, call := range runner.calls {
-		if len(call) < 2 || (call[1] != "ls" && call[1] != "inspect") || (call[0] != "network" && call[0] != "volume") {
+		if len(call) < 2 || (call[1] != "ls" && call[1] != "inspect") || call[0] != "network" {
 			t.Fatalf("local provider facts issued mutation: %#v", runner.calls)
 		}
 	}

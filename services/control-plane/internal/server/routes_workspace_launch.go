@@ -63,7 +63,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
 				return
 			}
-			if persisted.Status == "pending" && persisted.Stage == "key" {
+			if (persisted.Status == "pending" && persisted.Stage == "key") || (app.deployment.customerOwned() && persisted.Status == "manual_review" && (persisted.Stage == "key" || persisted.Stage == "secret") && persisted.Observations[persisted.Stage].State == workspaceLaunchStageUnknown) {
 				credentialUser, sub2APIUserID, credential, credentialOK := app.gatewayUserContext(w, r)
 				if !credentialOK {
 					return
@@ -101,7 +101,10 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		}
 
 		admission := controlledBasicPilotAdmissionFromEnv()
-		code := admission.rejectNewLaunch(accountID, packageID, autoRenew)
+		code := ""
+		if !app.deployment.customerOwned() {
+			code = admission.rejectNewLaunch(accountID, packageID, autoRenew)
+		}
 		acceptanceBApproved := false
 		if code == "workspace_launch_admission_disabled" {
 			approval, configured := parseProductionAcceptanceBApproval()
@@ -119,6 +122,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			return
 		}
 		quote = customerPricingPreviewDTO(quote)
+		quote = app.applyResourceBillingQuote(quote)
 		descriptor, err := newWorkspaceLaunchDescriptor(accountID, ownerUserID, name, packageID, int(storageGB), autoRenew, stringValue(quote["priceVersion"]), key)
 		if err != nil {
 			writeError(w, http.StatusConflict, "workspace_image_digest_invalid")
@@ -154,15 +158,19 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeUpstreamError(w, err)
 			return
 		}
-		balance, err := service.Sub2APIBalance(r.Context(), sub2APIUserID)
-		if err != nil {
-			writeUpstreamError(w, err)
-			return
-		}
 		totalCharge := int64(numberField(quote, "totalChargeUsdMicros", 0))
-		if balance.USDMicros < totalCharge {
-			writeError(w, http.StatusConflict, errMonthlyInsufficientBalance.Error())
-			return
+		preChargeBalance := int64(0)
+		if app.deployment.resourceBillingEnabled() {
+			balance, balanceErr := service.Sub2APIBalance(r.Context(), sub2APIUserID)
+			if balanceErr != nil {
+				writeUpstreamError(w, balanceErr)
+				return
+			}
+			if balance.USDMicros < totalCharge {
+				writeError(w, http.StatusConflict, errMonthlyInsufficientBalance.Error())
+				return
+			}
+			preChargeBalance = balance.USDMicros
 		}
 		created, err := app.createWorkspaceLaunch(r.Context(), service, credential, sub2APIUserID, workspaceLaunchReconcileCreate{
 			OperationID: descriptor.OperationID, RequestHash: descriptor.RequestHash, AccountID: accountID, OwnerUserID: ownerUserID,
@@ -170,7 +178,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			Name: name, PackageID: packageID, StorageGB: int(storageGB), AutoRenew: autoRenew,
 			PriceVersion: stringValue(quote["priceVersion"]), TotalChargeUSDMicros: totalCharge,
 			ProviderProfileRef: preflight.ProviderProfileRef, PreflightBindingRef: preflight.BindingRef,
-			WorkspaceImageDigest: descriptor.WorkspaceImageDigest, PreChargeBalanceMicros: balance.USDMicros,
+			WorkspaceImageDigest: descriptor.WorkspaceImageDigest, PreChargeBalanceMicros: preChargeBalance, ResourceBillingEnabled: boolPtr(app.deployment.resourceBillingEnabled()),
 			AcceptanceBCapacitySlot: acceptanceBApproved,
 		})
 		if err != nil {
@@ -195,7 +203,11 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			return
 		}
 		if workspaceLaunchWorkerEnabled() && created.Status == "pending" {
-			go func() { _ = app.runWorkspaceLaunch(context.Background(), service, created.ID) }()
+			go func() {
+				unlock := app.lockResource("workspace-launch", accountID)
+				defer unlock()
+				_ = app.runWorkspaceLaunch(context.Background(), service, created.ID)
+			}()
 		}
 		writeJSON(w, http.StatusAccepted, body)
 	}))
@@ -242,6 +254,52 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			return
 		}
 		writeError(w, http.StatusNotFound, "workspace_launch_not_found")
+	}))
+
+	mux.HandleFunc("POST /api/workspace-launches/{id}/resume", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := requiredMutationKey(w, r); !ok {
+			return
+		}
+		if !app.deployment.customerOwned() {
+			writeError(w, http.StatusNotFound, "workspace_launch_not_found")
+			return
+		}
+		accountID, ok := app.scopedAccountID(w, r, nil)
+		if !ok {
+			return
+		}
+		unlock := app.lockResource("workspace-launch", accountID)
+		defer unlock()
+		row, found, err := app.tables.GetRuntimeOperation(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		if !found || stringValue(row["accountId"]) != accountID || stringValue(row["action"]) != workspaceLaunchAction {
+			writeError(w, http.StatusNotFound, "workspace_launch_not_found")
+			return
+		}
+		operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+		recoverableManualReview := operation.Status == "manual_review" && (operation.Stage == "key" || operation.Stage == "storage" || operation.Stage == "attachment" || operation.Stage == "secret" || operation.Stage == "runtime" || operation.Stage == "activation") && operation.Observations[operation.Stage].State == workspaceLaunchStageUnknown
+		recoverablePendingStage := operation.Status == "pending" && (operation.Stage == "key" || operation.Stage == "storage" || operation.Stage == "attachment" || operation.Stage == "secret" || operation.Stage == "runtime")
+		if err != nil || !recoverableManualReview && !recoverablePendingStage {
+			writeError(w, http.StatusConflict, "workspace_launch_not_recoverable")
+			return
+		}
+		_, sub2APIUserID, credential, ok := app.gatewayUserContext(w, r)
+		if !ok {
+			return
+		}
+		if sub2APIUserID != operation.int64Fact("sub2apiUserId") {
+			writeError(w, http.StatusForbidden, "account_scope_forbidden")
+			return
+		}
+		continued, err := app.workspaceLaunchReconciler(service, credential, sub2APIUserID).Reconcile(r.Context(), operation.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		app.respondWorkspaceLaunchContinuation(w, r, continued)
 	}))
 }
 

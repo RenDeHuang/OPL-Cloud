@@ -1,23 +1,13 @@
 services:
-  fabric:
-    user: root
-    environment:
-      OPL_FABRIC_PROVIDER: local-docker
-      OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES: ${OPL_WORKSPACE_IMAGE:?Set OPL_WORKSPACE_IMAGE to an immutable Workspace image digest}
-      OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT: ${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}
-      OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER: ${OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER:?Set the task-owned Control Plane gateway container}
+  postgres:
     volumes:
       - type: bind
-        source: ${OPL_DOCKER_SOCKET_PATH:-/var/run/docker.sock}
-        target: /var/run/docker.sock
-      - type: bind
-        source: ${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}
-        target: ${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set a task-owned local Docker Secret root}
+        source: ${OPL_POSTGRES_DATA_ROOT:?Set the customer-owned PostgreSQL data root}
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
 
   control-plane:
-    labels:
-      opl.fabric.local-docker.gateway: control-plane
     environment:
       OPL_WORKSPACE_IMAGE: ${OPL_WORKSPACE_IMAGE:?Set OPL_WORKSPACE_IMAGE to an immutable Workspace image digest}
       OPL_WORKSPACE_LAUNCH_WORKER_ENABLED: "1"
-      OPL_TENCENT_ZONE: local

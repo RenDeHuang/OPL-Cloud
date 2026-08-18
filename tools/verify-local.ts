@@ -60,22 +60,11 @@ export const postgresVerificationSpecs = Object.freeze([
   { cwd: "services/fabric" }
 ]);
 
-export const productMatrixLaneSpecs = Object.freeze([
-  { order: 0, cwd: "services/internal/postgresmigrate", command: "go", argsPrefix: ["test", "-race", "-count=1", "-json"] },
-  { order: 1, cwd: "services/ledger", command: "go", argsPrefix: ["test", "-count=1", "-json"] },
-  { order: 2, cwd: "services/control-plane", command: "go", argsPrefix: ["test", "-timeout=15m", "-count=1", "-json"] },
-  { order: 3, cwd: "services/fabric", command: "go", argsPrefix: ["test", "-count=1", "-json"] },
-  { order: 4, cwd: ".", command: "node", argsPrefix: ["--test", "--test-reporter=tap", "tests/integration/local-workspace-vertical-readback.test.ts"] }
-]);
-
-export const productMatrixVerticalTests = Object.freeze([
-  "E0 fresh PostgreSQL owners and restart count zero",
-  "E1 canonical nine-stage launch is exactly once",
-  "E2 intermediate and succeeded restart preserve identities",
-  "E3 runtime status and workspace open are authoritative",
-  "E5 launch pending unknown continuation preserves one operation",
-  "E6 fixture authority launch cardinalities and bindings are exact",
-  "E7 qualification-owned exact-label cleanup leaves zero residuals"
+export const productMatrixModuleSpecs = Object.freeze([
+  { cwd: "services/internal/postgresmigrate", command: "go", argsPrefix: ["test", "-race", "-count=1", "-json"] },
+  { cwd: "services/ledger", command: "go", argsPrefix: ["test", "-count=1", "-json"] },
+  { cwd: "services/control-plane", command: "go", argsPrefix: ["test", "-timeout=15m", "-count=1", "-json"] },
+  { cwd: "services/fabric", command: "go", argsPrefix: ["test", "-count=1", "-json"] }
 ]);
 
 export const productMatrixStages = Object.freeze([
@@ -339,51 +328,8 @@ function runGoJSONWithoutSkips(args, { cwd, env }) {
   });
 }
 
-export function parseNodeTAPOutput(output) {
-  const passed = [];
-  for (const line of String(output).split(/\r?\n/)) {
-    const match = line.match(/^ok \d+ - (.+?)(?:\s+#\s+(?:skip|todo)\b.*)?$/i);
-    if (match) passed.push(match[1]);
-  }
-  const readSummary = (name) => {
-    const matches = [...String(output).matchAll(new RegExp(`^# ${name} (\\d+)$`, "gm"))];
-    return matches.length === 1 ? Number(matches[0][1]) : undefined;
-  };
-  return { passed, failed: readSummary("fail"), skipped: readSummary("skipped") };
-}
-
-async function runVerticalVerification(env) {
-  const spec = productMatrixLaneSpecs[4];
-  printStep("local Workspace vertical readback E0-E3/E5-E7 (E4 BLOCKED_PRODUCT_DECISION, zero skips)");
-  const result = await runProcess(spec.command, spec.argsPrefix, {
-    cwd: root,
-    env: { ...env, OPL_VERTICAL_INTEGRATION: "1" },
-    capture: true,
-    allowFailure: true
-  });
-  const { passed, failed, skipped } = parseNodeTAPOutput(result.stdout);
-  const evidence = productMatrixVerticalTests.filter((name) => passed.includes(name));
-  if (result.code !== 0 || failed !== 0 || skipped !== 0 || !sameStrings(evidence, productMatrixVerticalTests)) {
-    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").slice(-2_000_000);
-    if (output) process.stderr.write(output);
-    throw new Error(`Vertical FAIL ${failed} SKIP ${skipped}; process=${result.signal || result.code}`);
-  }
-  return {
-    order: spec.order,
-    cwd: spec.cwd,
-    command: spec.command,
-    args: [...spec.argsPrefix],
-    packages: [productMatrixVerticalPackage],
-    failed: 0,
-    skipped: 0,
-    passedPackages: [productMatrixVerticalPackage],
-    passedTests: productMatrixVerticalTests.map((name) => ({ package: productMatrixVerticalPackage, name }))
-  };
-}
-
 async function runPostgresVerification(env) {
-  const results = [];
-  for (const [order, spec] of postgresVerificationSpecs.entries()) {
+  const verifyModule = async (spec) => {
     const cwd = join(root, spec.cwd);
     printStep(`${spec.cwd} PostgreSQL compile`);
     await runProcess("go", ["test", "-run", "^$", "./..."], { cwd, env });
@@ -400,63 +346,62 @@ async function runPostgresVerification(env) {
     args.push("-count=1", "-json", ...packages);
     printStep(`${spec.cwd} PostgreSQL tests (zero skips)`);
     const result = await runGoJSONWithoutSkips(args, { cwd, env });
-    results.push({ order, cwd: spec.cwd, command: "go", args: [...args], packages: [...packages], ...result });
-  }
-  return results;
+    return { cwd: spec.cwd, command: "go", args: [...args], packages: [...packages], ...result };
+  };
+  const settled = await Promise.allSettled(postgresVerificationSpecs.map((spec) => verifyModule(spec)));
+  const failures = settled.flatMap((result, index) => result.status === "rejected"
+    ? [`${postgresVerificationSpecs[index].cwd}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+    : []);
+  if (failures.length > 0) throw new Error(`PostgreSQL module verification failed:\n${failures.join("\n")}`);
+  return settled.map((result) => result.value);
 }
 
-export const productMatrixVerticalPackage = "opl-cloud/tests/integration/local-workspace-vertical-readback";
-
-function packageBelongsToLane(packageName, cwd) {
-  return cwd === "." ? packageName === productMatrixVerticalPackage :
-    packageName === `opl-cloud/${cwd}` || packageName.startsWith(`opl-cloud/${cwd}/`);
+function packageBelongsToModule(packageName, cwd) {
+  return packageName === `opl-cloud/${cwd}` || packageName.startsWith(`opl-cloud/${cwd}/`);
 }
 
 function sameStrings(left, right) {
   return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-export function validateProductMatrixLanes(results) {
-  if (!Array.isArray(results) || results.length !== productMatrixLaneSpecs.length) {
-    throw new Error("Product matrix receipt requires every ordered lane including vertical evidence");
+export function validateProductMatrixModules(results) {
+  if (!Array.isArray(results) || results.length !== productMatrixModuleSpecs.length) {
+    throw new Error("Product matrix receipt requires every module result");
   }
-  return results.map((result, index) => {
-    const spec = productMatrixLaneSpecs[index];
-    if (result?.order !== spec.order || result?.cwd !== spec.cwd || result?.command !== spec.command ||
-      result?.failed !== 0 || result?.skipped !== 0) {
-      throw new Error(`Product matrix lane ${index} identity, cwd, order, or zero-skip result is invalid`);
+  const byCwd = new Map();
+  for (const result of results) {
+    if (!result?.cwd || byCwd.has(result.cwd)) throw new Error("Product matrix module identity is duplicated or missing");
+    byCwd.set(result.cwd, result);
+  }
+  return productMatrixModuleSpecs.map((spec) => {
+    const result = byCwd.get(spec.cwd);
+    if (!result || result.command !== spec.command || result.failed !== 0 || result.skipped !== 0) {
+      throw new Error(`Product matrix module ${spec.cwd} identity or zero-skip result is invalid`);
     }
     const packages = Array.isArray(result.packages) ? result.packages : [];
     if (packages.length === 0 || new Set(packages).size !== packages.length ||
-      packages.some((name) => !packageBelongsToLane(name, spec.cwd))) {
-      throw new Error(`Product matrix lane ${index} exact package list is invalid`);
+      packages.some((name) => !packageBelongsToModule(name, spec.cwd))) {
+      throw new Error(`Product matrix module ${spec.cwd} exact package list is invalid`);
     }
-    const expectedArgs = spec.cwd === "." ? [...spec.argsPrefix] : [...spec.argsPrefix, ...packages];
+    const expectedArgs = [...spec.argsPrefix, ...packages];
     if (!sameStrings(result.args, expectedArgs)) {
-      throw new Error(`Product matrix lane ${index} normalized command is invalid`);
+      throw new Error(`Product matrix module ${spec.cwd} normalized command is invalid`);
     }
     const passedPackages = Array.isArray(result.passedPackages) ? result.passedPackages : [];
     if (passedPackages.some((name) => !packages.includes(name)) ||
       packages.some((name) => !passedPackages.includes(name))) {
-      throw new Error(`Product matrix lane ${index} package pass evidence is invalid`);
+      throw new Error(`Product matrix module ${spec.cwd} package pass evidence is invalid`);
     }
     const passedTests = Array.isArray(result.passedTests) ? result.passedTests : [];
-    if (passedTests.some((entry) => !packageBelongsToLane(entry?.package, spec.cwd))) {
-      throw new Error(`Product matrix lane ${index} test provenance is invalid`);
+    if (passedTests.some((entry) => !packageBelongsToModule(entry?.package, spec.cwd))) {
+      throw new Error(`Product matrix module ${spec.cwd} test provenance is invalid`);
     }
-    if (spec.cwd === ".") {
-      const names = passedTests.filter((entry) => entry.package === productMatrixVerticalPackage).map((entry) => entry.name);
-      if (!sameStrings(names, productMatrixVerticalTests)) {
-        throw new Error("Product matrix vertical evidence is incomplete or out of order");
-      }
-    }
-    for (const entry of productMatrixRequiredTests.filter((candidate) => packageBelongsToLane(candidate.package, spec.cwd))) {
+    for (const entry of productMatrixRequiredTests.filter((candidate) => packageBelongsToModule(candidate.package, spec.cwd))) {
       if (!passedTests.some((candidate) => candidate.package === entry.package && candidate.name === entry.name)) {
-        throw new Error(`Product matrix required test did not pass in lane ${index}: ${entry.package} ${entry.name}`);
+        throw new Error(`Product matrix required test did not pass in module ${spec.cwd}: ${entry.package} ${entry.name}`);
       }
     }
     return {
-      order: spec.order,
       cwd: spec.cwd,
       command: spec.command,
       args: [...result.args],
@@ -480,12 +425,12 @@ export function buildProductMatrixReceipt(before, after, results, completedAt = 
   if (before.sha !== after.sha || before.tree !== after.tree) {
     throw new Error("Product matrix source changed while the full gate was running");
   }
-  const lanes = validateProductMatrixLanes(results);
-  const passedPackages = new Set(lanes.flatMap((result) => result.passedPackages || []));
+  const modules = validateProductMatrixModules(results);
+  const passedPackages = new Set(modules.flatMap((result) => result.passedPackages || []));
   for (const packageName of productMatrixRequiredPackages) {
     if (!passedPackages.has(packageName)) throw new Error(`Product matrix required package did not pass: ${packageName}`);
   }
-  const passedTests = new Set(lanes.flatMap((result) =>
+  const passedTests = new Set(modules.flatMap((result) =>
     (result.passedTests || []).map((entry) => `${entry.package}\0${entry.name}`)));
   for (const entry of productMatrixRequiredTests) {
     if (!passedTests.has(`${entry.package}\0${entry.name}`)) {
@@ -504,8 +449,7 @@ export function buildProductMatrixReceipt(before, after, results, completedAt = 
     completedAt,
     source: { sha: before.sha, tree: before.tree },
     zeroSkip: true,
-    lanes,
-    verticalTests: productMatrixVerticalTests.map((name) => ({ name, passed: true, skipped: 0 })),
+    modules,
     packages: [...passedPackages].sort().map((name) => ({ name, passed: true, skipped: 0 })),
     tests: productMatrixRequiredTests.map((entry) => ({ ...entry, passed: true, skipped: 0 })),
     stages: productMatrixStages.map((name) => ({ name, passed: true, skipped: 0, evidenceTests: [...stageEvidenceTests] })),
@@ -545,7 +489,6 @@ const defaultDependencies = Object.freeze({
   runStep,
   withTemporaryPostgres,
   runPostgresVerification,
-  runVerticalVerification,
   readSourceIdentity,
   writeProductMatrixReceipt
 });
@@ -556,9 +499,7 @@ export async function runVerification({ withPostgres = false } = {}, dependencie
   if (withPostgres) {
     postgresResults = await dependencies.withTemporaryPostgres((env) => dependencies.runPostgresVerification(env));
   }
-  const verticalResult = withPostgres && dependencies.runVerticalVerification ?
-    await dependencies.runVerticalVerification(process.env) : null;
-  return { postgresResults, verticalResult };
+  return { postgresResults };
 }
 
 async function runVerificationWithReceipt(options, dependencies = defaultDependencies) {
@@ -567,7 +508,7 @@ async function runVerificationWithReceipt(options, dependencies = defaultDepende
   const result = await runVerification(options, dependencies);
   if (!options.productMatrixReceipt) return result;
   const after = await dependencies.readSourceIdentity();
-  const receipt = buildProductMatrixReceipt(before, after, [...result.postgresResults, result.verticalResult]);
+  const receipt = buildProductMatrixReceipt(before, after, result.postgresResults);
   await dependencies.writeProductMatrixReceipt(options.productMatrixReceipt, receipt);
   return { ...result, productMatrixReceipt: receipt };
 }

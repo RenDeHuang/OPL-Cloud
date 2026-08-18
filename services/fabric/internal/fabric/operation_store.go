@@ -435,6 +435,14 @@ func (s *MemoryOperationStore) claimRuntimeLocked(operation FabricOperation) (Fa
 				s.operation[index] = operation
 				return operation, true, nil
 			}
+			if existing.ResourceKind == "workspace_launch_stage" && existing.Status == "failed" &&
+				existing.RequestHash == operation.RequestHash && existing.ResourceID == operation.ResourceID &&
+				existing.AccountID == operation.AccountID && existing.WorkspaceID == operation.WorkspaceID {
+				operation.ID = existing.ID
+				operation.CreatedAt = existing.CreatedAt
+				s.operation[index] = operation
+				return operation, true, nil
+			}
 			return existing, false, nil
 		}
 	}
@@ -1260,6 +1268,37 @@ func (s *PostgresOperationStore) ClaimRuntime(ctx context.Context, operation Fab
 			}
 			if !sameRuntimeOperationRequest(fabricOperationFromEnt(existing), operation) {
 				return FabricOperation{}, false, ErrRuntimeIdempotencyConflict
+			}
+		}
+		if existing.ResourceKind == "workspace_launch_stage" && existing.Status == "failed" &&
+			existing.RequestHash == operation.RequestHash && existing.ResourceID == operation.ResourceID &&
+			existing.AccountID == operation.AccountID && existing.WorkspaceID == operation.WorkspaceID {
+			updated, updateErr := s.client.FabricOperation.Update().
+				Where(
+					fabricoperation.ID(existing.ID),
+					fabricoperation.Status("failed"),
+					fabricoperation.ResourceKind("workspace_launch_stage"),
+					fabricoperation.RequestHash(operation.RequestHash),
+				).
+				SetStatus("started").
+				SetErrorCode("").
+				SetRetryable(false).
+				SetStartedAt(operation.StartedAt).
+				ClearFinishedAt().
+				Save(ctx)
+			if updateErr != nil {
+				return FabricOperation{}, false, updateErr
+			}
+			if updated == 1 {
+				current, getErr := s.client.FabricOperation.Get(ctx, existing.ID)
+				if getErr != nil {
+					return FabricOperation{}, false, getErr
+				}
+				return fabricOperationFromEnt(current), true, nil
+			}
+			existing, err = s.client.FabricOperation.Get(ctx, existing.ID)
+			if err != nil {
+				return FabricOperation{}, false, err
 			}
 		}
 		return fabricOperationFromEnt(existing), false, nil
