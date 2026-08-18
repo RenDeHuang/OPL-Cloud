@@ -329,7 +329,9 @@ original `Max=1` attempt and exact idempotency identity with zero mutation and
 zero replay budget, then performs the typed Fabric stage read. Exact `ready`
 facts confirm that attempt and advance to activation; every other observation
 or read error returns a conflict without persisting authorization, changing the
-operation, or calling Fabric ensure.
+operation, or calling Fabric ensure. If the exhausted Runtime read budget was
+owned by a failed fresh typed-pending continuation, the same READY transition
+also marks that continuation consumed so its persisted state remains coherent.
 
 Fresh post-mutation typed `pending` uses a distinct system continuation record,
 not the operator Resume record. The mutation's mandatory owner read persists

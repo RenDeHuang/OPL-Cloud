@@ -857,11 +857,19 @@ func (r *WorkspaceLaunchReconciler) recoverUnknownRuntimeStage(ctx context.Conte
 	if err != nil {
 		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchGrantConflict
 	}
+	now := r.clockNow()
+	if continuation, ok := operation.FreshContinuationAuthorizations[operation.Stage]; ok {
+		if continuation.Status != "failed" {
+			return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchGrantConflict
+		}
+		continuation.Status, continuation.ConsumedAt = "consumed", now.Format(time.RFC3339Nano)
+		operation.FreshContinuationAuthorizations[operation.Stage] = continuation
+	}
 	operation.rotateResumeAuthorization(authorization)
 	attempt.Confirmed, attempt.Unknown, attempt.Status = 1, 0, "confirmed"
 	operation.Attempts[operation.Stage] = attempt
 	operation.Observations[operation.Stage] = reduced
-	operation.consumeResumeAuthorization(r.clockNow())
+	operation.consumeResumeAuthorization(now)
 	operation.advance()
 	return r.persist(ctx, operation)
 }

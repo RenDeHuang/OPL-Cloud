@@ -168,6 +168,34 @@ func TestPostgresWorkspaceLaunchClaimPersistAndActivate(t *testing.T) {
 	}
 }
 
+func TestPostgresWorkspaceLaunchUnknownRuntimeRecoveryPersistsReadyReadOnly(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+	accountID, ownerID := "acct-unit", "usr-unit"
+	account, owner := provisionedAccountRowsFor(accountID, ownerID, "runtime-recovery-pg@example.com", 11)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner))
+
+	row := workspaceLaunchUnknownRuntimeWithFailedFreshContinuationRow(t)
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileClaim{AccountID: accountID, DesiredOperation: row}); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := &workspaceLaunchUnitAdapter{readyStages: map[string]bool{"runtime": true}}
+	authorization := workspaceLaunchUnknownRuntimeReadAuthorization(t, row, "resume-postgres-unknown-runtime")
+	got, err := NewWorkspaceLaunchReconciler(store, adapter).Resume(ctx, operation.ID, authorization)
+	fresh := got.FreshContinuationAuthorizations["runtime"]
+	if err != nil || got.Stage != "activation" || got.Status != "pending" || got.Version != operation.Version+1 ||
+		got.Attempts["runtime"].Confirmed != 1 || got.ResumeAuthorizationConsumedAt == "" || fresh.Status != "consumed" ||
+		adapter.reads != 1 || adapter.mutations != 0 {
+		t.Fatalf("PostgreSQL Runtime recovery did not persist: operation=%s version=%d reads=%d mutations=%d err=%v",
+			workspaceLaunchReconcileResultSummary(got), got.Version, adapter.reads, adapter.mutations, err)
+	}
+}
+
 func TestPostgresWorkspaceLaunchCanonicalOperatorActivationPersistsAuthoritativeReadback(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)

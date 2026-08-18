@@ -285,6 +285,39 @@ func workspaceLaunchUnknownRuntimeReadAuthorization(t *testing.T, row map[string
 	}
 }
 
+func workspaceLaunchUnknownRuntimeWithFailedFreshContinuationRow(t *testing.T) map[string]any {
+	t.Helper()
+	row := workspaceLaunchUnknownStageManualReviewRow(t, "runtime")
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := operation.Attempts["runtime"]
+	operationVersion := operation.Version - 1
+	authorizationID := workspaceLaunchFreshContinuationAuthorizationID(operation, attempt, operationVersion)
+	operation.FreshContinuationAuthorizations["runtime"] = workspaceLaunchFreshContinuationAuthorization{
+		SchemaVersion: workspaceLaunchFreshContinuationSchemaVersion, AuthorizationID: authorizationID,
+		AuthorizationClass: workspaceLaunchFreshContinuationAuthorizationClass,
+		AccountID:          operation.stringFact("accountId"), OperationID: operation.ID, WorkspaceID: operation.stringFact("workspaceId"),
+		Stage: "runtime", IdempotencyKey: attempt.IdempotencyKey, Attempt: 1, OperationVersion: operationVersion,
+		AuthoritativeReadBudget: workspaceLaunchFreshContinuationAdditionalReadBudget, ReadbacksAtAuthorization: 1,
+		Status: "failed", ConsumedAt: "2026-08-18T05:00:00Z",
+	}
+	for readback := 2; readback <= workspaceLaunchAuthoritativeReadBudget; readback++ {
+		key := workspaceLaunchFreshContinuationClaimKey(authorizationID, readback)
+		operation.ContinuationReadClaims[key] = workspaceLaunchContinuationReadClaim{
+			SchemaVersion: workspaceLaunchFreshContinuationSchemaVersion, AuthorizationID: authorizationID,
+			Stage: "runtime", IdempotencyKey: attempt.IdempotencyKey, Readback: readback,
+			Status: "pending", CompletedAt: "2026-08-18T05:00:00Z",
+		}
+	}
+	row, err = workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
 func TestWorkspaceLaunchReservedStageReplayMatrix(t *testing.T) {
 	for _, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-1] {
 		t.Run(stage+"/absent replays one logical claim", func(t *testing.T) {
@@ -334,6 +367,23 @@ func TestWorkspaceLaunchUnknownRuntimeRecoveryConvergesReadyReadOnly(t *testing.
 	replayed, err := reconciler.Resume(context.Background(), got.ID, authorization)
 	if err != nil || replayed.Version != got.Version || adapter.reads != readsBefore || adapter.mutations != 0 || stringValue(store.row["result"]) != persistedBefore {
 		t.Fatalf("consumed Runtime recovery repeated work: operation=%s reads=%d/%d mutations=%d err=%v", workspaceLaunchReconcileResultSummary(replayed), adapter.reads, readsBefore, adapter.mutations, err)
+	}
+}
+
+func TestWorkspaceLaunchUnknownRuntimeRecoveryConvergesFailedFreshContinuation(t *testing.T) {
+	row := workspaceLaunchUnknownRuntimeWithFailedFreshContinuationRow(t)
+	store := &workspaceLaunchUnitStore{row: row}
+	adapter := &workspaceLaunchUnitAdapter{readyStages: map[string]bool{"runtime": true}}
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	reconciler.now = func() time.Time { return time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC) }
+	authorization := workspaceLaunchUnknownRuntimeReadAuthorization(t, row, "resume-failed-fresh-runtime-ready")
+
+	got, err := reconciler.Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, authorization)
+	fresh := got.FreshContinuationAuthorizations["runtime"]
+	if err != nil || got.Status != "pending" || got.Stage != "activation" || fresh.Status != "consumed" ||
+		fresh.ConsumedAt != "2026-08-18T06:00:00Z" || adapter.reads != 1 || adapter.mutations != 0 {
+		t.Fatalf("failed fresh continuation did not converge with Runtime: operation=%s fresh=%#v reads=%d mutations=%d err=%v",
+			workspaceLaunchReconcileResultSummary(got), fresh, adapter.reads, adapter.mutations, err)
 	}
 }
 
