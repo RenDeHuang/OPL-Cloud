@@ -126,9 +126,6 @@ func newPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		{Version: "202607250001_control_plane_capacity_indexes", Run: func(ctx context.Context) error {
 			return controlplanemigrations.ApplyControlPlaneCapacityIndexes(ctx, driver)
 		}},
-		{Version: "202608170001_remote_companion_broker", Run: func(ctx context.Context) error {
-			return controlplanemigrations.ApplyRemoteCompanionBroker(ctx, driver)
-		}},
 	}); err != nil {
 		_ = client.Close()
 		return nil, err

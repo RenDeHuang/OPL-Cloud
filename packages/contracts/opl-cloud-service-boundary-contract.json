@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 44,
+  "schemaVersion": 45,
   "owner": "OPL Platform Architecture",
   "purpose": "Enforce the physical boundaries between Console UI, Control Plane, Fabric, Ledger, and external Sub2API while pointing launch and settlement facts to their focused owners.",
   "state": "current",
@@ -110,8 +110,7 @@
         "billingOperations",
         "latestReconciliationGuard",
         "supportTicketMappings",
-        "operationRequests",
-        "remoteCompanionBroker"
+        "operationRequests"
       ],
       "calls": {
         "ledger": "http",
@@ -119,7 +118,6 @@
         "sub2api": "http"
       },
       "workspaceLaunchContract": "opl-cloud-control-plane-launch-contract.json",
-      "remoteCompanionContract": "opl-cloud-remote-companion-contract.json",
       "walletMutationSerialization": {
         "deployment": "single_control_plane_replica",
         "scope": "process_local",

@@ -221,130 +221,6 @@ var (
 		Columns:    ControlPlaneProjectTaskSyncHeadsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneProjectTaskSyncHeadsColumns[0]},
 	}
-	// ControlPlaneRemoteDeviceCredentialsColumns holds the columns for the "control_plane_remote_device_credentials" table.
-	ControlPlaneRemoteDeviceCredentialsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "pairing_id", Type: field.TypeString},
-		{Name: "device_id", Type: field.TypeString},
-		{Name: "role", Type: field.TypeString},
-		{Name: "credential_hash", Type: field.TypeString},
-		{Name: "status", Type: field.TypeString, Default: "active"},
-		{Name: "provider_user_id", Type: field.TypeString, Default: ""},
-		{Name: "issued_at", Type: field.TypeString},
-		{Name: "revoked_at", Type: field.TypeString, Default: ""},
-		{Name: "issued_idempotency_key", Type: field.TypeString, Default: ""},
-	}
-	// ControlPlaneRemoteDeviceCredentialsTable holds the schema information for the "control_plane_remote_device_credentials" table.
-	ControlPlaneRemoteDeviceCredentialsTable = &schema.Table{
-		Name:       "control_plane_remote_device_credentials",
-		Columns:    ControlPlaneRemoteDeviceCredentialsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneRemoteDeviceCredentialsColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "remotedevicecredential_pairing_id_device_id",
-				Unique:  true,
-				Columns: []*schema.Column{ControlPlaneRemoteDeviceCredentialsColumns[3], ControlPlaneRemoteDeviceCredentialsColumns[4]},
-			},
-			{
-				Name:    "remotedevicecredential_pairing_id_status",
-				Unique:  false,
-				Columns: []*schema.Column{ControlPlaneRemoteDeviceCredentialsColumns[3], ControlPlaneRemoteDeviceCredentialsColumns[7]},
-			},
-		},
-	}
-	// ControlPlaneRemoteInvitationsColumns holds the columns for the "control_plane_remote_invitations" table.
-	ControlPlaneRemoteInvitationsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "label", Type: field.TypeString, Default: ""},
-		{Name: "secret_hash", Type: field.TypeString},
-		{Name: "secret_salt", Type: field.TypeString},
-		{Name: "expires_at", Type: field.TypeString},
-		{Name: "status", Type: field.TypeString, Default: "active"},
-		{Name: "consumed_at", Type: field.TypeString, Default: ""},
-		{Name: "created_by_user_id", Type: field.TypeString, Default: ""},
-		{Name: "idempotency_key", Type: field.TypeString, Default: ""},
-	}
-	// ControlPlaneRemoteInvitationsTable holds the schema information for the "control_plane_remote_invitations" table.
-	ControlPlaneRemoteInvitationsTable = &schema.Table{
-		Name:       "control_plane_remote_invitations",
-		Columns:    ControlPlaneRemoteInvitationsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneRemoteInvitationsColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "remoteinvitation_status_expires_at_id",
-				Unique:  false,
-				Columns: []*schema.Column{ControlPlaneRemoteInvitationsColumns[7], ControlPlaneRemoteInvitationsColumns[6], ControlPlaneRemoteInvitationsColumns[0]},
-			},
-		},
-	}
-	// ControlPlaneRemotePairingsColumns holds the columns for the "control_plane_remote_pairings" table.
-	ControlPlaneRemotePairingsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "invitation_id", Type: field.TypeString},
-		{Name: "claim_secret_hash", Type: field.TypeString},
-		{Name: "claim_secret_salt", Type: field.TypeString},
-		{Name: "manual_code_hash", Type: field.TypeString},
-		{Name: "manual_code_salt", Type: field.TypeString},
-		{Name: "manual_attempts", Type: field.TypeInt},
-		{Name: "state", Type: field.TypeString, Default: "reserved"},
-		{Name: "expires_at", Type: field.TypeString},
-		{Name: "reservation_expires_at", Type: field.TypeString},
-		{Name: "desktop_device_id", Type: field.TypeString, Default: ""},
-		{Name: "desktop_device_label", Type: field.TypeString, Default: ""},
-		{Name: "ios_device_id", Type: field.TypeString, Default: ""},
-		{Name: "ios_device_label", Type: field.TypeString, Default: ""},
-		{Name: "desktop_public_key", Type: field.TypeString},
-		{Name: "ios_public_key", Type: field.TypeString, Default: ""},
-		{Name: "sas", Type: field.TypeString, Default: ""},
-		{Name: "desktop_provider_user_id", Type: field.TypeString, Default: ""},
-		{Name: "ios_provider_user_id", Type: field.TypeString, Default: ""},
-		{Name: "desktop_provider_absent", Type: field.TypeBool, Default: false},
-		{Name: "ios_provider_absent", Type: field.TypeBool, Default: false},
-		{Name: "confirmed_at", Type: field.TypeString, Default: ""},
-		{Name: "revoked_at", Type: field.TypeString, Default: ""},
-		{Name: "seat_released", Type: field.TypeBool, Default: false},
-		{Name: "create_idempotency_key", Type: field.TypeString, Default: ""},
-		{Name: "create_request_hash", Type: field.TypeString, Default: ""},
-		{Name: "claim_idempotency_key", Type: field.TypeString, Default: ""},
-		{Name: "claim_request_hash", Type: field.TypeString, Default: ""},
-		{Name: "revocation_receipt_id", Type: field.TypeString, Default: ""},
-		{Name: "revocation_receipt_hash", Type: field.TypeString, Default: ""},
-		{Name: "revocation_receipt_salt", Type: field.TypeString, Default: ""},
-	}
-	// ControlPlaneRemotePairingsTable holds the schema information for the "control_plane_remote_pairings" table.
-	ControlPlaneRemotePairingsTable = &schema.Table{
-		Name:       "control_plane_remote_pairings",
-		Columns:    ControlPlaneRemotePairingsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneRemotePairingsColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "remotepairing_state_reservation_expires_at_seat_released_id",
-				Unique:  false,
-				Columns: []*schema.Column{ControlPlaneRemotePairingsColumns[9], ControlPlaneRemotePairingsColumns[11], ControlPlaneRemotePairingsColumns[25], ControlPlaneRemotePairingsColumns[0]},
-			},
-		},
-	}
-	// ControlPlaneRemoteSeatCapacitiesColumns holds the columns for the "control_plane_remote_seat_capacities" table.
-	ControlPlaneRemoteSeatCapacitiesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "seat_count", Type: field.TypeInt},
-		{Name: "seat_limit", Type: field.TypeInt, Default: 40},
-		{Name: "warning_threshold", Type: field.TypeInt, Default: 35},
-	}
-	// ControlPlaneRemoteSeatCapacitiesTable holds the schema information for the "control_plane_remote_seat_capacities" table.
-	ControlPlaneRemoteSeatCapacitiesTable = &schema.Table{
-		Name:       "control_plane_remote_seat_capacities",
-		Columns:    ControlPlaneRemoteSeatCapacitiesColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneRemoteSeatCapacitiesColumns[0]},
-	}
 	// ControlPlaneRuntimeOperationsColumns holds the columns for the "control_plane_runtime_operations" table.
 	ControlPlaneRuntimeOperationsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -631,10 +507,6 @@ var (
 		ControlPlaneComputeAllocationsTable,
 		ControlPlaneProductionE2eRecordsTable,
 		ControlPlaneProjectTaskSyncHeadsTable,
-		ControlPlaneRemoteDeviceCredentialsTable,
-		ControlPlaneRemoteInvitationsTable,
-		ControlPlaneRemotePairingsTable,
-		ControlPlaneRemoteSeatCapacitiesTable,
 		ControlPlaneRuntimeOperationsTable,
 		ControlPlaneSessionsTable,
 		ControlPlaneStorageAttachmentsTable,
@@ -676,18 +548,6 @@ func init() {
 	}
 	ControlPlaneProjectTaskSyncHeadsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_project_task_sync_heads",
-	}
-	ControlPlaneRemoteDeviceCredentialsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_remote_device_credentials",
-	}
-	ControlPlaneRemoteInvitationsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_remote_invitations",
-	}
-	ControlPlaneRemotePairingsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_remote_pairings",
-	}
-	ControlPlaneRemoteSeatCapacitiesTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_remote_seat_capacities",
 	}
 	ControlPlaneRuntimeOperationsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_runtime_operations",
