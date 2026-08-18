@@ -8,6 +8,7 @@ import test from "node:test";
 
 import {
   continueWorkspaceDelete,
+  cleanupLocalQualificationSecretRoot,
   createHTTP,
   exactRepoDigestFromInspection,
   immutableImageDigest,
@@ -175,6 +176,27 @@ test("qualification compose uses the runner-owned exact environment", () => {
   assert.equal(environment.PATH, "/usr/bin");
   assert.equal(environment.OPL_WORKSPACE_IMAGE, workspaceReference);
   assert.equal(environment.OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT, exactSecretRoot);
+});
+
+test("qualification teardown clears the root-owned secret bind mount through Fabric", async () => {
+  const calls = [];
+  const compose = async (args, settings) => {
+    calls.push({ args, settings });
+    return { code: 0 };
+  };
+  await cleanupLocalQualificationSecretRoot(compose, "/tmp/opl-local-qualification-123/fabric-secrets");
+  assert.deepEqual(calls, [{
+    args: [
+      "exec", "-T", "--user", "root", "fabric", "sh", "-c",
+      'rm -rf -- "$1"/* "$1"/.[!.]* "$1"/..?*',
+      "opl-qualification-secret-cleanup", "/tmp/opl-local-qualification-123/fabric-secrets"
+    ],
+    settings: { allowFailure: true }
+  }]);
+  await assert.rejects(
+    () => cleanupLocalQualificationSecretRoot(async () => ({ code: 1 }), "/tmp/opl-local-qualification-123/fabric-secrets"),
+    /secret cleanup failed/
+  );
 });
 
 test("source image tag inspection hands off one exact immutable RepoDigest", () => {
