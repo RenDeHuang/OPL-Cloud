@@ -302,7 +302,7 @@ func TestCustomerSupportScopeAllRemainsTenantScoped(t *testing.T) {
 
 func seedTenantMember(t *testing.T, store controlPlaneTableStore, accountID, _ string, userID, email string) {
 	t.Helper()
-	account := map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": testSub2APIUserID(email), "status": "active"}
+	account := map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": testSub2APIUserID(email), "status": "active", "workspacePurchaseEnabled": true}
 	user := map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"}
 	mustStore(t, store.CreateProvisionedAccount(context.Background(), account, user))
 }

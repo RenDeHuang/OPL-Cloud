@@ -111,6 +111,20 @@ func (au *AccountUpdate) SetNillableStatus(s *string) *AccountUpdate {
 	return au
 }
 
+// SetWorkspacePurchaseEnabled sets the "workspace_purchase_enabled" field.
+func (au *AccountUpdate) SetWorkspacePurchaseEnabled(b bool) *AccountUpdate {
+	au.mutation.SetWorkspacePurchaseEnabled(b)
+	return au
+}
+
+// SetNillableWorkspacePurchaseEnabled sets the "workspace_purchase_enabled" field if the given value is not nil.
+func (au *AccountUpdate) SetNillableWorkspacePurchaseEnabled(b *bool) *AccountUpdate {
+	if b != nil {
+		au.SetWorkspacePurchaseEnabled(*b)
+	}
+	return au
+}
+
 // Mutation returns the AccountMutation object of the builder.
 func (au *AccountUpdate) Mutation() *AccountMutation {
 	return au.mutation
@@ -199,6 +213,9 @@ func (au *AccountUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	}
 	if value, ok := au.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
+	}
+	if value, ok := au.mutation.WorkspacePurchaseEnabled(); ok {
+		_spec.SetField(account.FieldWorkspacePurchaseEnabled, field.TypeBool, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, au.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -299,6 +316,20 @@ func (auo *AccountUpdateOne) SetStatus(s string) *AccountUpdateOne {
 func (auo *AccountUpdateOne) SetNillableStatus(s *string) *AccountUpdateOne {
 	if s != nil {
 		auo.SetStatus(*s)
+	}
+	return auo
+}
+
+// SetWorkspacePurchaseEnabled sets the "workspace_purchase_enabled" field.
+func (auo *AccountUpdateOne) SetWorkspacePurchaseEnabled(b bool) *AccountUpdateOne {
+	auo.mutation.SetWorkspacePurchaseEnabled(b)
+	return auo
+}
+
+// SetNillableWorkspacePurchaseEnabled sets the "workspace_purchase_enabled" field if the given value is not nil.
+func (auo *AccountUpdateOne) SetNillableWorkspacePurchaseEnabled(b *bool) *AccountUpdateOne {
+	if b != nil {
+		auo.SetWorkspacePurchaseEnabled(*b)
 	}
 	return auo
 }
@@ -421,6 +452,9 @@ func (auo *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err e
 	}
 	if value, ok := auo.mutation.Status(); ok {
 		_spec.SetField(account.FieldStatus, field.TypeString, value)
+	}
+	if value, ok := auo.mutation.WorkspacePurchaseEnabled(); ok {
+		_spec.SetField(account.FieldWorkspacePurchaseEnabled, field.TypeBool, value)
 	}
 	_node = &Account{config: auo.config}
 	_spec.Assign = _node.assignValues

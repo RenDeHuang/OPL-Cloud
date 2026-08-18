@@ -175,7 +175,7 @@ func (app *controlPlaneServer) ensureDeploymentIdentity(ctx context.Context, ser
 		return nil
 	}
 	return app.tables.CreateProvisionedAccount(ctx,
-		map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": identity.ID, "status": "active"},
+		map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": identity.ID, "status": "active", "workspacePurchaseEnabled": true},
 		map[string]any{"id": userID, "email": identityEmail, "accountId": accountID, "role": "owner", "status": "active"})
 }
 

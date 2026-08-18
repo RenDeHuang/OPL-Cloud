@@ -224,6 +224,7 @@ type controlPlaneTableStore interface {
 	PageAccounts(ctx context.Context, query tablePageQuery) (tablePage, error)
 	CountAccountStatuses(ctx context.Context) (map[string]int, error)
 	SaveAccount(ctx context.Context, row map[string]any) error
+	ApplyWorkspacePurchaseEligibility(ctx context.Context, mutation workspacePurchaseEligibilityMutation) (map[string]any, error)
 	CreateProvisionedAccount(ctx context.Context, account, user map[string]any) error
 	ApplyUserLifecycle(ctx context.Context, user map[string]any) error
 	ListUsers(ctx context.Context, includeDeleted bool) ([]map[string]any, error)

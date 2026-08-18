@@ -94,6 +94,11 @@ func Status(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldStatus, v))
 }
 
+// WorkspacePurchaseEnabled applies equality check predicate on the "workspace_purchase_enabled" field. It's identical to WorkspacePurchaseEnabledEQ.
+func WorkspacePurchaseEnabled(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldWorkspacePurchaseEnabled, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldCreatedAt, v))
@@ -407,6 +412,16 @@ func StatusEqualFold(v string) predicate.Account {
 // StatusContainsFold applies the ContainsFold predicate on the "status" field.
 func StatusContainsFold(v string) predicate.Account {
 	return predicate.Account(sql.FieldContainsFold(FieldStatus, v))
+}
+
+// WorkspacePurchaseEnabledEQ applies the EQ predicate on the "workspace_purchase_enabled" field.
+func WorkspacePurchaseEnabledEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldWorkspacePurchaseEnabled, v))
+}
+
+// WorkspacePurchaseEnabledNEQ applies the NEQ predicate on the "workspace_purchase_enabled" field.
+func WorkspacePurchaseEnabledNEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldWorkspacePurchaseEnabled, v))
 }
 
 // And groups predicates with the AND operator between them.

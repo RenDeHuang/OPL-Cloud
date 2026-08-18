@@ -292,3 +292,20 @@ second Runtime Gateway base URL.
 requires separately approved real Pilot readback. `production-proven` requires
 the same immutable revision deployed with production evidence. A lower level
 never implies a higher one.
+
+## 2026-08-17: Control Plane Owns Workspace Purchase Eligibility
+
+Sub2API identity and spendable balance, a local Cloud Account, and permission to
+buy a new Workspace are separate facts. A Gateway-only account may authenticate
+through the Gateway but cannot purchase a Workspace. Operator provisioning must
+select either `full_cloud_customer` (eligibility enabled) or `gateway_only`
+(eligibility disabled); reusing an existing Sub2API identity does not change the
+selected product scope.
+
+`workspacePurchaseEnabled` on the Control Plane Account is the only current
+purchase-eligibility authority. Grant and revoke are explicit operator actions,
+audited with actor, reason, before, after, and account identity. Revocation blocks
+new purchases only and never deletes or changes existing Workspaces. Historical
+accounts remain disabled until a product-approved migration inventory is read
+back. The Instance per-account pilot allowlist is not removed until that
+Control Plane migration and readback are complete.

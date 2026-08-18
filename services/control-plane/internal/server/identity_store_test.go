@@ -11,7 +11,7 @@ import (
 
 func strictProvisionedAccountRows() (map[string]any, map[string]any) {
 	user := map[string]any{"id": "usr-provisioned", "email": "owner@provisioned.example", "accountId": "acct-provisioned", "role": "owner", "status": "active"}
-	account := map[string]any{"id": "acct-provisioned", "ownerUserId": user["id"], "status": "active", "sub2apiUserId": int64(73)}
+	account := map[string]any{"id": "acct-provisioned", "ownerUserId": user["id"], "status": "active", "sub2apiUserId": int64(73), "workspacePurchaseEnabled": true}
 	return account, user
 }
 
@@ -88,6 +88,46 @@ func TestMemoryProvisionedAccountReplayIsIdempotentAndConflictFailsClosed(t *tes
 	}
 	if count != 1 {
 		t.Fatalf("account users = %#v", users)
+	}
+}
+
+func TestWorkspacePurchaseEligibilityAccountAndAuditCommitAtomically(t *testing.T) {
+	for _, storeType := range []string{"memory", "sqlite"} {
+		t.Run(storeType, func(t *testing.T) {
+			var store controlPlaneTableStore = newMemoryTableStore()
+			if storeType == "sqlite" {
+				store = NewTestEntStateStore(t, t.TempDir()+"/eligibility.sqlite").(*postgresEntStateStore)
+			}
+			account, user := strictProvisionedAccountRows()
+			if err := store.CreateProvisionedAccount(context.Background(), account, user); err != nil {
+				t.Fatal(err)
+			}
+			audit := map[string]any{
+				"id": "audit-eligibility", "actorUserId": "usr-admin", "actorAccountId": "acct-admin",
+				"targetAccountId": "acct-provisioned", "action": "account.workspace_purchase.revoke",
+				"resourceKind": "account", "resourceId": "acct-provisioned", "result": "succeeded",
+				"after": map[string]any{"workspacePurchaseEnabled": false, "reason": "gateway_only_scope"},
+			}
+			mutation := workspacePurchaseEligibilityMutation{AccountID: "acct-provisioned", Enabled: false, AuditEvent: audit}
+			updated, err := store.ApplyWorkspacePurchaseEligibility(context.Background(), mutation)
+			if err != nil || workspacePurchaseEnabled(updated) {
+				t.Fatalf("eligibility update = %#v err=%v", updated, err)
+			}
+			replayed, err := store.ApplyWorkspacePurchaseEligibility(context.Background(), mutation)
+			if err != nil || workspacePurchaseEnabled(replayed) {
+				t.Fatalf("eligibility replay = %#v err=%v", replayed, err)
+			}
+			audits, err := store.ListAuditEvents(context.Background(), "acct-provisioned")
+			if err != nil || len(audits) != 1 || workspacePurchaseEnabled(mapField(audits[0], "before")) != true {
+				t.Fatalf("eligibility audits = %#v err=%v", audits, err)
+			}
+			conflict := mutation
+			conflict.AuditEvent = cloneMap(audit)
+			conflict.AuditEvent["after"] = map[string]any{"workspacePurchaseEnabled": false, "reason": "different_reason"}
+			if _, err := store.ApplyWorkspacePurchaseEligibility(context.Background(), conflict); !errors.Is(err, errIdempotencyConflict) {
+				t.Fatalf("eligibility conflict err=%v", err)
+			}
+		})
 	}
 }
 

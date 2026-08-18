@@ -35,6 +35,8 @@
   "pilotBoundary": {
     "accountProvisioning": "operator_provisioned",
     "publicRegistration": false,
+    "workspacePurchaseEligibilityAuthority": "control_plane_account",
+    "gatewayOnlyAccountsCannotPurchaseWorkspace": true,
     "workspaceCardinality": "many_per_account",
     "independentPerWorkspaceFacts": ["quote", "launchOperation", "compute", "storage", "attachment", "runtime", "workspaceApiKeyId", "gatewaySecretRef", "paidThrough", "renewalStatus", "purchaseReceiptId"],
     "workspaceDataAuthority": "cbs",

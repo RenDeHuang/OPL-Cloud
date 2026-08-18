@@ -252,17 +252,69 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			return
 		}
 		accountID := "acct-" + stableID("account", email)[:18]
-		user, err := app.createUser(r.Context(), service, map[string]any{"email": email, "password": input["password"], "accountId": accountID, "role": "owner"})
+		admission := firstNonEmpty(stringValue(input["admission"]), "full_cloud_customer")
+		workspaceEligibility := admission == "full_cloud_customer"
+		user, err := app.createUser(r.Context(), service, map[string]any{
+			"email": email, "password": input["password"], "accountId": accountID, "role": "owner",
+			"workspacePurchaseEnabled": workspaceEligibility,
+		})
 		if err != nil {
 			writeCreateUserError(w, err)
 			return
 		}
-		result := map[string]any{"operationId": "account-provision-" + stableID(key, email)[:18], "accountId": accountID, "status": "succeeded"}
-		if err := app.appendAuditEvent(r, "account.provision", "account", accountID, accountID, nil, map[string]any{"userId": user["id"], "email": email}, "succeeded"); err != nil {
+		result := map[string]any{"operationId": "account-provision-" + stableID(key, email)[:18], "accountId": accountID, "status": "succeeded", "workspacePurchaseEnabled": workspaceEligibility}
+		if err := app.appendAuditEvent(r, "account.provision", "account", accountID, accountID, nil, map[string]any{"userId": user["id"], "email": email, "workspacePurchaseEnabled": workspaceEligibility, "admission": admission}, "succeeded"); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, result)
+	}))
+	mux.HandleFunc("POST /api/operator/accounts/{accountId}/workspace-purchase-eligibility", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		accountID := strings.TrimSpace(r.PathValue("accountId"))
+		input := decodeJSON(r)
+		if !validAccountID(accountID) || !workspacePurchaseEligibilityShapeValid(input, accountID) {
+			writeError(w, http.StatusBadRequest, "invalid_workspace_purchase_eligibility")
+			return
+		}
+		unlock := app.lockResource("account", accountID)
+		defer unlock()
+		account, found, err := app.tables.GetAccount(r.Context(), accountID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		if !found {
+			writeError(w, http.StatusNotFound, "account_not_found")
+			return
+		}
+		enabled := input["enabled"].(bool)
+		before := workspacePurchaseEnabled(account)
+		action := "account.workspace_purchase.revoke"
+		if enabled {
+			action = "account.workspace_purchase.grant"
+		}
+		after := map[string]any{"workspacePurchaseEnabled": enabled, "reason": input["reason"]}
+		audit := app.auditEvent(r, action, "account", accountID, accountID, map[string]any{"workspacePurchaseEnabled": before}, after, "succeeded")
+		audit["id"] = "audit-" + stableID("account.workspace_purchase", accountID, key)[:12]
+		if _, err := app.tables.ApplyWorkspacePurchaseEligibility(r.Context(), workspacePurchaseEligibilityMutation{
+			AccountID: accountID, Enabled: enabled, AuditEvent: audit,
+		}); err != nil {
+			if errors.Is(err, errIdempotencyConflict) {
+				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		result := map[string]any{
+			"operationId": "workspace-purchase-eligibility-" + stableID(key, accountID)[:18],
+			"accountId":   accountID, "status": "succeeded", "workspacePurchaseEnabled": enabled,
+		}
+		writeJSON(w, http.StatusOK, result)
 	}))
 	mux.HandleFunc("POST /api/operator/accounts/{accountId}/disable", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		key, ok := requiredMutationKey(w, r)
@@ -389,11 +441,11 @@ func operatorPagination(w http.ResponseWriter, r *http.Request) (int, int, bool)
 }
 
 func operatorProvisionShapeValid(input map[string]any) bool {
-	if len(input) < 2 || len(input) > 3 {
+	if len(input) < 2 || len(input) > 4 {
 		return false
 	}
 	for key := range input {
-		if key != "email" && key != "password" && key != "name" {
+		if key != "email" && key != "password" && key != "name" && key != "admission" {
 			return false
 		}
 	}
@@ -404,6 +456,12 @@ func operatorProvisionShapeValid(input map[string]any) bool {
 	if raw, exists := input["name"]; exists {
 		name, ok := raw.(string)
 		if !ok || name != strings.TrimSpace(name) || name == "" || len([]rune(name)) > 100 {
+			return false
+		}
+	}
+	if raw, exists := input["admission"]; exists {
+		admission, ok := raw.(string)
+		if !ok || (admission != "full_cloud_customer" && admission != "gateway_only") {
 			return false
 		}
 	}
@@ -421,6 +479,20 @@ func operatorDisableShapeValid(input map[string]any, accountID string) bool {
 	}
 	reason, ok := input["reason"].(string)
 	return ok && reason == strings.TrimSpace(reason) && reason != "" && len([]rune(reason)) <= 200
+}
+
+func workspacePurchaseEligibilityShapeValid(input map[string]any, accountID string) bool {
+	if len(input) != 3 || stringValue(input["confirmationAccountId"]) != accountID {
+		return false
+	}
+	for key := range input {
+		if key != "confirmationAccountId" && key != "enabled" && key != "reason" {
+			return false
+		}
+	}
+	_, enabledOK := input["enabled"].(bool)
+	reason, reasonOK := input["reason"].(string)
+	return enabledOK && reasonOK && reason == strings.TrimSpace(reason) && reason != "" && len([]rune(reason)) <= 200
 }
 
 func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service *controlplane.Service, page, pageSize int) (map[string]any, string, error) {
@@ -463,10 +535,11 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 		item := map[string]any{
 			"accountId": stringValue(account["id"]), "consoleUserId": stringValue(owner["id"]), "role": stringValue(owner["role"]),
 			"sub2apiUserId": strconv.FormatInt(remoteID, 10), "email": normalizeEmail(stringValue(owner["email"])), "status": ownerStatus,
-			"gatewayIdentity": sourceEnvelope("sub2api", "unavailable", nil, ""),
-			"wallet":          sourceEnvelope("sub2api", "unavailable", nil, ""),
-			"usage":           sourceEnvelope("sub2api", "unavailable", nil, ""),
-			"keyCount":        sourceEnvelope("sub2api", "unavailable", nil, ""),
+			"workspacePurchaseEnabled": workspacePurchaseEnabled(account),
+			"gatewayIdentity":          sourceEnvelope("sub2api", "unavailable", nil, ""),
+			"wallet":                   sourceEnvelope("sub2api", "unavailable", nil, ""),
+			"usage":                    sourceEnvelope("sub2api", "unavailable", nil, ""),
+			"keyCount":                 sourceEnvelope("sub2api", "unavailable", nil, ""),
 		}
 		item["workspaceCount"] = sourceEnvelope("control-plane", "available", workspaceCounts[stringValue(account["id"])], "")
 		items = append(items, item)

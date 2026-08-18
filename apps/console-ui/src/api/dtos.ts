@@ -42,6 +42,7 @@ export interface AuthIdentity {
   role: string;
   email: string;
   status: "active" | "disabled";
+  workspacePurchaseEnabled: boolean;
   name?: string;
   sub2apiUserId?: string;
 }
@@ -627,10 +628,12 @@ export interface ProvisionAccountRequest {
   email: string;
   password: string;
   name?: string;
+  admission?: "full_cloud_customer" | "gateway_only";
 }
 
 export interface OperatorAccountCommandDTO extends OperationStatusDTO {
   accountId: string;
+  workspacePurchaseEnabled?: boolean;
 }
 
 export interface ResourceFact {

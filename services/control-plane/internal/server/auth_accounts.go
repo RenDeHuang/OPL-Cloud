@@ -78,7 +78,11 @@ func (app *controlPlaneServer) createUser(ctx context.Context, service *controlp
 	if accountFound {
 		preflightSub2APIUserID = int64(numberField(existingAccount, "sub2apiUserId", 0))
 	}
-	account := map[string]any{"id": accountID, "ownerUserId": id, "status": "active", "sub2apiUserId": preflightSub2APIUserID}
+	workspaceEligibility := true
+	if value, supplied := input["workspacePurchaseEnabled"].(bool); supplied {
+		workspaceEligibility = value
+	}
+	account := map[string]any{"id": accountID, "ownerUserId": id, "status": "active", "sub2apiUserId": preflightSub2APIUserID, "workspacePurchaseEnabled": workspaceEligibility}
 	if err := stageProvisionedAccount(accounts, users, account, user); err != nil {
 		return nil, err
 	}

@@ -18,6 +18,7 @@ var (
 		{Name: "sub2api_user_id", Type: field.TypeInt64, Unique: true},
 		{Name: "name", Type: field.TypeString, Default: ""},
 		{Name: "status", Type: field.TypeString, Default: "active"},
+		{Name: "workspace_purchase_enabled", Type: field.TypeBool, Default: false},
 	}
 	// ControlPlaneAccountsTable holds the schema information for the "control_plane_accounts" table.
 	ControlPlaneAccountsTable = &schema.Table{

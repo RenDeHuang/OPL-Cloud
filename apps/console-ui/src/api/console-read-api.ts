@@ -253,6 +253,10 @@ export function disableOperatorAccount(accountId: string, reason: string, csrfTo
   return postJson<unknown>(`/api/operator/accounts/${encodeURIComponent(accountId)}/disable`, { confirmationAccountId: accountId, reason }, csrfToken, idempotencyKey).then(decodeDto<OperatorAccountCommandDTO>);
 }
 
+export function setOperatorWorkspacePurchaseEligibility(accountId: string, enabled: boolean, reason: string, csrfToken: string, idempotencyKey: string): Promise<OperatorAccountCommandDTO> {
+  return postJson<unknown>(`/api/operator/accounts/${encodeURIComponent(accountId)}/workspace-purchase-eligibility`, { confirmationAccountId: accountId, enabled, reason }, csrfToken, idempotencyKey).then(decodeDto<OperatorAccountCommandDTO>);
+}
+
 export function resolveBillingReview(resourceType: string, resourceId: string, input: BillingReviewResolutionRequest, csrfToken: string, idempotencyKey: string): Promise<OperationStatusDTO> {
   return postJson<unknown>(`/api/operator/billing-reviews/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/resolve`, input, csrfToken, idempotencyKey).then(decodeDto<OperationStatusDTO>);
 }

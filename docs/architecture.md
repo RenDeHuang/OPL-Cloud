@@ -528,5 +528,17 @@ from the corresponding implementation repo, API contract, runtime health and
 owner receipt. Package currentness comes from the owning publication surface and
 fresh native-carrier readback, exposed through Framework aggregation where
 available.
+
+## Account Admission And Workspace Purchase
+
+Sub2API remains the Gateway identity and spendable-wallet authority. Control
+Plane owns the Cloud Account and the separate `workspacePurchaseEnabled` fact;
+the existence of a remote identity, a local Account, or an existing Workspace
+does not grant new-purchase permission. Operator provisioning explicitly selects
+`full_cloud_customer` or `gateway_only`, and grant/revoke actions are audited.
+The launch route reads this Control Plane fact before any billing or Fabric
+mutation. Revocation affects only future purchases. Historical account migration
+and removal of the Instance per-account pilot allowlist require a separate,
+product-approved inventory and authoritative readback.
 Contract presence, documentation, a successful build or an empty queue does not
 prove Cloud, package, domain or production readiness.

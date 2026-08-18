@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 20,
+  "schemaVersion": 21,
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
@@ -12,6 +12,17 @@
     "mode": "operator_provisioned",
     "publicRegistration": false
   },
+  "workspacePurchaseEligibility": {
+    "authority": "control_plane_account",
+    "meaning": "Only this account-level fact permits a new Workspace purchase; Gateway identity, Account existence, and existing Workspace ownership do not imply it.",
+    "admissions": {
+      "full_cloud_customer": "enabled_by_operator_provisioning",
+      "gateway_only": "disabled_by_operator_provisioning"
+    },
+    "revocation": "Blocks new purchases only and does not delete or alter existing Workspaces.",
+    "audit": "Every grant and revoke records actor, reason, before, after, and exact account identity.",
+    "migration": "Historical accounts remain disabled unless an explicit product-approved migration evidence set is read back."
+  },
   "entities": {
     "account": {
       "requiredFields": [
@@ -19,6 +30,7 @@
         "ownerUserId",
         "status",
         "sub2apiUserId",
+        "workspacePurchaseEnabled",
         "createdAt",
         "updatedAt"
       ],
@@ -187,10 +199,11 @@
     "ownerRenewalPolicy": "Disabling or deleting an owner turns off the Workspace autoRenew intent without deleting provider resources."
   },
   "api": {
-    "createAccount": "POST /api/operator/accounts (canonical owner provision only)",
+    "createAccount": "POST /api/operator/accounts (canonical owner provision with optional admission=full_cloud_customer|gateway_only)",
     "operatorAccounts": {
       "list": "GET /api/operator/accounts",
       "provision": "POST /api/operator/accounts",
+      "workspacePurchaseEligibility": "POST /api/operator/accounts/{accountId}/workspace-purchase-eligibility",
       "disable": "POST /api/operator/accounts/{accountId}/disable",
       "delete": false
     },

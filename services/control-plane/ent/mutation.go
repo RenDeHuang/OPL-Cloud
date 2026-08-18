@@ -64,20 +64,21 @@ const (
 // AccountMutation represents an operation that mutates the Account nodes in the graph.
 type AccountMutation struct {
 	config
-	op                 Op
-	typ                string
-	id                 *string
-	created_at         *time.Time
-	updated_at         *time.Time
-	owner_user_id      *string
-	sub2api_user_id    *int64
-	addsub2api_user_id *int64
-	name               *string
-	status             *string
-	clearedFields      map[string]struct{}
-	done               bool
-	oldValue           func(context.Context) (*Account, error)
-	predicates         []predicate.Account
+	op                         Op
+	typ                        string
+	id                         *string
+	created_at                 *time.Time
+	updated_at                 *time.Time
+	owner_user_id              *string
+	sub2api_user_id            *int64
+	addsub2api_user_id         *int64
+	name                       *string
+	status                     *string
+	workspace_purchase_enabled *bool
+	clearedFields              map[string]struct{}
+	done                       bool
+	oldValue                   func(context.Context) (*Account, error)
+	predicates                 []predicate.Account
 }
 
 var _ ent.Mutation = (*AccountMutation)(nil)
@@ -420,6 +421,42 @@ func (m *AccountMutation) ResetStatus() {
 	m.status = nil
 }
 
+// SetWorkspacePurchaseEnabled sets the "workspace_purchase_enabled" field.
+func (m *AccountMutation) SetWorkspacePurchaseEnabled(b bool) {
+	m.workspace_purchase_enabled = &b
+}
+
+// WorkspacePurchaseEnabled returns the value of the "workspace_purchase_enabled" field in the mutation.
+func (m *AccountMutation) WorkspacePurchaseEnabled() (r bool, exists bool) {
+	v := m.workspace_purchase_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWorkspacePurchaseEnabled returns the old "workspace_purchase_enabled" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldWorkspacePurchaseEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWorkspacePurchaseEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWorkspacePurchaseEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWorkspacePurchaseEnabled: %w", err)
+	}
+	return oldValue.WorkspacePurchaseEnabled, nil
+}
+
+// ResetWorkspacePurchaseEnabled resets all changes to the "workspace_purchase_enabled" field.
+func (m *AccountMutation) ResetWorkspacePurchaseEnabled() {
+	m.workspace_purchase_enabled = nil
+}
+
 // Where appends a list predicates to the AccountMutation builder.
 func (m *AccountMutation) Where(ps ...predicate.Account) {
 	m.predicates = append(m.predicates, ps...)
@@ -454,7 +491,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 6)
+	fields := make([]string, 0, 7)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -472,6 +509,9 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.status != nil {
 		fields = append(fields, account.FieldStatus)
+	}
+	if m.workspace_purchase_enabled != nil {
+		fields = append(fields, account.FieldWorkspacePurchaseEnabled)
 	}
 	return fields
 }
@@ -493,6 +533,8 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.Name()
 	case account.FieldStatus:
 		return m.Status()
+	case account.FieldWorkspacePurchaseEnabled:
+		return m.WorkspacePurchaseEnabled()
 	}
 	return nil, false
 }
@@ -514,6 +556,8 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldName(ctx)
 	case account.FieldStatus:
 		return m.OldStatus(ctx)
+	case account.FieldWorkspacePurchaseEnabled:
+		return m.OldWorkspacePurchaseEnabled(ctx)
 	}
 	return nil, fmt.Errorf("unknown Account field %s", name)
 }
@@ -564,6 +608,13 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetStatus(v)
+		return nil
+	case account.FieldWorkspacePurchaseEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWorkspacePurchaseEnabled(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Account field %s", name)
@@ -646,6 +697,9 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldStatus:
 		m.ResetStatus()
+		return nil
+	case account.FieldWorkspacePurchaseEnabled:
+		m.ResetWorkspacePurchaseEnabled()
 		return nil
 	}
 	return fmt.Errorf("unknown Account field %s", name)

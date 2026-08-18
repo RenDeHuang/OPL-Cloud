@@ -46,6 +46,9 @@ var controlPlaneCapacityIndexes string
 //go:embed 202608170002_legacy_identity_table_custody.sql
 var legacyIdentityTableCustody string
 
+//go:embed 202608180001_workspace_purchase_eligibility.sql
+var workspacePurchaseEligibility string
+
 func Apply(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, monthlyHardCut, []any{}, nil)
 }
@@ -120,4 +123,8 @@ func ApplyControlPlaneCapacityIndexes(ctx context.Context, driver dialect.Driver
 
 func ApplyLegacyIdentityTableCustody(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, legacyIdentityTableCustody, []any{}, nil)
+}
+
+func ApplyWorkspacePurchaseEligibility(ctx context.Context, driver dialect.Driver) error {
+	return driver.Exec(ctx, workspacePurchaseEligibility, []any{}, nil)
 }
