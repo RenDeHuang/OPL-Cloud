@@ -17,6 +17,7 @@ import (
 const localDockerStorageMetadataFile = ".opl-storage.json"
 const localDockerStorageQuotaLockFile = ".opl-project-quota.lock"
 const localDockerStorageDeletionDirectory = ".opl-storage-deletions"
+const localDockerRuntimeReservationDirectory = ".opl-runtime-reservations"
 const localDockerStorageMetadataSchemaVersion = 2
 const localDockerStorageDeletionSchemaVersion = 1
 const localDockerWriteAccessMode = 2
@@ -87,6 +88,115 @@ func (p *LocalDockerProvider) openStorageRoot() (*os.Root, error) {
 }
 
 func (p *LocalDockerProvider) preflightStorageCapacity(sizeGB int) error {
+	return p.withStorageQuotaLock(func() error {
+		root, err := p.openStorageRoot()
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		if err := p.resumePendingStorageDeletionsLocked(root); err != nil {
+			return err
+		}
+		if err := p.resumePendingStorageCreationsLocked(root); err != nil {
+			return err
+		}
+		if err := p.validateStorageMetadataInventoryLocked(root); err != nil {
+			return err
+		}
+		return p.checkStorageReservationCapacityLocked(root, sizeGB, "")
+	})
+}
+
+func localDockerEffectiveCapacity(stats syscall.Statfs_t) (uint64, error) {
+	if stats.Bsize <= 0 || stats.Blocks < stats.Bfree {
+		return 0, fmt.Errorf("local_docker_storage_capacity_unavailable")
+	}
+	usableBlocks := stats.Blocks - stats.Bfree
+	if ^uint64(0)-usableBlocks < stats.Bavail {
+		return 0, fmt.Errorf("local_docker_storage_capacity_unavailable")
+	}
+	usableBlocks += stats.Bavail
+	blockSize := uint64(stats.Bsize)
+	if usableBlocks != 0 && usableBlocks > ^uint64(0)/blockSize {
+		return 0, fmt.Errorf("local_docker_storage_capacity_unavailable")
+	}
+	return usableBlocks * blockSize, nil
+}
+
+func (p *LocalDockerProvider) storageReservationBytesLocked(root *os.Root, excludeStorageID string) (uint64, error) {
+	directory, err := root.Open(".")
+	if err != nil {
+		return 0, fmt.Errorf("local_docker_storage_inventory_unavailable")
+	}
+	entries, err := directory.ReadDir(-1)
+	directory.Close()
+	if err != nil {
+		return 0, fmt.Errorf("local_docker_storage_inventory_unavailable")
+	}
+	seen := make(map[string]localDockerStorageMetadata)
+	var total uint64
+	add := func(metadata localDockerStorageMetadata) error {
+		if metadata.StorageID == excludeStorageID {
+			return nil
+		}
+		if metadata.StorageID == "" || metadata.SizeGB <= 0 {
+			return fmt.Errorf("local_docker_storage_schema_incompatible")
+		}
+		if existing, ok := seen[metadata.StorageID]; ok {
+			if existing.SizeGB != metadata.SizeGB || existing.WorkspaceID != "" && metadata.WorkspaceID != "" && existing.WorkspaceID != metadata.WorkspaceID || existing.AccountID != "" && metadata.AccountID != "" && existing.AccountID != metadata.AccountID {
+				return fmt.Errorf("local_docker_storage_inventory_conflict")
+			}
+			return nil
+		}
+		bytes, err := localDockerStorageLimitBytes(metadata.SizeGB)
+		if err != nil {
+			return err
+		}
+		if ^uint64(0)-total < bytes {
+			return fmt.Errorf("local_docker_storage_capacity_unavailable")
+		}
+		total += bytes
+		seen[metadata.StorageID] = metadata
+		return nil
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, "opl-workspace-") || strings.HasPrefix(name, ".storage-opl-workspace-") {
+			metadata, readErr := readLocalDockerStorageMetadata(root, localDockerStoragePaths{WorkspaceName: name})
+			if readErr != nil {
+				return 0, readErr
+			}
+			if err := add(metadata); err != nil {
+				return 0, err
+			}
+		}
+	}
+	deletions, readErr := root.Open(localDockerStorageDeletionDirectory)
+	if readErr == nil {
+		deletionEntries, dirErr := deletions.ReadDir(-1)
+		deletions.Close()
+		if dirErr != nil {
+			return 0, fmt.Errorf("local_docker_storage_inventory_unavailable")
+		}
+		for _, entry := range deletionEntries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+				return 0, fmt.Errorf("local_docker_storage_deletion_journal_invalid")
+			}
+			deletion, err := readLocalDockerStorageDeletion(root, localDockerStorageDeletionDirectory+"/"+entry.Name())
+			if err != nil {
+				return 0, err
+			}
+			if err := add(localDockerStorageMetadata{StorageID: deletion.StorageID, SizeGB: deletion.SizeGB}); err != nil {
+				return 0, err
+			}
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return 0, fmt.Errorf("local_docker_storage_deletion_journal_invalid")
+	}
+	return total, nil
+}
+
+func (p *LocalDockerProvider) checkStorageReservationCapacityLocked(root *os.Root, sizeGB int, excludeStorageID string) error {
 	requiredBytes, err := localDockerStorageLimitBytes(sizeGB)
 	if err != nil {
 		return err
@@ -95,8 +205,19 @@ func (p *LocalDockerProvider) preflightStorageCapacity(sizeGB int) error {
 		return fmt.Errorf("local_docker_storage_root_not_writable")
 	}
 	var stats syscall.Statfs_t
-	if err := syscall.Statfs(p.hostStorageRoot, &stats); err != nil || stats.Bsize <= 0 {
+	if err := syscall.Statfs(p.hostStorageRoot, &stats); err != nil {
 		return fmt.Errorf("local_docker_storage_capacity_unavailable")
+	}
+	capacity, err := localDockerEffectiveCapacity(stats)
+	if err != nil {
+		return err
+	}
+	reserved, err := p.storageReservationBytesLocked(root, excludeStorageID)
+	if err != nil {
+		return err
+	}
+	if reserved > capacity || requiredBytes > capacity-reserved {
+		return fmt.Errorf("local_docker_storage_capacity_insufficient")
 	}
 	blockSize := uint64(stats.Bsize)
 	requiredBlocks := requiredBytes / blockSize
@@ -148,6 +269,11 @@ func (p *LocalDockerProvider) validateStorageMetadataInventoryLocked(root *os.Ro
 		case localDockerStorageDeletionDirectory:
 			if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 				return fmt.Errorf("local_docker_storage_inventory_conflict")
+			}
+			continue
+		case localDockerRuntimeReservationDirectory:
+			if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				return fmt.Errorf("local_docker_runtime_reservation_inventory_conflict")
 			}
 			continue
 		case "lost+found":
@@ -693,6 +819,9 @@ func (p *LocalDockerProvider) ensureStorageDirectories(metadata localDockerStora
 				return ErrLaunchStageBindingConflict
 			}
 			metadata.ProjectID = existing.ProjectID
+			if err := p.checkStorageReservationCapacityLocked(root, sizeGB, metadata.StorageID); err != nil {
+				return err
+			}
 			if err := p.storageQuota.Apply(paths.Workspace, metadata.ProjectID, limitBytes); err != nil {
 				return err
 			}
@@ -723,6 +852,9 @@ func (p *LocalDockerProvider) ensureStorageDirectories(metadata localDockerStora
 		}
 		metadata.ProjectID, err = p.allocateStorageProjectID(root, metadata)
 		if err != nil {
+			return err
+		}
+		if err := p.checkStorageReservationCapacityLocked(root, sizeGB, ""); err != nil {
 			return err
 		}
 		if err := ensureLocalDockerStorageDirectory(root, staging, 0700); err != nil {

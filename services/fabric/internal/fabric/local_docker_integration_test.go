@@ -197,6 +197,13 @@ type localDockerRuntimeReplayRunner struct {
 func (r *localDockerRuntimeReplayRunner) Run(_ context.Context, _ []byte, args ...string) ([]byte, error) {
 	r.calls = append(r.calls, append([]string(nil), args...))
 	switch {
+	case len(args) == 8 && args[0] == "container" && args[1] == "ls" && args[5] == "label=opl.fabric.kind=runtime":
+		if !r.containerVisible && !(r.containerVisibleOnRead > 0 && r.containerReads >= r.containerVisibleOnRead) {
+			return nil, nil
+		}
+		return json.Marshal(dockerObjectInventoryRow{ID: r.container.ID, Names: strings.TrimPrefix(r.container.Name, "/")})
+	case len(args) == 3 && args[0] == "info" && args[1] == "--format" && args[2] == "{{json .}}":
+		return []byte(`{"NCPU":64,"MemTotal":274877906944}`), nil
 	case len(args) == 7 && args[0] == "network" && args[1] == "ls":
 		return json.Marshal(dockerObjectInventoryRow{ID: r.network.ID, Name: r.network.Name})
 	case len(args) == 3 && args[0] == "network" && args[1] == "inspect":
@@ -774,7 +781,8 @@ func TestLocalDockerDestroyWorkspaceRuntimeDeletesExactSecretAndPreservesSibling
 		runtimeName: localDockerDestroyRuntimeContainer(workspaceID), localRuntimeName(otherWorkspaceID): localDockerDestroyRuntimeContainer(otherWorkspaceID),
 	}, volumes: map[string]dockerVolumeInspect{}, archives: map[string][]byte{}}
 	root := localDockerSecretTestRoot(t)
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, runner)
+	storageRoot := localDockerStorageTestRoot(t)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root, HostStorageRoot: storageRoot, StorageQuotaBackend: localDockerStorageTestQuota(storageRoot)}, runner)
 	secretRef := seedLocalDockerGatewaySecret(t, provider, "acct-alpha", workspaceID)
 	otherSecretRef := seedLocalDockerGatewaySecret(t, provider, "acct-beta", otherWorkspaceID)
 	runner.containers[runtimeName], runner.archives[runtimeName] = bindLocalDockerDestroyRuntimeSecret(
@@ -808,7 +816,8 @@ func TestLocalDockerDestroyWorkspaceRuntimeDeletesExactSecretAndPreservesSibling
 func TestLocalDockerDestroyWorkspaceRuntimeSecretOnlyRemnantIsIdempotent(t *testing.T) {
 	workspaceID := "ws-alpha"
 	runner := &localDockerDestroyRunner{containers: map[string]dockerContainerInspect{}, volumes: map[string]dockerVolumeInspect{}}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t)}, runner)
+	storageRoot := localDockerStorageTestRoot(t)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: storageRoot, StorageQuotaBackend: localDockerStorageTestQuota(storageRoot)}, runner)
 	seedLocalDockerGatewaySecret(t, provider, "acct-alpha", workspaceID)
 	for attempt := 0; attempt < 2; attempt++ {
 		runtime, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
