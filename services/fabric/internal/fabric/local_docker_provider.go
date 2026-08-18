@@ -14,6 +14,7 @@ import (
 )
 
 const defaultLocalDockerWorkspaceImageRepository = "ghcr.io/gaofeng21cn/one-person-lab-webui"
+const localDockerProviderProfileEnv = "OPL_FABRIC_LOCAL_DOCKER_PROVIDER_PROFILE_JSON"
 
 type dockerRunner interface {
 	Run(context.Context, []byte, ...string) ([]byte, error)
@@ -49,6 +50,30 @@ type LocalDockerProviderConfig struct {
 	ConfigureRuntimeGateway      bool
 	StorageQuotaBackend          localDockerProjectQuota
 	TrustedWorkspaceImageSources []string
+	ProviderProfileJSON          []byte
+}
+
+type localDockerProviderProfile struct {
+	SchemaVersion int                         `json:"schemaVersion"`
+	Packages      []localDockerPackageProfile `json:"packages"`
+}
+
+type localDockerPackageProfile struct {
+	ID        string                 `json:"id"`
+	Name      string                 `json:"name"`
+	Available bool                   `json:"available"`
+	Compute   ComputePlan            `json:"compute"`
+	Storage   localDockerStoragePlan `json:"storage"`
+}
+
+type localDockerStoragePlan struct {
+	SizeGB      int    `json:"sizeGb"`
+	QuotaPolicy string `json:"quotaPolicy"`
+}
+
+type localDockerPlanSpec struct {
+	Compute ComputePlan            `json:"compute"`
+	Storage localDockerStoragePlan `json:"storage"`
 }
 
 type LocalDockerProvider struct {
@@ -64,6 +89,9 @@ type LocalDockerProvider struct {
 	trustedWorkspaceImageReferences   map[string]struct{}
 	now                               func() time.Time
 	storageQuota                      localDockerProjectQuota
+	profile                           localDockerProviderProfile
+	plans                             map[string]localDockerPackageProfile
+	profileErr                        error
 }
 
 func NewLocalDockerProvider() *LocalDockerProvider {
@@ -79,6 +107,7 @@ func NewLocalDockerProvider() *LocalDockerProvider {
 		RuntimeGatewayContainer:      strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER")),
 		ConfigureRuntimeGateway:      true,
 		TrustedWorkspaceImageSources: trustedSources,
+		ProviderProfileJSON:          []byte(strings.TrimSpace(os.Getenv(localDockerProviderProfileEnv))),
 	}, nil)
 }
 
@@ -99,6 +128,11 @@ func newLocalDockerProvider(config LocalDockerProviderConfig, runner dockerRunne
 	if storageQuota == nil {
 		storageQuota = newLocalDockerProjectQuota(storageRoot)
 	}
+	profileJSON := config.ProviderProfileJSON
+	if len(bytes.TrimSpace(profileJSON)) == 0 {
+		profileJSON = []byte(strings.TrimSpace(os.Getenv(localDockerProviderProfileEnv)))
+	}
+	profile, plans, profileErr := decodeLocalDockerProviderProfile(profileJSON)
 	return &LocalDockerProvider{
 		runner: runner, gatewaySecretRoot: secretRoot, gatewaySecretRootErr: secretRootErr,
 		hostStorageRoot: storageRoot, hostStorageRootErr: storageRootErr,
@@ -107,8 +141,54 @@ func newLocalDockerProvider(config LocalDockerProviderConfig, runner dockerRunne
 		runtimeGatewayContainer:           strings.TrimSpace(config.RuntimeGatewayContainer),
 		configureRuntimeGatewayEnabled:    config.ConfigureRuntimeGateway,
 		trustedWorkspaceImageRepositories: trustedRepositories, trustedWorkspaceImageReferences: trustedReferences,
+		profile: profile, plans: plans, profileErr: profileErr,
 		now: func() time.Time { return time.Now().UTC() },
 	}
+}
+
+func decodeLocalDockerProviderProfile(raw []byte) (localDockerProviderProfile, map[string]localDockerPackageProfile, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return localDockerProviderProfile{}, nil, fmt.Errorf("local_docker_provider_profile_required")
+	}
+	var profile localDockerProviderProfile
+	if err := json.Unmarshal(raw, &profile); err != nil || profile.SchemaVersion != 1 || len(profile.Packages) == 0 {
+		return localDockerProviderProfile{}, nil, fmt.Errorf("local_docker_provider_profile_invalid")
+	}
+	plans := make(map[string]localDockerPackageProfile, len(profile.Packages))
+	for index, item := range profile.Packages {
+		if strings.TrimSpace(item.ID) == "" || item.ID != strings.TrimSpace(item.ID) || strings.TrimSpace(item.Name) == "" || item.Name != strings.TrimSpace(item.Name) ||
+			item.Compute.ID == "" || item.Compute.Server == "" || item.Compute.InstanceType == "" || item.Compute.CPU <= 0 || item.Compute.MemoryGB <= 0 ||
+			item.Storage.SizeGB < 10 || item.Storage.SizeGB%10 != 0 || item.Storage.QuotaPolicy != "linux-project" || item.Compute.DiskGB != 0 && item.Compute.DiskGB != item.Storage.SizeGB {
+			return localDockerProviderProfile{}, nil, fmt.Errorf("local_docker_provider_profile_invalid")
+		}
+		if _, exists := plans[item.ID]; exists {
+			return localDockerProviderProfile{}, nil, fmt.Errorf("local_docker_provider_profile_duplicate_package")
+		}
+		item.Compute.DiskGB = item.Storage.SizeGB
+		profile.Packages[index] = item
+		plans[item.ID] = item
+	}
+	return profile, plans, nil
+}
+
+func (p *LocalDockerProvider) localDockerPackagePlan(packageID string) (localDockerPackageProfile, bool) {
+	plan, ok := p.plans[packageID]
+	return plan, ok && plan.Available
+}
+
+func decodeLocalDockerPlanEnvelope(raw json.RawMessage, packageID string, sizeGB int) (localDockerPlanSpec, error) {
+	var envelope struct {
+		PackageID          string              `json:"packageId"`
+		ProviderProfileRef string              `json:"providerProfileRef"`
+		SchemaVersion      int                 `json:"schemaVersion"`
+		Spec               localDockerPlanSpec `json:"spec"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil || envelope.SchemaVersion != 1 || envelope.ProviderProfileRef != "local-docker" || envelope.PackageID != packageID ||
+		envelope.Spec.Storage.SizeGB != sizeGB || envelope.Spec.Storage.QuotaPolicy != "linux-project" || envelope.Spec.Compute.CPU <= 0 || envelope.Spec.Compute.MemoryGB <= 0 ||
+		envelope.Spec.Compute.DiskGB != envelope.Spec.Storage.SizeGB {
+		return localDockerPlanSpec{}, ErrLaunchStageBindingConflict
+	}
+	return envelope.Spec, nil
 }
 
 func immutableLocalDockerImage(value string) (repository, reference string, ok bool) {
@@ -149,32 +229,42 @@ func localDockerWorkspaceImageTrust(sources []string) (map[string]struct{}, map[
 	return repositories, references
 }
 
-func (*LocalDockerProvider) Descriptor() ProviderDescriptor {
-	basic := ComputePlan{ID: "local-basic-2c4g", Server: "2c4g", CPU: 2, MemoryGB: 4, DiskGB: 10, InstanceType: "local-2c4g"}
-	pro := ComputePlan{ID: "local-pro-8c16g", Server: "8c16g", CPU: 8, MemoryGB: 16, DiskGB: 100, InstanceType: "local-8c16g"}
+func (p *LocalDockerProvider) Descriptor() ProviderDescriptor {
+	plans := make(map[string]ComputePlan, len(p.plans))
+	packages := make([]WorkspacePackage, 0, len(p.plans))
+	for _, item := range p.plans {
+		if item.Available {
+			plans[item.ID] = item.Compute
+		}
+		packages = append(packages, WorkspacePackage{ID: item.ID, Name: item.Name, ComputeProfileID: item.Compute.ID, CPU: item.Compute.CPU, MemoryGB: item.Compute.MemoryGB, DiskGB: item.Storage.SizeGB, Provider: "local-docker", Available: item.Available})
+	}
+	sort.Slice(packages, func(i, j int) bool { return packages[i].ID < packages[j].ID })
 	return ProviderDescriptor{
-		Name: "local-docker", Plans: map[string]ComputePlan{"basic": basic, "pro": pro},
-		DefaultComputePoolIDs: map[string]string{"basic": "local-docker", "pro": "local-docker"},
+		Name: "local-docker", Plans: plans,
+		DefaultComputePoolIDs: func() map[string]string {
+			pools := make(map[string]string, len(plans))
+			for id := range plans {
+				pools[id] = "local-docker"
+			}
+			return pools
+		}(),
 		Catalog: Catalog{
 			SchemaVersion: 1, Owner: "OPL Fabric",
-			WorkspacePackages: []WorkspacePackage{
-				{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "cpu-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "local-docker", Available: true},
-				{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "cpu-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "local-docker", Available: true},
-			},
-			StorageClasses: []StorageClass{{ID: "workspace-local", StorageClassName: "host-directory", Provider: "local-docker", Available: true}},
-			IngressDomains: []IngressDomain{{ID: "workspace", Host: "127.0.0.1", PathPattern: "/", Available: true}},
+			WorkspacePackages: packages,
+			StorageClasses:    []StorageClass{{ID: "workspace-local", StorageClassName: "host-directory", Provider: "local-docker", Available: true}},
+			IngressDomains:    []IngressDomain{{ID: "workspace", Host: "127.0.0.1", PathPattern: "/", Available: true}},
 		},
 	}
 }
 
 func (p *LocalDockerProvider) ResolveWorkspacePlan(_ context.Context, input WorkspaceLaunchPlanInput) (json.RawMessage, error) {
-	plan, ok := p.Descriptor().Plans[input.PackageID]
-	if !ok || plan.ID == "" || input.SizeGB < 10 || input.SizeGB%10 != 0 {
+	item, ok := p.localDockerPackagePlan(input.PackageID)
+	if !ok || item.Storage.SizeGB != input.SizeGB {
 		return nil, ErrProviderPlanUnavailable
 	}
 	return json.Marshal(map[string]any{
-		"compute": plan,
-		"storage": map[string]any{"sizeGb": input.SizeGB},
+		"compute": item.Compute,
+		"storage": item.Storage,
 	})
 }
 
@@ -222,9 +312,8 @@ func (p *LocalDockerProvider) MonthlyPreflight(ctx context.Context, input Monthl
 	}, nil
 }
 
-func (p *LocalDockerProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
-	plan, ok := providerPlan(p, input.PackageID)
-	if !ok {
+func (p *LocalDockerProvider) prepareComputeAllocationWithPlan(ctx context.Context, input ComputeAllocationInput, plan ComputePlan) (ComputeAllocationPreparation, error) {
+	if plan.ID == "" || plan.InstanceType == "" || plan.CPU <= 0 || plan.MemoryGB <= 0 {
 		return ComputeAllocationPreparation{}, ErrUnsupportedComputePackage
 	}
 	if input.NodePoolID != "local-docker" {
@@ -237,6 +326,14 @@ func (p *LocalDockerProvider) PrepareComputeAllocation(ctx context.Context, inpu
 		PoolID: plan.ID, PackageID: input.PackageID, NodePoolID: input.NodePoolID, InstanceType: plan.InstanceType,
 		MaxReplicas: 1024, BaselineReplicas: 0, TargetReplicas: 1, ProviderRequestID: providerRequestID("docker-prepare", input.ID),
 	}, nil
+}
+
+func (p *LocalDockerProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
+	item, ok := p.localDockerPackagePlan(input.PackageID)
+	if !ok {
+		return ComputeAllocationPreparation{}, ErrUnsupportedComputePackage
+	}
+	return p.prepareComputeAllocationWithPlan(ctx, input, item.Compute)
 }
 
 type dockerNetworkInspect struct {
@@ -694,6 +791,9 @@ func (*LocalDockerProvider) DetachStorageAttachment(_ context.Context, attachmen
 }
 
 func (p *LocalDockerProvider) Readiness(ctx context.Context) (map[string]any, error) {
+	if p.profileErr != nil {
+		return nil, p.profileErr
+	}
 	if p.gatewaySecretRootErr != nil {
 		return nil, p.gatewaySecretRootErr
 	}

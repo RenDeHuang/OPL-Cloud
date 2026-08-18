@@ -19,15 +19,16 @@ import (
 
 func TestMain(m *testing.M) {
 	for key, value := range map[string]string{
-		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID": "np-system",
-		"OPL_SYSTEM_COMPUTE_MACHINE_ID":   "machine-system",
-		"OPL_SYSTEM_COMPUTE_NODE_NAME":    "10.66.0.42",
-		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE": "NativeCVM",
-		"OPL_SYSTEM_COMPUTE_CVM_ID":       "ins-system",
-		"OPL_BASIC_COMPUTE_NODE_POOL_ID":  "np-basic",
-		"OPL_PRO_COMPUTE_NODE_POOL_ID":    "np-pro",
-		"OPL_BASIC_COMPUTE_INSTANCE_TYPE": "SA5.MEDIUM4",
-		"OPL_PRO_COMPUTE_INSTANCE_TYPE":   "SA5.2XLARGE16",
+		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID":               "np-system",
+		"OPL_SYSTEM_COMPUTE_MACHINE_ID":                 "machine-system",
+		"OPL_SYSTEM_COMPUTE_NODE_NAME":                  "10.66.0.42",
+		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE":               "NativeCVM",
+		"OPL_SYSTEM_COMPUTE_CVM_ID":                     "ins-system",
+		"OPL_BASIC_COMPUTE_NODE_POOL_ID":                "np-basic",
+		"OPL_PRO_COMPUTE_NODE_POOL_ID":                  "np-pro",
+		"OPL_BASIC_COMPUTE_INSTANCE_TYPE":               "SA5.MEDIUM4",
+		"OPL_PRO_COMPUTE_INSTANCE_TYPE":                 "SA5.2XLARGE16",
+		"OPL_FABRIC_LOCAL_DOCKER_PROVIDER_PROFILE_JSON": `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic Workspace","available":true,"compute":{"id":"local-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"local-2c4g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}},{"id":"pro","name":"Pro Workspace","available":true,"compute":{"id":"local-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"local-8c16g"},"storage":{"sizeGb":100,"quotaPolicy":"linux-project"}}]}`,
 	} {
 		_ = os.Setenv(key, value)
 	}
