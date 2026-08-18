@@ -16,10 +16,6 @@ import (
 	"opl-cloud/services/control-plane/ent/computeallocation"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/projecttasksynchead"
-	"opl-cloud/services/control-plane/ent/remotedevicecredential"
-	"opl-cloud/services/control-plane/ent/remoteinvitation"
-	"opl-cloud/services/control-plane/ent/remotepairing"
-	"opl-cloud/services/control-plane/ent/remoteseatcapacity"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/session"
 	"opl-cloud/services/control-plane/ent/storageattachment"
@@ -104,10 +100,6 @@ func checkColumn(table, column string) error {
 			computeallocation.Table:       computeallocation.ValidColumn,
 			productione2erecord.Table:     productione2erecord.ValidColumn,
 			projecttasksynchead.Table:     projecttasksynchead.ValidColumn,
-			remotedevicecredential.Table:  remotedevicecredential.ValidColumn,
-			remoteinvitation.Table:        remoteinvitation.ValidColumn,
-			remotepairing.Table:           remotepairing.ValidColumn,
-			remoteseatcapacity.Table:      remoteseatcapacity.ValidColumn,
 			runtimeoperation.Table:        runtimeoperation.ValidColumn,
 			session.Table:                 session.ValidColumn,
 			storageattachment.Table:       storageattachment.ValidColumn,

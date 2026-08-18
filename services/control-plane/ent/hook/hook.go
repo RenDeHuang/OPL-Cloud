@@ -128,54 +128,6 @@ func (f ProjectTaskSyncHeadFunc) Mutate(ctx context.Context, m ent.Mutation) (en
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ProjectTaskSyncHeadMutation", m)
 }
 
-// The RemoteDeviceCredentialFunc type is an adapter to allow the use of ordinary
-// function as RemoteDeviceCredential mutator.
-type RemoteDeviceCredentialFunc func(context.Context, *ent.RemoteDeviceCredentialMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f RemoteDeviceCredentialFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.RemoteDeviceCredentialMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RemoteDeviceCredentialMutation", m)
-}
-
-// The RemoteInvitationFunc type is an adapter to allow the use of ordinary
-// function as RemoteInvitation mutator.
-type RemoteInvitationFunc func(context.Context, *ent.RemoteInvitationMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f RemoteInvitationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.RemoteInvitationMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RemoteInvitationMutation", m)
-}
-
-// The RemotePairingFunc type is an adapter to allow the use of ordinary
-// function as RemotePairing mutator.
-type RemotePairingFunc func(context.Context, *ent.RemotePairingMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f RemotePairingFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.RemotePairingMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RemotePairingMutation", m)
-}
-
-// The RemoteSeatCapacityFunc type is an adapter to allow the use of ordinary
-// function as RemoteSeatCapacity mutator.
-type RemoteSeatCapacityFunc func(context.Context, *ent.RemoteSeatCapacityMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f RemoteSeatCapacityFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.RemoteSeatCapacityMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RemoteSeatCapacityMutation", m)
-}
-
 // The RuntimeOperationFunc type is an adapter to allow the use of ordinary
 // function as RuntimeOperation mutator.
 type RuntimeOperationFunc func(context.Context, *ent.RuntimeOperationMutation) (ent.Value, error)

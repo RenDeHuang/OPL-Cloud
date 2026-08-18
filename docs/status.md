@@ -80,23 +80,11 @@ The configured public model `/v1` endpoint is projected by Control Plane. Its
 current presentation is a Console implementation choice. The server-only
 Sub2API management origin and credentials are never exposed to the browser.
 
-## Remote Companion Broker
+## Remote Companion Boundary
 
-The Control Plane candidate contains the Cloud-owned remote companion broker
-source, Ent persistence, canonical `/v1/remote-companion` snake_case wire, stable
-server-keyed invitation/claim hashing, atomic 40-seat reservation, desktop SAS
-confirmation, and provider-reclaim receipts with retryable partial state. The
-App-aligned mutation paths are `/pairings/claim`,
-`/pairings/{pairing_id}/credentials`, and `DELETE /pairings/{pairing_id}`;
-receipt state is read through `/revocations/{revocation_receipt_id}` and every
-mutation requires `Idempotency-Key`.
-Focused tests cover invitation single-use, concurrent seat bounds, manual-code
-attempt invalidation, revocation retry, and Tencent TLS UserSig encoding. This is
-Cloud-source and local-test evidence only: no live Tencent application Secret,
-APNs business ID, TestFlight or App Store release, or China three-network
-qualification is proven by this repository change. The candidate can project an
-optional non-secret `push_business_id` in initial activation and credential
-refresh responses once the Instance owner configures it.
+OPL Link's broker, pairing lifecycle, capacity, and provider transport are owned
+by `opl-link/service`. OPL Cloud only hosts Workspace/WebUI delivery and exposes
+no remote-companion broker route, provider, persistence, or Cloud contract.
 
 ## Implementation Snapshot
 

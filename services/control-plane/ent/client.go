@@ -21,10 +21,6 @@ import (
 	"opl-cloud/services/control-plane/ent/computeallocation"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/projecttasksynchead"
-	"opl-cloud/services/control-plane/ent/remotedevicecredential"
-	"opl-cloud/services/control-plane/ent/remoteinvitation"
-	"opl-cloud/services/control-plane/ent/remotepairing"
-	"opl-cloud/services/control-plane/ent/remoteseatcapacity"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/session"
 	"opl-cloud/services/control-plane/ent/storageattachment"
@@ -64,14 +60,6 @@ type Client struct {
 	ProductionE2ERecord *ProductionE2ERecordClient
 	// ProjectTaskSyncHead is the client for interacting with the ProjectTaskSyncHead builders.
 	ProjectTaskSyncHead *ProjectTaskSyncHeadClient
-	// RemoteDeviceCredential is the client for interacting with the RemoteDeviceCredential builders.
-	RemoteDeviceCredential *RemoteDeviceCredentialClient
-	// RemoteInvitation is the client for interacting with the RemoteInvitation builders.
-	RemoteInvitation *RemoteInvitationClient
-	// RemotePairing is the client for interacting with the RemotePairing builders.
-	RemotePairing *RemotePairingClient
-	// RemoteSeatCapacity is the client for interacting with the RemoteSeatCapacity builders.
-	RemoteSeatCapacity *RemoteSeatCapacityClient
 	// RuntimeOperation is the client for interacting with the RuntimeOperation builders.
 	RuntimeOperation *RuntimeOperationClient
 	// Session is the client for interacting with the Session builders.
@@ -109,10 +97,6 @@ func (c *Client) init() {
 	c.ComputeAllocation = NewComputeAllocationClient(c.config)
 	c.ProductionE2ERecord = NewProductionE2ERecordClient(c.config)
 	c.ProjectTaskSyncHead = NewProjectTaskSyncHeadClient(c.config)
-	c.RemoteDeviceCredential = NewRemoteDeviceCredentialClient(c.config)
-	c.RemoteInvitation = NewRemoteInvitationClient(c.config)
-	c.RemotePairing = NewRemotePairingClient(c.config)
-	c.RemoteSeatCapacity = NewRemoteSeatCapacityClient(c.config)
 	c.RuntimeOperation = NewRuntimeOperationClient(c.config)
 	c.Session = NewSessionClient(c.config)
 	c.StorageAttachment = NewStorageAttachmentClient(c.config)
@@ -223,10 +207,6 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		ComputeAllocation:       NewComputeAllocationClient(cfg),
 		ProductionE2ERecord:     NewProductionE2ERecordClient(cfg),
 		ProjectTaskSyncHead:     NewProjectTaskSyncHeadClient(cfg),
-		RemoteDeviceCredential:  NewRemoteDeviceCredentialClient(cfg),
-		RemoteInvitation:        NewRemoteInvitationClient(cfg),
-		RemotePairing:           NewRemotePairingClient(cfg),
-		RemoteSeatCapacity:      NewRemoteSeatCapacityClient(cfg),
 		RuntimeOperation:        NewRuntimeOperationClient(cfg),
 		Session:                 NewSessionClient(cfg),
 		StorageAttachment:       NewStorageAttachmentClient(cfg),
@@ -264,10 +244,6 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		ComputeAllocation:       NewComputeAllocationClient(cfg),
 		ProductionE2ERecord:     NewProductionE2ERecordClient(cfg),
 		ProjectTaskSyncHead:     NewProjectTaskSyncHeadClient(cfg),
-		RemoteDeviceCredential:  NewRemoteDeviceCredentialClient(cfg),
-		RemoteInvitation:        NewRemoteInvitationClient(cfg),
-		RemotePairing:           NewRemotePairingClient(cfg),
-		RemoteSeatCapacity:      NewRemoteSeatCapacityClient(cfg),
 		RuntimeOperation:        NewRuntimeOperationClient(cfg),
 		Session:                 NewSessionClient(cfg),
 		StorageAttachment:       NewStorageAttachmentClient(cfg),
@@ -308,10 +284,8 @@ func (c *Client) Use(hooks ...Hook) {
 		c.Account, c.AdminAuditEvent, c.Announcement, c.AnnouncementRead,
 		c.ArchivedAdminAuditEvent, c.AuthAttempt, c.BillingReconciliation,
 		c.ComputeAllocation, c.ProductionE2ERecord, c.ProjectTaskSyncHead,
-		c.RemoteDeviceCredential, c.RemoteInvitation, c.RemotePairing,
-		c.RemoteSeatCapacity, c.RuntimeOperation, c.Session, c.StorageAttachment,
-		c.StorageVolume, c.SupportTicketMapping, c.User, c.Workspace,
-		c.WorkspaceSyncEvent,
+		c.RuntimeOperation, c.Session, c.StorageAttachment, c.StorageVolume,
+		c.SupportTicketMapping, c.User, c.Workspace, c.WorkspaceSyncEvent,
 	} {
 		n.Use(hooks...)
 	}
@@ -324,10 +298,8 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.Account, c.AdminAuditEvent, c.Announcement, c.AnnouncementRead,
 		c.ArchivedAdminAuditEvent, c.AuthAttempt, c.BillingReconciliation,
 		c.ComputeAllocation, c.ProductionE2ERecord, c.ProjectTaskSyncHead,
-		c.RemoteDeviceCredential, c.RemoteInvitation, c.RemotePairing,
-		c.RemoteSeatCapacity, c.RuntimeOperation, c.Session, c.StorageAttachment,
-		c.StorageVolume, c.SupportTicketMapping, c.User, c.Workspace,
-		c.WorkspaceSyncEvent,
+		c.RuntimeOperation, c.Session, c.StorageAttachment, c.StorageVolume,
+		c.SupportTicketMapping, c.User, c.Workspace, c.WorkspaceSyncEvent,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -356,14 +328,6 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.ProductionE2ERecord.mutate(ctx, m)
 	case *ProjectTaskSyncHeadMutation:
 		return c.ProjectTaskSyncHead.mutate(ctx, m)
-	case *RemoteDeviceCredentialMutation:
-		return c.RemoteDeviceCredential.mutate(ctx, m)
-	case *RemoteInvitationMutation:
-		return c.RemoteInvitation.mutate(ctx, m)
-	case *RemotePairingMutation:
-		return c.RemotePairing.mutate(ctx, m)
-	case *RemoteSeatCapacityMutation:
-		return c.RemoteSeatCapacity.mutate(ctx, m)
 	case *RuntimeOperationMutation:
 		return c.RuntimeOperation.mutate(ctx, m)
 	case *SessionMutation:
@@ -1715,538 +1679,6 @@ func (c *ProjectTaskSyncHeadClient) mutate(ctx context.Context, m *ProjectTaskSy
 	}
 }
 
-// RemoteDeviceCredentialClient is a client for the RemoteDeviceCredential schema.
-type RemoteDeviceCredentialClient struct {
-	config
-}
-
-// NewRemoteDeviceCredentialClient returns a client for the RemoteDeviceCredential from the given config.
-func NewRemoteDeviceCredentialClient(c config) *RemoteDeviceCredentialClient {
-	return &RemoteDeviceCredentialClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `remotedevicecredential.Hooks(f(g(h())))`.
-func (c *RemoteDeviceCredentialClient) Use(hooks ...Hook) {
-	c.hooks.RemoteDeviceCredential = append(c.hooks.RemoteDeviceCredential, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `remotedevicecredential.Intercept(f(g(h())))`.
-func (c *RemoteDeviceCredentialClient) Intercept(interceptors ...Interceptor) {
-	c.inters.RemoteDeviceCredential = append(c.inters.RemoteDeviceCredential, interceptors...)
-}
-
-// Create returns a builder for creating a RemoteDeviceCredential entity.
-func (c *RemoteDeviceCredentialClient) Create() *RemoteDeviceCredentialCreate {
-	mutation := newRemoteDeviceCredentialMutation(c.config, OpCreate)
-	return &RemoteDeviceCredentialCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of RemoteDeviceCredential entities.
-func (c *RemoteDeviceCredentialClient) CreateBulk(builders ...*RemoteDeviceCredentialCreate) *RemoteDeviceCredentialCreateBulk {
-	return &RemoteDeviceCredentialCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *RemoteDeviceCredentialClient) MapCreateBulk(slice any, setFunc func(*RemoteDeviceCredentialCreate, int)) *RemoteDeviceCredentialCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &RemoteDeviceCredentialCreateBulk{err: fmt.Errorf("calling to RemoteDeviceCredentialClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*RemoteDeviceCredentialCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &RemoteDeviceCredentialCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for RemoteDeviceCredential.
-func (c *RemoteDeviceCredentialClient) Update() *RemoteDeviceCredentialUpdate {
-	mutation := newRemoteDeviceCredentialMutation(c.config, OpUpdate)
-	return &RemoteDeviceCredentialUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *RemoteDeviceCredentialClient) UpdateOne(rdc *RemoteDeviceCredential) *RemoteDeviceCredentialUpdateOne {
-	mutation := newRemoteDeviceCredentialMutation(c.config, OpUpdateOne, withRemoteDeviceCredential(rdc))
-	return &RemoteDeviceCredentialUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *RemoteDeviceCredentialClient) UpdateOneID(id string) *RemoteDeviceCredentialUpdateOne {
-	mutation := newRemoteDeviceCredentialMutation(c.config, OpUpdateOne, withRemoteDeviceCredentialID(id))
-	return &RemoteDeviceCredentialUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for RemoteDeviceCredential.
-func (c *RemoteDeviceCredentialClient) Delete() *RemoteDeviceCredentialDelete {
-	mutation := newRemoteDeviceCredentialMutation(c.config, OpDelete)
-	return &RemoteDeviceCredentialDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *RemoteDeviceCredentialClient) DeleteOne(rdc *RemoteDeviceCredential) *RemoteDeviceCredentialDeleteOne {
-	return c.DeleteOneID(rdc.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *RemoteDeviceCredentialClient) DeleteOneID(id string) *RemoteDeviceCredentialDeleteOne {
-	builder := c.Delete().Where(remotedevicecredential.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &RemoteDeviceCredentialDeleteOne{builder}
-}
-
-// Query returns a query builder for RemoteDeviceCredential.
-func (c *RemoteDeviceCredentialClient) Query() *RemoteDeviceCredentialQuery {
-	return &RemoteDeviceCredentialQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeRemoteDeviceCredential},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a RemoteDeviceCredential entity by its id.
-func (c *RemoteDeviceCredentialClient) Get(ctx context.Context, id string) (*RemoteDeviceCredential, error) {
-	return c.Query().Where(remotedevicecredential.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *RemoteDeviceCredentialClient) GetX(ctx context.Context, id string) *RemoteDeviceCredential {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *RemoteDeviceCredentialClient) Hooks() []Hook {
-	return c.hooks.RemoteDeviceCredential
-}
-
-// Interceptors returns the client interceptors.
-func (c *RemoteDeviceCredentialClient) Interceptors() []Interceptor {
-	return c.inters.RemoteDeviceCredential
-}
-
-func (c *RemoteDeviceCredentialClient) mutate(ctx context.Context, m *RemoteDeviceCredentialMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&RemoteDeviceCredentialCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&RemoteDeviceCredentialUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&RemoteDeviceCredentialUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&RemoteDeviceCredentialDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown RemoteDeviceCredential mutation op: %q", m.Op())
-	}
-}
-
-// RemoteInvitationClient is a client for the RemoteInvitation schema.
-type RemoteInvitationClient struct {
-	config
-}
-
-// NewRemoteInvitationClient returns a client for the RemoteInvitation from the given config.
-func NewRemoteInvitationClient(c config) *RemoteInvitationClient {
-	return &RemoteInvitationClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `remoteinvitation.Hooks(f(g(h())))`.
-func (c *RemoteInvitationClient) Use(hooks ...Hook) {
-	c.hooks.RemoteInvitation = append(c.hooks.RemoteInvitation, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `remoteinvitation.Intercept(f(g(h())))`.
-func (c *RemoteInvitationClient) Intercept(interceptors ...Interceptor) {
-	c.inters.RemoteInvitation = append(c.inters.RemoteInvitation, interceptors...)
-}
-
-// Create returns a builder for creating a RemoteInvitation entity.
-func (c *RemoteInvitationClient) Create() *RemoteInvitationCreate {
-	mutation := newRemoteInvitationMutation(c.config, OpCreate)
-	return &RemoteInvitationCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of RemoteInvitation entities.
-func (c *RemoteInvitationClient) CreateBulk(builders ...*RemoteInvitationCreate) *RemoteInvitationCreateBulk {
-	return &RemoteInvitationCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *RemoteInvitationClient) MapCreateBulk(slice any, setFunc func(*RemoteInvitationCreate, int)) *RemoteInvitationCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &RemoteInvitationCreateBulk{err: fmt.Errorf("calling to RemoteInvitationClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*RemoteInvitationCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &RemoteInvitationCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for RemoteInvitation.
-func (c *RemoteInvitationClient) Update() *RemoteInvitationUpdate {
-	mutation := newRemoteInvitationMutation(c.config, OpUpdate)
-	return &RemoteInvitationUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *RemoteInvitationClient) UpdateOne(ri *RemoteInvitation) *RemoteInvitationUpdateOne {
-	mutation := newRemoteInvitationMutation(c.config, OpUpdateOne, withRemoteInvitation(ri))
-	return &RemoteInvitationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *RemoteInvitationClient) UpdateOneID(id string) *RemoteInvitationUpdateOne {
-	mutation := newRemoteInvitationMutation(c.config, OpUpdateOne, withRemoteInvitationID(id))
-	return &RemoteInvitationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for RemoteInvitation.
-func (c *RemoteInvitationClient) Delete() *RemoteInvitationDelete {
-	mutation := newRemoteInvitationMutation(c.config, OpDelete)
-	return &RemoteInvitationDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *RemoteInvitationClient) DeleteOne(ri *RemoteInvitation) *RemoteInvitationDeleteOne {
-	return c.DeleteOneID(ri.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *RemoteInvitationClient) DeleteOneID(id string) *RemoteInvitationDeleteOne {
-	builder := c.Delete().Where(remoteinvitation.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &RemoteInvitationDeleteOne{builder}
-}
-
-// Query returns a query builder for RemoteInvitation.
-func (c *RemoteInvitationClient) Query() *RemoteInvitationQuery {
-	return &RemoteInvitationQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeRemoteInvitation},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a RemoteInvitation entity by its id.
-func (c *RemoteInvitationClient) Get(ctx context.Context, id string) (*RemoteInvitation, error) {
-	return c.Query().Where(remoteinvitation.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *RemoteInvitationClient) GetX(ctx context.Context, id string) *RemoteInvitation {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *RemoteInvitationClient) Hooks() []Hook {
-	return c.hooks.RemoteInvitation
-}
-
-// Interceptors returns the client interceptors.
-func (c *RemoteInvitationClient) Interceptors() []Interceptor {
-	return c.inters.RemoteInvitation
-}
-
-func (c *RemoteInvitationClient) mutate(ctx context.Context, m *RemoteInvitationMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&RemoteInvitationCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&RemoteInvitationUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&RemoteInvitationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&RemoteInvitationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown RemoteInvitation mutation op: %q", m.Op())
-	}
-}
-
-// RemotePairingClient is a client for the RemotePairing schema.
-type RemotePairingClient struct {
-	config
-}
-
-// NewRemotePairingClient returns a client for the RemotePairing from the given config.
-func NewRemotePairingClient(c config) *RemotePairingClient {
-	return &RemotePairingClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `remotepairing.Hooks(f(g(h())))`.
-func (c *RemotePairingClient) Use(hooks ...Hook) {
-	c.hooks.RemotePairing = append(c.hooks.RemotePairing, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `remotepairing.Intercept(f(g(h())))`.
-func (c *RemotePairingClient) Intercept(interceptors ...Interceptor) {
-	c.inters.RemotePairing = append(c.inters.RemotePairing, interceptors...)
-}
-
-// Create returns a builder for creating a RemotePairing entity.
-func (c *RemotePairingClient) Create() *RemotePairingCreate {
-	mutation := newRemotePairingMutation(c.config, OpCreate)
-	return &RemotePairingCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of RemotePairing entities.
-func (c *RemotePairingClient) CreateBulk(builders ...*RemotePairingCreate) *RemotePairingCreateBulk {
-	return &RemotePairingCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *RemotePairingClient) MapCreateBulk(slice any, setFunc func(*RemotePairingCreate, int)) *RemotePairingCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &RemotePairingCreateBulk{err: fmt.Errorf("calling to RemotePairingClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*RemotePairingCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &RemotePairingCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for RemotePairing.
-func (c *RemotePairingClient) Update() *RemotePairingUpdate {
-	mutation := newRemotePairingMutation(c.config, OpUpdate)
-	return &RemotePairingUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *RemotePairingClient) UpdateOne(rp *RemotePairing) *RemotePairingUpdateOne {
-	mutation := newRemotePairingMutation(c.config, OpUpdateOne, withRemotePairing(rp))
-	return &RemotePairingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *RemotePairingClient) UpdateOneID(id string) *RemotePairingUpdateOne {
-	mutation := newRemotePairingMutation(c.config, OpUpdateOne, withRemotePairingID(id))
-	return &RemotePairingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for RemotePairing.
-func (c *RemotePairingClient) Delete() *RemotePairingDelete {
-	mutation := newRemotePairingMutation(c.config, OpDelete)
-	return &RemotePairingDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *RemotePairingClient) DeleteOne(rp *RemotePairing) *RemotePairingDeleteOne {
-	return c.DeleteOneID(rp.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *RemotePairingClient) DeleteOneID(id string) *RemotePairingDeleteOne {
-	builder := c.Delete().Where(remotepairing.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &RemotePairingDeleteOne{builder}
-}
-
-// Query returns a query builder for RemotePairing.
-func (c *RemotePairingClient) Query() *RemotePairingQuery {
-	return &RemotePairingQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeRemotePairing},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a RemotePairing entity by its id.
-func (c *RemotePairingClient) Get(ctx context.Context, id string) (*RemotePairing, error) {
-	return c.Query().Where(remotepairing.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *RemotePairingClient) GetX(ctx context.Context, id string) *RemotePairing {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *RemotePairingClient) Hooks() []Hook {
-	return c.hooks.RemotePairing
-}
-
-// Interceptors returns the client interceptors.
-func (c *RemotePairingClient) Interceptors() []Interceptor {
-	return c.inters.RemotePairing
-}
-
-func (c *RemotePairingClient) mutate(ctx context.Context, m *RemotePairingMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&RemotePairingCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&RemotePairingUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&RemotePairingUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&RemotePairingDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown RemotePairing mutation op: %q", m.Op())
-	}
-}
-
-// RemoteSeatCapacityClient is a client for the RemoteSeatCapacity schema.
-type RemoteSeatCapacityClient struct {
-	config
-}
-
-// NewRemoteSeatCapacityClient returns a client for the RemoteSeatCapacity from the given config.
-func NewRemoteSeatCapacityClient(c config) *RemoteSeatCapacityClient {
-	return &RemoteSeatCapacityClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `remoteseatcapacity.Hooks(f(g(h())))`.
-func (c *RemoteSeatCapacityClient) Use(hooks ...Hook) {
-	c.hooks.RemoteSeatCapacity = append(c.hooks.RemoteSeatCapacity, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `remoteseatcapacity.Intercept(f(g(h())))`.
-func (c *RemoteSeatCapacityClient) Intercept(interceptors ...Interceptor) {
-	c.inters.RemoteSeatCapacity = append(c.inters.RemoteSeatCapacity, interceptors...)
-}
-
-// Create returns a builder for creating a RemoteSeatCapacity entity.
-func (c *RemoteSeatCapacityClient) Create() *RemoteSeatCapacityCreate {
-	mutation := newRemoteSeatCapacityMutation(c.config, OpCreate)
-	return &RemoteSeatCapacityCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of RemoteSeatCapacity entities.
-func (c *RemoteSeatCapacityClient) CreateBulk(builders ...*RemoteSeatCapacityCreate) *RemoteSeatCapacityCreateBulk {
-	return &RemoteSeatCapacityCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *RemoteSeatCapacityClient) MapCreateBulk(slice any, setFunc func(*RemoteSeatCapacityCreate, int)) *RemoteSeatCapacityCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &RemoteSeatCapacityCreateBulk{err: fmt.Errorf("calling to RemoteSeatCapacityClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*RemoteSeatCapacityCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &RemoteSeatCapacityCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for RemoteSeatCapacity.
-func (c *RemoteSeatCapacityClient) Update() *RemoteSeatCapacityUpdate {
-	mutation := newRemoteSeatCapacityMutation(c.config, OpUpdate)
-	return &RemoteSeatCapacityUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *RemoteSeatCapacityClient) UpdateOne(rsc *RemoteSeatCapacity) *RemoteSeatCapacityUpdateOne {
-	mutation := newRemoteSeatCapacityMutation(c.config, OpUpdateOne, withRemoteSeatCapacity(rsc))
-	return &RemoteSeatCapacityUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *RemoteSeatCapacityClient) UpdateOneID(id string) *RemoteSeatCapacityUpdateOne {
-	mutation := newRemoteSeatCapacityMutation(c.config, OpUpdateOne, withRemoteSeatCapacityID(id))
-	return &RemoteSeatCapacityUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for RemoteSeatCapacity.
-func (c *RemoteSeatCapacityClient) Delete() *RemoteSeatCapacityDelete {
-	mutation := newRemoteSeatCapacityMutation(c.config, OpDelete)
-	return &RemoteSeatCapacityDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *RemoteSeatCapacityClient) DeleteOne(rsc *RemoteSeatCapacity) *RemoteSeatCapacityDeleteOne {
-	return c.DeleteOneID(rsc.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *RemoteSeatCapacityClient) DeleteOneID(id string) *RemoteSeatCapacityDeleteOne {
-	builder := c.Delete().Where(remoteseatcapacity.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &RemoteSeatCapacityDeleteOne{builder}
-}
-
-// Query returns a query builder for RemoteSeatCapacity.
-func (c *RemoteSeatCapacityClient) Query() *RemoteSeatCapacityQuery {
-	return &RemoteSeatCapacityQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeRemoteSeatCapacity},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a RemoteSeatCapacity entity by its id.
-func (c *RemoteSeatCapacityClient) Get(ctx context.Context, id string) (*RemoteSeatCapacity, error) {
-	return c.Query().Where(remoteseatcapacity.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *RemoteSeatCapacityClient) GetX(ctx context.Context, id string) *RemoteSeatCapacity {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *RemoteSeatCapacityClient) Hooks() []Hook {
-	return c.hooks.RemoteSeatCapacity
-}
-
-// Interceptors returns the client interceptors.
-func (c *RemoteSeatCapacityClient) Interceptors() []Interceptor {
-	return c.inters.RemoteSeatCapacity
-}
-
-func (c *RemoteSeatCapacityClient) mutate(ctx context.Context, m *RemoteSeatCapacityMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&RemoteSeatCapacityCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&RemoteSeatCapacityUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&RemoteSeatCapacityUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&RemoteSeatCapacityDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown RemoteSeatCapacity mutation op: %q", m.Op())
-	}
-}
-
 // RuntimeOperationClient is a client for the RuntimeOperation schema.
 type RuntimeOperationClient struct {
 	config
@@ -3316,16 +2748,14 @@ type (
 	hooks struct {
 		Account, AdminAuditEvent, Announcement, AnnouncementRead,
 		ArchivedAdminAuditEvent, AuthAttempt, BillingReconciliation, ComputeAllocation,
-		ProductionE2ERecord, ProjectTaskSyncHead, RemoteDeviceCredential,
-		RemoteInvitation, RemotePairing, RemoteSeatCapacity, RuntimeOperation, Session,
+		ProductionE2ERecord, ProjectTaskSyncHead, RuntimeOperation, Session,
 		StorageAttachment, StorageVolume, SupportTicketMapping, User, Workspace,
 		WorkspaceSyncEvent []ent.Hook
 	}
 	inters struct {
 		Account, AdminAuditEvent, Announcement, AnnouncementRead,
 		ArchivedAdminAuditEvent, AuthAttempt, BillingReconciliation, ComputeAllocation,
-		ProductionE2ERecord, ProjectTaskSyncHead, RemoteDeviceCredential,
-		RemoteInvitation, RemotePairing, RemoteSeatCapacity, RuntimeOperation, Session,
+		ProductionE2ERecord, ProjectTaskSyncHead, RuntimeOperation, Session,
 		StorageAttachment, StorageVolume, SupportTicketMapping, User, Workspace,
 		WorkspaceSyncEvent []ent.Interceptor
 	}

@@ -26,7 +26,6 @@ type controlPlaneServer struct {
 	operationalAlertStates sync.Map
 	store                  StateStore
 	tables                 controlPlaneTableStore
-	remoteCompanion        *remoteCompanionBroker
 	sessionCredentials     *SessionCredentialVault
 	// ponytail: per-process limiter; move to Redis when login traffic spans multiple replicas.
 	loginRateLimits map[string]loginFailure
