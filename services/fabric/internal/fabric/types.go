@@ -249,6 +249,7 @@ type ComputeAllocationPreparation struct {
 	PackageID          string   `json:"packageId"`
 	NodePoolID         string   `json:"nodePoolId"`
 	InstanceType       string   `json:"instanceType"`
+	Zone               string   `json:"zone,omitempty"`
 	MaxReplicas        int64    `json:"maxReplicas"`
 	BaselineReplicas   int64    `json:"baselineReplicas"`
 	TargetReplicas     int64    `json:"targetReplicas"`

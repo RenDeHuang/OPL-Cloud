@@ -58,15 +58,15 @@ func validComputeClaimRecoveryInput(input ComputeClaimRecoveryInput) bool {
 			return false
 		}
 	}
-	return input.PackageID == "basic" || input.PackageID == "pro"
+	return true
 }
 
 func validComputeClaimRecoveryLocalIdentity(input ComputeClaimRecoveryInput, allocation ComputeAllocation, plan ComputeAllocationPreparation) bool {
 	persistedPeriodMonths := strings.TrimSpace(allocation.ProviderData["periodMonths"])
 	if allocation.ID != input.ComputeAllocationID || allocation.AccountID != input.AccountID || allocation.WorkspaceID != input.WorkspaceID ||
 		allocation.PackageID != input.PackageID || allocation.Provider != "tencent-tke" || allocation.PoolID != input.PoolID || allocation.NodePoolID != input.NodePoolID ||
-		allocation.PoolID != plan.PoolID || plan.PackageID != input.PackageID || plan.NodePoolID != input.NodePoolID || plan.PoolID != packagePlan(input.PackageID).ID ||
-		plan.InstanceType != packagePlan(input.PackageID).InstanceType || plan.BeforeMachineNames == nil || plan.BaselineReplicas < 0 || plan.TargetReplicas != plan.BaselineReplicas+1 ||
+		allocation.PoolID != plan.PoolID || plan.PackageID != input.PackageID || plan.NodePoolID != input.NodePoolID || plan.PoolID == "" || plan.InstanceType == "" ||
+		plan.BeforeMachineNames == nil || plan.BaselineReplicas < 0 || plan.TargetReplicas != plan.BaselineReplicas+1 ||
 		int64(len(plan.BeforeMachineNames)) != plan.BaselineReplicas || allocation.MachineName == "" || allocation.InstanceType != plan.InstanceType ||
 		!strings.HasPrefix(firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), "ins-") || allocation.NodeName == "" || allocation.PrivateIP == "" ||
 		allocation.Zone == "" || allocation.ChargeType != "PREPAID" || allocation.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || allocation.Deadline == "" ||

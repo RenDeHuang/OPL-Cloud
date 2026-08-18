@@ -114,7 +114,7 @@ func TestWorkspaceLaunchResumeRouteWaitsForOriginalCallerCredential(t *testing.T
 		t.Fatalf("operator consumed credential-bound authorization: operation=%s creates=%d err=%v", workspaceLaunchReconcileResultSummary(waiting), client.createCalls, err)
 	}
 
-	launchBody := `{"name":"Route Resume","packageId":"basic","sizeGb":10,"autoRenew":false}`
+	launchBody := `{"name":"Route Resume","packageId":"basic","autoRenew":false}`
 	continuedResponse := requestWithMutationKeyForTest(t, server, customer, http.MethodPost, "/api/workspace-launches", launchBody, launchKey)
 	if continuedResponse.Code != http.StatusAccepted {
 		t.Fatalf("customer continuation status=%d body=%s", continuedResponse.Code, continuedResponse.Body.String())

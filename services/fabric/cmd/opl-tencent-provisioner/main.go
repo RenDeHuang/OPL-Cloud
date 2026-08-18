@@ -52,6 +52,81 @@ const protectedCheckFailed = "failed"
 const protectedCheckNotApplicable = "not_applicable"
 
 const predebitIAMProofMode = "production_runner_deployment_attestation"
+const tencentProviderProfileEnv = "OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON"
+
+type tencentSKUProfile struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Available bool   `json:"available"`
+	Compute   struct {
+		ID           string `json:"id"`
+		Server       string `json:"server"`
+		CPU          uint64 `json:"cpu"`
+		MemoryGB     uint64 `json:"memoryGb"`
+		DiskGB       int    `json:"diskGb"`
+		InstanceType string `json:"instanceType"`
+	} `json:"compute"`
+	NodePoolID  string `json:"nodePoolId"`
+	MaxReplicas int64  `json:"maxReplicas"`
+	Zone        string `json:"zone"`
+	Storage     struct {
+		SizeGB   int    `json:"sizeGb"`
+		DiskType string `json:"diskType"`
+	} `json:"storage"`
+	Billing struct {
+		ChargeType   string `json:"chargeType"`
+		PeriodMonths int64  `json:"periodMonths"`
+		RenewFlag    string `json:"renewFlag"`
+	} `json:"billing"`
+}
+
+type tencentSKUProviderProfile struct {
+	SchemaVersion int                 `json:"schemaVersion"`
+	Packages      []tencentSKUProfile `json:"packages"`
+}
+
+func configuredTencentSKUProfiles(env map[string]string) ([]tencentSKUProfile, error) {
+	var profile tencentSKUProviderProfile
+	raw := strings.TrimSpace(env[tencentProviderProfileEnv])
+	if raw == "" || json.Unmarshal([]byte(raw), &profile) != nil || profile.SchemaVersion != 1 || len(profile.Packages) == 0 {
+		return nil, fmt.Errorf("tencent_provider_profile_required")
+	}
+	seen := map[string]bool{}
+	for index, item := range profile.Packages {
+		item.ID, item.Name = strings.TrimSpace(item.ID), strings.TrimSpace(item.Name)
+		item.Compute.ID, item.Compute.Server, item.Compute.InstanceType = strings.TrimSpace(item.Compute.ID), strings.TrimSpace(item.Compute.Server), strings.TrimSpace(item.Compute.InstanceType)
+		item.NodePoolID, item.Zone = strings.TrimSpace(item.NodePoolID), strings.TrimSpace(item.Zone)
+		item.Storage.DiskType = strings.TrimSpace(item.Storage.DiskType)
+		if item.ID == "" || seen[item.ID] || item.Name == "" || item.Compute.ID == "" || item.Compute.Server == "" || item.Compute.CPU == 0 || item.Compute.MemoryGB == 0 || item.Compute.InstanceType == "" || item.Compute.DiskGB <= 0 ||
+			item.MaxReplicas <= 0 || item.Zone == "" || item.Storage.SizeGB < 10 || item.Storage.SizeGB%10 != 0 || item.Storage.DiskType == "" || item.Compute.DiskGB != item.Storage.SizeGB ||
+			item.Billing.ChargeType != "PREPAID" || item.Billing.PeriodMonths != 1 || item.Billing.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" {
+			return nil, fmt.Errorf("tencent_provider_profile_invalid")
+		}
+		seen[item.ID] = true
+		profile.Packages[index] = item
+	}
+	return profile.Packages, nil
+}
+
+func validateTencentBootstrapProfiles(profiles []tencentSKUProfile) error {
+	for _, item := range profiles {
+		if !item.Available {
+			continue
+		}
+		item.Compute.ID = strings.TrimSpace(item.Compute.ID)
+		item.Compute.Server = strings.TrimSpace(item.Compute.Server)
+		item.Compute.InstanceType = strings.TrimSpace(item.Compute.InstanceType)
+		item.NodePoolID = strings.TrimSpace(item.NodePoolID)
+		item.Zone = strings.TrimSpace(item.Zone)
+		item.Storage.DiskType = strings.TrimSpace(item.Storage.DiskType)
+		if item.Name == "" || item.Compute.ID == "" || item.Compute.Server == "" || item.Compute.InstanceType == "" ||
+			item.Compute.DiskGB <= 0 || item.MaxReplicas <= 0 || item.Zone == "" || item.Storage.SizeGB <= 0 || item.Storage.DiskType == "" ||
+			item.Compute.DiskGB != item.Storage.SizeGB || item.Billing.ChargeType != "PREPAID" || item.Billing.PeriodMonths != 1 || item.Billing.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" {
+			return fmt.Errorf("tencent_provider_profile_invalid")
+		}
+	}
+	return nil
+}
 
 var predebitIAMRequiredActions = []string{"tag:TagResources", "tag:ModifyResourcesTagValue"}
 
@@ -780,13 +855,11 @@ func workspaceSKUInventoryFailure(code string, err error) Response {
 	return Response{Ok: false, ErrorCode: code, Message: message, Retryable: false, MutationCount: 0}
 }
 
-func workspaceSKUShape(packageID string) (uint64, uint64) {
-	cpu, memoryGB, _ := customerPackageResourceShape(packageID)
-	return cpu, memoryGB
+func workspaceSKUShape(request Request) (uint64, uint64, bool) {
+	return request.Pool.CPU, request.Pool.MemoryGB, strings.TrimSpace(request.PackageId) != ""
 }
 
-func workspaceSKUPackage(items []*cvm2017.InstanceTypeQuotaItem, packageID, zone string) (WorkspaceSKUPackage, error) {
-	cpu, memoryGB := workspaceSKUShape(packageID)
+func workspaceSKUPackage(items []*cvm2017.InstanceTypeQuotaItem, packageID, zone string, cpu, memoryGB uint64) (WorkspaceSKUPackage, error) {
 	result := WorkspaceSKUPackage{PackageID: packageID, CPU: cpu, MemoryGB: memoryGB, Candidates: []WorkspaceSKUCandidate{}}
 	seen := map[string]bool{}
 	for _, item := range items {
@@ -982,9 +1055,16 @@ func (client *tencentSDKClient) WorkspaceSKUInventory(request Request, env map[s
 	if err != nil || availability == nil || availability.Response == nil || strings.TrimSpace(stringValue(availability.Response.RequestId)) == "" {
 		return workspaceSKUInventoryFailure("workspace_sku_inventory_unavailable", fmt.Errorf("Tencent Workspace SKU inventory is unavailable"))
 	}
-	packages := make([]WorkspaceSKUPackage, 0, 2)
-	for _, packageID := range []string{"basic", "pro"} {
-		current, packageErr := workspaceSKUPackage(availability.Response.InstanceTypeQuotaSet, packageID, zone)
+	profiles, profileErr := configuredTencentSKUProfiles(env)
+	if profileErr != nil {
+		return workspaceSKUInventoryFailure("workspace_sku_inventory_invalid", profileErr)
+	}
+	packages := make([]WorkspaceSKUPackage, 0, len(profiles))
+	for _, profile := range profiles {
+		if !profile.Available {
+			continue
+		}
+		current, packageErr := workspaceSKUPackage(availability.Response.InstanceTypeQuotaSet, profile.ID, zone, profile.Compute.CPU, profile.Compute.MemoryGB)
 		if packageErr != nil {
 			response := workspaceSKUInventoryFailure("workspace_sku_unavailable", packageErr)
 			response.SKUPackages = packages
@@ -1141,17 +1221,6 @@ func cvmResourceShapeMatches(instance *cvm2017.Instance, pool ComputePoolInput) 
 	return instance != nil && exactInt64(instance.CPU, pool.CPU) && exactInt64(instance.Memory, pool.MemoryGB)
 }
 
-func customerPackageResourceShape(packageID string) (uint64, uint64, bool) {
-	switch packageID {
-	case "basic":
-		return 2, 4, true
-	case "pro":
-		return 8, 16, true
-	default:
-		return 0, 0, false
-	}
-}
-
 func computeResourceShapeFailure(requestID string) Response {
 	return Response{Ok: false, ErrorCode: "compute_resource_shape_mismatch", Message: "Tencent Machine, Native instance, and CVM CPU and memory must exactly match the package resource contract.", ProviderRequestId: requestID, Retryable: true}
 }
@@ -1190,9 +1259,7 @@ func (client *tencentSDKClient) capacityNodePool(request Request) (*tke2022.Node
 
 func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) Response {
 	required := request.Pool.DesiredReplicas
-	expectedCPU, expectedMemoryGB, packageShapeKnown := customerPackageResourceShape(request.PackageId)
-	if required <= 0 || request.Pool.MaxReplicas <= 0 || strings.TrimSpace(request.Pool.InstanceType) == "" || strings.TrimSpace(request.Pool.NodePoolId) == "" || strings.TrimSpace(request.Pool.Id) == "" ||
-		!packageShapeKnown || request.Pool.CPU != expectedCPU || request.Pool.MemoryGB != expectedMemoryGB {
+	if required <= 0 || request.Pool.MaxReplicas <= 0 || strings.TrimSpace(request.Pool.InstanceType) == "" || strings.TrimSpace(request.Pool.NodePoolId) == "" || strings.TrimSpace(request.Pool.Id) == "" || request.Pool.CPU == 0 || request.Pool.MemoryGB == 0 {
 		stages := []PreflightStage{}
 		for _, stage := range []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"} {
 			stages = append(stages, completedPreflightStage(stage, "failed", "tencent_capacity_input_invalid", time.Now(), nil, nil))
@@ -1369,6 +1436,7 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 		shapeMatches := false
 		var actualCPU any
 		var actualMemoryGB any
+		expectedCPU, expectedMemoryGB := request.Pool.CPU, request.Pool.MemoryGB
 		if err == nil && availability != nil && availability.Response != nil {
 			for _, item := range availability.Response.InstanceTypeQuotaSet {
 				if item != nil && stringValue(item.Zone) == zone && stringValue(item.InstanceType) == request.Pool.InstanceType && stringValue(item.InstanceChargeType) == "PREPAID" {
@@ -1483,7 +1551,7 @@ func boolValue(value *bool) bool {
 
 func (client *tencentSDKClient) StoragePreflight(request Request, env map[string]string) Response {
 	storage := request.Storage
-	storage.DiskType = firstNonEmpty(storage.DiskType, env["TENCENT_CBS_DISK_TYPE"], "CLOUD_BSSD")
+	storage.DiskType = firstNonEmpty(storage.DiskType, env["TENCENT_CBS_DISK_TYPE"])
 	if storage.SizeGB == 0 || strings.TrimSpace(storage.Zone) == "" || strings.TrimSpace(storage.DiskType) == "" {
 		return failedPreflightResponse([]PreflightStage{
 			completedPreflightStage("cbs_prepaid_quota", "failed", "tencent_storage_preflight_input_invalid", time.Now(), nil, nil),
@@ -1562,8 +1630,8 @@ func (client *tencentSDKClient) CreateStorageVolume(request Request, env map[str
 		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent CBS SDK client is missing.", Retryable: false}
 	}
 	storage := request.Storage
-	storage.DiskType = firstNonEmpty(storage.DiskType, env["TENCENT_CBS_DISK_TYPE"], "CLOUD_BSSD")
-	if strings.TrimSpace(request.AccountId) == "" || strings.TrimSpace(storage.Id) == "" || storage.SizeGB == 0 || strings.TrimSpace(storage.Zone) == "" ||
+	storage.DiskType = firstNonEmpty(storage.DiskType, env["TENCENT_CBS_DISK_TYPE"])
+	if strings.TrimSpace(request.AccountId) == "" || strings.TrimSpace(storage.Id) == "" || storage.SizeGB == 0 || strings.TrimSpace(storage.Zone) == "" || strings.TrimSpace(storage.DiskType) == "" ||
 		!validCBSOwnershipTags(request.Tags) || request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != storage.Id {
 		return Response{Ok: false, ErrorCode: "tencent_cbs_input_invalid", Message: "Exact CBS account, resource, size, compute Zone, and ownership tags are required.", Retryable: false}
 	}
@@ -1642,8 +1710,8 @@ func (client *tencentSDKClient) DiscoverStorageVolume(request Request, _ map[str
 		return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_sdk_client_missing", Message: "Tencent CBS SDK client is missing.", Retryable: false}
 	}
 	storage := request.Storage
-	storage.DiskType = firstNonEmpty(storage.DiskType, "CLOUD_BSSD")
-	if strings.TrimSpace(request.AccountId) == "" || storage.Id == "" || storage.SizeGB == 0 || storage.Zone == "" ||
+	storage.DiskType = strings.TrimSpace(storage.DiskType)
+	if strings.TrimSpace(request.AccountId) == "" || storage.Id == "" || storage.SizeGB == 0 || storage.Zone == "" || storage.DiskType == "" ||
 		!validCBSOwnershipTags(request.Tags) || request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != storage.Id {
 		return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_input_invalid", Message: "Exact CBS account, resource, size, compute Zone, and ownership tags are required.", Retryable: false}
 	}
@@ -1795,7 +1863,7 @@ func (client *tencentSDKClient) RenewStorageVolume(request Request, _ map[string
 
 func (client *tencentSDKClient) storageVolumeReadback(request Request, allowAbsent bool) Response {
 	storage := request.Storage
-	storage.DiskType = firstNonEmpty(storage.DiskType, "CLOUD_BSSD")
+	storage.DiskType = strings.TrimSpace(storage.DiskType)
 	if !validCBSReadbackInput(storage, request.Tags) {
 		return Response{Ok: false, ErrorCode: "tencent_cbs_input_invalid", Message: "Exact CBS disk identity, size, compute Zone, and ownership tags are required.", Retryable: false}
 	}
@@ -2266,8 +2334,7 @@ func (client *tencentSDKClient) ComputeClaimTruth(request Request, _ map[string]
 	if client == nil || client.nativeTkeClient == nil || client.nativeCvmClient == nil || client.nativeVpcClient == nil {
 		return computeClaimTruthFailure("provider_describe")
 	}
-	expectedCPU, expectedMemoryGB, knownPackage := customerPackageResourceShape(request.PackageId)
-	if !knownPackage || request.Pool.CPU != expectedCPU || request.Pool.MemoryGB != expectedMemoryGB ||
+	if request.Pool.CPU == 0 || request.Pool.MemoryGB == 0 ||
 		strings.TrimSpace(request.AccountId) == "" || strings.TrimSpace(request.Zone) == "" || strings.TrimSpace(request.Pool.Id) == "" ||
 		strings.TrimSpace(request.Pool.NodePoolId) == "" || strings.TrimSpace(request.Pool.InstanceType) == "" || request.Pool.MaxReplicas <= 0 ||
 		request.Pool.BaselineReplicas < 0 || request.Pool.TargetReplicas != request.Pool.BaselineReplicas+1 ||
@@ -2280,7 +2347,7 @@ func (client *tencentSDKClient) ComputeClaimTruth(request Request, _ map[string]
 			"knownPackage": true, "shapeMatches": true, "accountPresent": true, "zonePresent": true, "poolIdentityPresent": true,
 			"capacityPlanValid": true, "allocationIdentityPresent": true, "ownershipTagsValid": true,
 		}, map[string]any{
-			"knownPackage": knownPackage, "shapeMatches": request.Pool.CPU == expectedCPU && request.Pool.MemoryGB == expectedMemoryGB,
+			"knownPackage": strings.TrimSpace(request.PackageId) != "", "shapeMatches": request.Pool.CPU > 0 && request.Pool.MemoryGB > 0,
 			"accountPresent": strings.TrimSpace(request.AccountId) != "", "zonePresent": strings.TrimSpace(request.Zone) != "",
 			"poolIdentityPresent":       strings.TrimSpace(request.Pool.Id) != "" && strings.TrimSpace(request.Pool.NodePoolId) != "" && strings.TrimSpace(request.Pool.InstanceType) != "",
 			"capacityPlanValid":         request.Pool.MaxReplicas > 0 && request.Pool.BaselineReplicas >= 0 && request.Pool.TargetReplicas == request.Pool.BaselineReplicas+1 && int64(len(request.Pool.BeforeMachineNames)) == request.Pool.BaselineReplicas,
@@ -3861,6 +3928,8 @@ func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*
 		"TENCENT_DEPLOY_CLUSTER_ID",
 		"TENCENT_CVM_SUBNET_ID",
 		"TENCENT_CVM_SECURITY_GROUP_IDS",
+		"TENCENT_CVM_SYSTEM_DISK_TYPE",
+		"TENCENT_CVM_SYSTEM_DISK_SIZE_GB",
 	})
 	if len(missing) > 0 {
 		return nil, &Response{
@@ -3880,6 +3949,10 @@ func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*
 	}
 	if request.Pool.MaxReplicas <= 0 {
 		return nil, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: "ComputePool maxReplicas must be explicitly approved.", Retryable: false}
+	}
+	systemDiskSize, err := strconv.ParseInt(strings.TrimSpace(env["TENCENT_CVM_SYSTEM_DISK_SIZE_GB"]), 10, 64)
+	if err != nil || systemDiskSize <= 0 {
+		return nil, &Response{Ok: false, ErrorCode: "system_disk_configuration_invalid", Message: "TENCENT_CVM_SYSTEM_DISK_SIZE_GB must be an explicitly configured positive integer.", Retryable: false}
 	}
 	createRequest := tke2022.NewCreateNodePoolRequest()
 	createRequest.ClusterId = common.StringPtr(env["TENCENT_DEPLOY_CLUSTER_ID"])
@@ -3906,8 +3979,8 @@ func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*
 			Period: common.Uint64Ptr(1), RenewFlag: common.StringPtr("NOTIFY_AND_MANUAL_RENEW"),
 		},
 		SystemDisk: &tke2022.Disk{
-			DiskType: common.StringPtr(defaultString(env["TENCENT_CVM_SYSTEM_DISK_TYPE"], "CLOUD_BSSD")),
-			DiskSize: common.Int64Ptr(int64(intFromEnv(env, "TENCENT_CVM_SYSTEM_DISK_SIZE_GB", 50))),
+			DiskType: common.StringPtr(strings.TrimSpace(env["TENCENT_CVM_SYSTEM_DISK_TYPE"])),
+			DiskSize: common.Int64Ptr(systemDiskSize),
 		},
 		InstanceTypes:     []*string{common.StringPtr(request.Pool.InstanceType)},
 		SecurityGroupIds:  stringsToPtrs(splitCsv(env["TENCENT_CVM_SECURITY_GROUP_IDS"])),
@@ -3931,44 +4004,29 @@ type bootstrapPackageSpec struct {
 	ExpectedNodePoolID string
 }
 
-func bootstrapPackageSpecs(env map[string]string, requireMaxReplicas bool) ([]bootstrapPackageSpec, *Response) {
-	basicInstanceType := strings.TrimSpace(env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"])
-	if basicInstanceType == "" || len(basicInstanceType) > 64 || strings.ContainsAny(basicInstanceType, " \t\r\n") {
-		return nil, &Response{Ok: false, ErrorCode: "instance_type_required", Message: "OPL_BASIC_COMPUTE_INSTANCE_TYPE must be the release-owner-approved resolved Basic instance type.", Retryable: false}
-	}
-	proInstanceType := strings.TrimSpace(env["OPL_PRO_COMPUTE_INSTANCE_TYPE"])
-	if proInstanceType == "" || len(proInstanceType) > 64 || strings.ContainsAny(proInstanceType, " \t\r\n") {
-		return nil, &Response{Ok: false, ErrorCode: "instance_type_required", Message: "OPL_PRO_COMPUTE_INSTANCE_TYPE must be the release-owner-approved resolved Pro instance type.", Retryable: false}
-	}
-	basicMax, err := bootstrapMaxReplicas(env, "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", requireMaxReplicas)
+func bootstrapPackageSpecs(env map[string]string) ([]bootstrapPackageSpec, *Response) {
+	profiles, err := configuredTencentSKUProfiles(env)
 	if err != nil {
-		return nil, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: err.Error(), Retryable: false}
+		return nil, &Response{Ok: false, ErrorCode: "tencent_provider_profile_invalid", Message: err.Error(), Retryable: false}
 	}
-	proMax, err := bootstrapMaxReplicas(env, "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS", requireMaxReplicas)
-	if err != nil {
-		return nil, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: err.Error(), Retryable: false}
+	if err := validateTencentBootstrapProfiles(profiles); err != nil {
+		return nil, &Response{Ok: false, ErrorCode: "tencent_provider_profile_invalid", Message: err.Error(), Retryable: false}
 	}
-	return []bootstrapPackageSpec{
-		{PackageID: "basic", PoolID: "pool-basic-2c4g", InstanceType: basicInstanceType, CPU: 2, MemoryGB: 4, MaxReplicas: basicMax, ExpectedNodePoolID: strings.TrimSpace(env["OPL_BASIC_COMPUTE_NODE_POOL_ID"])},
-		{PackageID: "pro", PoolID: "pool-pro-8c16g", InstanceType: proInstanceType, CPU: 8, MemoryGB: 16, MaxReplicas: proMax, ExpectedNodePoolID: strings.TrimSpace(env["OPL_PRO_COMPUTE_NODE_POOL_ID"])},
-	}, nil
-}
-
-func bootstrapMaxReplicas(env map[string]string, key string, required bool) (int64, error) {
-	raw := strings.TrimSpace(env[key])
-	if raw == "" && !required {
-		return 0, nil
+	specs := make([]bootstrapPackageSpec, 0, len(profiles))
+	for _, item := range profiles {
+		if !item.Available {
+			continue
+		}
+		specs = append(specs, bootstrapPackageSpec{
+			PackageID: item.ID, PoolID: item.Compute.ID, InstanceType: item.Compute.InstanceType,
+			CPU: item.Compute.CPU, MemoryGB: item.Compute.MemoryGB, MaxReplicas: item.MaxReplicas,
+			ExpectedNodePoolID: item.NodePoolID,
+		})
 	}
-	return requiredPositiveInt64(env, key)
-}
-
-func requiredPositiveInt64(env map[string]string, key string) (int64, error) {
-	raw := strings.TrimSpace(env[key])
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("%s must be an explicitly approved positive integer", key)
+	if len(specs) == 0 {
+		return nil, &Response{Ok: false, ErrorCode: "tencent_provider_profile_invalid", Message: "Tencent Provider Profile has no available Workspace packages.", Retryable: false}
 	}
-	return value, nil
+	return specs, nil
 }
 
 func canonicalNativeMachineType(value string) (string, bool, bool) {
@@ -4271,14 +4329,19 @@ func bootstrapInventoryMatchesByStatus(
 			matches[spec.PackageID] = pool
 		}
 	}
-	if matches["basic"] != nil && matches["pro"] != nil && stringValue(matches["basic"].NodePoolId) == stringValue(matches["pro"].NodePoolId) {
-		return nil, &Response{Ok: false, ErrorCode: "node_pool_bootstrap_inventory_conflict", Message: "Basic and Pro cannot share a NodePool.", Retryable: false}
+	matchedNodePools := map[string]string{}
+	for packageID, pool := range matches {
+		nodePoolID := strings.TrimSpace(stringValue(pool.NodePoolId))
+		if priorPackageID := matchedNodePools[nodePoolID]; nodePoolID != "" && priorPackageID != "" && priorPackageID != packageID {
+			return nil, &Response{Ok: false, ErrorCode: "node_pool_bootstrap_inventory_conflict", Message: "Provider Profile packages cannot share a NodePool.", Retryable: false}
+		}
+		matchedNodePools[nodePoolID] = packageID
 	}
 	return matches, nil
 }
 
 func (client *tencentSDKClient) MigrateWorkspaceNodePoolTaints(request Request, env map[string]string) Response {
-	specs, failure := bootstrapPackageSpecs(env, true)
+	specs, failure := bootstrapPackageSpecs(env)
 	if failure != nil {
 		return *failure
 	}
@@ -4509,11 +4572,6 @@ func (client *tencentSDKClient) verifyBootstrapSystemIdentity(pools []*tke2022.N
 }
 
 func bootstrapInventoryCapacity(request Request, env map[string]string) (int64, *Response) {
-	for _, key := range []string{"OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"} {
-		if _, err := requiredPositiveInt64(env, key); err != nil {
-			return 0, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: err.Error(), Retryable: false}
-		}
-	}
 	const immediateHeadroom int64 = 1
 	if request.RequiredCapacity > 0 && request.RequiredCapacity != immediateHeadroom {
 		return 0, &Response{Ok: false, ErrorCode: "workspace_capacity_input_mismatch", Message: "bootstrap requiredCapacity must be exactly one immediate launch headroom.", Retryable: false}
@@ -4532,14 +4590,6 @@ func withBootstrapInventoryFacts(response Response, inventory Response, required
 	response.ProtectedSystem = inventory.ProtectedSystem
 	response.NodePoolInventory = inventory.NodePoolInventory
 	return response
-}
-
-func copyStringMap(source map[string]string) map[string]string {
-	result := make(map[string]string, len(source)+2)
-	for key, value := range source {
-		result[key] = value
-	}
-	return result
 }
 
 func selectedWorkspaceSKU(inventory Response, packageID, configured string) (string, error) {
@@ -4577,7 +4627,7 @@ func existingBootstrapPackageSKU(pool *tke2022.NodePool, spec bootstrapPackageSp
 	return labelSKU
 }
 
-func preserveExistingBootstrapSKUs(pools []*tke2022.NodePool, specs []bootstrapPackageSpec, inventory Response, systemPoolID string) *Response {
+func preserveExistingBootstrapSKUs(pools []*tke2022.NodePool, specs []bootstrapPackageSpec, systemPoolID string) *Response {
 	for index := range specs {
 		var existing *tke2022.NodePool
 		for _, pool := range pools {
@@ -4597,10 +4647,9 @@ func preserveExistingBootstrapSKUs(pools []*tke2022.NodePool, specs []bootstrapP
 		if existingSKU == "" {
 			continue
 		}
-		if _, err := selectedWorkspaceSKU(inventory, specs[index].PackageID, existingSKU); err != nil {
-			return &Response{Ok: false, ErrorCode: "workspace_sku_selection_invalid", Message: err.Error(), Retryable: false, MutationCount: 0}
+		if existingSKU != specs[index].InstanceType {
+			return &Response{Ok: false, ErrorCode: "workspace_sku_profile_conflict", Message: "Existing Tencent NodePool SKU differs from the configured Provider Profile.", Retryable: false, MutationCount: 0}
 		}
-		specs[index].InstanceType = existingSKU
 	}
 	return nil
 }
@@ -4614,25 +4663,23 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 	if !inventory.Ok {
 		return inventory
 	}
-	if !request.DryRun && (strings.TrimSpace(env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"]) == "" || strings.TrimSpace(env["OPL_PRO_COMPUTE_INSTANCE_TYPE"]) == "") {
-		return Response{Ok: false, ErrorCode: "instance_type_required", Message: "Mutation requires the Basic and Pro instance types selected by the preceding read-only inventory.", Retryable: false, MutationCount: 0}
+	profiles, profileErr := configuredTencentSKUProfiles(env)
+	if profileErr != nil {
+		return Response{Ok: false, ErrorCode: "tencent_provider_profile_invalid", Message: profileErr.Error(), Retryable: false, MutationCount: 0}
 	}
-	effectiveEnv := copyStringMap(env)
-	basicSKU, err := selectedWorkspaceSKU(inventory, "basic", env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"])
-	if err != nil {
-		return Response{Ok: false, ErrorCode: "workspace_sku_selection_invalid", Message: err.Error(), Retryable: false, MutationCount: 0}
+	for _, item := range profiles {
+		if !item.Available {
+			continue
+		}
+		if _, err := selectedWorkspaceSKU(inventory, item.ID, item.Compute.InstanceType); err != nil {
+			return Response{Ok: false, ErrorCode: "workspace_sku_selection_invalid", Message: err.Error(), Retryable: false, MutationCount: 0}
+		}
 	}
-	proSKU, err := selectedWorkspaceSKU(inventory, "pro", env["OPL_PRO_COMPUTE_INSTANCE_TYPE"])
-	if err != nil {
-		return Response{Ok: false, ErrorCode: "workspace_sku_selection_invalid", Message: err.Error(), Retryable: false, MutationCount: 0}
-	}
-	effectiveEnv["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = basicSKU
-	effectiveEnv["OPL_PRO_COMPUTE_INSTANCE_TYPE"] = proSKU
-	specs, failure := bootstrapPackageSpecs(effectiveEnv, true)
+	specs, failure := bootstrapPackageSpecs(env)
 	if failure != nil {
 		return *failure
 	}
-	if failure = validateBootstrapSystemConfig(effectiveEnv, specs); failure != nil {
+	if failure = validateBootstrapSystemConfig(env, specs); failure != nil {
 		return *failure
 	}
 	pools, err := client.bootstrapNodePoolInventory()
@@ -4640,16 +4687,16 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 		return Response{Ok: false, ErrorCode: "node_pool_bootstrap_inventory_unavailable", Message: "Tencent NodePool inventory is unavailable.", Retryable: false}
 	}
 	inventory.NodePoolInventory = bootstrapNodePoolIDs(pools)
-	if failure = preserveExistingBootstrapSKUs(pools, specs, inventory, strings.TrimSpace(effectiveEnv["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"])); failure != nil {
+	if failure = preserveExistingBootstrapSKUs(pools, specs, strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"])); failure != nil {
 		failure.NodePoolInventory = inventory.NodePoolInventory
 		return *failure
 	}
-	matches, failure := bootstrapInventoryMatches(pools, effectiveEnv, specs)
+	matches, failure := bootstrapInventoryMatches(pools, env, specs)
 	if failure != nil {
 		failure.NodePoolInventory = inventory.NodePoolInventory
 		return *failure
 	}
-	protectedSystem, err := client.verifyBootstrapSystemIdentity(pools, effectiveEnv)
+	protectedSystem, err := client.verifyBootstrapSystemIdentity(pools, env)
 	if err != nil {
 		return Response{Ok: false, ErrorCode: "protected_system_identity_mismatch", Message: "Protected system identity is unavailable or inconsistent.", ProtectedSystem: protectedSystem, NodePoolInventory: inventory.NodePoolInventory, MutationCount: 0, Retryable: false}
 	}
@@ -4659,16 +4706,9 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 	for _, spec := range specs {
 		result := NodePoolBootstrapResult{
 			PackageID: spec.PackageID, PoolID: spec.PoolID, InstanceType: spec.InstanceType, CPU: spec.CPU, MemoryGB: spec.MemoryGB, MaxReplicas: spec.MaxReplicas,
-			MaxReplicasSource: "not_configured", MaxReplicasDecision: "release_owner_approval_required",
+			MaxReplicasSource: "provider_profile", MaxReplicasDecision: "deployment_profile_approved",
 			MaxReplicasConstraint:     "positive_integer_subject_to_current_tencent_account_region_quota",
-			MaxReplicasRecommendation: "release_owner_selects_after_inventory_and_quota_review",
-		}
-		if spec.MaxReplicas > 0 {
-			result.MaxReplicasSource = "workflow_input"
-			if !request.DryRun {
-				result.MaxReplicasSource = "release_owner_approved_input"
-				result.MaxReplicasDecision = "approved_for_mutation"
-			}
+			MaxReplicasRecommendation: "deployment_owner_updates_provider_profile_after_inventory_and_quota_review",
 		}
 		if pool := matches[spec.PackageID]; pool != nil {
 			result.NodePoolID = stringValue(pool.NodePoolId)
@@ -4701,7 +4741,7 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 		if results[index].Status != "missing" {
 			continue
 		}
-		createRequest, buildFailure := buildCreateNativeNodePoolRequest(Request{PackageId: spec.PackageID, Pool: ComputePoolInput{Id: spec.PoolID, InstanceType: spec.InstanceType, MaxReplicas: spec.MaxReplicas}}, effectiveEnv)
+		createRequest, buildFailure := buildCreateNativeNodePoolRequest(Request{PackageId: spec.PackageID, Pool: ComputePoolInput{Id: spec.PoolID, InstanceType: spec.InstanceType, MaxReplicas: spec.MaxReplicas}}, env)
 		if buildFailure != nil {
 			results[index].Status = "failed"
 			results[index].ErrorCode = buildFailure.ErrorCode
@@ -4717,7 +4757,7 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 			continue
 		}
 		createdID := strings.TrimSpace(stringValue(created.Response.NodePoolId))
-		if createdID == strings.TrimSpace(effectiveEnv["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"]) || (index > 0 && results[0].NodePoolID == createdID) {
+		if createdID == strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"]) || (index > 0 && results[0].NodePoolID == createdID) {
 			results[index].Status = "failed"
 			results[index].ErrorCode = "node_pool_create_identity_conflict"
 			failedCount++

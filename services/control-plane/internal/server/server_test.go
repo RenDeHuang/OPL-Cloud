@@ -335,12 +335,12 @@ func TestUnavailablePackageStopsPreviewAndLaunchBeforeExternalCalls(t *testing.T
 	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
 	session := tenantAdminSessionForTest(t, server)
 
-	preview := requestWithSession(t, server, session, http.MethodPost, "/api/pricing/preview", `{"resourceType":"workspace","packageId":"pro","sizeGb":100}`)
+	preview := requestWithSession(t, server, session, http.MethodPost, "/api/pricing/preview", `{"resourceType":"workspace","packageId":"pro"}`)
 	if preview.Code != http.StatusConflict || !strings.Contains(preview.Body.String(), `"error":"package_unavailable"`) {
 		t.Fatalf("Pro preview status=%d body=%s", preview.Code, preview.Body.String())
 	}
-	launch := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Pro","packageId":"pro","sizeGb":100,"autoRenew":false}`, "unavailable-pro")
-	if launch.Code != http.StatusConflict || !strings.Contains(launch.Body.String(), `"error":"workspace_launch_basic_only"`) {
+	launch := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Pro","packageId":"pro","autoRenew":false}`, "unavailable-pro")
+	if launch.Code != http.StatusConflict || !strings.Contains(launch.Body.String(), `"error":"package_unavailable"`) {
 		t.Fatalf("Pro launch status=%d body=%s", launch.Code, launch.Body.String())
 	}
 	for _, call := range calls {
@@ -962,14 +962,7 @@ type catalogFabricClient struct {
 
 func (catalogFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, error) {
 	return clients.FabricCatalog{WorkspacePackages: []clients.FabricWorkspacePackage{{
-		ID:               "ultra",
-		Name:             "Ultra Workspace",
-		ComputeProfileID: "pool-ultra",
-		CPU:              16,
-		MemoryGB:         32,
-		DiskGB:           200,
-		Provider:         "fabric-test",
-		Available:        true,
+		ID: "ultra", Name: "Ultra Workspace", SizeGB: 200, Available: true,
 	}}}, nil
 }
 
@@ -978,8 +971,8 @@ type unavailableProCatalogFabricClient struct{ fakeFabricClient }
 func (f unavailableProCatalogFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, error) {
 	f.record("fabric.catalog")
 	return clients.FabricCatalog{WorkspacePackages: []clients.FabricWorkspacePackage{
-		{ID: "basic", ComputeProfileID: "pool-basic", Available: true},
-		{ID: "pro", ComputeProfileID: "pool-pro", Available: false},
+		{ID: "basic", SizeGB: 10, Available: true},
+		{ID: "pro", SizeGB: 100, Available: false},
 	}}, nil
 }
 
@@ -1041,8 +1034,8 @@ func (f *fakeFabricClient) record(call string) {
 func (f *fakeFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, error) {
 	f.record("fabric.catalog")
 	return clients.FabricCatalog{WorkspacePackages: []clients.FabricWorkspacePackage{
-		{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "pool-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "fabric", Available: true},
-		{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "pool-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "fabric", Available: true},
+		{ID: "basic", Name: "Basic Workspace", SizeGB: 10, Available: true},
+		{ID: "pro", Name: "Pro Workspace", SizeGB: 100, Available: true},
 	}}, nil
 }
 
@@ -1479,7 +1472,7 @@ func TestReconciliationGuardBlocksNewResourceProvisioning(t *testing.T) {
 		t.Fatalf("state missing blocking reconciliation guard: %#v", guard)
 	}
 
-	launchRec := requestWithSession(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Blocked","packageId":"basic","sizeGb":10,"autoRenew":false}`)
+	launchRec := requestWithSession(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Blocked","packageId":"basic","autoRenew":false}`)
 	if launchRec.Code != http.StatusConflict {
 		t.Fatalf("launch status = %d, want 409: %s", launchRec.Code, launchRec.Body.String())
 	}
@@ -1516,7 +1509,7 @@ func TestProtectedWriteRejectsOversizedJSONBody(t *testing.T) {
 		t.Run(contentType, func(t *testing.T) {
 			server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 			session := tenantAdminSessionForTest(t, server)
-			body := `{"name":"` + strings.Repeat("x", int(maxJSONBodyBytes)+1) + `","packageId":"basic","sizeGb":10,"autoRenew":false}`
+			body := `{"name":"` + strings.Repeat("x", int(maxJSONBodyBytes)+1) + `","packageId":"basic","autoRenew":false}`
 			req := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", bytes.NewBufferString(body))
 			req.Header.Set("Content-Type", contentType)
 			req.Header.Set("Idempotency-Key", "oversized-body")
@@ -1592,7 +1585,7 @@ func TestProtectedAPIRoutesRequireSessionCSRFAndAdminRole(t *testing.T) {
 	t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret")
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 
-	postWithoutSession := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", bytes.NewBufferString(`{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`))
+	postWithoutSession := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", bytes.NewBufferString(`{"name":"Alpha","packageId":"basic","autoRenew":false}`))
 	postWithoutSession.Header.Set("Content-Type", "application/json")
 	postWithoutSession.Header.Set("Idempotency-Key", "compute-no-session")
 	postWithoutSessionRec := httptest.NewRecorder()
@@ -1602,7 +1595,7 @@ func TestProtectedAPIRoutesRequireSessionCSRFAndAdminRole(t *testing.T) {
 	}
 
 	admin := tenantAdminSessionForTest(t, server)
-	postWithoutCSRF := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", bytes.NewBufferString(`{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`))
+	postWithoutCSRF := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", bytes.NewBufferString(`{"name":"Alpha","packageId":"basic","autoRenew":false}`))
 	postWithoutCSRF.Header.Set("Content-Type", "application/json")
 	postWithoutCSRF.Header.Set("Idempotency-Key", "compute-no-csrf")
 	addSessionCookies(postWithoutCSRF, admin)
@@ -1623,7 +1616,7 @@ func TestProtectedAPIRoutesRequireSessionCSRFAndAdminRole(t *testing.T) {
 		t.Fatalf("admin route as owner status = %d, want 403: %s", adminReqRec.Code, adminReqRec.Body.String())
 	}
 
-	allowed := requestWithSession(t, server, admin, http.MethodPost, "/api/pricing/preview", `{"resourceType":"workspace","packageId":"basic","sizeGb":10}`)
+	allowed := requestWithSession(t, server, admin, http.MethodPost, "/api/pricing/preview", `{"resourceType":"workspace","packageId":"basic"}`)
 	if allowed.Code != http.StatusOK {
 		t.Fatalf("admin csrf request did not reach protected route: status=%d body=%s", allowed.Code, allowed.Body.String())
 	}
@@ -2037,7 +2030,7 @@ func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
 		{http.MethodGet, "/api/support/tickets", ""},
 		{http.MethodPost, "/api/auth/logout", `{}`},
 		{http.MethodPost, "/api/billing/reconciliation", `{"report":{"id":"recon-test","generatedAt":"2026-07-06T00:00:00Z"}}`},
-		{http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`},
+		{http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","autoRenew":false}`},
 	}
 
 	for _, tc := range cases {

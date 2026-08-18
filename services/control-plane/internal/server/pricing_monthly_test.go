@@ -21,8 +21,8 @@ func customerPricingPreview(t *testing.T, input map[string]any) map[string]any {
 
 func allPricingPackagesAvailable() []any {
 	return []any{
-		map[string]any{"packageId": "basic", "available": true},
-		map[string]any{"packageId": "pro", "available": true},
+		map[string]any{"packageId": "basic", "name": "Basic Workspace", "sizeGb": 10, "available": true},
+		map[string]any{"packageId": "pro", "name": "Pro Workspace", "sizeGb": 100, "available": true},
 	}
 }
 
@@ -58,19 +58,18 @@ func TestMonthlyPricingCatalogUsesFixedPilotUSDPrices(t *testing.T) {
 	if len(packages) != 2 {
 		t.Fatalf("packages = %#v", packages)
 	}
-	assertCharge := func(index int, packageID string, usdMicros int64) {
+	assertPackage := func(index int, packageID string) {
 		t.Helper()
 		row, _ := packages[index].(map[string]any)
-		price, _ := row["price"].(map[string]any)
-		if row["id"] != packageID || row["available"] != true || price["priceVersion"] != pilotPriceVersion || price["currency"] != "USD" || price["chargeUsdMicros"] != usdMicros {
-			t.Fatalf("%s price = %#v", packageID, row)
+		if row["id"] != packageID || row["available"] != true {
+			t.Fatalf("%s package = %#v", packageID, row)
 		}
-		if _, ok := price["monthlyPriceCnyCents"]; ok {
-			t.Fatalf("internal CNY cost leaked to %s: %#v", packageID, row)
+		if len(row) != 3 || row["name"] == "" {
+			t.Fatalf("%s Console package projection = %#v, want id/name/available only", packageID, row)
 		}
 	}
-	assertCharge(0, "basic", 50_000_000)
-	assertCharge(1, "pro", 214_280_000)
+	assertPackage(0, "basic")
+	assertPackage(1, "pro")
 	storagePrice := mapField(catalog, "storagePer10GbMonthly")
 	if storagePrice["priceVersion"] != pilotPriceVersion || storagePrice["currency"] != "USD" || storagePrice["usdMicros"] != int64(2_580_000) {
 		t.Fatalf("default storage price = %#v", storagePrice)
@@ -79,8 +78,8 @@ func TestMonthlyPricingCatalogUsesFixedPilotUSDPrices(t *testing.T) {
 		t.Fatalf("internal CNY cost leaked to storage price: %#v", storagePrice)
 	}
 
-	statePackages, _ := newControlPlaneAppEmpty().state("", nil)["packages"].([]any)
-	if len(statePackages) != 2 || mapField(statePackages[0].(map[string]any), "price")["chargeUsdMicros"] != int64(50_000_000) || mapField(statePackages[1].(map[string]any), "price")["chargeUsdMicros"] != int64(214_280_000) {
+	statePackages, _ := newControlPlaneAppEmpty().state("", allPricingPackagesAvailable())["packages"].([]any)
+	if len(statePackages) != 2 || len(statePackages[0].(map[string]any)) != 3 || len(statePackages[1].(map[string]any)) != 3 {
 		t.Fatalf("state packages = %#v", statePackages)
 	}
 }
@@ -116,7 +115,7 @@ func TestWorkspacePricingPreviewAllowsOnlyFrozenPackageStoragePairs(t *testing.T
 		{packageID: "pro", name: "Pro", sizeGB: 100, compute: 214_280_000, storage: 25_800_000, sum: 240_080_000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			preview := customerPricingPreview(t, map[string]any{"resourceType": "workspace", "packageId": tc.packageID, "sizeGb": tc.sizeGB})
+			preview := customerPricingPreview(t, map[string]any{"resourceType": "workspace", "packageId": tc.packageID})
 			if preview["priceVersion"] != pilotPriceVersion || preview["currency"] != "USD" || preview["totalChargeUsdMicros"] != tc.sum {
 				t.Fatalf("workspace preview = %#v", preview)
 			}
@@ -129,11 +128,11 @@ func TestWorkspacePricingPreviewAllowsOnlyFrozenPackageStoragePairs(t *testing.T
 	}
 
 	for _, input := range []map[string]any{
-		{"resourceType": "workspace", "packageId": "basic", "sizeGb": 100},
-		{"resourceType": "workspace", "packageId": "pro", "sizeGb": 10},
+		{"resourceType": "workspace", "packageId": "basic", "sizeGb": 10},
+		{"resourceType": "workspace", "packageId": "pro", "sizeGb": 100},
 	} {
 		if _, err := newControlPlaneAppEmpty().pricingPreviewResponse(context.Background(), input, allPricingPackagesAvailable()); !errors.Is(err, errInvalidPricingInput) {
-			t.Fatalf("cross-package input %#v error = %v", input, err)
+			t.Fatalf("client infrastructure input %#v error = %v", input, err)
 		}
 	}
 }
@@ -158,7 +157,7 @@ func TestPricingPreviewHTTPRequiresCanonicalFields(t *testing.T) {
 		"storage string size":           `{"resourceType":"storage","packageId":"basic","sizeGb":"10"}`,
 		"storage fractional size":       `{"resourceType":"storage","packageId":"basic","sizeGb":10.5}`,
 		"storage legacy sizeGB alias":   `{"resourceType":"storage","packageId":"basic","sizeGB":10}`,
-		"workspace missing size":        `{"resourceType":"workspace","packageId":"basic"}`,
+		"workspace client size":         `{"resourceType":"workspace","packageId":"basic","sizeGb":10}`,
 		"workspace null size":           `{"resourceType":"workspace","packageId":"basic","sizeGb":null}`,
 		"workspace string size":         `{"resourceType":"workspace","packageId":"basic","sizeGb":"10"}`,
 		"workspace fractional size":     `{"resourceType":"workspace","packageId":"basic","sizeGb":10.5}`,
@@ -174,8 +173,8 @@ func TestPricingPreviewHTTPRequiresCanonicalFields(t *testing.T) {
 	for _, body := range []string{
 		`{"resourceType":"compute","packageId":"basic"}`,
 		`{"resourceType":"storage","packageId":"basic","sizeGb":10}`,
-		`{"resourceType":"workspace","packageId":"basic","sizeGb":10}`,
-		`{"resourceType":"workspace","packageId":"pro","sizeGb":100}`,
+		`{"resourceType":"workspace","packageId":"basic"}`,
+		`{"resourceType":"workspace","packageId":"pro"}`,
 	} {
 		response := requestWithSession(t, server, session, http.MethodPost, "/api/pricing/preview", body)
 		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"priceVersion":"pilot-usd-2026-07-v1"`) {

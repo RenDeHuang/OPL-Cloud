@@ -156,8 +156,9 @@ func decodeLocalDockerProviderProfile(raw []byte) (localDockerProviderProfile, m
 	}
 	plans := make(map[string]localDockerPackageProfile, len(profile.Packages))
 	for index, item := range profile.Packages {
-		if strings.TrimSpace(item.ID) == "" || item.ID != strings.TrimSpace(item.ID) || strings.TrimSpace(item.Name) == "" || item.Name != strings.TrimSpace(item.Name) ||
-			item.Compute.ID == "" || item.Compute.Server == "" || item.Compute.InstanceType == "" || item.Compute.CPU <= 0 || item.Compute.MemoryGB <= 0 ||
+		item.ID, item.Name = strings.TrimSpace(item.ID), strings.TrimSpace(item.Name)
+		item.Compute.ID, item.Compute.Server, item.Compute.InstanceType = strings.TrimSpace(item.Compute.ID), strings.TrimSpace(item.Compute.Server), strings.TrimSpace(item.Compute.InstanceType)
+		if item.ID == "" || item.Name == "" || item.Compute.ID == "" || item.Compute.Server == "" || item.Compute.InstanceType == "" || item.Compute.CPU <= 0 || item.Compute.MemoryGB <= 0 ||
 			item.Storage.SizeGB < 10 || item.Storage.SizeGB%10 != 0 || item.Storage.QuotaPolicy != "linux-project" || item.Compute.DiskGB != 0 && item.Compute.DiskGB != item.Storage.SizeGB {
 			return localDockerProviderProfile{}, nil, fmt.Errorf("local_docker_provider_profile_invalid")
 		}
@@ -290,6 +291,13 @@ func (*LocalDockerProvider) ValidateComputeAllocation(allocation ComputeAllocati
 }
 
 func (p *LocalDockerProvider) MonthlyPreflight(ctx context.Context, input MonthlyPreflightInput) (MonthlyPreflight, error) {
+	if p == nil || p.profileErr != nil {
+		return MonthlyPreflight{}, ErrProviderPlanUnavailable
+	}
+	_, ok := p.localDockerPackagePlan(input.PackageID)
+	if !ok {
+		return MonthlyPreflight{}, ErrProviderPlanUnavailable
+	}
 	if _, err := p.runner.Run(ctx, nil, "info", "--format", "{{.ServerVersion}}"); err != nil {
 		return MonthlyPreflight{}, err
 	}

@@ -31,7 +31,10 @@ type WorkspaceLaunchPreflight struct {
 	LaunchOperationID  string `json:"launchOperationId"`
 	RequestHash        string `json:"requestHash"`
 	ProviderProfileRef string `json:"providerProfileRef"`
-	BindingRef         string `json:"bindingRef"`
+	// BindingRef is retained as an internal Go name while the wire contract
+	// uses the provider-specific identity explicitly.
+	BindingRef string `json:"providerBindingRef"`
+	SpecDigest string `json:"specDigest"`
 }
 
 type WorkspaceLaunchStageBinding struct {
@@ -76,7 +79,8 @@ type WorkspaceLaunchGatewayCredential struct {
 type WorkspaceLaunchStageInput struct {
 	Binding              WorkspaceLaunchStageBinding       `json:"binding"`
 	ProviderProfileRef   string                            `json:"providerProfileRef"`
-	PreflightBindingRef  string                            `json:"preflightBindingRef"`
+	PreflightBindingRef  string                            `json:"providerBindingRef"`
+	SpecDigest           string                            `json:"specDigest"`
 	PackageID            string                            `json:"packageId"`
 	SizeGB               int                               `json:"sizeGb"`
 	WorkspaceImageDigest string                            `json:"workspaceImageDigest"`

@@ -258,8 +258,6 @@ function PlanOption({ controller, plan }: { controller: ConsoleController; plan:
   return (
     <RadioGroup.Item block className={`workspace-plan-option ${selected ? "selected" : ""} ${plan.available ? "" : "unavailable"}`} disabled={!plan.available} value={plan.id}>
       <span className="workspace-plan-option__identity"><span><strong>{plan.name}</strong><Badge color={plan.available ? "success" : "secondary"}>{plan.available ? "可售" : "暂不可用"}</Badge></span></span>
-      <span className="workspace-plan-option__fact"><strong>{plan.cpu} vCPU / {plan.memoryGb} GB</strong><small>计算规格</small></span>
-      <span className="workspace-plan-option__fact"><strong>{plan.diskGb} GB 持久存储</strong><small>存储</small></span>
       <span className="workspace-plan-option__fact workspace-plan-option__component"><strong>{preview?.compute ? formatUsdMicros(preview.compute.chargeUsdMicros) : unavailablePrice}</strong><small>计算</small></span>
       <span className="workspace-plan-option__fact workspace-plan-option__component"><strong>{preview?.storage ? formatUsdMicros(preview.storage.chargeUsdMicros) : unavailablePrice}</strong><small>存储</small></span>
       <span className="workspace-plan-option__fact workspace-plan-option__total"><strong>{preview ? formatUsdMicros(preview.totalChargeUsdMicros) : unavailablePrice}</strong><small>{preview ? billingUnitLabel(preview.billingUnit) : "月度总额"}</small></span>
@@ -381,8 +379,6 @@ function WorkspaceLaunchConfirm({ controller }: { controller: ConsoleController 
         <dl className="launch-confirm-list">
           <div><dt>Workspace 名称</dt><dd>{controller.launchName.trim()}</dd></div>
           <div><dt>套餐</dt><dd>{plan.name}</dd></div>
-          <div><dt>计算规格</dt><dd>{plan.cpu} vCPU / {plan.memoryGb} GB</dd></div>
-          <div><dt>持久存储</dt><dd>{plan.diskGb} GB</dd></div>
           <div><dt>价格版本</dt><dd>{preview.priceVersion}</dd></div>
           <div><dt>计费周期</dt><dd>{billingUnitLabel(preview.billingUnit)}</dd></div>
         </dl>

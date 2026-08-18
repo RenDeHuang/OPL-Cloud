@@ -145,7 +145,7 @@ function mutationError(error: unknown) {
 }
 
 function sameLaunchRequest(left: WorkspaceLaunchRequest, right: WorkspaceLaunchRequest) {
-  return left.name === right.name && left.packageId === right.packageId && left.sizeGb === right.sizeGb && left.autoRenew === right.autoRenew;
+  return left.name === right.name && left.packageId === right.packageId && left.autoRenew === right.autoRenew;
 }
 
 function walletRecoveryIdempotencyKey(operationId: string) {
@@ -417,7 +417,7 @@ export function useConsoleController() {
         if (firstAvailablePlan) setLaunchPlan(firstAvailablePlan.id);
       }
       const entries = await Promise.all(catalog.packages.filter((plan) => plan.available).map(async (plan) => {
-        const preview = await previewPricing({ resourceType: "workspace", packageId: plan.id, sizeGb: plan.diskGb }, activeSession.csrfToken);
+        const preview = await previewPricing({ resourceType: "workspace", packageId: plan.id }, activeSession.csrfToken);
         return [plan.id, preview] as const;
       }));
       if (!isRequestCurrent(generation, activeSession.user.id)) return;
@@ -872,7 +872,7 @@ export function useConsoleController() {
   const submitWorkspaceLaunch = async () => {
     if (!session || commandBusy || launchStep !== "confirm" || !launchConfirmed || !selectedPlan || selectedPrice === null || balanceSufficient !== true || !launchName.trim()) return;
     const requestStillCurrent = currentMutationRequest();
-    const input: WorkspaceLaunchRequest = { name: launchName.trim(), packageId: selectedPlan.id, sizeGb: selectedPlan.id === "basic" ? 10 : 100, autoRenew: false };
+    const input: WorkspaceLaunchRequest = { name: launchName.trim(), packageId: selectedPlan.id, autoRenew: false };
     if (!workspaceLaunchIntent.current || !sameLaunchRequest(workspaceLaunchIntent.current.input, input)) {
       workspaceLaunchIntent.current = { input, idempotencyKey: workspaceLaunchIdempotencyKey() };
     }

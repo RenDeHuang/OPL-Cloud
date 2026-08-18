@@ -26,7 +26,7 @@ func newTencentWorkspaceLaunchService(t *testing.T) (*Service, *MemoryOperationS
 		},
 		ProviderProfileRef: "tencent-tke",
 	}
-	admission.CanonicalProviderPlan = json.RawMessage(`{"packageId":"basic","providerProfileRef":"tencent-tke","schemaVersion":1,"spec":{"compute":{"cpu":2,"memoryGb":4},"storage":{"sizeGb":10}}}`)
+	admission.CanonicalProviderPlan = json.RawMessage(`{"packageId":"basic","providerProfileRef":"tencent-tke","schemaVersion":1,"spec":{"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"},"compute":{"cpu":2,"diskGb":10,"id":"pool-basic-2c4g","instanceType":"SA5.MEDIUM4","memoryGb":4,"server":"2c4g"},"maxReplicas":20,"nodePoolId":"np-basic","packageId":"basic","storage":{"diskType":"CLOUD_BSSD","sizeGb":10},"zone":"ap-guangzhou-3"}}`)
 	admission.SpecDigest = providerPlanDigest(admission.CanonicalProviderPlan)
 	admission.ProviderBindingRef = workspaceLaunchPreflightBindingRef(admission)
 	if err := service.persistWorkspaceLaunchPreflight(context.Background(), admission); err != nil {

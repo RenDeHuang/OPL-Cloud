@@ -273,7 +273,7 @@ func TestReconciliationBlockedCustomerMutationsDoNotLeakGlobalProjection(t *test
 		t.Fatal(err)
 	}
 	member := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	rec := requestWithSession(t, server, member, http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`)
+	rec := requestWithSession(t, server, member, http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","autoRenew":false}`)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"error":"billing_reconciliation_blocked"`) {
 		t.Fatalf("blocked launch status=%d body=%s", rec.Code, rec.Body.String())
 	}

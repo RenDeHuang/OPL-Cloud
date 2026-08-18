@@ -37,10 +37,6 @@ type pricingPackageData struct {
 	ID                   string
 	Name                 string
 	Available            bool
-	CPU                  float64
-	MemoryGB             float64
-	DiskGB               float64
-	Server               string
 	MonthlyPriceCNYCents int64
 	ChargeUSDMicros      int64
 }
@@ -50,8 +46,8 @@ func defaultPricingCatalog() pricingCatalogData {
 		Version: pricingCatalogVersion, Currency: pricingCurrency, WalletCurrency: pricingWalletCurrency,
 		BillingUnit: pricingBillingUnit,
 		Packages: []pricingPackageData{
-			{ID: "basic", Name: "Basic", Available: true, CPU: 2, MemoryGB: 4, DiskGB: 10, Server: "2c4g", MonthlyPriceCNYCents: 35000, ChargeUSDMicros: 50000000},
-			{ID: "pro", Name: "Pro", Available: true, CPU: 8, MemoryGB: 16, DiskGB: 100, Server: "8c16g", MonthlyPriceCNYCents: 150000, ChargeUSDMicros: 214280000},
+			{ID: "basic", Name: "Basic", Available: true, MonthlyPriceCNYCents: 35000, ChargeUSDMicros: 50000000},
+			{ID: "pro", Name: "Pro", Available: true, MonthlyPriceCNYCents: 150000, ChargeUSDMicros: 214280000},
 		},
 	}
 }
@@ -90,9 +86,30 @@ func (app *controlPlaneServer) pricingPreviewResponse(_ context.Context, input m
 	}
 	switch resourceType {
 	case "compute":
+		if _, available := providerPackageAvailable(computePools, packageID); !available {
+			return nil, errPackageUnavailable
+		}
 	case "storage", "workspace":
-		if _, validSize := positiveIntegerField(input, "sizeGb"); !validSize {
-			return nil, errInvalidPricingInput
+		if resourceType == "workspace" {
+			if _, supplied := input["sizeGb"]; supplied {
+				return nil, errInvalidPricingInput
+			}
+			if _, supplied := input["sizeGB"]; supplied {
+				return nil, errInvalidPricingInput
+			}
+			sizeGB, available := providerPackageStorageGB(computePools, packageID)
+			if !available {
+				return nil, errPackageUnavailable
+			}
+			input = cloneMap(input)
+			input["sizeGb"] = sizeGB
+		} else {
+			if _, available := providerPackageAvailable(computePools, packageID); !available {
+				return nil, errPackageUnavailable
+			}
+			if _, validSize := positiveIntegerField(input, "sizeGb"); !validSize {
+				return nil, errInvalidPricingInput
+			}
 		}
 	default:
 		return nil, errInvalidPricingInput
@@ -100,12 +117,6 @@ func (app *controlPlaneServer) pricingPreviewResponse(_ context.Context, input m
 	preview, err := pricingPreviewResponse(input)
 	if err != nil {
 		return nil, err
-	}
-	for _, raw := range packageRowsForComputePools(defaultPricingCatalog(), computePools) {
-		plan := raw.(map[string]any)
-		if stringValue(plan["id"]) == packageID && plan["available"] != true {
-			return nil, errPackageUnavailable
-		}
 	}
 	return app.applyResourceBillingQuote(customerPricingPreviewDTO(preview)), nil
 }
@@ -175,7 +186,7 @@ func workspacePricingPreview(catalog pricingCatalogData, input map[string]any) (
 	packageID, validPackage := input["packageId"].(string)
 	packageID = strings.TrimSpace(packageID)
 	sizeGB, validSize := positiveIntegerField(input, "sizeGb")
-	if !validPackage || packageID == "" || !validSize || packageID == "basic" && sizeGB != 10 || packageID == "pro" && sizeGB != 100 {
+	if !validPackage || packageID == "" || !validSize {
 		return nil, fmt.Errorf("%w: invalid workspace package or storage size", errInvalidPricingInput)
 	}
 	computeInput := cloneMap(input)
@@ -217,9 +228,7 @@ func packageRows(catalog pricingCatalogData) []any {
 	rows := make([]any, 0, len(catalog.Packages))
 	for _, plan := range catalog.Packages {
 		rows = append(rows, map[string]any{
-			"id": plan.ID, "name": plan.Name, "available": plan.Available, "cpu": plan.CPU,
-			"memoryGb": plan.MemoryGB, "diskGb": plan.DiskGB, "server": plan.Server,
-			"price": map[string]any{"priceVersion": catalog.Version, "currency": catalog.Currency, "displayCurrency": catalog.Currency, "chargeUsdMicros": plan.ChargeUSDMicros},
+			"id": plan.ID, "name": plan.Name, "available": plan.Available,
 		})
 	}
 	return rows
@@ -227,17 +236,56 @@ func packageRows(catalog pricingCatalogData) []any {
 
 func packageRowsForComputePools(catalog pricingCatalogData, computePools []any) []any {
 	available := map[string]bool{}
+	names := map[string]string{}
 	for _, raw := range computePools {
 		pool, _ := raw.(map[string]any)
 		packageID := stringValue(pool["packageId"])
+		if packageID == "" {
+			continue
+		}
 		available[packageID] = available[packageID] || pool["available"] == true
+		if name := strings.TrimSpace(stringValue(pool["name"])); name != "" {
+			names[packageID] = name
+		}
 	}
 	rows := packageRows(catalog)
 	for _, raw := range rows {
 		row := raw.(map[string]any)
+		if name := names[stringValue(row["id"])]; name != "" {
+			row["name"] = name
+		}
 		row["available"] = row["available"] == true && available[stringValue(row["id"])]
 	}
 	return rows
+}
+
+func providerPackageAvailable(computePools []any, packageID string) (bool, bool) {
+	found, available := false, false
+	for _, raw := range computePools {
+		pool, _ := raw.(map[string]any)
+		if stringValue(pool["packageId"]) != packageID {
+			continue
+		}
+		found = true
+		available = available || pool["available"] == true
+	}
+	return found, available
+}
+
+func providerPackageStorageGB(computePools []any, packageID string) (int, bool) {
+	found, available, sizeGB := false, false, 0
+	for _, raw := range computePools {
+		pool, _ := raw.(map[string]any)
+		if stringValue(pool["packageId"]) != packageID {
+			continue
+		}
+		candidate := int(numberField(pool, "sizeGb", 0))
+		if candidate <= 0 || float64(candidate) != numberField(pool, "sizeGb", 0) || found && sizeGB != candidate {
+			return 0, false
+		}
+		found, available, sizeGB = true, available || pool["available"] == true, candidate
+	}
+	return sizeGB, found && available
 }
 
 func packageByIDFromCatalog(catalog pricingCatalogData, packageID string) (pricingPackageData, bool) {

@@ -81,11 +81,11 @@ func preserveNormalLaunchMutationBudget(next, current map[string]any) map[string
 	return preserveLaunchStageBinding(next, current)
 }
 func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocation, error) {
-	if input.PackageID != "basic" && input.PackageID != "pro" {
+	if strings.TrimSpace(input.PackageID) == "" || input.PackageID != strings.TrimSpace(input.PackageID) {
 		return ComputeAllocation{}, ErrUnsupportedComputePackage
 	}
-	if strings.TrimSpace(input.NodePoolID) == "" {
-		input.NodePoolID = strings.TrimSpace(s.provider.Descriptor().DefaultComputePoolIDs[input.PackageID])
+	if _, ok := providerPlan(s.provider, input.PackageID); !ok {
+		return ComputeAllocation{}, ErrUnsupportedComputePackage
 	}
 	if input.NodePoolID == "" {
 		return ComputeAllocation{}, fmt.Errorf("compute_node_pool_id_required")
@@ -101,7 +101,7 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 		ID:                id,
 		AccountID:         input.AccountID,
 		WorkspaceID:       input.WorkspaceID,
-		PackageID:         firstNonEmpty(input.PackageID, "basic"),
+		PackageID:         input.PackageID,
 		NodePoolID:        strings.TrimSpace(input.NodePoolID),
 		Status:            "provisioning",
 		Provider:          s.provider.Descriptor().Name,
@@ -328,8 +328,14 @@ func (s *Service) finishCreateComputeAllocationLegacy(operation FabricOperation,
 }
 
 func validateComputeAllocationPreparation(prepared ComputeAllocationPreparation, allocation ComputeAllocation, expected plan) error {
-	if prepared.PoolID != expected.ID || prepared.PackageID != allocation.PackageID || prepared.NodePoolID != allocation.NodePoolID ||
-		prepared.InstanceType != expected.InstanceType || prepared.MaxReplicas <= 0 || prepared.BaselineReplicas < 0 || prepared.TargetReplicas != prepared.BaselineReplicas+1 || prepared.TargetReplicas > prepared.MaxReplicas ||
+	if prepared.PoolID != expected.ID || prepared.InstanceType != expected.InstanceType {
+		return fmt.Errorf("compute_allocation_preparation_mismatch")
+	}
+	return validatePersistedComputeAllocationPreparation(prepared, allocation)
+}
+
+func validatePersistedComputeAllocationPreparation(prepared ComputeAllocationPreparation, allocation ComputeAllocation) error {
+	if prepared.PoolID == "" || prepared.PackageID != allocation.PackageID || prepared.NodePoolID != allocation.NodePoolID || prepared.InstanceType == "" || prepared.MaxReplicas <= 0 || prepared.BaselineReplicas < 0 || prepared.TargetReplicas != prepared.BaselineReplicas+1 || prepared.TargetReplicas > prepared.MaxReplicas ||
 		int64(len(prepared.BeforeMachineNames)) != prepared.BaselineReplicas {
 		return fmt.Errorf("compute_allocation_preparation_mismatch")
 	}
@@ -617,7 +623,6 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID str
 		_ = s.recordOperation(ctx, operation, "rejected", ComputeAllocation{ID: allocationID}, err)
 		return ComputeAllocation{}, err
 	}
-	plan := packagePlan(firstNonEmpty(existing.PackageID, "basic"))
 	operation := newOperation("destroy_compute_allocation", "compute_allocation", allocationID, existing.AccountID, existing.WorkspaceID, "", hashInput(map[string]string{"id": allocationID}), time.Now().UTC())
 	allocation := existing
 	startWorker := false
@@ -655,15 +660,19 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID str
 		return allocation, err
 	}
 	if startWorker {
-		go s.finishDestroyComputeAllocation(operation, allocation, plan)
+		go s.finishDestroyComputeAllocation(operation, allocation)
 	}
 	return allocation, nil
 }
 
-func (s *Service) finishDestroyComputeAllocation(operation FabricOperation, existing ComputeAllocation, plan plan) {
+func (s *Service) finishDestroyComputeAllocation(operation FabricOperation, existing ComputeAllocation) {
 	ctx := context.Background()
 	allocation := existing
-	err := s.operations.WithPoolLock(ctx, plan.ID+":"+plan.InstanceType, func(lockCtx context.Context) error {
+	poolKey := firstNonEmpty(existing.PoolID, existing.NodePoolID)
+	if existing.InstanceType != "" {
+		poolKey += ":" + existing.InstanceType
+	}
+	err := s.operations.WithPoolLock(ctx, poolKey, func(lockCtx context.Context) error {
 		if latest, found, err := s.latestComputeDestroyOperation(lockCtx, existing.ID); err != nil {
 			return err
 		} else if found && latest.Status == "succeeded" {

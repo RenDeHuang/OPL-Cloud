@@ -1,6 +1,7 @@
 package protectedresource
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -16,8 +17,7 @@ type Config struct {
 	SystemNodeName    string
 	SystemMachineType string
 	SystemCVMID       string
-	BasicNodePoolID   string
-	ProNodePoolID     string
+	PackageNodePools  map[string]string
 }
 
 type Target struct {
@@ -30,25 +30,39 @@ type Target struct {
 
 func FromEnv() Config {
 	return FromMap(map[string]string{
-		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID": os.Getenv("OPL_SYSTEM_COMPUTE_NODE_POOL_ID"),
-		"OPL_SYSTEM_COMPUTE_MACHINE_ID":   os.Getenv("OPL_SYSTEM_COMPUTE_MACHINE_ID"),
-		"OPL_SYSTEM_COMPUTE_NODE_NAME":    os.Getenv("OPL_SYSTEM_COMPUTE_NODE_NAME"),
-		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE": os.Getenv("OPL_SYSTEM_COMPUTE_MACHINE_TYPE"),
-		"OPL_SYSTEM_COMPUTE_CVM_ID":       os.Getenv("OPL_SYSTEM_COMPUTE_CVM_ID"),
-		"OPL_BASIC_COMPUTE_NODE_POOL_ID":  os.Getenv("OPL_BASIC_COMPUTE_NODE_POOL_ID"),
-		"OPL_PRO_COMPUTE_NODE_POOL_ID":    os.Getenv("OPL_PRO_COMPUTE_NODE_POOL_ID"),
+		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID":              os.Getenv("OPL_SYSTEM_COMPUTE_NODE_POOL_ID"),
+		"OPL_SYSTEM_COMPUTE_MACHINE_ID":                os.Getenv("OPL_SYSTEM_COMPUTE_MACHINE_ID"),
+		"OPL_SYSTEM_COMPUTE_NODE_NAME":                 os.Getenv("OPL_SYSTEM_COMPUTE_NODE_NAME"),
+		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE":              os.Getenv("OPL_SYSTEM_COMPUTE_MACHINE_TYPE"),
+		"OPL_SYSTEM_COMPUTE_CVM_ID":                    os.Getenv("OPL_SYSTEM_COMPUTE_CVM_ID"),
+		"OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON": os.Getenv("OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON"),
 	})
 }
 
 func FromMap(values map[string]string) Config {
+	packagePools := map[string]string{}
+	var profile struct {
+		Packages []struct {
+			ID         string `json:"id"`
+			Available  bool   `json:"available"`
+			NodePoolID string `json:"nodePoolId"`
+		} `json:"packages"`
+	}
+	if json.Unmarshal([]byte(values["OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON"]), &profile) == nil {
+		for _, item := range profile.Packages {
+			if !item.Available {
+				continue
+			}
+			packagePools[strings.TrimSpace(item.ID)] = strings.TrimSpace(item.NodePoolID)
+		}
+	}
 	return Config{
 		SystemNodePoolID:  strings.TrimSpace(values["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"]),
 		SystemMachineID:   strings.TrimSpace(values["OPL_SYSTEM_COMPUTE_MACHINE_ID"]),
 		SystemNodeName:    strings.TrimSpace(values["OPL_SYSTEM_COMPUTE_NODE_NAME"]),
 		SystemMachineType: strings.TrimSpace(values["OPL_SYSTEM_COMPUTE_MACHINE_TYPE"]),
 		SystemCVMID:       strings.TrimSpace(values["OPL_SYSTEM_COMPUTE_CVM_ID"]),
-		BasicNodePoolID:   strings.TrimSpace(values["OPL_BASIC_COMPUTE_NODE_POOL_ID"]),
-		ProNodePoolID:     strings.TrimSpace(values["OPL_PRO_COMPUTE_NODE_POOL_ID"]),
+		PackageNodePools:  packagePools,
 	}
 }
 
@@ -58,16 +72,21 @@ func (config Config) Validate() error {
 		config.SystemMachineID,
 		config.SystemNodeName,
 		config.SystemMachineType,
-		config.BasicNodePoolID,
-		config.ProNodePoolID,
 	}
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" {
 			return ErrInvalidConfiguration
 		}
 	}
-	if config.BasicNodePoolID == config.ProNodePoolID || config.BasicNodePoolID == config.SystemNodePoolID || config.ProNodePoolID == config.SystemNodePoolID {
+	if len(config.PackageNodePools) == 0 {
 		return ErrInvalidConfiguration
+	}
+	seenPools := map[string]bool{config.SystemNodePoolID: true}
+	for packageID, nodePoolID := range config.PackageNodePools {
+		if strings.TrimSpace(packageID) == "" || strings.TrimSpace(nodePoolID) == "" || seenPools[nodePoolID] {
+			return ErrInvalidConfiguration
+		}
+		seenPools[nodePoolID] = true
 	}
 	switch {
 	case strings.EqualFold(config.SystemMachineType, "NativeCVM"):
@@ -92,13 +111,12 @@ func (config Config) Check(target Target) error {
 		(config.SystemCVMID != "" && target.CVMID == config.SystemCVMID) {
 		return ErrProtectedResource
 	}
-	switch target.PackageID {
-	case "basic":
-		if target.NodePoolID != "" && target.NodePoolID != config.BasicNodePoolID {
+	if target.PackageID != "" {
+		expectedNodePoolID, knownPackage := config.PackageNodePools[target.PackageID]
+		if !knownPackage || expectedNodePoolID == "" {
 			return ErrPackagePoolMismatch
 		}
-	case "pro":
-		if target.NodePoolID != "" && target.NodePoolID != config.ProNodePoolID {
+		if target.NodePoolID != "" && target.NodePoolID != expectedNodePoolID {
 			return ErrPackagePoolMismatch
 		}
 	}

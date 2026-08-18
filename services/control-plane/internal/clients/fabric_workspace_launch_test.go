@@ -52,6 +52,34 @@ func TestWorkspaceLaunchStageInputDoesNotProjectContinuationAuthority(t *testing
 	}
 }
 
+func TestWorkspaceLaunchProviderBindingUsesOpaqueWireFields(t *testing.T) {
+	encoded, err := json.Marshal(struct {
+		Preflight WorkspaceLaunchPreflight  `json:"preflight"`
+		Stage     WorkspaceLaunchStageInput `json:"stage"`
+	}{
+		Preflight: WorkspaceLaunchPreflight{BindingRef: "provider-binding", SpecDigest: strings.Repeat("a", 64)},
+		Stage:     WorkspaceLaunchStageInput{PreflightBindingRef: "provider-binding", SpecDigest: strings.Repeat("a", 64)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]map[string]any
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range body {
+		if value["providerBindingRef"] != "provider-binding" || value["specDigest"] != strings.Repeat("a", 64) {
+			t.Fatalf("%s wire identity=%#v", name, value)
+		}
+		if _, found := value["bindingRef"]; found {
+			t.Fatalf("%s retains bindingRef alias: %#v", name, value)
+		}
+		if _, found := value["preflightBindingRef"]; found {
+			t.Fatalf("%s retains preflightBindingRef alias: %#v", name, value)
+		}
+	}
+}
+
 func TestFabricLaunchBindingContractCarriesOpaqueProviderBinding(t *testing.T) {
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -156,7 +184,7 @@ func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T)
 		case "/fabric/workspace-launches/preflight":
 			var input WorkspaceLaunchPreflightInput
 			_ = json.NewDecoder(r.Body).Decode(&input)
-			_ = json.NewEncoder(w).Encode(WorkspaceLaunchPreflight{SchemaVersion: 1, Available: true, Reason: "none", LaunchOperationID: input.LaunchOperationID, RequestHash: input.RequestHash, ProviderProfileRef: "profile", BindingRef: "binding"})
+			_ = json.NewEncoder(w).Encode(WorkspaceLaunchPreflight{SchemaVersion: 1, Available: true, Reason: "none", LaunchOperationID: input.LaunchOperationID, RequestHash: input.RequestHash, ProviderProfileRef: "profile", BindingRef: "binding", SpecDigest: strings.Repeat("a", 64)})
 		case "/fabric/workspace-launches/stages/read", "/fabric/workspace-launches/stages/ensure":
 			var input WorkspaceLaunchStageInput
 			_ = json.NewDecoder(r.Body).Decode(&input)

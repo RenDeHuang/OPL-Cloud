@@ -290,6 +290,16 @@ when the common contract is proven by real paths. Control Plane keeps the one
 Launch business Reconciler and selected provider-profile ref; Fabric persists
 each stage-operation binding and the provider resource mapping.
 
+Both adapters resolve package identity from their deployment-owned Provider
+Profile. Tencent/TKE reads CVM instance type, TKE NodePool, zone, CBS disk and
+billing facts from that profile; Local-Docker reads CPU, memory, storage and
+quota policy from its own profile. A missing or invalid profile produces an
+empty catalog and a fail-closed launch error. Fabric never falls back to
+`basic`/`pro` resource literals. An admitted launch carries the canonical
+Provider plan and `specDigest`; replay, destroy and readback use that immutable
+binding or persisted resource facts, so later profile rotation cannot silently
+change an existing Workspace.
+
 The read-only `POST /fabric/provider-facts/batch` boundary delegates resource
 interpretation to the selected adapter. Control Plane Provider Acceptance uses
 that same provider-neutral facts shape for compute, storage, attachment, and

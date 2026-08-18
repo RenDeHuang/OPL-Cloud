@@ -18,6 +18,17 @@ func TestLocalDockerProviderRequiresDeploymentOwnedProfile(t *testing.T) {
 	if _, err := provider.Readiness(context.Background()); err == nil || err.Error() != "local_docker_provider_profile_required" {
 		t.Fatalf("missing profile readiness err=%v", err)
 	}
+	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "local"}); !errors.Is(err, ErrProviderPlanUnavailable) {
+		t.Fatalf("missing profile monthly preflight err=%v", err)
+	}
+}
+
+func TestLocalDockerMonthlyPreflightRequiresAvailableProfilePackage(t *testing.T) {
+	profile := []byte(`{"schemaVersion":1,"packages":[{"id":"basic","name":"Small Workspace","available":false,"compute":{"id":"configured-small","server":"1c2g","cpu":1,"memoryGb":2,"diskGb":10,"instanceType":"configured-1c2g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}}]}`)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{ProviderProfileJSON: profile}, &recordingDockerRunner{})
+	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "local"}); !errors.Is(err, ErrProviderPlanUnavailable) {
+		t.Fatalf("unavailable package monthly preflight err=%v", err)
+	}
 }
 
 func TestLocalDockerProviderUsesConfiguredProfileForCatalogAndPlan(t *testing.T) {

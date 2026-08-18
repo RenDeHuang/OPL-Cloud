@@ -32,15 +32,18 @@ func decodeTencentWorkspaceLaunchState(record workspaceLaunchStageRecord) (tence
 
 func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
 	input, binding := request.Input, request.Input.Binding
+	plan, planErr := decodeTencentWorkspacePlanEnvelope(request.ProviderPlan, input.PackageID, input.SizeGB)
+	if planErr != nil {
+		return WorkspaceLaunchProviderResult{}, planErr
+	}
+	ctx = withTencentWorkspacePlan(ctx, plan)
 	resources := input.Resources
 	state := tencentWorkspaceLaunchState{}
+	var err error
 	switch binding.Stage {
 	case "ensure_compute_allocation":
 		computeID := firstNonEmpty(resources.ComputeAllocationID, workspaceLaunchComputeID(binding))
-		pool, err := configuredPackageNodePool(input.PackageID)
-		if err != nil {
-			return WorkspaceLaunchProviderResult{}, err
-		}
+		pool := packageNodePoolConfig{NodePoolID: plan.NodePoolID, MaxReplicas: plan.MaxReplicas}
 		if journal := providerMutationJournalFromContext(ctx); journal != nil {
 			ownership, ownershipErr := journal.operations.MachineOwnership(ctx, computeID)
 			if ownershipErr == nil && (ownership.ResourceID != computeID || ownership.AccountID != binding.AccountID ||
@@ -73,7 +76,7 @@ func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, reques
 		if errors.Is(err, ErrComputeAllocationPending) {
 			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchPending
 		}
-		if err != nil || p.ValidateComputeAllocation(allocation, prepared) != nil {
+		if err != nil || p.ValidateComputeAllocation(allocation, prepared) != nil || (prepared.Zone != "" && allocation.Zone != prepared.Zone) {
 			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchUnavailable)
 		}
 		ownership, err := p.ensureWorkspaceLaunchComputeOwnership(ctx, allocation, prepared)
@@ -81,7 +84,7 @@ func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, reques
 			return WorkspaceLaunchProviderResult{}, err
 		}
 		allocation, err = p.DiscoverComputeAllocation(ctx, allocation, prepared)
-		if err != nil || p.ValidateComputeAllocation(allocation, prepared) != nil || !isReadyResourceStatus(allocation.Status) {
+		if err != nil || p.ValidateComputeAllocation(allocation, prepared) != nil || (prepared.Zone != "" && allocation.Zone != prepared.Zone) || !isReadyResourceStatus(allocation.Status) {
 			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchUnavailable)
 		}
 		state.Compute, state.ComputePlan, state.Ownership = &allocation, &prepared, &ownership
@@ -91,10 +94,13 @@ func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, reques
 		if err != nil || computeState.Compute == nil {
 			return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
 		}
+		if computeState.Compute.Zone != plan.Zone {
+			return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
+		}
 		storageID := firstNonEmpty(resources.StorageID, workspaceLaunchStorageID(binding))
 		volume, err := p.CreateStorageVolume(ctx, StorageVolumeInput{
 			ID: storageID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, ComputeID: computeState.Compute.ID,
-			Zone: computeState.Compute.Zone, SizeGB: input.SizeGB, IdempotencyKey: binding.IdempotencyKey, OperationID: binding.FabricOperationID,
+			Zone: computeState.Compute.Zone, SizeGB: plan.Storage.SizeGB, IdempotencyKey: binding.IdempotencyKey, OperationID: binding.FabricOperationID,
 		})
 		if err != nil {
 			return WorkspaceLaunchProviderResult{}, err
@@ -181,6 +187,11 @@ func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, reques
 }
 func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
 	input, binding := request.Input, request.Input.Binding
+	plan, planErr := decodeTencentWorkspacePlanEnvelope(request.ProviderPlan, input.PackageID, input.SizeGB)
+	if planErr != nil {
+		return WorkspaceLaunchProviderResult{}, planErr
+	}
+	ctx = withTencentWorkspacePlan(ctx, plan)
 	resources := input.Resources
 	state, stateErr := decodeTencentWorkspaceLaunchState(request.Current)
 	switch binding.Stage {
@@ -196,7 +207,7 @@ func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request 
 		if err != nil {
 			return WorkspaceLaunchProviderResult{}, err
 		}
-		if p.ValidateComputeAllocation(readback, *state.ComputePlan) != nil || !isReadyResourceStatus(readback.Status) {
+		if p.ValidateComputeAllocation(readback, *state.ComputePlan) != nil || (state.ComputePlan.Zone != "" && readback.Zone != state.ComputePlan.Zone) || !isReadyResourceStatus(readback.Status) {
 			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchPending
 		}
 		if state.Ownership == nil {
@@ -224,11 +235,14 @@ func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request 
 			}
 			state.Storage = &StorageVolume{
 				ID: workspaceLaunchStorageID(binding), OperationID: binding.IdempotencyKey, AccountID: binding.AccountID,
-				WorkspaceID: binding.WorkspaceID, Provider: p.Descriptor().Name, SizeGB: input.SizeGB, Zone: computeState.Compute.Zone,
+				WorkspaceID: binding.WorkspaceID, Provider: p.Descriptor().Name, SizeGB: plan.Storage.SizeGB, Zone: computeState.Compute.Zone, DiskType: plan.Storage.DiskType,
 			}
 		}
+		if state.Storage.Zone != plan.Zone {
+			return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
+		}
 		storageInput := StorageVolumeInput{
-			ID: state.Storage.ID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, SizeGB: input.SizeGB,
+			ID: state.Storage.ID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, SizeGB: plan.Storage.SizeGB,
 			Zone: state.Storage.Zone, IdempotencyKey: binding.IdempotencyKey, OperationID: binding.FabricOperationID,
 		}
 		readback, err := p.ReadCBSVolume(ctx, storageInput, *state.Storage)
@@ -380,10 +394,12 @@ func (p *TencentProvider) tencentWorkspaceLaunchComputeStateFromMutation(ctx con
 		return tencentWorkspaceLaunchState{}, ownershipErr
 	}
 	var mutationState tencentComputeMutationState
+	boundPlan, boundPlanErr := p.workspacePlanForContext(ctx, packageID)
 	if !decodeProviderMutationState(operation, &mutationState) || mutationState.Allocation.ID != computeID ||
 		mutationState.Allocation.AccountID != binding.AccountID || mutationState.Allocation.WorkspaceID != binding.WorkspaceID ||
 		mutationState.Allocation.PackageID != packageID || mutationState.Allocation.NodePoolID != nodePoolID ||
-		mutationState.Plan.PoolID != packagePlan(packageID).ID || mutationState.Plan.PackageID != packageID || mutationState.Plan.NodePoolID != nodePoolID {
+		boundPlanErr != nil || mutationState.Plan.PoolID != boundPlan.Compute.ID || mutationState.Plan.PackageID != packageID || mutationState.Plan.NodePoolID != nodePoolID ||
+		(mutationState.Plan.Zone != "" && mutationState.Plan.Zone != boundPlan.Zone) {
 		return tencentWorkspaceLaunchState{}, ErrLaunchStageBindingConflict
 	}
 	allocation := mutationState.Allocation

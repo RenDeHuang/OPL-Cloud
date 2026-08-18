@@ -101,7 +101,11 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 func (p *TencentProvider) CreateCBSVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
 	now := time.Now().UTC()
 	id := firstNonEmpty(input.ID, fabricID("vol", input.WorkspaceID, now))
-	diskType := firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")
+	storagePlan, planErr := p.tencentStoragePlanForContext(ctx, input)
+	if planErr != nil {
+		return StorageVolume{}, planErr
+	}
+	diskType := storagePlan.DiskType
 	tags := oplCostTags(input.AccountID, input.WorkspaceID, id, input.OperationID)
 	volume := StorageVolume{
 		ID: id, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "pending", Provider: "tencent-tke",
@@ -136,6 +140,10 @@ func (p *TencentProvider) CreateCBSVolume(ctx context.Context, input StorageVolu
 // ReadCBSVolume is intentionally Describe-only. The persisted disk identity
 // is authoritative; a response naming another disk is an identity failure.
 func (p *TencentProvider) ReadCBSVolume(ctx context.Context, input StorageVolumeInput, persisted StorageVolume) (StorageVolume, error) {
+	storagePlan, planErr := p.tencentStoragePlanForContext(ctx, input)
+	if planErr != nil {
+		return persisted, planErr
+	}
 	if persisted.ID == "" {
 		persisted.ID = input.ID
 	}
@@ -164,7 +172,7 @@ func (p *TencentProvider) ReadCBSVolume(ctx context.Context, input StorageVolume
 		if input.OperationID == "" {
 			return persisted, fmt.Errorf("storage_cbs_readback_identity_required")
 		}
-		diskType := firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")
+		diskType := storagePlan.DiskType
 		discovery, discoverErr := p.provision(ctx, provisionerRequest{
 			Action: "discover_storage_volume", AccountID: input.AccountID,
 			Tags:    oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID),
@@ -328,8 +336,15 @@ func (p *TencentProvider) ReadStorageVolume(ctx context.Context, volume StorageV
 	if volume.ID == "" || !strings.HasPrefix(volume.ProviderResourceID, "disk-") {
 		return StorageVolume{}, fmt.Errorf("storage_volume_cbs_identity_required")
 	}
+	diskType := volume.DiskType
+	if bound, ok := tencentWorkspacePlanFromContext(ctx); ok {
+		if volume.SizeGB != bound.Storage.SizeGB || volume.Zone != bound.Zone {
+			return volume, ErrLaunchStageBindingConflict
+		}
+		diskType = bound.Storage.DiskType
+	}
 	response, err := p.provision(ctx, provisionerRequest{Action: "sync_storage_volume", AccountID: volume.AccountID, Tags: volume.CostTags, Storage: provisionerStorage{
-		ID: volume.ProviderResourceID, SizeGB: uint64(volume.SizeGB), Zone: volume.Zone, DiskType: volume.DiskType, Deadline: volume.Deadline,
+		ID: volume.ProviderResourceID, SizeGB: uint64(volume.SizeGB), Zone: volume.Zone, DiskType: diskType, Deadline: volume.Deadline,
 	}})
 	if err != nil {
 		return volume, err
@@ -354,6 +369,20 @@ func (p *TencentProvider) ReadStorageVolume(ctx context.Context, volume StorageV
 		volume.Provider = "tencent-tke"
 	}
 	return volume, nil
+}
+
+func (p *TencentProvider) tencentStoragePlanForContext(ctx context.Context, input StorageVolumeInput) (tencentStoragePlan, error) {
+	if bound, ok := tencentWorkspacePlanFromContext(ctx); ok {
+		if input.SizeGB != bound.Storage.SizeGB || input.Zone != bound.Zone {
+			return tencentStoragePlan{}, ErrLaunchStageBindingConflict
+		}
+		return bound.Storage, nil
+	}
+	diskType := strings.TrimSpace(os.Getenv("TENCENT_CBS_DISK_TYPE"))
+	if diskType == "" {
+		return tencentStoragePlan{}, fmt.Errorf("tencent_storage_disk_type_required")
+	}
+	return tencentStoragePlan{SizeGB: input.SizeGB, DiskType: diskType}, nil
 }
 
 func (p *TencentProvider) ReadStorageProviderFacts(ctx context.Context, volume StorageVolume) (ProviderResourceFacts, error) {

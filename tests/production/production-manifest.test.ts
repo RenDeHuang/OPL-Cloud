@@ -11,10 +11,7 @@ const dedicatedNodePoolEnv = {
   OPL_SYSTEM_COMPUTE_NODE_NAME: { value: "10.66.0.42" },
   OPL_SYSTEM_COMPUTE_MACHINE_TYPE: { value: "NativeCVM" },
   OPL_SYSTEM_COMPUTE_CVM_ID: { value: "ins-system" },
-  OPL_BASIC_COMPUTE_NODE_POOL_ID: { value: "np-basic" },
-  OPL_PRO_COMPUTE_NODE_POOL_ID: { value: "np-pro" },
-  OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: { value: "50" },
-  OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: { value: "50" }
+  OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON: { value: '{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic","available":true,"compute":{"id":"pool-basic","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"S5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":20,"zone":"na-siliconvalley-1","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}' }
 };
 
 
@@ -35,6 +32,7 @@ test("production manifest requires deployment secret refs for every launch varia
       OPL_WORKSPACE_STORAGE_CLASS: { value: "cbs" },
       OPL_TENCENT_ZONE: { value: "na-siliconvalley-1" },
       ...dedicatedNodePoolEnv,
+      TENCENT_CBS_DISK_TYPE: { value: "CLOUD_BSSD" },
       TENCENT_DEPLOY_KUBECONFIG_REF: { secretRef: "opl-cloud/tencent-deploy-kubeconfig-ref" },
       TENCENT_DEPLOY_CLUSTER_ID: { value: "cls-123" },
       TENCENT_TCR_REGISTRY: { value: "registry.example.com" },
@@ -50,9 +48,9 @@ test("production manifest requires deployment secret refs for every launch varia
     "required_env:true",
     "secret_refs:true",
     "runtime_provider:true",
+    "tencent_provider_profile:true",
     "verification_mutation_authority:true",
-    "dedicated_node_pool_identity:true",
-    "dedicated_node_pool_capacity:true",
+    "system_compute_identity:true",
     "registry_images:true",
     "workspace_domain:true"
   ]);
@@ -75,6 +73,7 @@ test("production manifest validates Tencent TKE fields only", () => {
       OPL_WORKSPACE_STORAGE_CLASS: { value: "cbs" },
       OPL_TENCENT_ZONE: { value: "na-siliconvalley-1" },
       ...dedicatedNodePoolEnv,
+      TENCENT_CBS_DISK_TYPE: { value: "CLOUD_BSSD" },
       TENCENT_DEPLOY_KUBECONFIG_REF: { secretRef: "opl-cloud/tencent-deploy-kubeconfig-ref" },
       TENCENT_DEPLOY_CLUSTER_ID: { value: "cls-123" },
       TENCENT_TCR_REGISTRY: { value: "registry.example.com" },
@@ -90,27 +89,24 @@ test("production manifest validates Tencent TKE fields only", () => {
     "required_env:true",
     "secret_refs:true",
     "runtime_provider:true",
+    "tencent_provider_profile:true",
     "verification_mutation_authority:true",
-    "dedicated_node_pool_identity:true",
-    "dedicated_node_pool_capacity:true",
+    "system_compute_identity:true",
     "registry_images:true",
     "workspace_domain:true"
   ]);
 });
 
 
-test("production manifest rejects protected identity conflicts and implicit NodePool capacity", () => {
+test("production manifest rejects invalid system compute identity", () => {
   const manifest = {
     OPL_RUNTIME_PROVIDER: { value: "tencent-tke" },
     ...dedicatedNodePoolEnv
   };
   for (const [key, value, failedCheck] of [
-    ["OPL_SYSTEM_COMPUTE_MACHINE_TYPE", "Unknown", "dedicated_node_pool_identity"],
-    ["OPL_SYSTEM_COMPUTE_CVM_ID", "system-cvm", "dedicated_node_pool_identity"],
-    ["OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-system", "dedicated_node_pool_identity"],
-    ["OPL_PRO_COMPUTE_NODE_POOL_ID", "np-basic", "dedicated_node_pool_identity"],
-    ["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "0", "dedicated_node_pool_capacity"],
-    ["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS", "10.5", "dedicated_node_pool_capacity"]
+    ["OPL_SYSTEM_COMPUTE_NODE_POOL_ID", "pool-system", "system_compute_identity"],
+    ["OPL_SYSTEM_COMPUTE_MACHINE_TYPE", "Unknown", "system_compute_identity"],
+    ["OPL_SYSTEM_COMPUTE_CVM_ID", "system-cvm", "system_compute_identity"]
   ]) {
     const report = validateProductionManifest({ env: { ...manifest, [key]: { value } } });
     assert.ok(report.failedChecks.includes(failedCheck), `${key}:${JSON.stringify(report.checks)}`);
@@ -170,6 +166,7 @@ test("production manifest rejects empty container image tags", () => {
       OPL_WORKSPACE_STORAGE_CLASS: { value: "cbs" },
       OPL_TENCENT_ZONE: { value: "na-siliconvalley-1" },
       ...dedicatedNodePoolEnv,
+      TENCENT_CBS_DISK_TYPE: { value: "CLOUD_BSSD" },
       TENCENT_DEPLOY_KUBECONFIG_REF: { secretRef: "opl-cloud/tencent-deploy-kubeconfig-ref" },
       TENCENT_DEPLOY_CLUSTER_ID: { value: "cls-123" },
       TENCENT_TCR_REGISTRY: { value: "registry.example.com" },
@@ -203,6 +200,7 @@ test("production manifest rejects latest and every tag-only production image", (
         OPL_WORKSPACE_STORAGE_CLASS: { value: "cbs" },
         OPL_TENCENT_ZONE: { value: "na-siliconvalley-1" },
         ...dedicatedNodePoolEnv,
+        TENCENT_CBS_DISK_TYPE: { value: "CLOUD_BSSD" },
         TENCENT_DEPLOY_KUBECONFIG_REF: { secretRef: "opl-cloud/tencent-deploy-kubeconfig-ref" },
         TENCENT_DEPLOY_CLUSTER_ID: { value: "cls-123" },
         TENCENT_TCR_REGISTRY: { value: "registry.example.com" },

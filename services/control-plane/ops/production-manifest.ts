@@ -23,10 +23,8 @@ const REQUIRED_TKE_ENV = [
   "OPL_SYSTEM_COMPUTE_NODE_NAME",
   "OPL_SYSTEM_COMPUTE_MACHINE_TYPE",
   "OPL_SYSTEM_COMPUTE_CVM_ID",
-  "OPL_BASIC_COMPUTE_NODE_POOL_ID",
-  "OPL_PRO_COMPUTE_NODE_POOL_ID",
-  "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS",
-  "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS",
+  "OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON",
+  "TENCENT_CBS_DISK_TYPE",
   "TENCENT_DEPLOY_KUBECONFIG_REF",
   "TENCENT_DEPLOY_CLUSTER_ID",
   "TENCENT_TCR_REGISTRY",
@@ -93,29 +91,48 @@ function looksLikeProductionDomain(domain) {
 
 function hasDedicatedNodePoolIdentity(values) {
   const systemPool = String(values.OPL_SYSTEM_COMPUTE_NODE_POOL_ID || "").trim();
-  const basicPool = String(values.OPL_BASIC_COMPUTE_NODE_POOL_ID || "").trim();
-  const proPool = String(values.OPL_PRO_COMPUTE_NODE_POOL_ID || "").trim();
-  const pools = [systemPool, basicPool, proPool];
   const machineType = String(values.OPL_SYSTEM_COMPUTE_MACHINE_TYPE || "").trim();
   const cvmId = String(values.OPL_SYSTEM_COMPUTE_CVM_ID || "").trim();
   const cvmIdentityValid = machineType === "NativeCVM"
     ? /^ins-[A-Za-z0-9]+$/.test(cvmId)
     : (machineType === "Native" || machineType === "CXM") && cvmId === "";
-  return pools.every((value) => /^np-[A-Za-z0-9-]+$/.test(value)) &&
-    new Set(pools).size === pools.length &&
+  return /^np-[A-Za-z0-9-]+$/.test(systemPool) &&
     Boolean(String(values.OPL_SYSTEM_COMPUTE_MACHINE_ID || "").trim()) &&
     Boolean(String(values.OPL_SYSTEM_COMPUTE_NODE_NAME || "").trim()) &&
     cvmIdentityValid;
 }
 
-function isPositiveInt64(value) {
-  const normalized = String(value || "").trim();
-  if (!/^[1-9][0-9]*$/.test(normalized)) return false;
+function hasValidTencentProviderProfile(raw, systemPoolID) {
+  let profile;
   try {
-    return BigInt(normalized) <= 9223372036854775807n;
+    profile = JSON.parse(String(raw || ""));
   } catch {
     return false;
   }
+  if (!profile || profile.schemaVersion !== 1 || !Array.isArray(profile.packages) || profile.packages.length === 0) return false;
+  const packageIDs = new Set();
+  const nodePoolIDs = new Set();
+  let availableCount = 0;
+  for (const item of profile.packages) {
+    const compute = item?.compute || {};
+    const storage = item?.storage || {};
+    const billing = item?.billing || {};
+    const packageID = String(item?.id || "").trim();
+    const nodePoolID = String(item?.nodePoolId || "").trim();
+    const sizeGB = Number(storage.sizeGb);
+    if (!packageID || packageIDs.has(packageID) || !String(item?.name || "").trim() ||
+      !String(compute.id || "").trim() || !String(compute.server || "").trim() ||
+      !String(compute.instanceType || "").trim() || Number(compute.cpu) <= 0 || Number(compute.memoryGb) <= 0 ||
+      Number(compute.diskGb) !== sizeGB || !/^np-[A-Za-z0-9-]+$/.test(nodePoolID) || nodePoolID === systemPoolID ||
+      nodePoolIDs.has(nodePoolID) || !Number.isInteger(Number(item.maxReplicas)) || Number(item.maxReplicas) <= 0 ||
+      !String(item.zone || "").trim() || !Number.isInteger(sizeGB) || sizeGB < 10 || sizeGB % 10 !== 0 ||
+      !String(storage.diskType || "").trim() || billing.chargeType !== "PREPAID" || billing.periodMonths !== 1 ||
+      billing.renewFlag !== "NOTIFY_AND_MANUAL_RENEW") return false;
+    packageIDs.add(packageID);
+    nodePoolIDs.add(nodePoolID);
+    if (item.available === true) availableCount += 1;
+  }
+  return availableCount > 0;
 }
 
 export function productionManifestRequiredEnv() {
@@ -150,13 +167,9 @@ export function validateProductionManifest({ env = {} } = {}) {
     check("required_env", missingEnv.length === 0, "Every production launch variable must be declared"),
     check("secret_refs", inlineSecretEnv.length === 0, "Sensitive production values must use secretRef"),
     check("runtime_provider", provider === PROVIDERS.TENCENT_TKE, "OPL_RUNTIME_PROVIDER must be tencent-tke"),
+    check("tencent_provider_profile", hasValidTencentProviderProfile(values.OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON, values.OPL_SYSTEM_COMPUTE_NODE_POOL_ID), "Tencent Provider Profile must contain executable package and NodePool bindings"),
     check("verification_mutation_authority", !hasVerificationMutationAuthority, "Ordinary production manifests must not carry real-verification approvals or write flags"),
-    check("dedicated_node_pool_identity", hasDedicatedNodePoolIdentity(values), "System, Basic, and Pro resource identities must be explicit, valid, and distinct"),
-    check(
-      "dedicated_node_pool_capacity",
-      isPositiveInt64(values.OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS) && isPositiveInt64(values.OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS),
-      "Basic and Pro NodePool maxReplicas must be explicitly approved positive int64 values"
-    ),
+    check("system_compute_identity", hasDedicatedNodePoolIdentity(values), "System compute identity must be explicit and valid"),
     check(
       "registry_images",
       looksLikeRegistryImage({ image: values.OPL_CLOUD_IMAGE, registry: values.TENCENT_TCR_REGISTRY }) &&

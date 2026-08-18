@@ -49,7 +49,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 		api := process.login(t, fixture.ownerEmail, gatewayAccountingOwnerPassword)
 
 		launch := api.mustRequest(t, http.MethodPost, "/api/workspace-launches", map[string]any{
-			"name": "Gateway accounting success", "packageId": "basic", "sizeGb": 10, "autoRenew": false,
+			"name": "Gateway accounting success", "packageId": "basic", "autoRenew": false,
 		}, "gateway-accounting-success", http.StatusAccepted)
 		launchID := stringValue(launch["operationId"])
 		if launchID == "" {
@@ -90,7 +90,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 
 		beforeReplay := fixture.writeCounts()
 		replay := api.mustRequest(t, http.MethodPost, "/api/workspace-launches", map[string]any{
-			"name": "Gateway accounting success", "packageId": "basic", "sizeGb": 10, "autoRenew": false,
+			"name": "Gateway accounting success", "packageId": "basic", "autoRenew": false,
 		}, "gateway-accounting-success", http.StatusAccepted)
 		if stringValue(replay["operationId"]) != launchID {
 			t.Fatalf("replay operation = %#v, want %s", replay, launchID)
@@ -111,7 +111,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 		api := process.login(t, fixture.ownerEmail, gatewayAccountingOwnerPassword)
 
 		launch := api.mustRequest(t, http.MethodPost, "/api/workspace-launches", map[string]any{
-			"name": "Gateway accounting unknown", "packageId": "basic", "sizeGb": 10, "autoRenew": false,
+			"name": "Gateway accounting unknown", "packageId": "basic", "autoRenew": false,
 		}, "gateway-accounting-unknown", http.StatusAccepted)
 		launchID := stringValue(launch["operationId"])
 		operation := runGatewayAccountingLaunch(t, process, launchID, true)
@@ -123,7 +123,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 		}
 
 		replay := api.mustRequest(t, http.MethodPost, "/api/workspace-launches", map[string]any{
-			"name": "Gateway accounting unknown", "packageId": "basic", "sizeGb": 10, "autoRenew": false,
+			"name": "Gateway accounting unknown", "packageId": "basic", "autoRenew": false,
 		}, "gateway-accounting-unknown", http.StatusAccepted)
 		if stringValue(replay["operationId"]) != launchID || stringValue(replay["status"]) != "manual_review" {
 			t.Fatalf("unknown replay response = %#v", replay)
@@ -541,7 +541,7 @@ func (f *gatewayAccountingFabric) PreflightWorkspaceLaunch(_ context.Context, in
 	return clients.WorkspaceLaunchPreflight{
 		SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, Available: true, Reason: "none",
 		LaunchOperationID: input.LaunchOperationID, RequestHash: input.RequestHash,
-		ProviderProfileRef: "local-provider-profile", BindingRef: "local-preflight-" + stableID(input.LaunchOperationID)[:12],
+		ProviderProfileRef: "local-provider-profile", BindingRef: "local-preflight-" + stableID(input.LaunchOperationID)[:12], SpecDigest: strings.Repeat("a", 64),
 	}, nil
 }
 

@@ -28,16 +28,61 @@ import (
 )
 
 const (
-	defaultNamespace         = "opl-cloud"
-	gatewayService           = "opl-cloud-control-plane"
-	webuiUsername            = "opl"
-	workspaceImageRepository = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
+	defaultNamespace          = "opl-cloud"
+	gatewayService            = "opl-cloud-control-plane"
+	webuiUsername             = "opl"
+	workspaceImageRepository  = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
+	tencentProviderProfileEnv = "OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON"
 )
+
+type tencentStoragePlan struct {
+	SizeGB   int    `json:"sizeGb"`
+	DiskType string `json:"diskType"`
+}
+
+type tencentBillingPlan struct {
+	ChargeType   string `json:"chargeType"`
+	PeriodMonths int64  `json:"periodMonths"`
+	RenewFlag    string `json:"renewFlag"`
+}
+
+type tencentPackageProfile struct {
+	ID          string             `json:"id"`
+	Name        string             `json:"name"`
+	Available   bool               `json:"available"`
+	Compute     ComputePlan        `json:"compute"`
+	NodePoolID  string             `json:"nodePoolId"`
+	MaxReplicas int64              `json:"maxReplicas"`
+	Zone        string             `json:"zone"`
+	Storage     tencentStoragePlan `json:"storage"`
+	Billing     tencentBillingPlan `json:"billing"`
+}
+
+type tencentProviderProfile struct {
+	SchemaVersion int                     `json:"schemaVersion"`
+	Packages      []tencentPackageProfile `json:"packages"`
+}
+
+// tencentWorkspacePlan is the provider-owned, immutable plan used by a
+// Workspace Launch. It intentionally contains the concrete TKE/CVM/CBS facts
+// that never cross into Control Plane or Console contracts.
+type tencentWorkspacePlan struct {
+	PackageID   string             `json:"packageId"`
+	Compute     ComputePlan        `json:"compute"`
+	NodePoolID  string             `json:"nodePoolId"`
+	MaxReplicas int64              `json:"maxReplicas"`
+	Zone        string             `json:"zone"`
+	Storage     tencentStoragePlan `json:"storage"`
+	Billing     tencentBillingPlan `json:"billing"`
+}
 
 type TencentProvider struct {
 	provision       func(context.Context, provisionerRequest) (provisionerResponse, error)
 	kubectl         func(context.Context, []string, []byte) ([]byte, error)
 	convergenceWait func(context.Context, int) error
+	profile         tencentProviderProfile
+	plans           map[string]tencentPackageProfile
+	profileErr      error
 }
 
 func (p *TencentProvider) callKubectl(ctx context.Context, args []string, stdin []byte, target protectedresource.Target) ([]byte, error) {
@@ -65,35 +110,137 @@ type monthlyPreflightEvaluation struct {
 }
 
 func NewTencentProvider() *TencentProvider {
-	return &TencentProvider{provision: executeProvisioner, kubectl: executeKubectl, convergenceWait: boundedClaimReadbackWait}
+	raw := []byte(strings.TrimSpace(os.Getenv(tencentProviderProfileEnv)))
+	profile, plans, profileErr := decodeTencentProviderProfile(raw)
+	return &TencentProvider{provision: executeProvisioner, kubectl: executeKubectl, convergenceWait: boundedClaimReadbackWait, profile: profile, plans: plans, profileErr: profileErr}
 }
 
-func (*TencentProvider) Descriptor() ProviderDescriptor {
-	basic, pro := packagePlan("basic"), packagePlan("pro")
-	return ProviderDescriptor{
+func (p *TencentProvider) Descriptor() ProviderDescriptor {
+	descriptor := ProviderDescriptor{
 		Name: "tencent-tke", RequiresMonthlyPricing: true,
-		Plans: map[string]ComputePlan{"basic": basic, "pro": pro},
+		Plans: make(map[string]ComputePlan), DefaultComputePoolIDs: make(map[string]string),
 		Catalog: Catalog{
 			SchemaVersion: 1, Owner: "OPL Fabric",
-			WorkspacePackages: []WorkspacePackage{
-				{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "cpu-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "tencent-tke", Available: true},
-				{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "cpu-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "tencent-tke", Available: true},
-			},
-			StorageClasses: []StorageClass{{ID: "workspace-cbs", StorageClassName: "cbs", Provider: "tencent-tke", Available: true}},
-			IngressDomains: []IngressDomain{{ID: "workspace", Host: "workspace.medopl.cn", PathPattern: "/w/<workspaceId>/", Available: true}},
+			WorkspacePackages: []WorkspacePackage{},
+			StorageClasses:    []StorageClass{{ID: "workspace-cbs", StorageClassName: "cbs", Provider: "tencent-tke", Available: true}},
+			IngressDomains:    []IngressDomain{{ID: "workspace", Host: "workspace.medopl.cn", PathPattern: "/w/<workspaceId>/", Available: true}},
 		},
 	}
+	if p == nil || p.profileErr != nil {
+		return descriptor
+	}
+	packages := make([]WorkspacePackage, 0, len(p.profile.Packages))
+	for _, item := range p.profile.Packages {
+		packages = append(packages, WorkspacePackage{ID: item.ID, Name: item.Name, ComputeProfileID: item.Compute.ID, CPU: item.Compute.CPU, MemoryGB: item.Compute.MemoryGB, DiskGB: item.Storage.SizeGB, Provider: "tencent-tke", Available: item.Available})
+		if item.Available {
+			descriptor.Plans[item.ID] = item.Compute
+			descriptor.DefaultComputePoolIDs[item.ID] = item.NodePoolID
+		}
+	}
+	sort.Slice(packages, func(i, j int) bool { return packages[i].ID < packages[j].ID })
+	descriptor.Catalog.WorkspacePackages = packages
+	return descriptor
 }
 
 func (p *TencentProvider) ResolveWorkspacePlan(_ context.Context, input WorkspaceLaunchPlanInput) (json.RawMessage, error) {
-	plan, ok := p.Descriptor().Plans[input.PackageID]
-	if !ok || plan.ID == "" || input.SizeGB < 10 || input.SizeGB%10 != 0 {
+	if p == nil || p.profileErr != nil {
 		return nil, ErrProviderPlanUnavailable
 	}
-	return json.Marshal(map[string]any{
-		"compute": plan,
-		"storage": map[string]any{"sizeGb": input.SizeGB},
-	})
+	item, ok := p.plans[input.PackageID]
+	if !ok || !item.Available || item.Storage.SizeGB != input.SizeGB {
+		return nil, ErrProviderPlanUnavailable
+	}
+	plan := tencentWorkspacePlan{PackageID: item.ID, Compute: item.Compute, NodePoolID: item.NodePoolID, MaxReplicas: item.MaxReplicas, Zone: item.Zone, Storage: item.Storage, Billing: item.Billing}
+	return json.Marshal(plan)
+}
+
+func decodeTencentProviderProfile(raw []byte) (tencentProviderProfile, map[string]tencentPackageProfile, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return tencentProviderProfile{}, nil, fmt.Errorf("tencent_provider_profile_required")
+	}
+	var profile tencentProviderProfile
+	if err := json.Unmarshal(raw, &profile); err != nil || profile.SchemaVersion != 1 || len(profile.Packages) == 0 {
+		return tencentProviderProfile{}, nil, fmt.Errorf("tencent_provider_profile_invalid")
+	}
+	plans := make(map[string]tencentPackageProfile, len(profile.Packages))
+	for index, item := range profile.Packages {
+		item.ID, item.Name, item.NodePoolID, item.Zone = strings.TrimSpace(item.ID), strings.TrimSpace(item.Name), strings.TrimSpace(item.NodePoolID), strings.TrimSpace(item.Zone)
+		item.Compute.ID, item.Compute.Server, item.Compute.InstanceType = strings.TrimSpace(item.Compute.ID), strings.TrimSpace(item.Compute.Server), strings.TrimSpace(item.Compute.InstanceType)
+		item.Storage.DiskType = strings.TrimSpace(item.Storage.DiskType)
+		if item.ID == "" || item.Name == "" || item.Compute.ID == "" || item.Compute.Server == "" || item.Compute.CPU <= 0 || item.Compute.MemoryGB <= 0 || item.Compute.InstanceType == "" || len(item.Compute.InstanceType) > 64 || strings.ContainsAny(item.Compute.InstanceType, " \t\r\n") ||
+			item.NodePoolID == "" || item.MaxReplicas <= 0 || item.Zone == "" || item.Storage.SizeGB < 10 || item.Storage.SizeGB%10 != 0 || item.Storage.DiskType == "" ||
+			(item.Compute.DiskGB != 0 && item.Compute.DiskGB != item.Storage.SizeGB) || item.Billing.ChargeType != "PREPAID" || item.Billing.PeriodMonths != 1 || item.Billing.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" {
+			return tencentProviderProfile{}, nil, fmt.Errorf("tencent_provider_profile_invalid")
+		}
+		item.Compute.DiskGB = item.Storage.SizeGB
+		if _, exists := plans[item.ID]; exists {
+			return tencentProviderProfile{}, nil, fmt.Errorf("tencent_provider_profile_duplicate_package")
+		}
+		profile.Packages[index] = item
+		plans[item.ID] = item
+	}
+	return profile, plans, nil
+}
+
+type tencentWorkspacePlanContextKey struct{}
+
+func withTencentWorkspacePlan(ctx context.Context, plan tencentWorkspacePlan) context.Context {
+	return context.WithValue(ctx, tencentWorkspacePlanContextKey{}, plan)
+}
+
+func tencentWorkspacePlanFromContext(ctx context.Context) (tencentWorkspacePlan, bool) {
+	plan, ok := ctx.Value(tencentWorkspacePlanContextKey{}).(tencentWorkspacePlan)
+	return plan, ok && plan.PackageID != "" && plan.Compute.ID != "" && plan.NodePoolID != "" && plan.Zone != ""
+}
+
+func decodeTencentWorkspacePlanEnvelope(raw json.RawMessage, packageID string, sizeGB int) (tencentWorkspacePlan, error) {
+	var envelope struct {
+		PackageID          string               `json:"packageId"`
+		ProviderProfileRef string               `json:"providerProfileRef"`
+		SchemaVersion      int                  `json:"schemaVersion"`
+		Spec               tencentWorkspacePlan `json:"spec"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil || envelope.SchemaVersion != 1 || envelope.ProviderProfileRef != "tencent-tke" || envelope.PackageID != packageID || envelope.Spec.PackageID != packageID ||
+		envelope.Spec.Storage.SizeGB != sizeGB || envelope.Spec.Compute.DiskGB != sizeGB || envelope.Spec.Compute.CPU <= 0 || envelope.Spec.Compute.MemoryGB <= 0 || envelope.Spec.Compute.InstanceType == "" ||
+		envelope.Spec.NodePoolID == "" || envelope.Spec.MaxReplicas <= 0 || envelope.Spec.Zone == "" || envelope.Spec.Storage.DiskType == "" || envelope.Spec.Billing.ChargeType != "PREPAID" || envelope.Spec.Billing.PeriodMonths != 1 || envelope.Spec.Billing.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" {
+		return tencentWorkspacePlan{}, ErrLaunchStageBindingConflict
+	}
+	return envelope.Spec, nil
+}
+
+func (p *TencentProvider) workspacePlanForContext(ctx context.Context, packageID string) (tencentWorkspacePlan, error) {
+	if bound, ok := tencentWorkspacePlanFromContext(ctx); ok {
+		if bound.PackageID != packageID {
+			return tencentWorkspacePlan{}, ErrLaunchStageBindingConflict
+		}
+		return bound, nil
+	}
+	if p == nil || p.profileErr != nil {
+		return tencentWorkspacePlan{}, ErrProviderPlanUnavailable
+	}
+	item, ok := p.plans[packageID]
+	if !ok || !item.Available {
+		return tencentWorkspacePlan{}, ErrProviderPlanUnavailable
+	}
+	return tencentWorkspacePlan{
+		PackageID: item.ID, Compute: item.Compute, NodePoolID: item.NodePoolID,
+		MaxReplicas: item.MaxReplicas, Zone: item.Zone, Storage: item.Storage, Billing: item.Billing,
+	}, nil
+}
+
+func (p *TencentProvider) configuredWorkspacePlan(packageID string, sizeGB int, zone string) (tencentWorkspacePlan, error) {
+	if p == nil || p.profileErr != nil {
+		return tencentWorkspacePlan{}, ErrProviderPlanUnavailable
+	}
+	item, ok := p.plans[packageID]
+	if !ok || !item.Available || item.Storage.SizeGB != sizeGB || item.Zone != strings.TrimSpace(zone) {
+		return tencentWorkspacePlan{}, ErrProviderPlanUnavailable
+	}
+	return tencentWorkspacePlan{PackageID: item.ID, Compute: item.Compute, NodePoolID: item.NodePoolID, MaxReplicas: item.MaxReplicas, Zone: item.Zone, Storage: item.Storage, Billing: item.Billing}, nil
+}
+
+func (p *TencentProvider) configuredWorkspaceStoragePlan(packageID string, sizeGB int, zone string) (tencentWorkspacePlan, error) {
+	return p.configuredWorkspacePlan(packageID, sizeGB, zone)
 }
 
 func (*TencentProvider) ValidateComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {
@@ -108,6 +255,9 @@ func validateTencentComputeAllocationIdentity(allocation ComputeAllocation, prep
 		allocation.InstanceType != prepared.InstanceType || allocation.MachineName == "" || !strings.HasPrefix(firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), "ins-") ||
 		allocation.NodeName == "" || allocation.PrivateIP == "" || allocation.Zone == "" || allocation.ChargeType != "PREPAID" ||
 		allocation.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || allocation.Deadline == "" {
+		return fmt.Errorf("compute_provider_readback_mismatch")
+	}
+	if prepared.Zone != "" && allocation.Zone != prepared.Zone {
 		return fmt.Errorf("compute_provider_readback_mismatch")
 	}
 	for _, existing := range prepared.BeforeMachineNames {
@@ -149,24 +299,35 @@ func (p *TencentProvider) MonthlyPreflight(ctx context.Context, input MonthlyPre
 }
 
 func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input MonthlyPreflightInput) monthlyPreflightEvaluation {
-	if (input.ResourceType != "compute" && input.ResourceType != "storage") || (input.PackageID != "basic" && input.PackageID != "pro") || strings.TrimSpace(input.Zone) == "" ||
+	if (input.ResourceType != "compute" && input.ResourceType != "storage") || strings.TrimSpace(input.PackageID) == "" || strings.TrimSpace(input.Zone) == "" ||
 		(input.ResourceType == "compute" && input.SizeGB != 0) || (input.ResourceType == "storage" && input.SizeGB <= 0) {
 		return monthlyPreflightEvaluation{Err: ErrInvalidMonthlyPreflight}
 	}
 	request := provisionerRequest{PackageID: input.PackageID, Zone: input.Zone}
-	plan, err := configuredPackagePlan(input.PackageID)
+	profileSizeGB := input.SizeGB
+	if input.ResourceType == "compute" {
+		if p == nil || p.profileErr != nil {
+			return monthlyPreflightEvaluation{Err: ErrProviderPlanUnavailable}
+		}
+		item, ok := p.plans[input.PackageID]
+		if !ok {
+			return monthlyPreflightEvaluation{Err: ErrProviderPlanUnavailable}
+		}
+		profileSizeGB = item.Storage.SizeGB
+	}
+	workspacePlan, err := p.configuredWorkspacePlan(input.PackageID, profileSizeGB, input.Zone)
+	if input.ResourceType == "storage" {
+		workspacePlan, err = p.configuredWorkspaceStoragePlan(input.PackageID, input.SizeGB, input.Zone)
+	}
 	if err != nil {
 		return monthlyPreflightEvaluation{Err: err}
 	}
+	plan := workspacePlan.Compute
 	expectedStages := []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"}
 	preflightStages := []MonthlyPreflightStage{}
 	if input.ResourceType == "compute" {
-		poolConfig, err := configuredPackageNodePool(input.PackageID)
-		if err != nil {
-			return monthlyPreflightEvaluation{Err: err}
-		}
 		request.Action = "capacity_preflight"
-		request.Pool = provisionerPool{ID: plan.ID, PackageID: input.PackageID, InstanceType: plan.InstanceType, CPU: uint64(plan.CPU), MemoryGB: uint64(plan.MemoryGB), NodePoolID: poolConfig.NodePoolID, DesiredReplicas: 1, MaxReplicas: poolConfig.MaxReplicas}
+		request.Pool = provisionerPool{ID: plan.ID, PackageID: input.PackageID, InstanceType: plan.InstanceType, CPU: uint64(plan.CPU), MemoryGB: uint64(plan.MemoryGB), NodePoolID: workspacePlan.NodePoolID, DesiredReplicas: 1, MaxReplicas: workspacePlan.MaxReplicas}
 		iamResponse, iamErr := p.provision(ctx, provisionerRequest{Action: "predebit_iam_gate", PackageID: input.PackageID, Zone: input.Zone})
 		iamStage, gateErr := predebitIAMPreflightStage(iamResponse, iamErr)
 		preflightStages = append(preflightStages, iamStage)
@@ -176,7 +337,7 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 		}
 	} else {
 		request.Action = "storage_preflight"
-		request.Storage = provisionerStorage{SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")}
+		request.Storage = provisionerStorage{SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: workspacePlan.Storage.DiskType}
 		expectedStages = []string{"cbs_prepaid_quota", "cbs_price"}
 	}
 	if input.ResourceType == "compute" {
@@ -201,8 +362,8 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 		return evaluation
 	}
 	validPrice := response.ProviderPriceCNY > 0 && !math.IsNaN(response.ProviderPriceCNY) && !math.IsInf(response.ProviderPriceCNY, 0)
-	validFacts := response.Status == "ready" && response.ProviderData["chargeType"] == "PREPAID" && response.ProviderData["periodMonths"] == "1" &&
-		response.ProviderData["renewFlag"] == "NOTIFY_AND_MANUAL_RENEW" && response.ProviderData["zone"] == input.Zone
+	validFacts := response.Status == "ready" && response.ProviderData["chargeType"] == workspacePlan.Billing.ChargeType && response.ProviderData["periodMonths"] == strconv.FormatInt(workspacePlan.Billing.PeriodMonths, 10) &&
+		response.ProviderData["renewFlag"] == workspacePlan.Billing.RenewFlag && response.ProviderData["zone"] == input.Zone
 	if input.ResourceType == "compute" {
 		validFacts = validFacts && strings.TrimSpace(response.NodePoolID) != "" && response.InstanceType == plan.InstanceType && response.InstanceAvailable && len(response.Zones) == 1 && response.Zones[0] == input.Zone &&
 			response.RemainingQuota >= uint64(request.Pool.DesiredReplicas) && strings.TrimSpace(response.ProviderRequestIDs["nodePool"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["subnets"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["availability"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["quota"]) != ""
@@ -216,7 +377,7 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 	}
 	evaluation.Result = MonthlyPreflight{
 		ResourceType: input.ResourceType, PackageID: input.PackageID, NodePoolID: response.NodePoolID, SizeGB: input.SizeGB, Zone: input.Zone,
-		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+		Available: true, ChargeType: workspacePlan.Billing.ChargeType, PeriodMonths: int(workspacePlan.Billing.PeriodMonths), RenewFlag: workspacePlan.Billing.RenewFlag,
 		ProviderPriceCNY: response.ProviderPriceCNY, ProviderRequestIDs: response.ProviderRequestIDs,
 	}
 	return evaluation
@@ -264,21 +425,24 @@ func (p *TencentProvider) MonthlyPreflightReport(ctx context.Context, input Mont
 	if strings.TrimSpace(input.Zone) == "" || input.Zone != strings.TrimSpace(input.Zone) {
 		return MonthlyPreflightReport{}, ErrInvalidMonthlyPreflight
 	}
-	packages := make([]MonthlyPreflightPackageReport, 0, 2)
-	for _, current := range []struct {
-		packageID string
-		sizeGB    int
-	}{{packageID: "basic", sizeGB: 10}, {packageID: "pro", sizeGB: 100}} {
+	if p == nil || p.profileErr != nil {
+		return MonthlyPreflightReport{}, ErrProviderPlanUnavailable
+	}
+	packages := make([]MonthlyPreflightPackageReport, 0, len(p.profile.Packages))
+	for _, current := range p.profile.Packages {
+		if !current.Available {
+			continue
+		}
 		packageItems := []MonthlyPreflightStage{}
 		if items[1].Status != "passed" {
 			packageItems = blockedPreflightStages(monthlyPreflightProviderStageNames(), "credentials")
 		} else {
-			compute := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "compute", PackageID: current.packageID, Zone: input.Zone})
-			storage := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "storage", PackageID: current.packageID, SizeGB: current.sizeGB, Zone: input.Zone})
+			compute := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "compute", PackageID: current.ID, Zone: input.Zone})
+			storage := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "storage", PackageID: current.ID, SizeGB: current.Storage.SizeGB, Zone: input.Zone})
 			packageItems = append(packageItems, normalizedPreflightStages(compute, []string{"tencent_predebit_iam", "node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"})...)
 			packageItems = append(packageItems, normalizedPreflightStages(storage, []string{"cbs_prepaid_quota", "cbs_price"})...)
 		}
-		packages = append(packages, MonthlyPreflightPackageReport{PackageID: current.packageID, SizeGB: current.sizeGB, Status: preflightStatus(packageItems), Items: packageItems})
+		packages = append(packages, MonthlyPreflightPackageReport{PackageID: current.ID, SizeGB: current.Storage.SizeGB, Status: preflightStatus(packageItems), Items: packageItems})
 	}
 	status := preflightStatus(items)
 	for _, packageReport := range packages {
@@ -651,33 +815,6 @@ type packageNodePoolConfig struct {
 	MaxReplicas int64
 }
 
-func configuredPackageNodePool(packageID string) (packageNodePoolConfig, error) {
-	prefix := ""
-	switch packageID {
-	case "basic":
-		prefix = "OPL_BASIC_COMPUTE_NODE_POOL_"
-	case "pro":
-		prefix = "OPL_PRO_COMPUTE_NODE_POOL_"
-	default:
-		return packageNodePoolConfig{}, ErrUnsupportedComputePackage
-	}
-	config := packageNodePoolConfig{NodePoolID: strings.TrimSpace(os.Getenv(prefix + "ID"))}
-	maxRaw := strings.TrimSpace(os.Getenv(prefix + "MAX_REPLICAS"))
-	maxReplicas, err := strconv.ParseInt(maxRaw, 10, 64)
-	if config.NodePoolID == "" || err != nil || maxReplicas <= 0 {
-		return packageNodePoolConfig{}, fmt.Errorf("compute_node_pool_configuration_required")
-	}
-	config.MaxReplicas = maxReplicas
-	otherPrefix := "OPL_PRO_COMPUTE_NODE_POOL_ID"
-	if packageID == "pro" {
-		otherPrefix = "OPL_BASIC_COMPUTE_NODE_POOL_ID"
-	}
-	if other := strings.TrimSpace(os.Getenv(otherPrefix)); other != "" && other == config.NodePoolID {
-		return packageNodePoolConfig{}, fmt.Errorf("compute_node_pool_configuration_invalid")
-	}
-	return config, nil
-}
-
 type provisionerAllocation struct {
 	ID          string `json:"id,omitempty"`
 	InstanceID  string `json:"instanceId,omitempty"`
@@ -854,31 +991,6 @@ func (p *TencentProvider) DetachStorageAttachment(_ context.Context, attachment 
 	return attachment, nil
 }
 
-func packagePlan(packageID string) plan {
-	if packageID == "pro" {
-		return plan{ID: "pool-pro-8c16g", Server: "8c16g", CPU: 8, MemoryGB: 16, DiskGB: 100, InstanceType: strings.TrimSpace(os.Getenv("OPL_PRO_COMPUTE_INSTANCE_TYPE"))}
-	}
-	return plan{ID: "pool-basic-2c4g", Server: "2c4g", CPU: 2, MemoryGB: 4, DiskGB: 10, InstanceType: strings.TrimSpace(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE"))}
-}
-
-func configuredPackagePlan(packageID string) (plan, error) {
-	current := packagePlan(packageID)
-	key := ""
-	switch packageID {
-	case "basic":
-		key = "OPL_BASIC_COMPUTE_INSTANCE_TYPE"
-	case "pro":
-		key = "OPL_PRO_COMPUTE_INSTANCE_TYPE"
-	default:
-		return plan{}, ErrUnsupportedComputePackage
-	}
-	current.InstanceType = strings.TrimSpace(os.Getenv(key))
-	if current.InstanceType == "" || len(current.InstanceType) > 64 || strings.ContainsAny(current.InstanceType, " \t\r\n") {
-		return current, fmt.Errorf("compute_instance_type_configuration_required")
-	}
-	return current, nil
-}
-
 func staticCBSManifest(volume StorageVolume) []byte {
 	pvName, pvcName := storageBindingNames(volume)
 	labels := mergeStringMaps(map[string]string{"app.kubernetes.io/name": "opl-storage-volume", "app.kubernetes.io/instance": k8sName(volume.ID), "oplcloud.cn/storage-id": volume.ID, "oplcloud.cn/account-id": volume.AccountID}, k8sCostLabels(volume.CostTags))
@@ -915,11 +1027,7 @@ func storagePVCName(volume StorageVolume) string {
 	return pvc
 }
 
-func workspaceManifest(input WorkspaceRuntimeInput, workspaceName string, credentialSeed string, runtimeID string, serviceName string, compute ComputeAllocation, storage StorageVolume, tags map[string]string) []byte {
-	return workspaceManifestWithGatewayBinding(input, workspaceName, credentialSeed, runtimeID, serviceName, compute, storage, tags, tencentWorkspaceRuntimeGatewayBinding{})
-}
-
-func workspaceManifestWithGatewayBinding(input WorkspaceRuntimeInput, workspaceName string, credentialSeed string, runtimeID string, serviceName string, compute ComputeAllocation, storage StorageVolume, tags map[string]string, gateway tencentWorkspaceRuntimeGatewayBinding) []byte {
+func workspaceManifestWithGatewayPlan(input WorkspaceRuntimeInput, workspaceName string, credentialSeed string, runtimeID string, serviceName string, compute ComputeAllocation, storage StorageVolume, tags map[string]string, gateway tencentWorkspaceRuntimeGatewayBinding, plan plan) []byte {
 	workspaceID := input.WorkspaceID
 	gatewaySecretRef := input.GatewaySecretRef
 	selectorLabels := stringAnyMap(runtimeSelectorLabels(serviceName, compute))
@@ -935,7 +1043,6 @@ func workspaceManifestWithGatewayBinding(input WorkspaceRuntimeInput, workspaceN
 	}
 	labels := stringAnyMap(mergeStringMaps(runtimeSelectorLabels(serviceName, compute), identityLabels, k8sCostLabels(tags)))
 	pvcName := storagePVCName(storage)
-	plan := packagePlan(compute.PackageID)
 	password := deriveAionUIAdminPassword(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"), workspaceID, credentialSeed)
 	secretData := map[string]any{"webui_password": b64(password), "webui_session_secret": b64(deriveWebUISessionSecret(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"), workspaceID, credentialSeed))}
 	secretItems := []any{map[string]any{"key": "webui_password", "path": "opl_webui_password"}, map[string]any{"key": "webui_session_secret", "path": "webui_session_secret"}}

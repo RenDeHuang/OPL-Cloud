@@ -424,14 +424,10 @@ func computePoolsFromFabricCatalog(catalog clients.FabricCatalog) []any {
 	pools := make([]any, 0, len(catalog.WorkspacePackages))
 	for _, pkg := range catalog.WorkspacePackages {
 		pools = append(pools, map[string]any{
-			"id":        firstNonEmpty(pkg.ComputeProfileID, "pool-"+pkg.ID),
 			"packageId": pkg.ID,
 			"name":      firstNonEmpty(pkg.Name, pkg.ID),
 			"available": pkg.Available,
-			"provider":  pkg.Provider,
-			"cpu":       pkg.CPU,
-			"memoryGb":  pkg.MemoryGB,
-			"diskGb":    pkg.DiskGB,
+			"sizeGb":    pkg.SizeGB,
 		})
 	}
 	return pools

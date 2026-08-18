@@ -73,9 +73,10 @@ test("Workspace launch uses the selected split-decision flow with API-backed fac
   for (const label of ["配置", "核对", "开通状态", "订单摘要", "价格明细", "可用余额", "按自然月计费", "自动续费关闭"]) {
     assert.match(launch, new RegExp(label));
   }
-  for (const fact of ["plan.cpu", "plan.memoryGb", "plan.diskGb", "preview.compute", "preview.storage", "preview.totalChargeUsdMicros", "wallet.usdMicros", "preview.billingUnit"]) {
-    assert.match(launch, new RegExp(fact.replaceAll(".", "\\.")));
+  for (const fact of ["preview.compute", "preview.storage", "preview.totalChargeUsdMicros", "wallet.usdMicros", "preview.billingUnit"]) {
+	assert.match(launch, new RegExp(fact.replaceAll(".", "\\.")));
   }
+  assert.doesNotMatch(launch, /plan\.(?:cpu|memoryGb|diskGb|server)/);
   assert.doesNotMatch(launch, /分别来自各自权威来源|浏览器不会自行计算|服务端权威总价/);
 });
 

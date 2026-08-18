@@ -95,14 +95,10 @@ type FabricCatalog struct {
 }
 
 type FabricWorkspacePackage struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	ComputeProfileID string `json:"computeProfileId"`
-	CPU              int    `json:"cpu"`
-	MemoryGB         int    `json:"memoryGb"`
-	DiskGB           int    `json:"diskGb"`
-	Provider         string `json:"provider"`
-	Available        bool   `json:"available"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SizeGB    int    `json:"diskGb"`
+	Available bool   `json:"available"`
 }
 
 type FabricStorageClass struct {

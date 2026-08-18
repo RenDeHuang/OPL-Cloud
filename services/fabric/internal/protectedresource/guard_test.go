@@ -9,8 +9,7 @@ func TestGuardRejectsProtectedSystemIdentitiesAndPackagePoolMismatch(t *testing.
 		SystemNodeName:    "10.66.0.42",
 		SystemMachineType: "NativeCVM",
 		SystemCVMID:       "ins-system",
-		BasicNodePoolID:   "np-basic",
-		ProNodePoolID:     "np-pro",
+		PackageNodePools:  map[string]string{"basic": "np-basic", "pro": "np-pro"},
 	}
 
 	if err := config.Validate(); err != nil {
@@ -43,6 +42,9 @@ func TestGuardRejectsProtectedSystemIdentitiesAndPackagePoolMismatch(t *testing.
 			t.Fatalf("customer target rejected: target=%#v err=%v", target, err)
 		}
 	}
+	if err := config.Check(Target{PackageID: "starter", NodePoolID: "np-basic"}); err != ErrPackagePoolMismatch {
+		t.Fatalf("unknown package must fail closed: %v", err)
+	}
 }
 
 func TestGuardConfigurationFailsClosed(t *testing.T) {
@@ -52,8 +54,7 @@ func TestGuardConfigurationFailsClosed(t *testing.T) {
 		SystemNodeName:    "10.66.0.42",
 		SystemMachineType: "NativeCVM",
 		SystemCVMID:       "ins-system",
-		BasicNodePoolID:   "np-basic",
-		ProNodePoolID:     "np-pro",
+		PackageNodePools:  map[string]string{"basic": "np-basic", "pro": "np-pro"},
 	}
 	for _, test := range []struct {
 		name   string
@@ -62,9 +63,9 @@ func TestGuardConfigurationFailsClosed(t *testing.T) {
 		{name: "missing system machine type", mutate: func(value *Config) { value.SystemMachineType = "" }},
 		{name: "missing system CVM", mutate: func(value *Config) { value.SystemCVMID = "" }},
 		{name: "non CVM system with CVM identity", mutate: func(value *Config) { value.SystemMachineType = "Native" }},
-		{name: "shared customer pools", mutate: func(value *Config) { value.ProNodePoolID = value.BasicNodePoolID }},
-		{name: "Basic is system pool", mutate: func(value *Config) { value.BasicNodePoolID = value.SystemNodePoolID }},
-		{name: "Pro is system pool", mutate: func(value *Config) { value.ProNodePoolID = value.SystemNodePoolID }},
+		{name: "shared customer pools", mutate: func(value *Config) { value.PackageNodePools["pro"] = value.PackageNodePools["basic"] }},
+		{name: "Basic is system pool", mutate: func(value *Config) { value.PackageNodePools["basic"] = value.SystemNodePoolID }},
+		{name: "Pro is system pool", mutate: func(value *Config) { value.PackageNodePools["pro"] = value.SystemNodePoolID }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			config := valid
@@ -84,8 +85,7 @@ func TestGuardAcceptsExplicitNonCVMSystemIdentityWithoutCVM(t *testing.T) {
 				SystemMachineID:   "machine-system",
 				SystemNodeName:    "10.66.0.42",
 				SystemMachineType: machineType,
-				BasicNodePoolID:   "np-basic",
-				ProNodePoolID:     "np-pro",
+				PackageNodePools:  map[string]string{"basic": "np-basic", "pro": "np-pro"},
 			}
 			if err := config.Validate(); err != nil {
 				t.Fatalf("explicit non-CVM system config rejected: %v", err)
@@ -99,5 +99,22 @@ func TestGuardAcceptsExplicitNonCVMSystemIdentityWithoutCVM(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGuardIgnoresUnavailableProviderPackages(t *testing.T) {
+	config := FromMap(map[string]string{
+		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID":              "np-system",
+		"OPL_SYSTEM_COMPUTE_MACHINE_ID":                "machine-system",
+		"OPL_SYSTEM_COMPUTE_NODE_NAME":                 "10.66.0.42",
+		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE":              "NativeCVM",
+		"OPL_SYSTEM_COMPUTE_CVM_ID":                    "ins-system",
+		"OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON": `{"schemaVersion":1,"packages":[{"id":"basic","available":false,"nodePoolId":"np-basic"},{"id":"pro","available":true,"nodePoolId":"np-pro"}]}`,
+	})
+	if err := config.Check(Target{PackageID: "basic", NodePoolID: "np-basic"}); err != ErrPackagePoolMismatch {
+		t.Fatalf("unavailable package must fail closed: %v", err)
+	}
+	if err := config.Check(Target{PackageID: "pro", NodePoolID: "np-pro"}); err != nil {
+		t.Fatalf("available package rejected: %v", err)
 	}
 }

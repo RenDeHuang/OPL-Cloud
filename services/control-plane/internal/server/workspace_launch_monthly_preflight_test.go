@@ -64,6 +64,7 @@ func (f *workspaceLaunchMonthlyPreflightFabric) PreflightWorkspaceLaunch(_ conte
 		RequestHash:        input.RequestHash,
 		ProviderProfileRef: "provider-profile",
 		BindingRef:         "workspace-binding",
+		SpecDigest:         strings.Repeat("a", 64),
 	}, nil
 }
 
@@ -250,7 +251,7 @@ func TestWorkspaceLaunchMissingPurchaseEligibilityFailsClosedBeforeMutation(t *t
 		t.Fatal(err)
 	}
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Missing eligibility","packageId":"basic","sizeGb":10,"autoRenew":false}`, "missing-eligibility")
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Missing eligibility","packageId":"basic","autoRenew":false}`, "missing-eligibility")
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_purchase_not_enabled") {
 		t.Fatalf("missing eligibility response = %d: %s", response.Code, response.Body.String())
 	}
@@ -265,7 +266,7 @@ func TestWorkspaceLaunchRetainsInstancePilotAllowlistUntilMigrationReadback(t *t
 	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
 	server, _, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Pilot allowlist pending","packageId":"basic","sizeGb":10,"autoRenew":false}`, "pilot-allowlist-pending")
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Pilot allowlist pending","packageId":"basic","autoRenew":false}`, "pilot-allowlist-pending")
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_launch_admission_invalid") {
 		t.Fatalf("pilot allowlist transition response = %d: %s", response.Code, response.Body.String())
 	}
@@ -289,7 +290,7 @@ func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *t
 			session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 
 			response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
-				`{"name":"Monthly preflight failure","packageId":"basic","sizeGb":10,"autoRenew":false}`,
+				`{"name":"Monthly preflight failure","packageId":"basic","autoRenew":false}`,
 				"monthly-preflight-"+failureMode)
 			if response.Code != http.StatusAccepted {
 				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
@@ -330,7 +331,7 @@ func TestWorkspaceLaunchMissingProviderZoneParksReservedDebitWithoutAuthorityWri
 	server, store, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
-		`{"name":"Missing local provider zone","packageId":"basic","sizeGb":10,"autoRenew":false}`,
+		`{"name":"Missing local provider zone","packageId":"basic","autoRenew":false}`,
 		"missing-local-provider-zone")
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
@@ -368,7 +369,7 @@ func TestWorkspaceLaunchMonthlyPreflightRunsBeforeDebitAndProviderStages(t *test
 	server, store, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
-		`{"name":"Monthly preflight success","packageId":"basic","sizeGb":10,"autoRenew":false}`,
+		`{"name":"Monthly preflight success","packageId":"basic","autoRenew":false}`,
 		"monthly-preflight-success")
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
@@ -425,7 +426,7 @@ func TestWorkspaceLaunchNormalPostWorkerContinuesFreshRuntimePendingReadOnly(t *
 	fabric.runtimePending = true
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
-		`{"name":"Fresh runtime pending","packageId":"basic","sizeGb":10,"autoRenew":false}`,
+		`{"name":"Fresh runtime pending","packageId":"basic","autoRenew":false}`,
 		"fresh-runtime-pending")
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())

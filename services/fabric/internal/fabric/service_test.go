@@ -666,6 +666,7 @@ func TestCreateComputeAllocationPersistsExplicitNodePoolID(t *testing.T) {
 }
 
 func TestCreateComputeAllocationRequiresExactNodePoolID(t *testing.T) {
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "")
 	service := NewService(testProvider{})
 
 	allocation, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{

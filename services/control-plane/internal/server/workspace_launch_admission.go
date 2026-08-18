@@ -347,7 +347,7 @@ func workspaceLaunchAcceptanceBIdentityDigests(operation workspaceLaunchReconcil
 			operation.stringFact("priceVersion"), pricingCurrency, strconv.FormatInt(operation.int64Fact("totalChargeUsdMicros"), 10),
 		),
 		ProviderIdentitySHA256: acceptanceBDigestParts(
-			operation.stringFact("providerProfileRef"), operation.stringFact("preflightBindingRef"), operation.stringFact("workspaceImageDigest"),
+			operation.stringFact("providerProfileRef"), operation.stringFact("preflightBindingRef"), operation.stringFact("specDigest"), operation.stringFact("workspaceImageDigest"),
 			operation.stringFact("computeAllocationId"), operation.stringFact("computeBindingRef"), operation.stringFact("storageId"), operation.stringFact("storageBindingRef"),
 			operation.stringFact("attachmentId"), operation.stringFact("attachmentBindingRef"), operation.stringFact("gatewaySecretRef"), operation.stringFact("secretBindingRef"),
 			operation.stringFact("runtimeId"), operation.stringFact("runtimeBindingRef"),
