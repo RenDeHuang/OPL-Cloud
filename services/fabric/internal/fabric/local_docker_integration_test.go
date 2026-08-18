@@ -631,13 +631,13 @@ func TestLocalDockerConfiguredReleaseManifestReplacesDefaultRepositoryTrust(t *t
 func TestLocalDockerAcceptsApprovedImmutableWorkspaceImage(t *testing.T) {
 	image := "ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:" + strings.Repeat("a", 64)
 	preflight, runner, operations := localDockerImageTrustPreflight(t, image)
-	if !preflight.Available || preflight.Reason != "none" || preflight.BindingRef == "" {
+	if !preflight.Available || preflight.Reason != "none" || preflight.ProviderBindingRef == "" {
 		t.Fatalf("approved image preflight=%#v", preflight)
 	}
 	if len(runner.calls) != 1 || len(runner.calls[0]) == 0 || runner.calls[0][0] != "info" {
 		t.Fatalf("approved image Docker calls=%#v", runner.calls)
 	}
-	if len(operations) != 1 || operations[0].ID != preflight.BindingRef || operations[0].Status != "succeeded" {
+	if len(operations) != 1 || operations[0].ID != preflight.ProviderBindingRef || operations[0].Status != "succeeded" {
 		t.Fatalf("approved image operations=%#v", operations)
 	}
 }
@@ -891,7 +891,7 @@ func TestLocalDockerComputeStageSurvivesPostgresJSONBRoundTrip(t *testing.T) {
 			}
 			input := WorkspaceLaunchStageInput{
 				Binding:            localLaunchBinding(launchID, accountID, workspaceID, "ensure_compute_allocation", "ensure_compute_allocation", launchID+":ensure-compute-allocation"),
-				ProviderProfileRef: "local-docker", PreflightBindingRef: preflight.BindingRef,
+				ProviderProfileRef: "local-docker", ProviderBindingRef: preflight.ProviderBindingRef, SpecDigest: preflight.SpecDigest,
 				PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image,
 			}
 			input.Binding.RequestHash = workspaceLaunchStageRequestHash(input, launchHash)
@@ -1017,7 +1017,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		t.Fatalf("preflight=%#v err=%v", preflight, err)
 	}
 	base := WorkspaceLaunchStageInput{
-		ProviderProfileRef: "local-docker", PreflightBindingRef: preflight.BindingRef, PackageID: "basic",
+		ProviderProfileRef: "local-docker", ProviderBindingRef: preflight.ProviderBindingRef, SpecDigest: preflight.SpecDigest, PackageID: "basic",
 		SizeGB: 10, WorkspaceImageDigest: imageID,
 	}
 	bindInput := func(input *WorkspaceLaunchStageInput) {

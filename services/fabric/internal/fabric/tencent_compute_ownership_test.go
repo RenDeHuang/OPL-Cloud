@@ -640,13 +640,15 @@ func TestTencentWorkspaceLaunchComputeReplayReusesOwnershipCoreWithoutRepeatedMu
 		SchemaVersion: 1, LaunchOperationID: "launch-workspace-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image, RequestHash: launchHash,
 	}
-	admission := workspaceLaunchPreflightAdmission{SchemaVersion: 1, Input: preflightInput, ProviderProfileRef: "tencent-tke"}
-	admission.BindingRef = "fabric-preflight:" + hashInput(admission)
+	admission := workspaceLaunchPreflightAdmission{SchemaVersion: 1, Input: preflightInput, ProviderProfileRef: "tencent-tke",
+		CanonicalProviderPlan: json.RawMessage(`{"packageId":"basic","providerProfileRef":"tencent-tke","schemaVersion":1,"spec":{"compute":{"cpu":2,"memoryGb":4},"storage":{"sizeGb":10}}}`)}
+	admission.SpecDigest = providerPlanDigest(admission.CanonicalProviderPlan)
+	admission.ProviderBindingRef = workspaceLaunchPreflightBindingRef(admission)
 	if err := service.persistWorkspaceLaunchPreflight(context.Background(), admission); err != nil {
 		t.Fatal(err)
 	}
 	input := workspaceLaunchStageFixtureInput(
-		WorkspaceLaunchPreflight{BindingRef: admission.BindingRef}, image, launchHash,
+		WorkspaceLaunchPreflight{ProviderBindingRef: admission.ProviderBindingRef, SpecDigest: admission.SpecDigest}, image, launchHash,
 		"ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{},
 	)
 	input.Binding.LaunchOperationID = preflightInput.LaunchOperationID

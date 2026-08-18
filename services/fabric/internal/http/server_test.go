@@ -755,7 +755,7 @@ func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *te
 		IdempotencyKey: "launch-alpha:ensure_compute_allocation",
 	}
 	input := fabric.WorkspaceLaunchStageInput{
-		Binding: binding, ProviderProfileRef: "tencent-tke", PreflightBindingRef: preflight.BindingRef,
+		Binding: binding, ProviderProfileRef: "tencent-tke", ProviderBindingRef: preflight.ProviderBindingRef, SpecDigest: preflight.SpecDigest,
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest,
 	}
 	input.Binding.RequestHash = "ddb1c0c5195c4e04c1d23230a493da582a2ca56af528a7abcf67d781f81c3fe1"
@@ -809,7 +809,7 @@ func TestWorkspaceLaunchEnsureCapabilityUsesFabricOperationOwnerIdentity(t *test
 			IdempotencyKey: "launch-alpha:ensure_compute_allocation",
 			RequestHash:    "ddb1c0c5195c4e04c1d23230a493da582a2ca56af528a7abcf67d781f81c3fe1",
 		},
-		ProviderProfileRef: "tencent-tke", PreflightBindingRef: preflight.BindingRef,
+		ProviderProfileRef: "tencent-tke", ProviderBindingRef: preflight.ProviderBindingRef, SpecDigest: preflight.SpecDigest,
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest,
 	}
 	body, err := json.Marshal(input)
@@ -1818,6 +1818,13 @@ func (testProvider) Descriptor() fabric.ProviderDescriptor {
 			WorkspacePackages: []fabric.WorkspacePackage{{ID: "basic", Provider: "tencent-tke", Available: true}},
 		},
 	}
+}
+
+func (testProvider) ResolveWorkspacePlan(_ context.Context, input fabric.WorkspaceLaunchPlanInput) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{
+		"compute": map[string]any{"cpu": 2, "memoryGb": 4},
+		"storage": map[string]any{"sizeGb": input.SizeGB},
+	})
 }
 
 func (testProvider) ValidateComputeAllocation(allocation fabric.ComputeAllocation, prepared fabric.ComputeAllocationPreparation) error {

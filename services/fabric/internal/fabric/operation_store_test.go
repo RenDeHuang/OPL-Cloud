@@ -31,7 +31,7 @@ func canonicalRuntimeOperationGraph(t *testing.T, workspaceID, suffix string, no
 		t.Fatal(err)
 	}
 	setWorkspaceLaunchStageRecord(&parent, workspaceLaunchStageRecord{
-		SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: parent.Provider, PreflightBindingRef: "preflight-" + suffix,
+		SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: parent.Provider, ProviderBindingRef: "preflight-" + suffix, SpecDigest: strings.Repeat("a", 64),
 		Resources: WorkspaceLaunchResources{
 			RuntimeID: runtime.ID, RuntimeServiceName: runtime.ServiceName, RuntimeURL: runtime.URL,
 			RuntimeUsername: runtime.Access.Username, RuntimeCredentialStatus: runtime.Access.CredentialStatus,

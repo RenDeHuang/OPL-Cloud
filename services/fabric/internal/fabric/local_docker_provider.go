@@ -167,6 +167,17 @@ func (*LocalDockerProvider) Descriptor() ProviderDescriptor {
 	}
 }
 
+func (p *LocalDockerProvider) ResolveWorkspacePlan(_ context.Context, input WorkspaceLaunchPlanInput) (json.RawMessage, error) {
+	plan, ok := p.Descriptor().Plans[input.PackageID]
+	if !ok || plan.ID == "" || input.SizeGB < 10 || input.SizeGB%10 != 0 {
+		return nil, ErrProviderPlanUnavailable
+	}
+	return json.Marshal(map[string]any{
+		"compute": plan,
+		"storage": map[string]any{"sizeGb": input.SizeGB},
+	})
+}
+
 func (p *LocalDockerProvider) ValidateWorkspaceImageReference(value string) bool {
 	repository, reference, ok := immutableLocalDockerImage(value)
 	if !ok {

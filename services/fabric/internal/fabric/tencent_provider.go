@@ -85,6 +85,17 @@ func (*TencentProvider) Descriptor() ProviderDescriptor {
 	}
 }
 
+func (p *TencentProvider) ResolveWorkspacePlan(_ context.Context, input WorkspaceLaunchPlanInput) (json.RawMessage, error) {
+	plan, ok := p.Descriptor().Plans[input.PackageID]
+	if !ok || plan.ID == "" || input.SizeGB < 10 || input.SizeGB%10 != 0 {
+		return nil, ErrProviderPlanUnavailable
+	}
+	return json.Marshal(map[string]any{
+		"compute": plan,
+		"storage": map[string]any{"sizeGb": input.SizeGB},
+	})
+}
+
 func (*TencentProvider) ValidateComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {
 	if allocation.Provider != "tencent-tke" {
 		return fmt.Errorf("compute_provider_readback_mismatch")

@@ -47,14 +47,27 @@ type workspaceLaunchRecordingProvider struct {
 	testProvider
 	ensureCalls  int
 	readCalls    int
+	resolvedPlan json.RawMessage
+	requestPlan  json.RawMessage
 	ensureErr    error
 	readErr      error
 	ensureResult *WorkspaceLaunchProviderResult
 	mutateOnRead bool
 }
 
+func (p *workspaceLaunchRecordingProvider) ResolveWorkspacePlan(_ context.Context, input WorkspaceLaunchPlanInput) (json.RawMessage, error) {
+	if len(p.resolvedPlan) != 0 {
+		return p.resolvedPlan, nil
+	}
+	return json.Marshal(map[string]any{
+		"compute": map[string]any{"cpu": 2, "memoryGb": 4},
+		"storage": map[string]any{"sizeGb": input.SizeGB},
+	})
+}
+
 func (p *workspaceLaunchRecordingProvider) EnsureWorkspaceLaunchStage(_ context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
 	p.ensureCalls++
+	p.requestPlan = append(json.RawMessage(nil), request.ProviderPlan...)
 	if p.ensureErr != nil {
 		return WorkspaceLaunchProviderResult{}, p.ensureErr
 	}
@@ -114,7 +127,7 @@ func workspaceLaunchStageFixture(t *testing.T) (*Service, *MemoryOperationStore,
 		SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image, RequestHash: launchHash,
 	})
-	if err != nil || !preflight.Available || preflight.BindingRef == "" {
+	if err != nil || !preflight.Available || preflight.ProviderBindingRef == "" || !validWorkspaceLaunchHash(preflight.SpecDigest) {
 		t.Fatalf("preflight=%#v err=%v", preflight, err)
 	}
 	return service, store, provider, preflight, image, launchHash
@@ -137,7 +150,7 @@ func workspaceLaunchStageFixtureInput(preflight WorkspaceLaunchPreflight, image,
 			SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
 			Stage: stage, Action: action, FabricOperationID: "launch-alpha:" + stage, IdempotencyKey: "launch-alpha:" + stage,
 		},
-		ProviderProfileRef: "tencent-tke", PreflightBindingRef: preflight.BindingRef,
+		ProviderProfileRef: "tencent-tke", ProviderBindingRef: preflight.ProviderBindingRef, SpecDigest: preflight.SpecDigest,
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image, Resources: resources,
 	}
 	input.Binding.RequestHash = workspaceLaunchStageRequestHash(input, launchHash)
@@ -146,9 +159,9 @@ func workspaceLaunchStageFixtureInput(preflight WorkspaceLaunchPreflight, image,
 
 func TestWorkspaceLaunchPreflightIsDurableAndPointReadBeforeStageWrite(t *testing.T) {
 	service, store, provider, preflight, image, launchHash := workspaceLaunchStageFixture(t)
-	operation, err := store.Get(context.Background(), preflight.BindingRef)
+	operation, err := store.Get(context.Background(), preflight.ProviderBindingRef)
 	admission, ok := decodeWorkspaceLaunchPreflight(operation)
-	if err != nil || !ok || operation.Status != "succeeded" || admission.BindingRef != preflight.BindingRef ||
+	if err != nil || !ok || operation.Status != "succeeded" || admission.ProviderBindingRef != preflight.ProviderBindingRef || admission.SpecDigest != preflight.SpecDigest ||
 		admission.Input.LaunchOperationID != "launch-alpha" || admission.Input.AccountID != "acct-alpha" ||
 		admission.Input.WorkspaceID != "ws-alpha" || admission.Input.PackageID != "basic" || admission.Input.SizeGB != 10 ||
 		admission.Input.WorkspaceImageDigest != image || admission.Input.RequestHash != launchHash || admission.ProviderProfileRef != "tencent-tke" {
@@ -156,13 +169,45 @@ func TestWorkspaceLaunchPreflightIsDurableAndPointReadBeforeStageWrite(t *testin
 	}
 
 	input := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "storage", "ensure_storage", WorkspaceLaunchResources{})
-	input.PreflightBindingRef = "fabric-preflight:" + strings.Repeat("0", 64)
+	input.ProviderBindingRef = "fabric-provider-binding:" + strings.Repeat("0", 64)
 	if _, err := service.EnsureWorkspaceLaunchStage(context.Background(), input); !errors.Is(err, ErrLaunchStageBindingNotFound) {
 		t.Fatalf("forged preflight error=%v", err)
 	}
 	operations, err := store.List(context.Background())
-	if err != nil || len(operations) != 1 || operations[0].ID != preflight.BindingRef || provider.ensureCalls != 0 {
+	if err != nil || len(operations) != 1 || operations[0].ID != preflight.ProviderBindingRef || provider.ensureCalls != 0 {
 		t.Fatalf("forged preflight crossed stage write: operations=%#v providerCalls=%d err=%v", operations, provider.ensureCalls, err)
+	}
+}
+
+func TestWorkspaceLaunchPreflightPersistsCanonicalProviderPlanAcrossProfileDrift(t *testing.T) {
+	service, store, provider, preflight, image, launchHash := workspaceLaunchStageFixture(t)
+	operation, err := store.Get(context.Background(), preflight.ProviderBindingRef)
+	admission, ok := decodeWorkspaceLaunchPreflight(operation)
+	if err != nil || !ok {
+		t.Fatalf("provider binding read=%#v/%v err=%v", admission, ok, err)
+	}
+	wantPlan := `{"packageId":"basic","providerProfileRef":"tencent-tke","schemaVersion":1,"spec":{"compute":{"cpu":2,"memoryGb":4},"storage":{"sizeGb":10}}}`
+	if string(admission.CanonicalProviderPlan) != wantPlan || admission.SpecDigest != providerPlanDigest(admission.CanonicalProviderPlan) {
+		t.Fatalf("provider plan=%s digest=%s", admission.CanonicalProviderPlan, admission.SpecDigest)
+	}
+
+	replayed, replayErr := service.PreflightWorkspaceLaunch(context.Background(), admission.Input)
+	if replayErr != nil || replayed.ProviderBindingRef != preflight.ProviderBindingRef || replayed.SpecDigest != preflight.SpecDigest {
+		t.Fatalf("preflight replay=%#v err=%v", replayed, replayErr)
+	}
+
+	provider.resolvedPlan = json.RawMessage(`{"compute":{"cpu":8,"memoryGb":16},"packageId":"basic","storage":{"sizeGb":100}}`)
+	input := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{})
+	current := workspaceLaunchStageRecord{SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: input.ProviderProfileRef, ProviderBindingRef: input.ProviderBindingRef, SpecDigest: input.SpecDigest}
+	request, requestErr := service.WorkspaceLaunchProviderRequest(context.Background(), input, current)
+	if requestErr != nil || string(request.ProviderPlan) != wantPlan {
+		t.Fatalf("stage plan=%s err=%v", request.ProviderPlan, requestErr)
+	}
+
+	input.SpecDigest = strings.Repeat("0", 64)
+	input.Binding.RequestHash = workspaceLaunchStageRequestHash(input, launchHash)
+	if err := service.validateWorkspaceLaunchStageInput(context.Background(), input); !errors.Is(err, ErrLaunchStageBindingConflict) {
+		t.Fatalf("spec digest drift error=%v", err)
 	}
 }
 
