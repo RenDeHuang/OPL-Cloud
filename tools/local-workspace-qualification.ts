@@ -1024,6 +1024,15 @@ export async function residualCounts(accountId, workspaceId) {
   return { containers: containers.length, volumes: volumes.length, networks: networks.length };
 }
 
+export async function cleanupLocalQualificationSecretRoot(compose, fabricSecretRoot) {
+  const cleanup = await compose([
+    "exec", "-T", "--user", "root", "fabric", "sh", "-c",
+    'rm -rf -- "$1"/* "$1"/.[!.]* "$1"/..?*',
+    "opl-qualification-secret-cleanup", fabricSecretRoot
+  ], { allowFailure: true });
+  if (cleanup.code !== 0) throw new Error("qualification-owned secret cleanup failed");
+}
+
 export async function cleanupLocalQualificationResources(accountId, workspaceId, beforeNetworks = async () => {}) {
   for (const id of await exactLabelIDs("containers", accountId, workspaceId)) {
     await runProcess("docker", ["stop", "--time", "10", id], { allowFailure: true });
@@ -1228,6 +1237,7 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
   let registryContainer = "";
   let stage = "image_admission";
   let composeStarted = false;
+  let composeDown = false;
   let auth = null;
   let finalReceipt;
   let failure;
@@ -1385,8 +1395,11 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
             return null;
           }
           if (!scope?.accountId || !scope?.workspaceId) return { containers: 0, volumes: 0, networks: 0 };
+          await cleanupLocalQualificationSecretRoot(compose, fabricSecretRoot);
           const counts = await cleanupLocalQualificationResources(scope.accountId, scope.workspaceId, async () => {
-            await compose(["down", "--volumes", "--remove-orphans", "--timeout", "30"], { allowFailure: false });
+            const down = await compose(["down", "--volumes", "--remove-orphans", "--timeout", "30"], { allowFailure: false });
+            if (down.code !== 0) throw new Error("local qualification compose teardown failed");
+            composeDown = true;
           });
           await rm(fabricSecretRoot, { recursive: true, force: true });
           await mkdir(fabricSecretRoot, { recursive: true, mode: 0o700 });
@@ -1602,6 +1615,13 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
     failure = error;
   } finally {
     if (composeStarted && !preserveRecoveryAuthority) {
+      if (!composeDown) {
+        try {
+          await cleanupLocalQualificationSecretRoot(compose, fabricSecretRoot);
+        } catch (error) {
+          failure ||= error;
+        }
+      }
       const stop = await compose(["stop", "--timeout", "30", "control-plane", "fabric"], { allowFailure: true });
       const down = await compose(["down", "--volumes", "--remove-orphans"], { allowFailure: true });
       const observed = await residualCounts(accountId, workspaceId).catch(() => null);
