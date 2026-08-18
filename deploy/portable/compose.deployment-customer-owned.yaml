@@ -1,0 +1,8 @@
+services:
+  control-plane:
+    labels:
+      opl.cloud.deployment-mode: customer_owned
+    environment:
+      OPL_DEPLOYMENT_MODE: customer_owned
+      OPL_SUB2API_USER_EMAIL: ${OPL_SUB2API_USER_EMAIL:?Set OPL_SUB2API_USER_EMAIL}
+      OPL_SUB2API_USER_PASSWORD: ${OPL_SUB2API_USER_PASSWORD:?Set OPL_SUB2API_USER_PASSWORD}

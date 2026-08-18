@@ -101,7 +101,7 @@ func TestMemoryProvisionedAccountRollsBackEveryValidationStage(t *testing.T) {
 				account, user := provisionedAccountRowsFor("acct-existing", "usr-existing", "owner@provisioned.example", 74)
 				mustStore(t, store.CreateProvisionedAccount(context.Background(), account, user))
 			},
-				mutate: func(_, user map[string]any) {
+			mutate: func(_, user map[string]any) {
 				user["email"] = " OWNER@PROVISIONED.EXAMPLE "
 			},
 			wantErr: errUserExists,

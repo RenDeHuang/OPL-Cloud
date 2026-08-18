@@ -584,7 +584,7 @@ func (s *Service) EnsureWorkspaceLaunchStage(ctx context.Context, input Workspac
 	if err := s.validateWorkspaceLaunchStageInput(ctx, input); err != nil {
 		return WorkspaceLaunchStageResult{}, err
 	}
-	if input.Binding.Stage == "secret" && (input.GatewayCredential == nil || input.GatewayCredential.KeyID <= 0 || strings.TrimSpace(input.GatewayCredential.Value) == "") {
+	if input.Binding.Stage == "secret" && (input.GatewayCredential == nil || input.GatewayCredential.KeyID <= 0) {
 		return WorkspaceLaunchStageResult{}, ErrWorkspaceLaunchInputInvalid
 	}
 	stageProvider, ok := s.provider.(workspaceLaunchProvider)
@@ -594,6 +594,18 @@ func (s *Service) EnsureWorkspaceLaunchStage(ctx context.Context, input Workspac
 	operation, record, err := newWorkspaceLaunchStageOperation(input, s.provider.Descriptor().Name, s.now)
 	if err != nil {
 		return WorkspaceLaunchStageResult{}, err
+	}
+	if existing, found, lookupErr := s.operations.OperationByActionIdempotency(ctx, input.Binding.Action, input.Binding.IdempotencyKey); lookupErr != nil {
+		return WorkspaceLaunchStageResult{}, lookupErr
+	} else if found && existing.Status == "failed" {
+		if existingRecord, matches := workspaceLaunchStageOperationMatches(existing, input, s.provider.Descriptor().Name); !matches {
+			return WorkspaceLaunchStageResult{}, ErrLaunchStageBindingConflict
+		} else {
+			observed, readErr := s.readWorkspaceLaunchStage(ctx, input, existing, existingRecord)
+			if readErr != nil || observed.State != "absent" {
+				return observed, readErr
+			}
+		}
 	}
 	stored, claimed, err := s.operations.ClaimRuntime(ctx, operation)
 	if err != nil {

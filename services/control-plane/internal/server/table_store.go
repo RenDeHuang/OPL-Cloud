@@ -288,7 +288,7 @@ type controlPlaneTableStore interface {
 func prepareWorkspaceLaunchProjection(row, owner, existing map[string]any) (map[string]any, error) {
 	row = cloneMap(row)
 	accountID, ownerID, workspaceID := stringValue(row["accountId"]), stringValue(row["ownerUserId"]), stringValue(row["id"])
-	if workspaceAcceptedBillingState(row) == nil || accountID == "" || ownerID == "" || workspaceID == "" ||
+	if !workspaceBillingProjectionPresent(row) || accountID == "" || ownerID == "" || workspaceID == "" ||
 		stringValue(row["ownerAccountId"]) != accountID || stringValue(owner["id"]) != ownerID ||
 		stringValue(owner["accountId"]) != accountID || stringValue(owner["status"]) != "active" ||
 		(stringValue(owner["role"]) != "owner" && !isOperatorUser(owner)) {
@@ -303,6 +303,11 @@ func prepareWorkspaceLaunchProjection(row, owner, existing map[string]any) (map[
 	delete(access, "password")
 	prepared["access"] = access
 	return prepared, nil
+}
+
+func workspaceBillingProjectionPresent(row map[string]any) bool {
+	state, present, err := normalizeWorkspaceBillingStateForWorkspace(row, row)
+	return err == nil && present && (state.RenewalStatus == "active" || state.RenewalStatus == workspaceBillingNotApplicable)
 }
 
 func validateSub2APIAccountMapping(accounts []map[string]any, row map[string]any) error {

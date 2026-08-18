@@ -1,0 +1,8 @@
+services:
+  control-plane:
+    labels:
+      opl.cloud.deployment-mode: managed_tke
+    environment:
+      OPL_DEPLOYMENT_MODE: managed_tke
+      OPL_SUB2API_ADMIN_EMAIL: ${OPL_SUB2API_ADMIN_EMAIL:?Set OPL_SUB2API_ADMIN_EMAIL}
+      OPL_SUB2API_ADMIN_PASSWORD: ${OPL_SUB2API_ADMIN_PASSWORD:?Set OPL_SUB2API_ADMIN_PASSWORD}

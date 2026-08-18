@@ -32,11 +32,9 @@ import {
 } from "../../tools/local-workspace-qualification.ts";
 import { runLocalWorkspaceQualification } from "../../tools/local-workspace-qualification.ts";
 import {
-  productMatrixLaneSpecs,
+  productMatrixModuleSpecs,
   productMatrixRequiredPackages,
-  productMatrixRequiredTests,
-  productMatrixVerticalPackage,
-  productMatrixVerticalTests
+  productMatrixRequiredTests
 } from "../../tools/verify-local.ts";
 
 const sha = "a".repeat(40);
@@ -44,18 +42,14 @@ const cloudDigest = `sha256:${"b".repeat(64)}`;
 const workspaceDigest = `sha256:${"c".repeat(64)}`;
 const workspaceReference = `ghcr.io/example/workspace@${workspaceDigest}`;
 
-function completeMatrixLanes() {
-  return productMatrixLaneSpecs.map((spec) => {
-    const packages = spec.cwd === "." ? [productMatrixVerticalPackage] :
-      productMatrixRequiredPackages.filter((name) => name === `opl-cloud/${spec.cwd}` || name.startsWith(`opl-cloud/${spec.cwd}/`));
-    const passedTests = spec.cwd === "." ?
-      productMatrixVerticalTests.map((name) => ({ package: productMatrixVerticalPackage, name })) :
-      productMatrixRequiredTests.filter((entry) => packages.includes(entry.package)).map((entry) => ({ ...entry }));
+function completeMatrixModules() {
+  return productMatrixModuleSpecs.map((spec) => {
+    const packages = productMatrixRequiredPackages.filter((name) => name === `opl-cloud/${spec.cwd}` || name.startsWith(`opl-cloud/${spec.cwd}/`));
+    const passedTests = productMatrixRequiredTests.filter((entry) => packages.includes(entry.package)).map((entry) => ({ ...entry }));
     return {
-      order: spec.order,
       cwd: spec.cwd,
       command: spec.command,
-      args: spec.cwd === "." ? [...spec.argsPrefix] : [...spec.argsPrefix, ...packages],
+      args: [...spec.argsPrefix, ...packages],
       packages,
       failed: 0,
       skipped: 0,
@@ -272,11 +266,6 @@ function j0ReadyReceipt(sourceSha = sha, sourceTree = "d".repeat(40)) {
     kind: "opl.local-workspace.j0-ready.v1",
     status: "READY",
     source: { sha: sourceSha, tree: sourceTree, clean: true },
-    gates: [
-      ...["E0", "E1", "E2", "E3"].map((id) => ({ id, status: "GREEN", failed: 0, skipped: 0 })),
-      { id: "E4", status: "BLOCKED_PRODUCT_DECISION_OUT_OF_P0", failed: 0, skipped: 0 },
-      ...["E5", "E6", "E7"].map((id) => ({ id, status: "GREEN", failed: 0, skipped: 0 }))
-    ],
     authority: { mode: "live", class: "sandbox", dedicated: true, confirmed: true },
     provider: "local-docker",
     failed: 0,
@@ -313,7 +302,7 @@ test("live arguments require one external J0 READY receipt instead of a Product 
   ]), /Product matrix/);
 });
 
-test("J0 READY admission binds exact clean source, P0 gates, authority, provider, and external 0600 file", async () => {
+test("J0 READY admission binds exact clean source, authority, provider, and external 0600 file", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-j0-ready-test-"));
   const path = join(root, "j0-ready.json");
   const link = join(root, "j0-ready-link.json");
@@ -325,21 +314,17 @@ test("J0 READY admission binds exact clean source, P0 gates, authority, provider
     const loaded = await loadJ0ReadyReceipt(path, sha, "d".repeat(40));
     assert.match(loaded.digest, /^sha256:[0-9a-f]{64}$/);
     assert.deepEqual(loaded.source, value.source);
-    assert.deepEqual(loaded.gates, value.gates);
     for (const invalid of [
       { ...value, kind: "opl.local-workspace.product-matrix.v1" },
       { ...value, status: "NOT_READY" },
       { ...value, source: { ...value.source, sha: "b".repeat(40) } },
       { ...value, source: { ...value.source, tree: "c".repeat(40) } },
       { ...value, source: { ...value.source, clean: false } },
-      { ...value, gates: value.gates.map((gate) => gate.id === "E5" ? { ...gate, status: "BLOCKED" } : gate) },
-      { ...value, gates: value.gates.map((gate) => gate.id === "E4" ? { ...gate, status: "GREEN" } : gate) },
       { ...value, authority: { ...value.authority, dedicated: false } },
       { ...value, provider: "tencent" },
       { ...value, skipped: 1 },
       { ...value, unexpected: true },
-      { ...value, authority: { ...value.authority, token: "forbidden" } },
-      { ...value, gates: value.gates.map((gate) => gate.id === "E7" ? { ...gate, detail: "duplicate truth" } : gate) }
+      { ...value, authority: { ...value.authority, token: "forbidden" } }
     ]) {
       assert.throws(() => validateJ0ReadyReceipt(invalid, sha, "d".repeat(40)), /j0_ready_receipt_invalid/);
     }
@@ -359,7 +344,7 @@ test("J0 READY admission binds exact clean source, P0 gates, authority, provider
   }
 });
 
-test("top-level live entry rejects J0 source and gate drift before starting the J1 stack or HTTP", async () => {
+test("top-level live entry rejects J0 source drift before starting the J1 stack or HTTP", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-j0-top-level-reject-"));
   const path = join(root, "j0-ready.json");
   const outputPath = join(root, "j1.json");
@@ -383,9 +368,7 @@ test("top-level live entry rejects J0 source and gate drift before starting the 
   try {
     for (const invalid of [
       j0ReadyReceipt("b".repeat(40)),
-      j0ReadyReceipt(sha, "c".repeat(40)),
-      { ...j0ReadyReceipt(), gates: j0ReadyReceipt().gates.slice(0, -1) },
-      { ...j0ReadyReceipt(), gates: j0ReadyReceipt().gates.map((gate) => gate.id === "E6" ? { ...gate, skipped: 1 } : gate) }
+      j0ReadyReceipt(sha, "c".repeat(40))
     ]) {
       await writeFile(path, JSON.stringify(invalid), { mode: 0o600 });
       await assert.rejects(() => runLocalWorkspaceQualification(baseOptions, dependencies), /j0_ready_receipt_invalid/);
@@ -613,11 +596,10 @@ test("READY receipt binds the exact durable and accounting evidence", () => {
       stages: ["key", "debit", "ensure_compute_allocation", "storage", "attachment", "secret", "runtime", "activation", "receipt"],
       packages: [...productMatrixRequiredPackages],
       tests: productMatrixRequiredTests.map((entry) => `${entry.package}:${entry.name}`),
-      lanes: completeMatrixLanes().map((lane) => ({
-        order: lane.order, cwd: lane.cwd, command: lane.command, args: lane.args,
-        packages: lane.packages, failed: lane.failed, skipped: lane.skipped
+      modules: completeMatrixModules().map((module) => ({
+        cwd: module.cwd, command: module.command, args: module.args,
+        packages: module.packages, failed: module.failed, skipped: module.skipped
       })),
-      verticalTests: [...productMatrixVerticalTests],
       zeroSkip: true,
       casWinnerCount: 1,
       unknownAuthorityWriteDeltas: { controlPlane: 0, sub2api: 0, fabric: 0, ledger: 0 }
@@ -685,11 +667,10 @@ test("Product matrix receipt admission binds exact source, nine stages, CAS, and
     unknown: { authorityWriteDeltas: { controlPlane: 0, sub2api: 0, fabric: 0, ledger: 0 } },
     packages: productMatrixRequiredPackages.map((name) => ({ name, passed: true, skipped: 0 })),
     tests: productMatrixRequiredTests.map((entry) => ({ ...entry, passed: true, skipped: 0 })),
-    lanes: completeMatrixLanes(),
-    verticalTests: productMatrixVerticalTests.map((name) => ({ name, passed: true, skipped: 0 }))
+    modules: completeMatrixModules()
   };
   assert.equal(validateProductMatrixReceipt(matrix, sha, "d".repeat(40)), matrix);
-  assert.throws(() => validateProductMatrixReceipt({ ...matrix, lanes: matrix.lanes.slice(1) }, sha, "d".repeat(40)), /lane|vertical/i);
+  assert.throws(() => validateProductMatrixReceipt({ ...matrix, modules: matrix.modules.slice(1) }, sha, "d".repeat(40)), /module/i);
   assert.throws(() => validateProductMatrixReceipt({ ...matrix, stages: [] }, sha, "d".repeat(40)), /nine-stage/);
   assert.throws(() => validateProductMatrixReceipt({ ...matrix, cas: { winnerCount: 2, loserMutationCount: 0 } }, sha, "d".repeat(40)), /CAS/);
   assert.throws(() => validateProductMatrixReceipt({
@@ -706,12 +687,12 @@ test("package exposes one local Workspace qualification command", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
   assert.equal(packageJson.scripts["qualify:local:workspace"], "node tools/local-workspace-qualification.ts");
   const compose = await readFile(new URL("../../deploy/portable/compose.local-workspace.yaml", import.meta.url), "utf8");
-  assert.match(compose, /source: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set a task-owned local Docker Secret root\}/);
-  assert.match(compose, /target: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set a task-owned local Docker Secret root\}/);
-  assert.match(compose, /OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set a task-owned local Docker Secret root\}/);
-	assert.match(compose, /OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER: \$\{OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER:\?Set the task-owned Control Plane gateway container\}/);
-	assert.match(compose, /opl\.fabric\.local-docker\.gateway: control-plane/);
-  assert.match(compose, /OPL_TENCENT_ZONE: local/);
+  const fabricCompose = await readFile(new URL("../../deploy/portable/compose.fabric-local-docker.yaml", import.meta.url), "utf8");
+  assert.match(fabricCompose, /source: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT\}/);
+  assert.match(fabricCompose, /target: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT\}/);
+  assert.match(fabricCompose, /OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT\}/);
+	assert.match(fabricCompose, /OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER: \$\{OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER:\?Set the task-owned Control Plane gateway container\}/);
+	assert.match(fabricCompose, /opl\.fabric\.local-docker\.gateway: control-plane/);
   const envExample = await readFile(new URL("../../deploy/portable/opl-cloud.env.example", import.meta.url), "utf8");
   assert.match(envExample, /^OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT=\/absolute\/path\/to\/opl-fabric-secrets$/m);
   const runner = await readFile(new URL("../../tools/local-workspace-qualification.ts", import.meta.url), "utf8");
@@ -925,7 +906,6 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
     const writtenReceipt = JSON.parse(await readFile(outputPath, "utf8"));
     assert.equal(writtenReceipt.j0Ready.digest, result.j0Ready.digest);
     assert.deepEqual(writtenReceipt.j0Ready.source, { sha, tree: "d".repeat(40), clean: true });
-    assert.deepEqual(writtenReceipt.j0Ready.gates.map(({ id, status }) => ({ id, status })), j0ReadyReceipt().gates.map(({ id, status }) => ({ id, status })));
     assert.equal(Object.prototype.hasOwnProperty.call(writtenReceipt, "productMatrix"), false);
     assert.deepEqual(stages, ["bootstrap_ready", "admin_login", "account_provision", "qualification_login", "wallet_usage_baseline", "pricing_preview", "workspace_launch", "terminal_readback", "workspace_open", "accounting_readback", "receipt_validation", "qualification_cleanup"]);
     assert.deepEqual(cleanupCalls, [{ accountId, workspaceId }]);

@@ -1,0 +1,35 @@
+services:
+  fabric:
+    user: root
+    labels:
+      opl.cloud.fabric-provider: local-docker
+    environment:
+      OPL_FABRIC_PROVIDER: local-docker
+      OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES: ${OPL_WORKSPACE_IMAGE:?Set OPL_WORKSPACE_IMAGE to an immutable Workspace image digest}
+      OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT: ${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT}
+      OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER: ${OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER:?Set the task-owned Control Plane gateway container}
+      OPL_FABRIC_LOCAL_DOCKER_STORAGE_ROOT: ${OPL_FABRIC_LOCAL_DOCKER_STORAGE_ROOT:?Set OPL_FABRIC_LOCAL_DOCKER_STORAGE_ROOT}
+    volumes:
+      - type: bind
+        source: ${OPL_DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT}
+        target: ${OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:?Set OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPL_FABRIC_LOCAL_DOCKER_STORAGE_ROOT:?Set OPL_FABRIC_LOCAL_DOCKER_STORAGE_ROOT}
+        target: ${OPL_FABRIC_LOCAL_DOCKER_STORAGE_ROOT:?Set OPL_FABRIC_LOCAL_DOCKER_STORAGE_ROOT}
+        bind:
+          create_host_path: false
+
+  control-plane:
+    container_name: ${OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER:?Set the task-owned Control Plane gateway container}
+    environment:
+      OPL_FABRIC_PROVIDER: local-docker
+    labels:
+      opl.fabric.local-docker.gateway: control-plane
+      opl.cloud.fabric-provider: local-docker

@@ -769,6 +769,27 @@ func TestWorkspaceRenewalStateSupportsProAndDisabledIntent(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCustomerOwnedBillingProjectionRoundTripsWithoutResourceCharges(t *testing.T) {
+	row := canonicalWorkspaceRenewalRow(false)
+	row["resourceBillingEnabled"] = false
+	row["renewalStatus"] = workspaceBillingNotApplicable
+	row["computeUsdMicros"], row["storageUsdMicros"], row["totalUsdMicros"] = int64(0), int64(0), int64(0)
+	if err := validateWorkspaceBillingState(row); err != nil {
+		t.Fatalf("customer-owned state rejected: %v", err)
+	}
+	encoded, err := encodeWorkspaceBillingState(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeWorkspaceBillingState(encoded, row)
+	if err != nil || decoded["resourceBillingEnabled"] != false || decoded["renewalStatus"] != workspaceBillingNotApplicable || decoded["totalUsdMicros"] != int64(0) {
+		t.Fatalf("customer-owned state did not round-trip: %#v err=%v", decoded, err)
+	}
+	if workspaceAcceptedBillingState(decoded) != nil {
+		t.Fatal("customer-owned state was treated as a renewable resource bill")
+	}
+}
+
 func TestWorkspaceRenewalOwnerLifecycleDisablesCanonicalIntent(t *testing.T) {
 	for _, storeCase := range []struct {
 		name string

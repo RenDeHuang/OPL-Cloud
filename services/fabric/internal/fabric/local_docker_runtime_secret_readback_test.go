@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -50,6 +51,8 @@ func validRuntimeSecretArchive(t *testing.T, key []byte, metadata localDockerGat
 		{name: "./", typeflag: tar.TypeDir, mode: 0700},
 		{name: "./" + localDockerGatewayKeyFile, typeflag: tar.TypeReg, body: key, mode: 0444},
 		{name: "./" + localDockerGatewayMetaFile, typeflag: tar.TypeReg, body: meta, mode: 0400},
+		{name: "./" + localDockerWebUIPasswordFile, typeflag: tar.TypeReg, body: []byte(deriveAionUIAdminPassword(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"), metadata.WorkspaceID, metadata.Version)), mode: 0400},
+		{name: "./" + localDockerWebUISessionSecretFile, typeflag: tar.TypeReg, body: []byte(deriveWebUISessionSecret(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"), metadata.WorkspaceID, metadata.Version)), mode: 0400},
 	})
 }
 
@@ -140,6 +143,7 @@ func TestLocalDockerRuntimeSecretMountViewsFailClosed(t *testing.T) {
 }
 
 func TestLocalDockerRuntimeSecretArchiveFailsClosed(t *testing.T) {
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", localDockerTestWebUISeed)
 	key := []byte("runtime-secret-key")
 	digest := fmt.Sprintf("%x", sha256.Sum256(key))
 	metadata := localDockerGatewayMetadata{
@@ -183,6 +187,20 @@ func TestLocalDockerRuntimeSecretArchiveFailsClosed(t *testing.T) {
 		{name: "missing key", body: runtimeSecretArchive(t, []runtimeSecretArchiveEntry{
 			{name: "./", typeflag: tar.TypeDir, mode: 0700},
 			{name: "./" + localDockerGatewayMetaFile, typeflag: tar.TypeReg, body: metadataBody, mode: 0400},
+		})},
+		{name: "password drift", body: runtimeSecretArchive(t, []runtimeSecretArchiveEntry{
+			{name: "./", typeflag: tar.TypeDir, mode: 0700},
+			{name: "./" + localDockerGatewayKeyFile, typeflag: tar.TypeReg, body: key, mode: 0444},
+			{name: "./" + localDockerGatewayMetaFile, typeflag: tar.TypeReg, body: metadataBody, mode: 0400},
+			{name: "./" + localDockerWebUIPasswordFile, typeflag: tar.TypeReg, body: []byte("foreign-password"), mode: 0400},
+			{name: "./" + localDockerWebUISessionSecretFile, typeflag: tar.TypeReg, body: []byte(deriveWebUISessionSecret(localDockerTestWebUISeed, metadata.WorkspaceID, metadata.Version)), mode: 0400},
+		})},
+		{name: "session secret drift", body: runtimeSecretArchive(t, []runtimeSecretArchiveEntry{
+			{name: "./", typeflag: tar.TypeDir, mode: 0700},
+			{name: "./" + localDockerGatewayKeyFile, typeflag: tar.TypeReg, body: key, mode: 0444},
+			{name: "./" + localDockerGatewayMetaFile, typeflag: tar.TypeReg, body: metadataBody, mode: 0400},
+			{name: "./" + localDockerWebUIPasswordFile, typeflag: tar.TypeReg, body: []byte(deriveAionUIAdminPassword(localDockerTestWebUISeed, metadata.WorkspaceID, metadata.Version)), mode: 0400},
+			{name: "./" + localDockerWebUISessionSecretFile, typeflag: tar.TypeReg, body: []byte("foreign-session-secret"), mode: 0400},
 		})},
 		{name: "unknown metadata field", body: runtimeSecretArchive(t, []runtimeSecretArchiveEntry{
 			{name: "./", typeflag: tar.TypeDir, mode: 0700},
@@ -233,6 +251,7 @@ func (failingRuntimeSecretArchiveRunner) Run(context.Context, []byte, ...string)
 }
 
 func TestLocalDockerRuntimeSecretArchiveReadbackFailsClosedOnDockerError(t *testing.T) {
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", localDockerTestWebUISeed)
 	provider := &LocalDockerProvider{runner: failingRuntimeSecretArchiveRunner{}}
 	key := []byte("runtime-secret-key")
 	digest := fmt.Sprintf("%x", sha256.Sum256(key))

@@ -2,11 +2,12 @@ FROM --platform=$BUILDPLATFORM golang:1.25-bookworm@sha256:6359592445455f2dbe241
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG GOPROXY=https://proxy.golang.org,direct
 
 WORKDIR /src/services/fabric
 COPY services/internal/postgresmigrate /src/services/internal/postgresmigrate
 COPY services/fabric/go.mod services/fabric/go.sum ./
-RUN go mod download
+RUN GOPROXY="$GOPROXY" go mod download
 COPY services/fabric ./
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/opl-tencent-provisioner ./cmd/opl-tencent-provisioner \
   && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/opl-fabric ./cmd/fabric
@@ -15,10 +16,12 @@ FROM --platform=$BUILDPLATFORM golang:1.22-bookworm@sha256:3d699e4d15d0f8f13c919
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG GOPROXY=https://proxy.golang.org,direct
 
 WORKDIR /src/services/control-plane
 COPY services/internal/postgresmigrate /src/services/internal/postgresmigrate
-COPY services/control-plane/go.mod ./
+COPY services/control-plane/go.mod services/control-plane/go.sum ./
+RUN GOPROXY="$GOPROXY" go mod download
 COPY services/control-plane ./
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/opl-control-plane ./cmd/control-plane
 
@@ -26,11 +29,12 @@ FROM --platform=$BUILDPLATFORM golang:1.22-bookworm@sha256:3d699e4d15d0f8f13c919
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG GOPROXY=https://proxy.golang.org,direct
 
 WORKDIR /src/services/ledger
 COPY services/internal/postgresmigrate /src/services/internal/postgresmigrate
 COPY services/ledger/go.mod services/ledger/go.sum ./
-RUN go mod download
+RUN GOPROXY="$GOPROXY" go mod download
 COPY services/ledger ./
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/opl-ledger ./cmd/ledger
 

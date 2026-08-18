@@ -19,7 +19,13 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchKey(ctx con
 	if userID <= 0 || groupID <= 0 || name == "" {
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, errInvalidWorkspaceLaunchOperation
 	}
-	keys, err := a.service.WorkspaceKeysForConvergence(ctx, userID, name)
+	var keys []clients.Sub2APIWorkspaceKey
+	var err error
+	if a.workspaceLaunchKeyMutationCredentialValid(operation) {
+		keys, err = a.service.GatewayWorkspaceKeysForConvergence(ctx, a.keyCredential, userID, name)
+	} else {
+		keys, err = a.service.WorkspaceKeysForConvergence(ctx, userID, name)
+	}
 	if err != nil {
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, err
 	}
@@ -46,22 +52,95 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchKey(ctx c
 		return errWorkspaceLaunchStageAdapterUnavailable
 	}
 	name := workspaceReservedKeyName(operation.stringFact("workspaceId"))
-	keys, err := a.service.WorkspaceKeysForConvergence(ctx, userID, name)
+	var keys []clients.Sub2APIWorkspaceKey
+	var err error
+	if a.workspaceLaunchKeyMutationCredentialValid(operation) {
+		keys, err = a.service.GatewayWorkspaceKeysForConvergence(ctx, a.keyCredential, userID, name)
+	} else {
+		keys, err = a.service.WorkspaceKeysForConvergence(ctx, userID, name)
+	}
 	if err != nil {
 		return err
 	}
 	reserved := workspaceKeysNamed(keys, name)
 	if len(reserved) == 0 {
-		_, err = a.service.CreateGatewayUserKey(ctx, a.keyCredential, userID, clients.Sub2APICreateKeyInput{Name: name, GroupID: groupID}, idempotencyKey)
-		return err
+		created, createErr := a.service.CreateGatewayUserKey(ctx, a.keyCredential, userID, clients.Sub2APICreateKeyInput{Name: name, GroupID: groupID}, idempotencyKey)
+		if createErr != nil {
+			return createErr
+		}
+		return a.materializeCustomerOwnedGatewaySecret(ctx, operation, created, idempotencyKey)
 	}
 	if len(reserved) != 1 || reserved[0].ID <= 0 || reserved[0].UserID != userID || reserved[0].Status != "active" {
 		return clients.ErrSub2APIWorkspaceKeyAmbiguous
 	}
 	if reserved[0].GroupID != nil && *reserved[0].GroupID == groupID {
+		// A replay of the original idempotency key is allowed to return the
+		// one-time plaintext. This repairs a launch that persisted the key
+		// before the secret write without creating another key.
+		if !operation.boolFact("resourceBillingEnabled") {
+			replayed, replayErr := a.service.CreateGatewayUserKey(ctx, a.keyCredential, userID, clients.Sub2APICreateKeyInput{Name: name, GroupID: groupID}, idempotencyKey)
+			if replayErr == nil {
+				return a.materializeCustomerOwnedGatewaySecret(ctx, operation, replayed, idempotencyKey)
+			}
+			keys, listErr := a.service.GatewayWorkspaceKeysForConvergence(ctx, a.keyCredential, userID, name)
+			if listErr != nil {
+				return replayErr
+			}
+			for _, listed := range keys {
+				if listed.ID == reserved[0].ID {
+					return a.materializeCustomerOwnedGatewaySecret(ctx, operation, listed, idempotencyKey)
+				}
+			}
+			return replayErr
+		}
 		return nil
 	}
 	_, err = a.service.UpdateGatewayUserKey(ctx, a.keyCredential, userID, reserved[0].ID, clients.Sub2APIUpdateKeyInput{GroupID: &groupID})
+	if err != nil {
+		return err
+	}
+	if !operation.boolFact("resourceBillingEnabled") {
+		replayed, replayErr := a.service.CreateGatewayUserKey(ctx, a.keyCredential, userID, clients.Sub2APICreateKeyInput{Name: name, GroupID: groupID}, idempotencyKey)
+		if replayErr == nil {
+			return a.materializeCustomerOwnedGatewaySecret(ctx, operation, replayed, idempotencyKey)
+		}
+		keys, listErr := a.service.GatewayWorkspaceKeysForConvergence(ctx, a.keyCredential, userID, name)
+		if listErr != nil {
+			return replayErr
+		}
+		for _, listed := range keys {
+			if listed.ID == reserved[0].ID {
+				return a.materializeCustomerOwnedGatewaySecret(ctx, operation, listed, idempotencyKey)
+			}
+		}
+		return replayErr
+	}
+	return nil
+}
+
+func (a *controlPlaneWorkspaceLaunchStageAdapter) materializeCustomerOwnedGatewaySecret(ctx context.Context, operation workspaceLaunchReconcileOperation, key clients.Sub2APIWorkspaceKey, idempotencyKey string) error {
+	if operation.boolFact("resourceBillingEnabled") {
+		return nil
+	}
+	if key.ID <= 0 || key.UserID != operation.int64Fact("sub2apiUserId") || key.Status != "active" || strings.TrimSpace(key.Key) == "" {
+		if key.ID <= 0 || key.UserID != operation.int64Fact("sub2apiUserId") || key.Status != "active" {
+			return errInvalidWorkspaceLaunchOperation
+		}
+		keys, err := a.service.GatewayWorkspaceKeysForConvergence(ctx, a.keyCredential, key.UserID, workspaceReservedKeyName(operation.stringFact("workspaceId")))
+		if err != nil {
+			return err
+		}
+		for _, listed := range keys {
+			if listed.ID == key.ID {
+				key = listed
+				break
+			}
+		}
+		if strings.TrimSpace(key.Key) == "" {
+			return errInvalidWorkspaceLaunchOperation
+		}
+	}
+	_, err := a.service.SyncWorkspaceGatewaySecretWithKey(ctx, operation.stringFact("accountId"), operation.stringFact("workspaceId"), key.UserID, key, idempotencyKey)
 	return err
 }
 
@@ -72,6 +151,14 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) workspaceLaunchKeyMutationCred
 }
 
 func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchDebit(ctx context.Context, operation workspaceLaunchReconcileOperation) (workspaceLaunchStageObservation, error) {
+	if operation.raw["resourceBillingEnabled"] != nil && !operation.boolFact("resourceBillingEnabled") {
+		start := time.Now().UTC()
+		return workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: map[string]any{
+			"chargeAttempted": false, "chargeConfirmation": map[string]any{"status": "not_charged"},
+			"preChargeBalanceUsdMicros": int64(0), "postChargeBalanceUsdMicros": int64(0), "postChargeBalanceKnown": true,
+			"billingPeriodState": "not_billed", "periodStart": start.Format(time.RFC3339Nano), "paidThrough": nextBillingMonth(start, start.Day()).Format(time.RFC3339Nano), "billingAnchorDay": start.Day(),
+		}}, nil
+	}
 	userID, code := operation.int64Fact("sub2apiUserId"), operation.stringFact("sub2apiRedeemCode")
 	if userID <= 0 || code == "" {
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, errInvalidWorkspaceLaunchOperation
@@ -125,6 +212,9 @@ func workspaceLaunchDebitReadbackCanConverge(operation workspaceLaunchReconcileO
 }
 
 func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchDebit(ctx context.Context, operation workspaceLaunchReconcileOperation) error {
+	if operation.raw["resourceBillingEnabled"] != nil && !operation.boolFact("resourceBillingEnabled") {
+		return nil
+	}
 	userID, code := operation.int64Fact("sub2apiUserId"), operation.stringFact("sub2apiRedeemCode")
 	if userID <= 0 || code == "" || workspaceLaunchStageIdempotencyKey(operation, 1) != code {
 		return errInvalidWorkspaceLaunchOperation

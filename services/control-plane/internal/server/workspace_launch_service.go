@@ -208,9 +208,11 @@ func (app *controlPlaneServer) runWorkspaceLaunchesOnce(ctx context.Context, ser
 			errs = append(errs, decodeErr)
 			continue
 		}
+		unlock := app.lockResource("workspace-launch", operation.stringFact("accountId"))
 		if err := app.runWorkspaceLaunch(ctx, service, operation.ID); err != nil {
 			errs = append(errs, err)
 		}
+		unlock()
 	}
 	return errors.Join(errs...)
 }

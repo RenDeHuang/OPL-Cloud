@@ -11,13 +11,10 @@ import {
   parseVerifyLocalArgs,
   postgresImage,
   postgresVerificationSpecs,
-  productMatrixLaneSpecs,
+  productMatrixModuleSpecs,
   productMatrixRequiredPackages,
   productMatrixRequiredTests,
   productMatrixStages,
-  productMatrixVerticalPackage,
-  productMatrixVerticalTests,
-  parseNodeTAPOutput,
   runVerification
 } from "../../tools/verify-local.ts";
 
@@ -51,15 +48,14 @@ test("verify-local exposes one default gate across Node, builds, and every Go mo
   }
 });
 
-function completeProductMatrixResults({ includeVertical = true } = {}) {
-  const results = postgresVerificationSpecs.map((spec, order) => {
-    const lane = productMatrixLaneSpecs[order];
+function completeProductMatrixResults() {
+  return postgresVerificationSpecs.map((spec, index) => {
+    const module = productMatrixModuleSpecs[index];
     const packages = productMatrixRequiredPackages.filter((name) => name === `opl-cloud/${spec.cwd}` || name.startsWith(`opl-cloud/${spec.cwd}/`));
     return {
-    order,
     cwd: spec.cwd,
-    command: lane.command,
-    args: [...lane.argsPrefix, ...packages],
+    command: module.command,
+    args: [...module.argsPrefix, ...packages],
     packages,
     failed: 0,
     skipped: 0,
@@ -67,18 +63,6 @@ function completeProductMatrixResults({ includeVertical = true } = {}) {
     passedTests: productMatrixRequiredTests.filter((entry) => packages.includes(entry.package)).map((entry) => ({ ...entry }))
   };
   });
-  if (includeVertical) results.push({
-    order: 4,
-    cwd: ".",
-    command: "node",
-    args: [...productMatrixLaneSpecs[4].argsPrefix],
-    packages: [productMatrixVerticalPackage],
-    failed: 0,
-    skipped: 0,
-    passedPackages: [productMatrixVerticalPackage],
-    passedTests: productMatrixVerticalTests.map((name) => ({ package: productMatrixVerticalPackage, name }))
-  });
-  return results;
 }
 
 test("Product matrix receipt is derived from exact passed packages and tests", () => {
@@ -86,11 +70,7 @@ test("Product matrix receipt is derived from exact passed packages and tests", (
   const receipt = buildProductMatrixReceipt(source, source, completeProductMatrixResults(), "2026-08-16T00:00:00.000Z");
   assert.deepEqual(receipt.source, { sha: source.sha, tree: source.tree });
   assert.equal(receipt.zeroSkip, true);
-  assert.deepEqual(receipt.lanes.map((lane) => ({ order: lane.order, cwd: lane.cwd })),
-    productMatrixLaneSpecs.map((lane) => ({ order: lane.order, cwd: lane.cwd })));
-  assert.deepEqual(receipt.verticalTests.map((entry) => entry.name), productMatrixVerticalTests);
-  assert.equal(productMatrixVerticalTests.length, 7);
-  assert.equal(productMatrixVerticalTests.some((name) => name.startsWith("E4 ")), false);
+  assert.deepEqual(receipt.modules.map((module) => module.cwd), productMatrixModuleSpecs.map((module) => module.cwd));
   assert.deepEqual(receipt.stages.map((stage) => stage.name), productMatrixStages);
   assert.ok(receipt.stages.every((stage) => stage.passed === true && stage.skipped === 0));
   assert.deepEqual(receipt.cas, {
@@ -113,56 +93,6 @@ test("Product matrix receipt is derived from exact passed packages and tests", (
   }
 });
 
-test("vertical verification parses Node's supported TAP reporter without losing evidence", () => {
-  const output = [
-    "TAP version 13",
-    "# Subtest: E0 fresh PostgreSQL owners and restart count zero",
-    "ok 1 - E0 fresh PostgreSQL owners and restart count zero",
-    "# Subtest: E1 canonical nine-stage launch is exactly once",
-    "ok 2 - E1 canonical nine-stage launch is exactly once",
-    "# Subtest: E2 intermediate and succeeded restart preserve identities",
-    "ok 3 - E2 intermediate and succeeded restart preserve identities",
-    "# Subtest: E3 runtime status and workspace open are authoritative",
-    "ok 4 - E3 runtime status and workspace open are authoritative",
-    "# Subtest: E5 launch pending unknown continuation preserves one operation",
-    "ok 5 - E5 launch pending unknown continuation preserves one operation",
-    "# Subtest: E6 fixture authority launch cardinalities and bindings are exact",
-    "ok 6 - E6 fixture authority launch cardinalities and bindings are exact",
-    "# Subtest: E7 qualification-owned exact-label cleanup leaves zero residuals",
-    "ok 7 - E7 qualification-owned exact-label cleanup leaves zero residuals",
-    "1..7",
-    "# tests 7",
-    "# pass 7",
-    "# fail 0",
-    "# skipped 0",
-    "# todo 0"
-  ].join("\n");
-
-  assert.deepEqual(parseNodeTAPOutput(output), {
-    passed: productMatrixVerticalTests,
-    failed: 0,
-    skipped: 0
-  });
-});
-
-test("vertical verification keeps TAP failure and skip evidence visible", () => {
-  assert.deepEqual(parseNodeTAPOutput([
-    "TAP version 13",
-    "not ok 1 - E0 fresh PostgreSQL owners and restart count zero",
-    "ok 2 - E1 canonical nine-stage launch is exactly once # SKIP unavailable",
-    "1..2",
-    "# tests 2",
-    "# pass 1",
-    "# fail 1",
-    "# skipped 1",
-    "# todo 0"
-  ].join("\n")), {
-    passed: ["E1 canonical nine-stage launch is exactly once"],
-    failed: 1,
-    skipped: 1
-  });
-});
-
 test("Product matrix receipt rejects dirty source drift and incomplete test evidence", () => {
   const source = { sha: "a".repeat(40), tree: "b".repeat(40), clean: true };
   assert.throws(() => buildProductMatrixReceipt({ ...source, clean: false }, source, completeProductMatrixResults()), /clean/);
@@ -178,16 +108,17 @@ test("Product matrix receipt rejects dirty source drift and incomplete test evid
   assert.throws(() => buildProductMatrixReceipt(source, source, skipped), /zero.?skip/i);
 });
 
-test("Product matrix receipt rejects spoofed lane cwd, order, and missing vertical evidence", () => {
+test("Product matrix receipt rejects spoofed, duplicated, and missing module evidence", () => {
   const source = { sha: "a".repeat(40), tree: "b".repeat(40), clean: true };
   const spoofedCwd = completeProductMatrixResults();
   spoofedCwd[0] = { ...spoofedCwd[0], cwd: "services/fabric" };
-  assert.throws(() => buildProductMatrixReceipt(source, source, spoofedCwd), /cwd|lane/i);
+  assert.throws(() => buildProductMatrixReceipt(source, source, spoofedCwd), /cwd|module/i);
 
-  const reversed = completeProductMatrixResults().reverse();
-  assert.throws(() => buildProductMatrixReceipt(source, source, reversed), /order|lane|cwd/i);
+  const duplicated = completeProductMatrixResults();
+  duplicated[1] = { ...duplicated[1], cwd: duplicated[0].cwd };
+  assert.throws(() => buildProductMatrixReceipt(source, source, duplicated), /module|duplicated/i);
 
-  assert.throws(() => buildProductMatrixReceipt(source, source, completeProductMatrixResults({ includeVertical: false })), /vertical/i);
+  assert.throws(() => buildProductMatrixReceipt(source, source, completeProductMatrixResults().slice(0, -1)), /module/i);
 });
 
 test("full local gate covers every PostgreSQL owner with the CI-only extensions", async () => {
@@ -205,7 +136,7 @@ test("full local gate covers every PostgreSQL owner with the CI-only extensions"
   assert.equal(postgresVerificationSpecs[2].timeout, "15m");
 });
 
-test("full verification adds the temporary PostgreSQL lane after the default gate", async () => {
+test("full verification adds the temporary PostgreSQL modules after the default checks", async () => {
   const events = [];
   const env = { OPL_POSTGRES_TESTS: "1" };
   const dependencies = {

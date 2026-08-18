@@ -36,6 +36,13 @@ func (c *workspaceLaunchResumeRouteSub2API) WorkspaceKeysForConvergence(_ contex
 	return result, nil
 }
 
+func (c *workspaceLaunchResumeRouteSub2API) WorkspaceUserKeysForConvergence(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64, name string) ([]clients.Sub2APIWorkspaceKey, error) {
+	if credential.Bearer != "test-user-delegated-token" {
+		return nil, errors.New("wrong delegated key read")
+	}
+	return c.WorkspaceKeysForConvergence(ctx, userID, name)
+}
+
 func (c *workspaceLaunchResumeRouteSub2API) CreateUserKey(_ context.Context, credential clients.SessionDelegatedCredential, userID int64, input clients.Sub2APICreateKeyInput, idempotencyKey string) (clients.Sub2APIWorkspaceKey, error) {
 	c.credentials = append(c.credentials, credential)
 	if credential.Bearer != "test-user-delegated-token" || userID != 41 || input.GroupID != 7 || idempotencyKey != c.expectedCreateKey {

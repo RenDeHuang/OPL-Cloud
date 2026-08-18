@@ -101,13 +101,23 @@ func (p *LocalDockerProvider) EnsureWorkspaceLaunchStage(ctx context.Context, re
 		resources.AttachmentID, resources.AttachmentBindingRef = attachment.ID, binding.FabricOperationID
 	case "secret":
 		credential := input.GatewayCredential
-		if credential == nil || credential.KeyID != request.Current.GatewayKeyID || credential.KeyID <= 0 || strings.TrimSpace(credential.Value) == "" {
+		if credential == nil || credential.KeyID != request.Current.GatewayKeyID || credential.KeyID <= 0 {
 			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchInputInvalid
 		}
-		secret, err := p.UpsertGatewaySecret(ctx, GatewaySecretInput{
-			AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, WorkspaceAPIKeyID: credential.KeyID,
-			Fingerprint: resources.GatewaySecretFingerprint, GatewayAPIKey: credential.Value, IdempotencyKey: binding.IdempotencyKey,
-		})
+		var secret GatewaySecret
+		var err error
+		if strings.TrimSpace(credential.Value) == "" {
+			secret, err = p.ReadGatewaySecretByDigest(ctx, GatewaySecretReadbackInput{
+				AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, WorkspaceAPIKeyID: credential.KeyID,
+				SecretRef: gatewaySecretName(binding.WorkspaceID), Fingerprint: resources.GatewaySecretFingerprint,
+				KeyDigest: strings.TrimPrefix(resources.GatewaySecretFingerprint, "sha256:"),
+			})
+		} else {
+			secret, err = p.UpsertGatewaySecret(ctx, GatewaySecretInput{
+				AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, WorkspaceAPIKeyID: credential.KeyID,
+				Fingerprint: resources.GatewaySecretFingerprint, GatewayAPIKey: credential.Value, IdempotencyKey: binding.IdempotencyKey,
+			})
+		}
 		if err != nil {
 			return WorkspaceLaunchProviderResult{}, err
 		}

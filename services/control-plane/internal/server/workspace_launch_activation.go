@@ -42,15 +42,23 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchActivatio
 }
 
 func workspaceLaunchActivationRow(operation workspaceLaunchReconcileOperation) (map[string]any, error) {
-	quote, err := workspacePricingPreview(defaultPricingCatalog(), map[string]any{"packageId": operation.stringFact("packageId"), "sizeGb": operation.intFact("sizeGb")})
-	if err != nil {
-		return nil, err
-	}
-	computePrice, computeOK := requiredPositiveInteger(mapField(quote, "compute"), "chargeUsdMicros")
-	storagePrice, storageOK := requiredPositiveInteger(mapField(quote, "storage"), "chargeUsdMicros")
 	paidThrough, paidThroughErr := time.Parse(time.RFC3339, operation.stringFact("paidThrough"))
-	if !computeOK || !storageOK || paidThroughErr != nil {
+	if paidThroughErr != nil {
 		return nil, errInvalidWorkspaceLaunchOperation
+	}
+	resourceBillingEnabled := operation.raw["resourceBillingEnabled"] == nil || operation.boolFact("resourceBillingEnabled")
+	computePrice, storagePrice := int64(0), int64(0)
+	if resourceBillingEnabled {
+		quote, err := workspacePricingPreview(defaultPricingCatalog(), map[string]any{"packageId": operation.stringFact("packageId"), "sizeGb": operation.intFact("sizeGb")})
+		if err != nil {
+			return nil, err
+		}
+		var computeOK, storageOK bool
+		computePrice, computeOK = requiredPositiveInteger(mapField(quote, "compute"), "chargeUsdMicros")
+		storagePrice, storageOK = requiredPositiveInteger(mapField(quote, "storage"), "chargeUsdMicros")
+		if !computeOK || !storageOK {
+			return nil, errInvalidWorkspaceLaunchOperation
+		}
 	}
 	row := workspaceProjectionRow(domain.WorkspaceProjection{
 		ID: operation.stringFact("workspaceId"), AccountID: operation.stringFact("accountId"), OwnerID: operation.stringFact("ownerUserId"),
@@ -61,10 +69,10 @@ func workspaceLaunchActivationRow(operation workspaceLaunchReconcileOperation) (
 		CredentialVersion: operation.stringFact("credentialVersion"), CredentialSecretRef: operation.stringFact("credentialSecretRef"),
 	})
 	for key, value := range map[string]any{
-		"autoRenew": false, "authorizedBy": "", "authorizedAt": "", "priceVersion": operation.stringFact("priceVersion"), "currency": pricingCurrency,
+		"resourceBillingEnabled": resourceBillingEnabled, "autoRenew": false, "authorizedBy": "", "authorizedAt": "", "priceVersion": operation.stringFact("priceVersion"), "currency": pricingCurrency,
 		"billingUnit": pricingBillingUnit, "computeUsdMicros": computePrice, "storageUsdMicros": storagePrice, "totalUsdMicros": operation.int64Fact("totalChargeUsdMicros"),
 		"periodStart": operation.stringFact("periodStart"), "paidThrough": operation.stringFact("paidThrough"), "nextRenewalAt": paidThrough.Add(-24 * time.Hour).Format(time.RFC3339Nano),
-		"billingAnchorDay": operation.intFact("billingAnchorDay"), "renewalStatus": "active", "computeAllocationId": operation.stringFact("computeAllocationId"),
+		"billingAnchorDay": operation.intFact("billingAnchorDay"), "renewalStatus": map[bool]string{true: "active", false: workspaceBillingNotApplicable}[resourceBillingEnabled], "computeAllocationId": operation.stringFact("computeAllocationId"),
 		"storageId": operation.stringFact("storageId"), "storageGb": operation.intFact("sizeGb"), "activatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	} {
 		row[key] = value
@@ -124,6 +132,9 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchReceipt(c
 }
 
 func workspaceLaunchPurchaseReceiptInput(operation workspaceLaunchReconcileOperation) (clients.ReceiptInput, error) {
+	if operation.raw["resourceBillingEnabled"] != nil && !operation.boolFact("resourceBillingEnabled") {
+		return clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", AccountID: operation.stringFact("accountId"), WorkspaceID: operation.stringFact("workspaceId"), RequestID: operation.ID + ":purchase-receipt", Execution: map[string]any{"operationId": operation.ID + ":purchase-receipt", "runtimeId": operation.stringFact("runtimeId")}, OutputRefs: map[string]any{"url": operation.stringFact("url")}, Owner: map[string]any{"accountId": operation.stringFact("accountId"), "userId": operation.stringFact("ownerUserId")}}, nil
+	}
 	quote, err := workspacePricingPreview(defaultPricingCatalog(), map[string]any{"packageId": operation.stringFact("packageId"), "sizeGb": operation.intFact("sizeGb")})
 	if err != nil {
 		return clients.ReceiptInput{}, err

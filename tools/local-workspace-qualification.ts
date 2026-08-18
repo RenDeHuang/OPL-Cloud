@@ -9,12 +9,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseDocument } from "yaml";
 
 import {
-  productMatrixLaneSpecs,
   productMatrixRequiredPackages,
   productMatrixRequiredTests,
   productMatrixStages,
-  productMatrixVerticalTests,
-  validateProductMatrixLanes
+  validateProductMatrixModules
 } from "./verify-local.ts";
 import {
   collectLocalJ1RecoveryAuthority,
@@ -46,17 +44,6 @@ const deferredCloudGates = Object.freeze([
   "production-secrets-and-network",
   "instance-deployment-and-rollback"
 ]);
-const j0GateStatuses = Object.freeze([
-  ["E0", "GREEN"],
-  ["E1", "GREEN"],
-  ["E2", "GREEN"],
-  ["E3", "GREEN"],
-  ["E4", "BLOCKED_PRODUCT_DECISION_OUT_OF_P0"],
-  ["E5", "GREEN"],
-  ["E6", "GREEN"],
-  ["E7", "GREEN"]
-]);
-
 export function immutableImageDigest(value) {
   const normalized = String(value || "").trim();
   if (digestPattern.test(normalized)) return normalized;
@@ -249,11 +236,7 @@ export function validateProductMatrixReceipt(value, sourceSha, sourceTree) {
       entry?.name !== productMatrixRequiredTests[index].name || entry?.passed !== true || entry?.skipped !== 0)) {
     throw new Error("Product matrix receipt test evidence is invalid");
   }
-  validateProductMatrixLanes(value.lanes);
-  if (!Array.isArray(value.verticalTests) || value.verticalTests.length !== productMatrixVerticalTests.length ||
-    value.verticalTests.some((entry, index) => entry?.name !== productMatrixVerticalTests[index] || entry?.passed !== true || entry?.skipped !== 0)) {
-    throw new Error("Product matrix receipt vertical evidence is invalid");
-  }
+  validateProductMatrixModules(value.modules);
   return value;
 }
 
@@ -269,18 +252,14 @@ function hasExactKeys(value, keys) {
 }
 
 export function validateJ0ReadyReceipt(value, sourceSha, sourceTree) {
-  if (!hasExactKeys(value, ["schemaVersion", "kind", "status", "source", "gates", "authority", "provider", "failed", "skipped"]) ||
+  if (!hasExactKeys(value, ["schemaVersion", "kind", "status", "source", "authority", "provider", "failed", "skipped"]) ||
     value.schemaVersion !== 1 || value.kind !== "opl.local-workspace.j0-ready.v1" || value.status !== "READY" ||
     !hasExactKeys(value.source, ["sha", "tree", "clean"]) ||
     value.source?.sha !== sourceSha || value.source?.tree !== sourceTree || value.source?.clean !== true ||
     value.failed !== 0 || value.skipped !== 0 || value.provider !== "local-docker" ||
     !hasExactKeys(value.authority, ["mode", "class", "dedicated", "confirmed"]) ||
     value.authority?.mode !== "live" || value.authority?.class !== "sandbox" ||
-    value.authority?.dedicated !== true || value.authority?.confirmed !== true ||
-    !Array.isArray(value.gates) || value.gates.length !== j0GateStatuses.length ||
-    value.gates.some((gate, index) => !hasExactKeys(gate, ["id", "status", "failed", "skipped"]) ||
-      gate?.id !== j0GateStatuses[index][0] || gate?.status !== j0GateStatuses[index][1] ||
-      gate?.failed !== 0 || gate?.skipped !== 0)) {
+    value.authority?.dedicated !== true || value.authority?.confirmed !== true) {
     throw j0ReadyReceiptError();
   }
   return value;
@@ -305,7 +284,6 @@ export async function loadJ0ReadyReceipt(path, sourceSha, sourceTree, { currentU
     return {
       digest: `sha256:${createHash("sha256").update(raw).digest("hex")}`,
       source: { sha: value.source.sha, tree: value.source.tree, clean: true },
-      gates: value.gates.map((gate) => ({ id: gate.id, status: gate.status, failed: 0, skipped: 0 })),
       authority: { mode: "live", class: "sandbox", dedicated: true, confirmed: true },
       provider: "local-docker",
       failed: 0,
@@ -329,11 +307,10 @@ async function loadProductMatrixReceipt(path, sourceSha, sourceTree) {
     stages: [...productMatrixStages],
     packages: value.packages.map((entry) => entry.name),
     tests: value.tests.map((entry) => `${entry.package}:${entry.name}`),
-    lanes: value.lanes.map((lane) => ({
-      order: lane.order, cwd: lane.cwd, command: lane.command, args: [...lane.args], packages: [...lane.packages],
-      failed: lane.failed, skipped: lane.skipped
+    modules: value.modules.map((module) => ({
+      cwd: module.cwd, command: module.command, args: [...module.args], packages: [...module.packages],
+      failed: module.failed, skipped: module.skipped
     })),
-    verticalTests: value.verticalTests.map((entry) => entry.name),
     zeroSkip: true,
     casWinnerCount: 1,
     unknownAuthorityWriteDeltas: { ...value.unknown.authorityWriteDeltas }
@@ -360,9 +337,7 @@ export function validateLocalQualificationReceipt(value) {
     value.j0Ready?.source?.tree !== value.source.tree || value.j0Ready?.source?.clean !== true ||
     value.j0Ready?.provider !== "local-docker" || value.j0Ready?.authority?.mode !== "live" ||
     value.j0Ready?.authority?.class !== "sandbox" || value.j0Ready?.authority?.dedicated !== true ||
-    value.j0Ready?.authority?.confirmed !== true || value.j0Ready?.failed !== 0 || value.j0Ready?.skipped !== 0 ||
-    !Array.isArray(value.j0Ready?.gates) || value.j0Ready.gates.length !== j0GateStatuses.length ||
-    value.j0Ready.gates.some((gate, index) => gate?.id !== j0GateStatuses[index]?.[0] || gate?.status !== j0GateStatuses[index]?.[1] || gate?.failed !== 0 || gate?.skipped !== 0))) {
+    value.j0Ready?.authority?.confirmed !== true || value.j0Ready?.failed !== 0 || value.j0Ready?.skipped !== 0)) {
     throw new Error("live qualification requires the exact J0 READY receipt binding");
   }
   for (const name of ["console", "controlPlane", "fabric", "ledger"]) {

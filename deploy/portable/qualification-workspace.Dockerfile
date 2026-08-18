@@ -1,5 +1,5 @@
-FROM alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
 
 EXPOSE 3000
-HEALTHCHECK --interval=1s --timeout=1s --retries=30 CMD wget -q -O- http://127.0.0.1:3000/ || exit 1
-CMD ["sh", "-c", "while true; do { printf 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 20\r\nConnection: close\r\n\r\nOPL Workspace READY\n'; } | nc -l -p 3000; done"]
+HEALTHCHECK --interval=1s --timeout=1s --retries=30 CMD node -e 'fetch("http://127.0.0.1:3000/").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'
+CMD ["node", "-e", "require('node:http').createServer((_request,response)=>{response.writeHead(200,{'content-type':'text/plain'});response.end('OPL Workspace READY\\n')}).listen(3000,'0.0.0.0')"]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -141,6 +142,13 @@ func (c *workspaceLaunchMonthlyPreflightSub2API) WorkspaceKeysForConvergence(_ c
 	return result, nil
 }
 
+func (c *workspaceLaunchMonthlyPreflightSub2API) WorkspaceUserKeysForConvergence(_ context.Context, credential clients.SessionDelegatedCredential, userID int64, name string) ([]clients.Sub2APIWorkspaceKey, error) {
+	if credential.Bearer != "test-user-delegated-token" || userID != 41 {
+		return nil, errors.New("wrong delegated credential")
+	}
+	return c.WorkspaceKeysForConvergence(context.Background(), userID, name)
+}
+
 func (c *workspaceLaunchMonthlyPreflightSub2API) CreateUserKey(_ context.Context, _ clients.SessionDelegatedCredential, userID int64, input clients.Sub2APICreateKeyInput, _ string) (clients.Sub2APIWorkspaceKey, error) {
 	*c.events = append(*c.events, "sub2api.workspace-key")
 	groupID := input.GroupID
@@ -181,6 +189,9 @@ func (c *workspaceLaunchMonthlyPreflightSub2API) FinancialBalanceHistoryByCodes(
 
 func newWorkspaceLaunchMonthlyPreflightFixture(t *testing.T, failureMode string) (http.Handler, *memoryTableStore, *workspaceLaunchMonthlyPreflightSub2API, *workspaceLaunchMonthlyPreflightFabric, *[]string) {
 	t.Helper()
+	// These cases prove the platform billing sequence, independent of the shell
+	// environment used to run the package.
+	t.Setenv("OPL_DEPLOYMENT_MODE", string(deploymentPlatformOwned))
 	events := []string{}
 	client := &workspaceLaunchMonthlyPreflightSub2API{
 		testSub2APIClient: &testSub2APIClient{
@@ -205,6 +216,27 @@ func newWorkspaceLaunchMonthlyPreflightFixture(t *testing.T, failureMode string)
 	return server, store, client, fabric, &events
 }
 
+func continueWorkspaceLaunchKeyForMonthlyPreflightTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, key string) (workspaceLaunchReconcileOperation, error) {
+	t.Helper()
+	handler, ok := server.(*controlPlaneHTTPHandler)
+	if !ok {
+		t.Fatal("unexpected control-plane test handler")
+	}
+	var credential clients.SessionDelegatedCredential
+	for _, cookie := range session.Result().Cookies() {
+		if value, found := handler.app.sessionCredentials.Get(sessionLookupKey(cookie.Value)); found {
+			credential = value
+			break
+		}
+	}
+	if credential.Bearer == "" {
+		t.Fatal("missing delegated session credential")
+	}
+	operationID := workspaceLaunchOperationID("acct-alpha", key)
+	reconciler := handler.app.workspaceLaunchReconciler(handler.service, credential, 41)
+	return reconciler.Reconcile(context.Background(), operationID)
+}
+
 func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *testing.T) {
 	t.Setenv(controlledBasicPilotEnabledEnv, "1")
 	t.Setenv(controlledBasicPilotAccountsEnv, "acct-alpha")
@@ -225,8 +257,7 @@ func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *t
 			if response.Code != http.StatusAccepted {
 				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 			}
-			handler := server.(*controlPlaneHTTPHandler)
-			runErr := handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service)
+			continued, runErr := continueWorkspaceLaunchKeyForMonthlyPreflightTest(t, server, session, "monthly-preflight-"+failureMode)
 			operations, err := store.ListRuntimeOperations(context.Background())
 			if err != nil {
 				t.Fatal(err)
@@ -239,7 +270,7 @@ func TestWorkspaceLaunchMonthlyPreflightFailureBlocksDebitAndFabricMutation(t *t
 				t.Fatal(decodeErr)
 			}
 			attempt := operation.Attempts["debit"]
-			if runErr == nil || !errors.Is(runErr, errWorkspaceLaunchMutationNotDispatched) ||
+			if continued.ID != operation.ID || runErr == nil || !errors.Is(runErr, errWorkspaceLaunchMutationNotDispatched) ||
 				operation.Status != "manual_review" || operation.Stage != "debit" || attempt.Status != "unknown" || attempt.Unknown != 1 ||
 				operation.Observations["debit"].State != workspaceLaunchStageUnknown || len(operation.FreshContinuationAuthorizations) != 0 {
 				t.Fatalf("monthly %s failure did not park pre-dispatch: operation=%#v attempt=%#v err=%v", failureMode, operation, attempt, runErr)
@@ -267,10 +298,10 @@ func TestWorkspaceLaunchMissingProviderZoneParksReservedDebitWithoutAuthorityWri
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
+	_, runErr := continueWorkspaceLaunchKeyForMonthlyPreflightTest(t, server, session, "missing-local-provider-zone")
 
-	handler := server.(*controlPlaneHTTPHandler)
-	if err := handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service); err == nil || !errors.Is(err, errWorkspaceLaunchMonthlyPreflightInvalid) {
-		t.Fatalf("run launch error=%v, want %v", err, errWorkspaceLaunchMonthlyPreflightInvalid)
+	if runErr == nil || !errors.Is(runErr, errWorkspaceLaunchMonthlyPreflightInvalid) {
+		t.Fatalf("run launch error=%v, want %v", runErr, errWorkspaceLaunchMonthlyPreflightInvalid)
 	}
 	rows, err := store.ListRuntimeOperations(context.Background())
 	if err != nil || len(rows) != 1 {
@@ -307,6 +338,9 @@ func TestWorkspaceLaunchMonthlyPreflightRunsBeforeDebitAndProviderStages(t *test
 	}
 	if len(client.charges) != 0 {
 		t.Fatalf("launch route debited before worker: charges=%#v events=%#v", client.charges, *events)
+	}
+	if _, err := continueWorkspaceLaunchKeyForMonthlyPreflightTest(t, server, session, "monthly-preflight-success"); err != nil {
+		t.Fatalf("continue launch: %v", err)
 	}
 
 	handler := server.(*controlPlaneHTTPHandler)
@@ -358,6 +392,9 @@ func TestWorkspaceLaunchNormalPostWorkerContinuesFreshRuntimePendingReadOnly(t *
 		"fresh-runtime-pending")
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := continueWorkspaceLaunchKeyForMonthlyPreflightTest(t, server, session, "fresh-runtime-pending"); err != nil {
+		t.Fatalf("continue launch: %v", err)
 	}
 	handler := server.(*controlPlaneHTTPHandler)
 	var pending workspaceLaunchReconcileOperation

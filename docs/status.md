@@ -8,6 +8,62 @@ This file reports what is implemented or evidenced now. It does not define the
 target architecture, long-term invariants, open priorities, workflow procedure,
 or historical provenance.
 
+## Local-Docker Customer Closure Evidence
+
+The current local deployment was exercised on 2026-08-18 on Docker Desktop
+`linux/arm64` from the worktree candidate at `codex/local-docker-customer-closure`.
+The Cloud image is pinned to
+`local/opl-cloud@sha256:0aacdcf19c8e118b22eeb0d181dec14b3973d1e28d6f5ab3dc9677e1637380cf` and the
+App image is pinned to
+`local/one-person-lab-webui@sha256:ac235b97c84935d78228b41545af722f1e28e3641e17cc784812dde3a4d5f5e6`;
+both report `arm64`. The App image is built from the exact v26.8.16 source and
+is not a retagged amd64 image.
+
+The reproducible customer-owned entry point is
+`/Users/huangrende/Desktop/opl-cloud/sub2api-local_customer_owned.yaml` with
+`OPL_DEPLOYMENT_MODE=customer_owned` and
+`OPL_FABRIC_PROVIDER=local-docker`; Console is available at
+`http://127.0.0.1:8787`. The run produced two independent running Workspaces:
+`ws-4d8a7b49945de5f742` (`rt_787cbd23eabf37e607`, port `64920`) and
+`ws-8ce8ffc12723ed8557` (`rt_eba4b2d1cd8fa21eb7`, port `50034`). Each has its
+own runtime container, Docker network, Secret, `/data`, `/projects`, and
+`/recovery` tmpfs. Both have `autoRenew=false`, distinct Workspace key IDs,
+and `totalUsdMicros=0`; customer-owned compute and storage therefore produce
+no Cloud resource Debit or Purchase Receipt. Sub2API remains the sole API
+usage and spendable-balance authority.
+
+From the real Workspace UI at port `50034`, the message
+`请只回复：OPL_LOCAL_EVIDENCE_OK` completed successfully. Sub2API usage changed
+from `totalRequests=1`, `totalActualCostUsdMicros=90350` to
+`totalRequests=2`, `totalActualCostUsdMicros=143518` (delta: one request,
+`53168` USD micros, `9678` input tokens, `27` output tokens). After restarting
+the customer Compose, a new Session read the same two running Workspaces and
+the same runtime IDs and usage state.
+
+Evidence files are retained outside Git under
+`/Users/huangrende/Desktop/opl-cloud/evidence/2026-08-18-v2` and include the
+redacted Compose configuration, health and service readback, immutable image
+identity, Console entry screenshot, Workspace UI response screenshot, usage
+before/after delta, and post-restart readback. Login cookies and bearer/session
+tokens are not retained.
+
+The local `platform_owned` entry point is
+`/Users/huangrende/Desktop/opl-cloud/sub2api-local_platform_owned.yaml` with
+`OPL_DEPLOYMENT_MODE=platform_owned`, `OPL_FABRIC_PROVIDER=local-docker`, and
+Console at `http://127.0.0.1:8788`. Its historical launch record proves one
+Sub2API resource Debit and one Workspace Key, but is parked at
+`runtime unknown/manual_review` before Receipt because the runtime network was
+created before the current Fabric gateway was recreated. No Receipt is claimed
+for that parked record and no synthetic billing evidence is accepted. A fresh
+platform-owned clean-host run remains a follow-up acceptance item; it is not
+required to change the customer-owned billing semantics above.
+
+`managed_tke` and `tencent-tke` are implemented as independent selection
+overlays and are contract-tested, but no live TKE mutation or readiness was run
+on this Mac. The two local runtime paths actually exercised here are therefore
+`customer_owned + local-docker`, plus the platform-owned configuration and
+Sub2API Debit boundary described above.
+
 ## Product Boundary
 
 The current Pilot implementation supports administrator-provisioned accounts.

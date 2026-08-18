@@ -174,6 +174,10 @@ func (p *LocalDockerProvider) writeGatewaySecret(secretRef string, key []byte, m
 	if err != nil || metadata.Fingerprint != "sha256:"+digest || metadata.Version != digest[:16] {
 		return fmt.Errorf("local_docker_secret_identity_mismatch")
 	}
+	credentials, err := localDockerWebUICredentialsFor(metadata)
+	if err != nil {
+		return err
+	}
 	meta, err := json.Marshal(metadata)
 	if err != nil {
 		return err
@@ -214,6 +218,12 @@ func (p *LocalDockerProvider) writeGatewaySecret(secretRef string, key []byte, m
 		if err := writeLocalDockerSecretFile(root, stagingPath+"/"+localDockerGatewayMetaFile, meta, 0400); err != nil {
 			return err
 		}
+		if err := writeLocalDockerSecretFile(root, stagingPath+"/"+localDockerWebUIPasswordFile, credentials.Password, 0400); err != nil {
+			return err
+		}
+		if err := writeLocalDockerSecretFile(root, stagingPath+"/"+localDockerWebUISessionSecretFile, credentials.SessionSecret, 0400); err != nil {
+			return err
+		}
 		if err := syncLocalDockerSecretPath(root, stagingPath); err != nil {
 			return err
 		}
@@ -250,7 +260,25 @@ func readLocalDockerGatewayVersion(root *os.Root, secretRef, versionName string)
 			return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
 		}
 	}
-	for name, mode := range map[string]os.FileMode{localDockerGatewayKeyFile: 0444, localDockerGatewayMetaFile: 0400} {
+	expectedFiles := map[string]os.FileMode{
+		localDockerGatewayKeyFile: 0444, localDockerGatewayMetaFile: 0400,
+		localDockerWebUIPasswordFile: 0400, localDockerWebUISessionSecretFile: 0400,
+	}
+	directory, err := root.Open(base)
+	if err != nil {
+		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
+	}
+	entries, readDirErr := directory.ReadDir(-1)
+	closeErr := directory.Close()
+	if readDirErr != nil || closeErr != nil || len(entries) != len(expectedFiles) {
+		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
+	}
+	for _, entry := range entries {
+		if _, expected := expectedFiles[entry.Name()]; !expected {
+			return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
+		}
+	}
+	for name, mode := range expectedFiles {
 		info, err := root.Lstat(base + "/" + name)
 		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != mode {
 			return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
@@ -268,6 +296,18 @@ func readLocalDockerGatewayVersion(root *os.Root, secretRef, versionName string)
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&metadata) != nil || !errors.Is(decoder.Decode(&struct{}{}), io.EOF) {
+		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
+	}
+	credentials, err := localDockerWebUICredentialsFor(metadata)
+	if err != nil {
+		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
+	}
+	password, err := root.ReadFile(base + "/" + localDockerWebUIPasswordFile)
+	if err != nil || !bytes.Equal(password, credentials.Password) {
+		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
+	}
+	sessionSecret, err := root.ReadFile(base + "/" + localDockerWebUISessionSecretFile)
+	if err != nil || !bytes.Equal(sessionSecret, credentials.SessionSecret) {
 		return nil, localDockerGatewayMetadata{}, ErrLaunchStageBindingConflict
 	}
 	return key, metadata, nil

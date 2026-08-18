@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,7 +13,7 @@ import (
 	"time"
 )
 
-const defaultLocalDockerWorkspaceImageRepository = "ghcr.io/gaofeng21cn/one-person-lab-app"
+const defaultLocalDockerWorkspaceImageRepository = "ghcr.io/gaofeng21cn/one-person-lab-webui"
 
 type dockerRunner interface {
 	Run(context.Context, []byte, ...string) ([]byte, error)
@@ -42,8 +43,10 @@ func firstArg(values []string) string {
 type LocalDockerProviderConfig struct {
 	DockerBinary                 string
 	GatewaySecretRoot            string
+	HostStorageRoot              string
 	RuntimeHost                  string
 	RuntimeGatewayContainer      string
+	ConfigureRuntimeGateway      bool
 	TrustedWorkspaceImageSources []string
 }
 
@@ -51,8 +54,11 @@ type LocalDockerProvider struct {
 	runner                            dockerRunner
 	gatewaySecretRoot                 string
 	gatewaySecretRootErr              error
+	hostStorageRoot                   string
+	hostStorageRootErr                error
 	runtimeHost                       string
 	runtimeGatewayContainer           string
+	configureRuntimeGatewayEnabled    bool
 	trustedWorkspaceImageRepositories map[string]struct{}
 	trustedWorkspaceImageReferences   map[string]struct{}
 	now                               func() time.Time
@@ -66,8 +72,10 @@ func NewLocalDockerProvider() *LocalDockerProvider {
 	return newLocalDockerProvider(LocalDockerProviderConfig{
 		DockerBinary:                 firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_DOCKER_BINARY")), "docker"),
 		GatewaySecretRoot:            strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT")),
+		HostStorageRoot:              strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_STORAGE_ROOT")),
 		RuntimeHost:                  firstNonEmpty(strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_HOST")), "127.0.0.1"),
 		RuntimeGatewayContainer:      strings.TrimSpace(os.Getenv("OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER")),
+		ConfigureRuntimeGateway:      true,
 		TrustedWorkspaceImageSources: trustedSources,
 	}, nil)
 }
@@ -83,10 +91,14 @@ func newLocalDockerProvider(config LocalDockerProviderConfig, runner dockerRunne
 	trustedRepositories, trustedReferences := localDockerWorkspaceImageTrust(trustedSources)
 	secretRoot := strings.TrimSpace(config.GatewaySecretRoot)
 	secretRootErr := validateLocalDockerGatewaySecretRoot(secretRoot)
+	storageRoot := strings.TrimSpace(config.HostStorageRoot)
+	storageRootErr := validateLocalDockerStorageRoot(storageRoot)
 	return &LocalDockerProvider{
 		runner: runner, gatewaySecretRoot: secretRoot, gatewaySecretRootErr: secretRootErr,
+		hostStorageRoot: storageRoot, hostStorageRootErr: storageRootErr,
 		runtimeHost:                       firstNonEmpty(strings.TrimSpace(config.RuntimeHost), "127.0.0.1"),
 		runtimeGatewayContainer:           strings.TrimSpace(config.RuntimeGatewayContainer),
+		configureRuntimeGatewayEnabled:    config.ConfigureRuntimeGateway,
 		trustedWorkspaceImageRepositories: trustedRepositories, trustedWorkspaceImageReferences: trustedReferences,
 		now: func() time.Time { return time.Now().UTC() },
 	}
@@ -142,7 +154,7 @@ func (*LocalDockerProvider) Descriptor() ProviderDescriptor {
 				{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "cpu-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "local-docker", Available: true},
 				{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "cpu-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "local-docker", Available: true},
 			},
-			StorageClasses: []StorageClass{{ID: "workspace-local", StorageClassName: "docker-volume", Provider: "local-docker", Available: true}},
+			StorageClasses: []StorageClass{{ID: "workspace-local", StorageClassName: "host-directory", Provider: "local-docker", Available: true}},
 			IngressDomains: []IngressDomain{{ID: "workspace", Host: "127.0.0.1", PathPattern: "/", Available: true}},
 		},
 	}
@@ -175,6 +187,9 @@ func (p *LocalDockerProvider) MonthlyPreflight(ctx context.Context, input Monthl
 	}
 	requestIDs := map[string]string{"nodePool": "local-docker", "subnets": "local-bridge", "availability": "docker-engine", "quota": "local-host"}
 	if input.ResourceType == "storage" {
+		if err := p.preflightStorageCapacity(input.SizeGB); err != nil {
+			return MonthlyPreflight{}, err
+		}
 		requestIDs = map[string]string{"quota": "local-host", "price": "not-applicable"}
 	}
 	return MonthlyPreflight{
@@ -260,26 +275,6 @@ func (p *LocalDockerProvider) inspectNetwork(ctx context.Context, name string) (
 	var values []dockerNetworkInspect
 	if json.Unmarshal(output, &values) != nil || len(values) != 1 || values[0].ID == "" || values[0].Name != name || row.ID != "" && values[0].ID != row.ID {
 		return dockerNetworkInspect{}, false, fmt.Errorf("local_docker_network_readback_invalid")
-	}
-	return values[0], true, nil
-}
-
-func (p *LocalDockerProvider) inspectVolume(ctx context.Context, name string) (dockerVolumeInspect, bool, error) {
-	inventory, err := p.runner.Run(ctx, nil, "volume", "ls", "--filter", "name=^"+name+"$", "--format", "{{json .}}")
-	if err != nil {
-		return dockerVolumeInspect{}, false, err
-	}
-	_, exists, err := decodeDockerObjectInventory(inventory, name)
-	if err != nil || !exists {
-		return dockerVolumeInspect{}, false, err
-	}
-	output, err := p.runner.Run(ctx, nil, "volume", "inspect", name)
-	if err != nil {
-		return dockerVolumeInspect{}, false, err
-	}
-	var values []dockerVolumeInspect
-	if json.Unmarshal(output, &values) != nil || len(values) != 1 || values[0].Name != name {
-		return dockerVolumeInspect{}, false, fmt.Errorf("local_docker_volume_readback_invalid")
 	}
 	return values[0], true, nil
 }
@@ -492,51 +487,40 @@ func (p *LocalDockerProvider) DestroyComputeAllocation(ctx context.Context, allo
 }
 
 func (p *LocalDockerProvider) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
-	name := localDockerName("opl-storage", input.ID)
-	labels := localDockerLabels(input.AccountID, input.WorkspaceID, input.ID, input.OperationID, "storage")
-	attempt, err := beginProviderMutation(ctx, "local_docker_volume_create", "storage_volume", input.ID, name)
+	paths, err := p.storagePaths(input.WorkspaceID)
 	if err != nil {
 		return StorageVolume{}, err
 	}
-	readback, exists, err := p.inspectVolume(ctx, name)
+	attempt, err := beginProviderMutation(ctx, "local_docker_storage_directory_create", "storage_volume", input.ID, paths.WorkspaceName)
 	if err != nil {
 		return StorageVolume{}, err
 	}
-	if !exists {
-		if attempt != nil && !attempt.Fresh {
+	metadata := localDockerStorageMetadata{SchemaVersion: 1, StorageID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}
+	if attempt != nil && !attempt.Fresh {
+		if _, readErr := p.readStorageDirectories(StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}); readErr != nil {
 			claimed, claimErr := attempt.claimReplay(ctx)
 			if claimErr != nil || !claimed {
 				return StorageVolume{}, firstNonNil(claimErr, ErrWorkspaceLaunchPending)
 			}
-			readback, exists, err = p.inspectVolume(ctx, name)
-			if err != nil {
-				_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, err)
-				return StorageVolume{}, err
-			}
-		}
-		if !exists {
 			if dispatchErr := attempt.markReplayDispatch(ctx); dispatchErr != nil {
 				return StorageVolume{}, dispatchErr
 			}
-			args := append([]string{"volume", "create"}, dockerLabelArgs(labels)...)
-			args = append(args, name)
-			if _, err := p.runner.Run(ctx, nil, args...); err != nil {
-				_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, err)
-				return StorageVolume{}, err
-			}
-			readback, exists, err = p.inspectVolume(ctx, name)
+		}
+	} else if attempt != nil {
+		if dispatchErr := attempt.markReplayDispatch(ctx); dispatchErr != nil {
+			return StorageVolume{}, dispatchErr
 		}
 	}
-	if err != nil || !exists || !exactDockerLabels(readback.Labels, labels) {
-		readErr := fmt.Errorf("local_docker_storage_readback_mismatch")
+	if _, err := p.ensureStorageDirectories(metadata); err != nil {
+		readErr := fmt.Errorf("local_docker_storage_readback_mismatch: %w", err)
 		_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, readErr)
 		return StorageVolume{}, readErr
 	}
 	deadline := p.now().AddDate(0, 1, 0).Format(time.RFC3339)
 	resource := StorageVolume{
 		ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready",
-		Provider: "local-docker", ProviderResourceID: "volume/" + readback.Name, ProviderRequestID: providerRequestID("docker-storage", input.ID),
-		SizeGB: input.SizeGB, StorageClass: "docker-volume", DiskType: "local-volume",
+		Provider: "local-docker", ProviderResourceID: "directory/" + paths.WorkspaceName, ProviderRequestID: providerRequestID("docker-storage", input.ID),
+		SizeGB: input.SizeGB, StorageClass: "host-directory", DiskType: "local-directory",
 		RenewFlag: "NOT_APPLICABLE", Deadline: deadline, Zone: "local", CreatedAt: p.now(),
 	}
 	if completeErr := attempt.complete(ctx, resource.ProviderRequestID, resource, nil); completeErr != nil {
@@ -546,20 +530,16 @@ func (p *LocalDockerProvider) CreateStorageVolume(ctx context.Context, input Sto
 }
 
 func (p *LocalDockerProvider) ReadStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
-	name := localDockerName("opl-storage", volume.ID)
-	readback, exists, err := p.inspectVolume(ctx, name)
-	if err != nil {
-		return volume, err
-	}
-	if !exists {
+	paths, err := p.readStorageDirectories(volume)
+	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
 		volume.Status = "external_deleted"
 		return volume, fmt.Errorf("local_docker_storage_not_found")
 	}
-	expected := localDockerLabels(volume.AccountID, volume.WorkspaceID, volume.ID, "", "storage")
-	if !exactDockerLabels(readback.Labels, expected) {
-		return volume, fmt.Errorf("local_docker_storage_ownership_mismatch")
+	if err != nil {
+		return volume, fmt.Errorf("local_docker_storage_ownership_mismatch: %w", err)
 	}
-	volume.Status, volume.Provider, volume.ProviderResourceID = "ready", "local-docker", "volume/"+readback.Name
+	volume.Status, volume.Provider, volume.ProviderResourceID = "ready", "local-docker", "directory/"+paths.WorkspaceName
+	volume.StorageClass, volume.DiskType = "host-directory", "local-directory"
 	volume.ProviderRequestID = providerRequestID("docker-storage-read", volume.ID)
 	return volume, nil
 }
@@ -596,13 +576,25 @@ func (p *LocalDockerProvider) RenewStorageVolume(ctx context.Context, volume Sto
 }
 
 func (p *LocalDockerProvider) DestroyStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
-	name := localDockerName("opl-storage", volume.ID)
-	if _, exists, err := p.inspectVolume(ctx, name); err != nil {
+	paths, pathErr := p.storagePaths(volume.WorkspaceID)
+	if pathErr != nil || volume.ID == "" || volume.AccountID == "" {
+		return volume, firstNonNil(pathErr, fmt.Errorf("local_docker_storage_identity_invalid"))
+	}
+	root, err := p.openStorageRoot()
+	if err != nil {
 		return volume, err
-	} else if exists {
-		if _, err := p.runner.Run(ctx, nil, "volume", "rm", name); err != nil {
-			return volume, err
-		}
+	}
+	defer root.Close()
+	metadata, err := readLocalDockerStorageOwnerMetadata(root, paths)
+	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		volume.Status, volume.ProviderRequestID = "destroyed", providerRequestID("docker-storage-destroy", volume.ID)
+		return volume, nil
+	}
+	if err != nil || metadata != (localDockerStorageMetadata{SchemaVersion: 1, StorageID: volume.ID, AccountID: volume.AccountID, WorkspaceID: volume.WorkspaceID}) {
+		return volume, firstNonNil(err, fmt.Errorf("local_docker_storage_destroy_ownership_mismatch"))
+	}
+	if err := root.RemoveAll(paths.WorkspaceName); err != nil {
+		return volume, err
 	}
 	volume.Status, volume.ProviderRequestID = "destroyed", providerRequestID("docker-storage-destroy", volume.ID)
 	return volume, nil
@@ -615,10 +607,14 @@ func (p *LocalDockerProvider) CreateStorageAttachment(ctx context.Context, input
 	if _, err := p.ReadStorageVolume(ctx, volume); err != nil {
 		return StorageAttachment{}, err
 	}
+	paths, err := p.storagePaths(volume.WorkspaceID)
+	if err != nil {
+		return StorageAttachment{}, err
+	}
 	id := "att_" + stableSuffix(input.IdempotencyKey)[:18]
 	return StorageAttachment{
 		ID: id, OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
-		Status: "attached", Provider: "local-docker", ProviderAttachmentID: "docker/" + localDockerName("opl-compute", compute.ID) + "/" + localDockerName("opl-storage", volume.ID),
+		Status: "attached", Provider: "local-docker", ProviderAttachmentID: "docker/" + localDockerName("opl-compute", compute.ID) + "/" + paths.WorkspaceName,
 		ProviderRequestID: providerRequestID("docker-attachment", input.IdempotencyKey), CreatedAt: p.now(),
 	}, nil
 }
@@ -630,8 +626,12 @@ func (p *LocalDockerProvider) ReadStorageAttachment(ctx context.Context, attachm
 	if _, err := p.ReadStorageVolume(ctx, volume); err != nil {
 		return attachment, err
 	}
+	paths, err := p.storagePaths(volume.WorkspaceID)
+	if err != nil {
+		return attachment, err
+	}
 	attachment.Status, attachment.Provider = "attached", "local-docker"
-	attachment.ProviderAttachmentID = "docker/" + localDockerName("opl-compute", compute.ID) + "/" + localDockerName("opl-storage", volume.ID)
+	attachment.ProviderAttachmentID = "docker/" + localDockerName("opl-compute", compute.ID) + "/" + paths.WorkspaceName
 	attachment.ProviderRequestID = providerRequestID("docker-attachment-read", attachment.OperationID)
 	return attachment, nil
 }
@@ -653,6 +653,9 @@ func (*LocalDockerProvider) DetachStorageAttachment(_ context.Context, attachmen
 func (p *LocalDockerProvider) Readiness(ctx context.Context) (map[string]any, error) {
 	if p.gatewaySecretRootErr != nil {
 		return nil, p.gatewaySecretRootErr
+	}
+	if p.hostStorageRootErr != nil {
+		return nil, p.hostStorageRootErr
 	}
 	output, err := p.runner.Run(ctx, nil, "info", "--format", "{{.ServerVersion}}")
 	if err != nil {

@@ -303,6 +303,9 @@ export interface PricingCatalogResponse {
   walletCurrency: "USD";
   currency: "USD";
   packages: PricingPlan[];
+  deploymentMode?: "platform_owned" | "managed_tke" | "customer_owned";
+  fabricProvider?: "local-docker" | "tencent-tke";
+  resourceBillingMode?: "enabled" | "none";
 }
 
 export interface WorkspacePricePreview {

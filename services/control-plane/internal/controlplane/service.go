@@ -189,6 +189,14 @@ func (s *Service) Sub2APIUser(ctx context.Context, userID int64) (clients.Sub2AP
 	return identity, nil
 }
 
+func (s *Service) Sub2APIUserWithCredential(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64, email string) (clients.Sub2APIIdentity, error) {
+	client, ok := s.sub2API.(clients.Sub2APIUserCredentialReadClient)
+	if !ok {
+		return clients.Sub2APIIdentity{}, errors.New("sub2api_user_read_unavailable")
+	}
+	return client.UserWithCredential(ctx, credential, userID, email)
+}
+
 func (s *Service) Sub2APIAdminUsers(ctx context.Context, query clients.Sub2APIUserPageQuery) (clients.Sub2APIUserPage, error) {
 	client, ok := s.sub2API.(clients.Sub2APIAdminUsersClient)
 	if !ok {
@@ -250,6 +258,16 @@ func (s *Service) AuthenticateSub2APIUser(ctx context.Context, email, password s
 		return clients.Sub2APIUserAuthentication{}, clients.ErrSub2APIAuthUnavailable
 	}
 	return client.AuthenticateUser(ctx, email, password)
+}
+
+func (s *Service) ConfiguredSub2APIIdentity(ctx context.Context) (clients.Sub2APIIdentity, error) {
+	client, ok := s.sub2API.(interface {
+		ConfiguredUserIdentity(context.Context) (clients.Sub2APIIdentity, error)
+	})
+	if !ok {
+		return clients.Sub2APIIdentity{}, clients.ErrSub2APIAuthUnavailable
+	}
+	return client.ConfiguredUserIdentity(ctx)
 }
 
 func (s *Service) Sub2APIAdminIdentity(ctx context.Context) (clients.Sub2APIIdentity, error) {
@@ -481,6 +499,13 @@ func (s *Service) writeGatewaySecretValue(ctx context.Context, accountID, worksp
 		return clients.GatewaySecretWriteResult{}, errors.New("gateway_secret_write_failed")
 	}
 	return secret, nil
+}
+
+// SyncWorkspaceGatewaySecretWithKey is used only on the key-creation request
+// that already holds the one-time plaintext returned by Sub2API. The key is
+// passed directly to Fabric and is never persisted in the Control Plane.
+func (s *Service) SyncWorkspaceGatewaySecretWithKey(ctx context.Context, accountID, workspaceID string, userID int64, key clients.Sub2APIWorkspaceKey, idempotencyKey string) (clients.GatewaySecretWriteResult, error) {
+	return s.writeGatewaySecretValue(ctx, accountID, workspaceID, userID, key, idempotencyKey)
 }
 
 func (s *Service) BindWorkspaceRuntimeGatewaySecret(ctx context.Context, input clients.WorkspaceRuntimeGatewaySecretInput, idempotencyKey string) (clients.WorkspaceRuntimeGatewaySecretBinding, error) {
