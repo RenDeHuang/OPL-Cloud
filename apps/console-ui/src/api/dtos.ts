@@ -42,7 +42,6 @@ export interface AuthIdentity {
   role: string;
   email: string;
   status: "active" | "disabled";
-  workspacePurchaseEnabled: boolean;
   name?: string;
   sub2apiUserId?: string;
 }
@@ -592,6 +591,7 @@ export interface OperatorAccount {
   sub2apiUserId: string;
   email: string;
   status: "active" | "disabled";
+  workspacePurchaseEnabled: boolean;
 }
 
 export interface OperatorAccountsData {
