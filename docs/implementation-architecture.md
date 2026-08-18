@@ -299,6 +299,9 @@ persistent-volume fields are optional response-only projections and do not
 participate in readiness or continuity comparison. The Local Docker adapter also
 validates an immutable Workspace image against its trusted repository or exact
 release-manifest source before Docker access or Fabric operation persistence.
+Its running container ID, service identity, and provider binding are immutable
+Runtime identity facts; Docker-assigned HostPort and URL are live routing facts
+that authoritative Runtime readback refreshes after a restart.
 
 ## Launch Boundary Integration
 
