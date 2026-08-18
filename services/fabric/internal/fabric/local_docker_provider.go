@@ -47,6 +47,7 @@ type LocalDockerProviderConfig struct {
 	RuntimeHost                  string
 	RuntimeGatewayContainer      string
 	ConfigureRuntimeGateway      bool
+	StorageQuotaBackend          localDockerProjectQuota
 	TrustedWorkspaceImageSources []string
 }
 
@@ -62,6 +63,7 @@ type LocalDockerProvider struct {
 	trustedWorkspaceImageRepositories map[string]struct{}
 	trustedWorkspaceImageReferences   map[string]struct{}
 	now                               func() time.Time
+	storageQuota                      localDockerProjectQuota
 }
 
 func NewLocalDockerProvider() *LocalDockerProvider {
@@ -93,9 +95,14 @@ func newLocalDockerProvider(config LocalDockerProviderConfig, runner dockerRunne
 	secretRootErr := validateLocalDockerGatewaySecretRoot(secretRoot)
 	storageRoot := strings.TrimSpace(config.HostStorageRoot)
 	storageRootErr := validateLocalDockerStorageRoot(storageRoot)
+	storageQuota := config.StorageQuotaBackend
+	if storageQuota == nil {
+		storageQuota = newLocalDockerProjectQuota(storageRoot)
+	}
 	return &LocalDockerProvider{
 		runner: runner, gatewaySecretRoot: secretRoot, gatewaySecretRootErr: secretRootErr,
 		hostStorageRoot: storageRoot, hostStorageRootErr: storageRootErr,
+		storageQuota:                      storageQuota,
 		runtimeHost:                       firstNonEmpty(strings.TrimSpace(config.RuntimeHost), "127.0.0.1"),
 		runtimeGatewayContainer:           strings.TrimSpace(config.RuntimeGatewayContainer),
 		configureRuntimeGatewayEnabled:    config.ConfigureRuntimeGateway,
@@ -187,6 +194,12 @@ func (p *LocalDockerProvider) MonthlyPreflight(ctx context.Context, input Monthl
 	}
 	requestIDs := map[string]string{"nodePool": "local-docker", "subnets": "local-bridge", "availability": "docker-engine", "quota": "local-host"}
 	if input.ResourceType == "storage" {
+		if err := p.storageQuota.Preflight(p.hostStorageRoot); err != nil {
+			return MonthlyPreflight{}, err
+		}
+		if err := p.prepareStorageRoot(); err != nil {
+			return MonthlyPreflight{}, err
+		}
 		if err := p.preflightStorageCapacity(input.SizeGB); err != nil {
 			return MonthlyPreflight{}, err
 		}
@@ -495,9 +508,9 @@ func (p *LocalDockerProvider) CreateStorageVolume(ctx context.Context, input Sto
 	if err != nil {
 		return StorageVolume{}, err
 	}
-	metadata := localDockerStorageMetadata{SchemaVersion: 1, StorageID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}
+	metadata := localDockerStorageMetadata{SchemaVersion: localDockerStorageMetadataSchemaVersion, StorageID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB}
 	if attempt != nil && !attempt.Fresh {
-		if _, readErr := p.readStorageDirectories(StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}); readErr != nil {
+		if _, readErr := p.readStorageDirectories(StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB}); readErr != nil {
 			claimed, claimErr := attempt.claimReplay(ctx)
 			if claimErr != nil || !claimed {
 				return StorageVolume{}, firstNonNil(claimErr, ErrWorkspaceLaunchPending)
@@ -511,7 +524,7 @@ func (p *LocalDockerProvider) CreateStorageVolume(ctx context.Context, input Sto
 			return StorageVolume{}, dispatchErr
 		}
 	}
-	if _, err := p.ensureStorageDirectories(metadata); err != nil {
+	if _, err := p.ensureStorageDirectories(metadata, input.SizeGB); err != nil {
 		readErr := fmt.Errorf("local_docker_storage_readback_mismatch: %w", err)
 		_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, readErr)
 		return StorageVolume{}, readErr
@@ -580,20 +593,39 @@ func (p *LocalDockerProvider) DestroyStorageVolume(ctx context.Context, volume S
 	if pathErr != nil || volume.ID == "" || volume.AccountID == "" {
 		return volume, firstNonNil(pathErr, fmt.Errorf("local_docker_storage_identity_invalid"))
 	}
-	root, err := p.openStorageRoot()
-	if err != nil {
+	if err := p.storageQuota.Preflight(p.hostStorageRoot); err != nil {
 		return volume, err
 	}
-	defer root.Close()
-	metadata, err := readLocalDockerStorageOwnerMetadata(root, paths)
-	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
-		volume.Status, volume.ProviderRequestID = "destroyed", providerRequestID("docker-storage-destroy", volume.ID)
-		return volume, nil
-	}
-	if err != nil || metadata != (localDockerStorageMetadata{SchemaVersion: 1, StorageID: volume.ID, AccountID: volume.AccountID, WorkspaceID: volume.WorkspaceID}) {
-		return volume, firstNonNil(err, fmt.Errorf("local_docker_storage_destroy_ownership_mismatch"))
-	}
-	if err := root.RemoveAll(paths.WorkspaceName); err != nil {
+	if err := p.withStorageQuotaLock(func() error {
+		root, err := p.openStorageRoot()
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		deletionName := localDockerStorageDeletionName(paths.WorkspaceName)
+		deletion, err := readLocalDockerStorageDeletion(root, deletionName)
+		if err == nil {
+			if deletion.StorageID != volume.ID || deletion.AccountID != volume.AccountID || deletion.WorkspaceID != volume.WorkspaceID || deletion.SizeGB != volume.SizeGB {
+				return fmt.Errorf("local_docker_storage_destroy_ownership_mismatch")
+			}
+			return p.resumeStorageDeletionLocked(root, deletion)
+		}
+		if !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+			return err
+		}
+		metadata, err := readLocalDockerStorageOwnerMetadata(root, paths)
+		if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+			return nil
+		}
+		if err != nil || metadata.SchemaVersion != localDockerStorageMetadataSchemaVersion || metadata.ProjectID == 0 || metadata.StorageID != volume.ID || metadata.AccountID != volume.AccountID || metadata.WorkspaceID != volume.WorkspaceID || metadata.SizeGB != volume.SizeGB {
+			return firstNonNil(err, fmt.Errorf("local_docker_storage_destroy_ownership_mismatch"))
+		}
+		deletion = localDockerStorageDeletionFromMetadata(metadata, paths.WorkspaceName)
+		if err := writeLocalDockerStorageDeletion(root, deletion); err != nil {
+			return err
+		}
+		return p.resumeStorageDeletionLocked(root, deletion)
+	}); err != nil {
 		return volume, err
 	}
 	volume.Status, volume.ProviderRequestID = "destroyed", providerRequestID("docker-storage-destroy", volume.ID)
@@ -656,6 +688,12 @@ func (p *LocalDockerProvider) Readiness(ctx context.Context) (map[string]any, er
 	}
 	if p.hostStorageRootErr != nil {
 		return nil, p.hostStorageRootErr
+	}
+	if err := p.storageQuota.Preflight(p.hostStorageRoot); err != nil {
+		return nil, err
+	}
+	if err := p.prepareStorageRoot(); err != nil {
+		return nil, err
 	}
 	output, err := p.runner.Run(ctx, nil, "info", "--format", "{{.ServerVersion}}")
 	if err != nil {

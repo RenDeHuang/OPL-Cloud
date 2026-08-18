@@ -302,6 +302,24 @@ release-manifest source before Docker access or Fabric operation persistence.
 Its running container ID, service identity, and provider binding are immutable
 Runtime identity facts; Docker-assigned HostPort and URL are live routing facts
 that authoritative Runtime readback refreshes after a restart.
+Its Runtime stage maps the admitted package to Docker cgroup CPU and memory
+limits and requires exact `HostConfig` readback. Its storage stage assigns a
+stable Linux project ID to the Workspace host-directory tree, applies the
+requested `SizeGB` as the project hard block limit, and requires kernel quota
+readback before returning `ready`. The backend requires Linux 5.14+ for
+`quotactl_fd` and a dedicated ext4/XFS filesystem with project quota enabled.
+Readiness verifies that the configured root is the filesystem root of one unique
+visible mount, rejects bind-mounted subdirectories and foreign root inventory,
+and checks kernel quota readback for every retained Workspace. Quota application
+uses fd-relative, no-symlink, no-cross-mount traversal. Storage deletion writes a
+durable Fabric-owned tombstone before removing data, then clears and reads back
+the project quota before removing the tombstone, so retry and process restart do
+not leak a quota record or reuse its project ID.
+Legacy schema-1 directories make the provider fail readiness before Launch and
+must be deleted/recreated with the preceding release; they are not silently
+adopted without a known `SizeGB`. Non-Linux or non-project-quota storage roots
+also fail the existing preflight, with no unenforced-directory fallback. These
+provider-specific mechanics do not add CPU, memory, or disk HTTP routes.
 
 ## Launch Boundary Integration
 

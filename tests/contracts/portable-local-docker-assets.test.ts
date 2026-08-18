@@ -12,7 +12,9 @@ test("portable Local-Docker assets configure from a standalone download director
   const fabricSource = await readFile("deploy/portable/compose.fabric-local-docker.yaml", "utf8");
   const deploymentSource = await readFile("deploy/portable/compose.deployment-customer-owned.yaml", "utf8");
   const environmentSource = await readFile("deploy/portable/opl-cloud.env.example", "utf8");
+  const qualificationSource = await readFile(".github/workflows/qualification.yml", "utf8");
   const overlay = YAML.parse(overlaySource);
+  const fabric = YAML.parse(fabricSource);
 
   assert.deepEqual(overlay.services.postgres.volumes, [{
     type: "bind",
@@ -22,6 +24,7 @@ test("portable Local-Docker assets configure from a standalone download director
   }]);
 
   assert.equal(fabricSource.includes("opl.cloud.fabric-provider: local-docker"), true);
+  assert.deepEqual(fabric.services.fabric.cap_add, ["SYS_ADMIN"]);
   assert.equal(deploymentSource.includes("opl.cloud.deployment-mode: customer_owned"), true);
   assert.equal(overlay.services["control-plane"].environment.OPL_WORKSPACE_LAUNCH_WORKER_ENABLED, "1");
 
@@ -37,6 +40,11 @@ test("portable Local-Docker assets configure from a standalone download director
   assert.match(environmentSource, /^OPL_POSTGRES_DATA_ROOT=\/absolute\/path\/to\/opl-cloud-data\/postgres$/m);
   assert.match(environmentSource, /^OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER=opl-cloud-control-plane$/m);
   assert.match(environmentSource, /^OPL_FABRIC_LOCAL_DOCKER_STORAGE_ROOT=\/absolute\/path\/to\/opl-workspaces$/m);
+  assert.match(environmentSource, /dedicated Linux 5\.14\+ ext4\/XFS\n# filesystem with project quota enabled/);
+  assert.match(qualificationSource, /go test -tags opl_project_quota -run '\^TestLinuxLocalDockerProjectQuotaEnforcesHardLimit\$'/);
+  assert.match(qualificationSource, /sudo env OPL_TEST_PROJECT_QUOTA_ROOT=/);
+  assert.match(qualificationSource, /sudo mount -o loop,prjquota/);
+  assert.match(qualificationSource, /if: \$\{\{ always\(\) \}\}/);
   assert.match(
     environmentSource,
     /docker compose --env-file \.\/opl-cloud\.env/
