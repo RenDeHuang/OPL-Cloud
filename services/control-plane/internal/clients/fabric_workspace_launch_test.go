@@ -80,7 +80,7 @@ func TestFabricLaunchBindingContractCarriesOpaqueProviderBinding(t *testing.T) {
 	if responseIdentity["bindingRef"] {
 		t.Fatal("preflight contract retains ambiguous bindingRef alias")
 	}
-	for _, field := range []string{"canonicalProviderPlan", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag"} {
+	for _, field := range []string{"canonicalProviderPlan", "providerPlan", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag"} {
 		if !stringSet(preflight["responseForbiddenFields"])[field] {
 			t.Fatalf("preflight response does not forbid provider field %q", field)
 		}
@@ -93,7 +93,7 @@ func TestFabricLaunchBindingContractCarriesOpaqueProviderBinding(t *testing.T) {
 			t.Fatalf("stage input misses %q", field)
 		}
 	}
-	for _, field := range []string{"canonicalProviderPlan", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag"} {
+	for _, field := range []string{"canonicalProviderPlan", "providerPlan", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag"} {
 		if !stringSet(stageInput["forbiddenFields"])[field] {
 			t.Fatalf("stage input does not forbid provider field %q", field)
 		}

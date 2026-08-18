@@ -43,6 +43,7 @@
     ],
     "responseForbiddenFields": [
       "canonicalProviderPlan",
+      "providerPlan",
       "cpu",
       "memoryGb",
       "diskGb",
@@ -70,6 +71,7 @@
       "resumeAuthorizationDigest",
       "mutationBudget",
       "canonicalProviderPlan",
+      "providerPlan",
       "cpu",
       "memoryGb",
       "diskGb",
