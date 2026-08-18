@@ -80,12 +80,6 @@ The configured public model `/v1` endpoint is projected by Control Plane. Its
 current presentation is a Console implementation choice. The server-only
 Sub2API management origin and credentials are never exposed to the browser.
 
-## Remote Companion Boundary
-
-OPL Link's broker, pairing lifecycle, capacity, and provider transport are owned
-by `opl-link/service`. OPL Cloud only hosts Workspace/WebUI delivery and exposes
-no remote-companion broker route, provider, persistence, or Cloud contract.
-
 ## Implementation Snapshot
 
 - Control Plane's retained Ent persistence implementation is split inside the
