@@ -15,7 +15,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1326,6 +1328,60 @@ func TestCatalogHTTP(t *testing.T) {
 	}
 	if len(catalog.WorkspacePackages) == 0 {
 		t.Fatalf("expected workspace packages")
+	}
+}
+
+func TestFabricCatalogContractKeepsConsoleProjectionProductOnly(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	contractPath := filepath.Join(filepath.Dir(sourceFile), "../../../../packages/contracts/opl-cloud-fabric-resource-catalog-contract.json")
+	data, err := os.ReadFile(contractPath)
+	if err != nil {
+		t.Fatalf("read catalog contract: %v", err)
+	}
+	var contract struct {
+		SchemaVersion     int `json:"schemaVersion"`
+		ConsoleProjection struct {
+			Fields              []string `json:"fields"`
+			SelectionInput      string   `json:"selectionInput"`
+			ForbiddenFields     []string `json:"forbiddenFields"`
+			InfrastructureOwner string   `json:"infrastructureOwnership"`
+		} `json:"consoleProjection"`
+	}
+	if err := json.Unmarshal(data, &contract); err != nil {
+		t.Fatalf("decode catalog contract: %v", err)
+	}
+	if contract.SchemaVersion != 7 {
+		t.Fatalf("catalog contract schemaVersion=%d, want 7", contract.SchemaVersion)
+	}
+	if !reflect.DeepEqual(contract.ConsoleProjection.Fields, []string{"id", "name", "available"}) {
+		t.Fatalf("console catalog fields=%v", contract.ConsoleProjection.Fields)
+	}
+	if contract.ConsoleProjection.SelectionInput != "packageId_only" || contract.ConsoleProjection.InfrastructureOwner != "Fabric Provider Profile and adapter only" {
+		t.Fatalf("console projection ownership=%#v", contract.ConsoleProjection)
+	}
+	allowed := map[string]bool{}
+	for _, field := range contract.ConsoleProjection.Fields {
+		allowed[field] = true
+	}
+	for _, field := range contract.ConsoleProjection.ForbiddenFields {
+		if allowed[field] {
+			t.Fatalf("catalog field %q is both allowed and forbidden", field)
+		}
+	}
+	for _, field := range []string{"provider", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag", "canonicalProviderPlan", "providerBindingRef", "specDigest"} {
+		found := false
+		for _, forbidden := range contract.ConsoleProjection.ForbiddenFields {
+			if forbidden == field {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("catalog contract does not forbid provider field %q", field)
+		}
 	}
 }
 

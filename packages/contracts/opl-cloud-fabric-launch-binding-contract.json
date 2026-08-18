@@ -38,14 +38,28 @@
       "launchOperationId",
       "requestHash",
       "providerProfileRef",
-      "bindingRef"
+      "providerBindingRef",
+      "specDigest"
+    ],
+    "responseForbiddenFields": [
+      "canonicalProviderPlan",
+      "cpu",
+      "memoryGb",
+      "diskGb",
+      "instanceType",
+      "nodePoolId",
+      "zone",
+      "diskType",
+      "chargeType",
+      "renewFlag"
     ]
   },
   "stageInput": {
     "fields": [
       "binding",
       "providerProfileRef",
-      "preflightBindingRef",
+      "providerBindingRef",
+      "specDigest",
       "packageId",
       "sizeGb",
       "workspaceImageDigest",
@@ -54,9 +68,76 @@
     ],
     "forbiddenFields": [
       "resumeAuthorizationDigest",
-      "mutationBudget"
+      "mutationBudget",
+      "canonicalProviderPlan",
+      "cpu",
+      "memoryGb",
+      "diskGb",
+      "instanceType",
+      "nodePoolId",
+      "zone",
+      "diskType",
+      "chargeType",
+      "renewFlag"
     ],
     "gatewayCredential": "optional_secret_stage_transport_only_never_hashed_or_persisted"
+  },
+  "providerBinding": {
+    "owner": "services/fabric",
+    "identityField": "providerBindingRef",
+    "digestField": "specDigest",
+    "canonicalPlanField": "canonicalProviderPlan",
+    "persistedFields": [
+      "providerBindingRef",
+      "providerProfileRef",
+      "packageId",
+      "canonicalProviderPlan",
+      "specDigest"
+    ],
+    "responseFields": [
+      "providerBindingRef",
+      "specDigest"
+    ],
+    "canonicalProviderPlan": "provider-owned structured JSON retained by Fabric and never submitted by Control Plane or Console",
+    "digest": {
+      "algorithm": "sha256",
+      "encoding": "lowercase_hex",
+      "input": "canonicalProviderPlanEnvelope",
+      "canonicalJson": {
+        "characterEncoding": "utf-8",
+        "whitespace": "none",
+        "objectKeys": "lexicographic_utf8_order",
+        "arrayOrder": "preserve_input_order"
+      }
+    },
+    "bindingRules": [
+      "providerBindingRef identifies exactly one immutable Fabric-persisted binding",
+      "specDigest must match the persisted canonicalProviderPlan digest",
+      "replay and readback reuse the original providerBindingRef and specDigest",
+      "a current Provider Profile change cannot replace an existing binding"
+    ],
+    "goldenVectors": [
+      {
+        "providerProfileRef": "fixture-provider:profile-v1",
+        "packageId": "basic",
+        "canonicalProviderPlanEnvelope": {
+          "packageId": "basic",
+          "providerProfileRef": "fixture-provider:profile-v1",
+          "schemaVersion": 1,
+          "spec": {
+            "compute": {
+              "cpu": 2,
+              "memoryGb": 4
+            },
+            "storage": {
+              "sizeGb": 10
+            }
+          }
+        },
+        "canonicalJson": "{\"packageId\":\"basic\",\"providerProfileRef\":\"fixture-provider:profile-v1\",\"schemaVersion\":1,\"spec\":{\"compute\":{\"cpu\":2,\"memoryGb\":4},\"storage\":{\"sizeGb\":10}}}",
+        "specDigest": "a186e4c78fa0197fd827e4810b1db83f0fee8f703cf378a9ff776df474059257"
+      }
+    ]
   },
   "launchBinding": {
     "schemaVersion": 1,
@@ -138,7 +219,8 @@
     ],
     "excludedStageInputFields": [
       "providerProfileRef",
-      "preflightBindingRef",
+      "providerBindingRef",
+      "specDigest",
       "gatewayCredential"
     ],
     "consumerModules": [
@@ -149,7 +231,8 @@
     "outsideHashValidation": {
       "bindingIdentity": "exact_immutable_launch_stage_binding",
       "providerProfileRef": "exact_admitted_preflight_profile",
-      "preflightBindingRef": "exact_fabric_preflight_record"
+      "providerBindingRef": "exact_immutable_provider_binding",
+      "specDigest": "exact_digest_of_persisted_canonical_provider_plan"
     },
     "goldenVectors": [
       {
