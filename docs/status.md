@@ -306,6 +306,17 @@ Sub2API management origin and credentials are never exposed to the browser.
   restart-safe before a project ID can be reused. Platform PostgreSQL
   stores identity, operation, reference, and evidence facts rather than file
   bodies.
+- Local-Docker also has source-level host-total admission protection under the
+  same durable storage-root flock. Runtime creation reads Docker host CPU and
+  memory capacity, persists a Runtime reservation before dispatch, validates
+  labels and cgroup HostConfig readback, and releases the reservation only after
+  container-absence readback. Storage admission sums active, staging, and
+  tombstoned SizeGB reservations against the effective filesystem capacity while
+  retaining the immediate writable-block check. Unknown inventory, malformed
+  evidence, drift, and overflow fail closed. Focused tests cover strict capacity
+  evidence, aggregate boundaries, metadata/tombstone deduplication, stale
+  reservation recovery, and overflow; Linux project-quota enforcement remains
+  qualified through the existing Linux workflow.
 - Create and Resume now enter one durable Control Plane Reconciler. Its resource
   stages call the typed Fabric HTTP contract and consume the same six-field
   request-hash vectors as Fabric. Activation readback uses the canonical

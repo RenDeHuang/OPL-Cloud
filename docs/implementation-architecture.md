@@ -475,6 +475,32 @@ customer renewal controls. At unpaid expiry, access is denied and auto-renew is
 disabled, but Control Plane performs no Fabric/Tencent stop, renew, destroy, or
 delete mutation; Tencent expiry policy owns eventual provider reclamation.
 
+### Local-Docker Host Capacity Admission
+
+The local-docker Fabric adapter owns host-capacity admission. Control Plane
+continues to call the existing staged Workspace APIs and Console has no direct
+Docker or quota surface. The Runtime stage maps the admitted package to Docker
+CPU, memory, and memory-swap cgroup limits, then reads the exact HostConfig
+values back. Storage maps admitted SizeGB to a Linux project-quota hard limit on
+the host-owned Workspace root.
+
+Before a Runtime is dispatched, Fabric holds the storage-root flock, reads the
+Docker daemon NCPU and MemTotal facts, validates every OPL Runtime label and
+cgroup readback, and sums durable Runtime reservations. The reservation is
+persisted before Docker run. It remains charged after restart or an uncertain
+Docker response and is released only after container absence is read back.
+Malformed capacity evidence, unknown OPL Runtime, drift, inventory errors, and
+arithmetic overflow reject admission. This is an OPL-managed reservation
+boundary, so a shared Docker daemon must reserve capacity for non-OPL workloads
+or be dedicated to Fabric.
+
+Storage uses the same flock to recover journals and sum unique StorageID
+reservations across active roots, staging roots, and deletion tombstones. New
+SizeGB is admitted only when that sum plus the new project-quota limit fits the
+effective filesystem capacity, calculated from Blocks, Bfree, Bavail, and Bsize
+with overflow checks; the immediate writable-block check must also succeed. A
+tombstone stays charged until quota clear and its zero-limit readback complete.
+
 ## Current Medopl Workspace Access Path
 
 The current medopl Tencent/TKE extension data path is:
