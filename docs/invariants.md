@@ -188,6 +188,18 @@ schemas, workflows, and focused tests.
   Fabric/provider mutation. Console, workflow, review, and Ledger input cannot
   provide or rewrite a resource ID, reset a budget, create a successor Launch,
   or authorize a downstream write.
+- Fulfillment Repair is a separate operator command under Workspace Launch, not
+  a Recovery budget or a second Launch. It is eligible only for a resource-paid
+  `manual_review/runtime` operation with confirmed Key, Debit, Compute,
+  Storage, Attachment, and Secret, one consumed unknown Runtime attempt, and no
+  Activation or Receipt attempt. The operator may provide only the exact Launch
+  version, reason, immutable replacement image digest, and idempotency identity.
+- Fabric must prove the persisted original Runtime operation and exact retained
+  Compute, Storage, Attachment, and Secret bindings before repair mutation. An
+  opted-in provider may replace only Runtime; it must preserve those resources
+  and the Secret. READY advances the original Launch to its single Activation
+  and Purchase Receipt. Exact replay performs no second Runtime replacement,
+  and unsupported providers fail closed.
 - Only a quiesced `manual_review` legacy Launch is migration-eligible.
   Migration performs owner-authoritative GET-only fact collection,
   deterministic mapping, exact-row/result CAS, and Control Plane post-write

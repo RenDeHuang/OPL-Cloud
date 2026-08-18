@@ -336,6 +336,19 @@ operation, or calling Fabric ensure. If the exhausted Runtime read budget was
 owned by a failed fresh typed-pending continuation, the same READY transition
 also marks that continuation consumed so its persisted state remains coherent.
 
+When that authoritative read proves the original Runtime is genuinely unready,
+the current local-Docker implementation exposes a distinct operator
+Fulfillment Repair command. Control Plane admits only the exact paid Launch
+whose Key, Debit, Compute, Storage, Attachment, and Secret are confirmed and
+whose Activation and Receipt have not started. The operator provides only the
+new immutable image digest, reason, Launch version, and idempotency identity;
+all resource identities come from the persisted Launch. Fabric checks the
+persisted original Runtime evidence before mutation, serializes repair per
+Workspace, retains the Secret and all non-Runtime resources, replaces the
+container through the local-Docker adapter, and persists the replacement as the
+canonical Runtime readback. Unsupported adapters fail closed. READY then
+continues the existing Activation and Purchase Receipt stages.
+
 Fresh post-mutation typed `pending` uses a distinct system continuation record,
 not the operator Resume record. The mutation's mandatory owner read persists
 `PendingReadbacks=1`, a zero-mutation/zero-replay authorization, and an exact

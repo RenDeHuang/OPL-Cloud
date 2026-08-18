@@ -255,6 +255,32 @@ func TestMemoryWorkspaceRuntimeIdentityCandidatesAllowDynamicURLReadback(t *test
 	}
 }
 
+func TestMemoryWorkspaceRuntimeIdentityCandidatesReadLegacyRepairWithoutBinding(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 8, 18, 2, 0, 0, 0, time.UTC)
+	store := NewMemoryOperationStore()
+	parent, predecessor, runtime := canonicalRuntimeOperationGraph(t, "workspace-alpha", "legacy-repair", now)
+	predecessorRuntime := runtime
+	predecessorRuntime.ImageID = "local/one-person-lab-webui@sha256:" + strings.Repeat("a", 64)
+	fillOperationResource(&predecessor, predecessorRuntime)
+	legacyReplacement := runtime
+	legacyReplacement.OperationID = "launch-legacy-repair:runtime-repair:repair-auth:create"
+	legacyReplacement.ImageID = "local/one-person-lab-webui@sha256:" + strings.Repeat("b", 64)
+	repair := newOperation("repair_workspace_runtime", "workspace_runtime", runtime.WorkspaceID, parent.AccountID, runtime.WorkspaceID,
+		strings.TrimSuffix(legacyReplacement.OperationID, ":create"), "legacy-repair-hash", now.Add(2*time.Second))
+	repair.ID, repair.Status, repair.CreatedAt, repair.FinishedAt = "repair-legacy", "succeeded", now.Add(2*time.Second), now.Add(2*time.Second)
+	fillOperationResource(&repair, legacyReplacement)
+	for _, operation := range []FabricOperation{parent, predecessor, repair} {
+		if err := store.Append(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	candidates, err := store.WorkspaceRuntimeIdentityCandidates(ctx, runtime.WorkspaceID)
+	if err != nil || len(candidates) != 1 || candidates[0].ID != repair.ID {
+		t.Fatalf("legacy repair candidates=%#v err=%v", candidates, err)
+	}
+}
+
 func TestMemoryWorkspaceRuntimeIdentityCandidatesPreserveDuplicatesAndStartingChildIdentity(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)

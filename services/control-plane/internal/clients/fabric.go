@@ -35,6 +35,12 @@ type FabricWorkspaceRuntimeGatewaySecretClient interface {
 	WorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretBinding, error)
 }
 
+// FabricWorkspaceRuntimeRepairClient replaces only a failed Runtime while
+// preserving the already allocated Compute, Storage, Attachment and Secret.
+type FabricWorkspaceRuntimeRepairClient interface {
+	RepairWorkspaceRuntime(context.Context, WorkspaceRuntimeInput, string) (WorkspaceRuntime, error)
+}
+
 type FabricWorkspaceRuntimeCredentialClient interface {
 	RevealWorkspaceRuntimeCredentials(context.Context, string, string, string) (WorkspaceRuntime, error)
 }
@@ -210,15 +216,16 @@ type StorageAttachment struct {
 }
 
 type WorkspaceRuntimeInput struct {
-	AccountID             string `json:"accountId"`
-	WorkspaceID           string `json:"workspaceId"`
-	ComputeID             string `json:"computeId"`
-	VolumeID              string `json:"volumeId"`
-	AttachmentID          string `json:"attachmentId"`
-	AttachmentOperationID string `json:"attachmentOperationId"`
-	RuntimeOperationID    string `json:"runtimeOperationId"`
-	ImageID               string `json:"imageId"`
-	GatewaySecretRef      string `json:"gatewaySecretRef"`
+	AccountID                  string `json:"accountId"`
+	WorkspaceID                string `json:"workspaceId"`
+	ComputeID                  string `json:"computeId"`
+	VolumeID                   string `json:"volumeId"`
+	AttachmentID               string `json:"attachmentId"`
+	AttachmentOperationID      string `json:"attachmentOperationId"`
+	RuntimeOperationID         string `json:"runtimeOperationId"`
+	PreviousRuntimeOperationID string `json:"previousRuntimeOperationId,omitempty"`
+	ImageID                    string `json:"imageId"`
+	GatewaySecretRef           string `json:"gatewaySecretRef"`
 }
 
 type GatewaySecretWriteInput struct {
@@ -332,6 +339,7 @@ type WorkspaceRuntime struct {
 	URL               string                 `json:"url"`
 	Status            string                 `json:"status"`
 	ServiceName       string                 `json:"serviceName"`
+	ImageID           string                 `json:"imageId,omitempty"`
 	ProviderRequestID string                 `json:"providerRequestId,omitempty"`
 	Access            WorkspaceRuntimeAccess `json:"access,omitempty"`
 	Ready             bool                   `json:"ready"`
@@ -592,6 +600,14 @@ func (c *fabricHTTPClient) CreateWorkspaceRuntime(ctx context.Context, input Wor
 	}
 	err := c.postMutation(ctx, "/fabric/workspace-runtimes", input, idempotencyKey, fabricMutationScope{
 		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceKind: "workspace_runtime", ResourceID: input.WorkspaceID, Action: action,
+	}, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) RepairWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, idempotencyKey string) (WorkspaceRuntime, error) {
+	var result WorkspaceRuntime
+	err := c.postMutation(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(input.WorkspaceID)+"/repair", input, idempotencyKey, fabricMutationScope{
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceKind: "workspace_runtime", ResourceID: input.WorkspaceID, Action: "repair_workspace_runtime",
 	}, &result)
 	return result, err
 }

@@ -12,6 +12,15 @@ import (
 
 const runtimeClaimStaleAfter = 2 * time.Minute
 
+const workspaceRuntimeRepairPayloadKey = "workspaceRuntimeRepair"
+
+type workspaceRuntimeRepairBinding struct {
+	SchemaVersion                 int    `json:"schemaVersion"`
+	PreviousRuntimeOperationID    string `json:"previousRuntimeOperationId"`
+	ReplacementRuntimeOperationID string `json:"replacementRuntimeOperationId"`
+	ImageID                       string `json:"imageId"`
+}
+
 func (s *Service) claimRuntimeOperation(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error) {
 	stored, claimed, err := s.operations.ClaimRuntime(ctx, operation)
 	// A stale runtime operation is never reclaimed into a new provider lease.
@@ -159,6 +168,160 @@ func (s *Service) workspaceRuntimeForUpdate(ctx context.Context, input Workspace
 		return WorkspaceRuntime{}, fmt.Errorf("runtime_operation_identity_mismatch")
 	}
 	return runtime, nil
+}
+
+func (s *Service) RepairWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput) (WorkspaceRuntime, error) {
+	if strings.TrimSpace(input.IdempotencyKey) == "" || strings.TrimSpace(input.PreviousRuntimeOperationID) == "" ||
+		input.PreviousRuntimeOperationID == input.RuntimeOperationID {
+		return WorkspaceRuntime{}, fmt.Errorf("runtime_repair_identity_required")
+	}
+	s.mu.Lock()
+	compute := s.computes[input.ComputeID]
+	volume := s.volumes[input.VolumeID]
+	attachment := s.attachments[input.AttachmentID]
+	s.mu.Unlock()
+	if err := validateRuntimeInput(input, compute, volume, attachment, true, s.provider.ValidateWorkspaceImageReference); err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	repairProvider, ok := s.provider.(runtimeRepairProvider)
+	if !ok {
+		return WorkspaceRuntime{}, fmt.Errorf("workspace_runtime_repair_unavailable")
+	}
+	var result WorkspaceRuntime
+	err := s.operations.WithPoolLock(ctx, "workspace-runtime-repair:"+input.WorkspaceID, func(lockCtx context.Context) error {
+		predecessorOperation, found, err := s.previousRuntimeOperation(lockCtx, input.WorkspaceID, input.PreviousRuntimeOperationID, compute.AccountID)
+		if err != nil {
+			return err
+		}
+		var predecessor WorkspaceRuntime
+		if !found || predecessorOperation.Status != "succeeded" || predecessorOperation.AccountID != compute.AccountID ||
+			predecessorOperation.WorkspaceID != input.WorkspaceID || !decodeOperationResource(predecessorOperation, &predecessor) ||
+			predecessor.WorkspaceID != input.WorkspaceID || predecessor.OperationID != input.PreviousRuntimeOperationID ||
+			predecessor.ID == "" || predecessor.ServiceName == "" || predecessor.ImageID == "" {
+			return ErrLaunchStageBindingConflict
+		}
+		latest, latestFound, err := s.operations.LatestResourceOperation(lockCtx, "workspace_runtime", input.WorkspaceID)
+		if err != nil {
+			return err
+		}
+		if latestFound && latest.Action == "repair_workspace_runtime" && latest.Status != "rejected" && latest.Status != "failed" && latest.IdempotencyKey != input.IdempotencyKey {
+			return ErrRuntimeIdempotencyConflict
+		}
+
+		requestHash := hashInput(input)
+		now := s.now()
+		operation := newOperation("repair_workspace_runtime", "workspace_runtime", input.WorkspaceID, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
+		operation.ID = "fop_runtime_repair_claim_" + stableSuffix("repair_workspace_runtime", input.IdempotencyKey)
+		operation.Status, operation.CreatedAt = "started", now
+		fillOperationResource(&operation, WorkspaceRuntime{OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID})
+		binding := workspaceRuntimeRepairBinding{
+			SchemaVersion: 1, PreviousRuntimeOperationID: input.PreviousRuntimeOperationID,
+			ReplacementRuntimeOperationID: input.RuntimeOperationID, ImageID: input.ImageID,
+		}
+		operation.RedactedProviderPayload[workspaceRuntimeRepairPayloadKey] = binding
+		stored, claimed, err := s.claimRuntimeOperation(lockCtx, operation)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			if stored.RequestHash != requestHash {
+				return ErrRuntimeIdempotencyConflict
+			}
+			if stored.Status == "succeeded" {
+				if !decodeOperationResource(stored, &result) || !runtimeReadbackMatches(result, input) {
+					return ErrRuntimeOperationFailed
+				}
+				return nil
+			}
+			if stored.Status == "failed" {
+				readback, readErr := s.provider.WorkspaceRuntimeStatus(lockCtx, input.WorkspaceID)
+				readback.Access.Password = ""
+				if readErr != nil || !readback.Ready || !runtimeReadbackMatches(readback, input) {
+					return ErrRuntimeOperationFailed
+				}
+				if _, convergeErr := s.convergeRuntimeOperationReadback(lockCtx, stored, readback, nil); convergeErr != nil {
+					return convergeErr
+				}
+				result = readback
+				return nil
+			}
+			if stored.Status != "started" {
+				return ErrRuntimeOperationFailed
+			}
+		}
+		result, err = repairProvider.RepairWorkspaceRuntime(s.providerMutationContextForRuntimeRepair(lockCtx, stored), input, compute, volume)
+		result.OperationID = input.RuntimeOperationID
+		result.Access.Password = ""
+		if err == nil && (!runtimeReadbackMatches(result, input) || result.ImageID != input.ImageID) {
+			err = fmt.Errorf("workspace_runtime_repair_readback_mismatch")
+		}
+		if err != nil {
+			_ = s.saveRuntimeRepairOperation(lockCtx, stored, binding, result, "failed", err)
+			return err
+		}
+		if err := s.saveRuntimeRepairOperation(lockCtx, stored, binding, result, "succeeded", nil); err != nil {
+			return err
+		}
+		return nil
+	})
+	return result, err
+}
+
+func (s *Service) providerMutationContextForRuntimeRepair(ctx context.Context, operation FabricOperation) context.Context {
+	binding := WorkspaceLaunchStageBinding{
+		SchemaVersion: 1, LaunchOperationID: operation.ID, AccountID: operation.AccountID,
+		WorkspaceID: operation.WorkspaceID, Stage: "runtime", Action: "ensure_runtime",
+		FabricOperationID: operation.ID + ":runtime", IdempotencyKey: operation.IdempotencyKey,
+		RequestHash: operation.RequestHash,
+	}
+	return context.WithValue(ctx, providerMutationJournalContextKey{}, &providerMutationJournal{
+		operations: s.operations, parent: binding, parentOperation: operation,
+		provider: s.provider.Descriptor().Name, now: s.now,
+	})
+}
+
+// previousRuntimeOperation resolves both the current standalone Runtime record
+// and the legacy Launch Stage parent used by already-persisted launches. The
+// latter owns a succeeded provider child even when the Runtime was unready.
+func (s *Service) previousRuntimeOperation(ctx context.Context, workspaceID, previousOperationID, accountID string) (FabricOperation, bool, error) {
+	operation, found, err := s.operations.OperationByResourceActionIdempotency(
+		ctx, "workspace_runtime", workspaceID, "create_workspace_runtime", previousOperationID,
+	)
+	if err != nil || found {
+		return operation, found, err
+	}
+	operations, err := s.operations.List(ctx)
+	if err != nil {
+		return FabricOperation{}, false, err
+	}
+	var candidate FabricOperation
+	found = false
+	for _, operation := range operations {
+		if operation.Status != "succeeded" || operation.AccountID != accountID || operation.WorkspaceID != workspaceID || operation.ResourceKind != "workspace_runtime" {
+			continue
+		}
+		binding, bindingOK := decodeProviderMutationBinding(operation)
+		if !bindingOK || binding.Parent.Stage != "runtime" || binding.Parent.FabricOperationID != previousOperationID {
+			continue
+		}
+		var runtime WorkspaceRuntime
+		if !decodeOperationResource(operation, &runtime) || runtime.ID == "" || runtime.WorkspaceID != workspaceID || runtime.OperationID != previousOperationID {
+			continue
+		}
+		if found {
+			return FabricOperation{}, false, ErrLaunchStageBindingConflict
+		}
+		candidate, found = operation, true
+	}
+	return candidate, found, nil
+}
+
+func (s *Service) saveRuntimeRepairOperation(ctx context.Context, operation FabricOperation, binding workspaceRuntimeRepairBinding, runtime WorkspaceRuntime, status string, operationErr error) error {
+	operation.Status, operation.FinishedAt = status, s.now()
+	operation.ErrorCode, operation.Retryable = errorCode(operationErr), false
+	fillOperationResource(&operation, runtime)
+	operation.RedactedProviderPayload[workspaceRuntimeRepairPayloadKey] = binding
+	return s.operations.SaveRuntime(ctx, operation)
 }
 
 func (s *Service) DestroyWorkspaceRuntime(ctx context.Context, workspaceID, idempotencyKey string) (WorkspaceRuntime, error) {

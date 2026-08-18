@@ -26,6 +26,62 @@ const (
 )
 
 func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/repair-runtime", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		if len(r.Header.Values("Idempotency-Key")) != 1 || !validBillingReviewOpaqueID(key) {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		input := decodeJSON(r)
+		launchVersion, validVersion := positiveIntegerField(input, "launchVersion")
+		reason, imageDigest := stringValue(input["reason"]), stringValue(input["imageDigest"])
+		if !validVersion || launchVersion > int64(^uint(0)>>1) || reason == "" || reason != strings.TrimSpace(reason) ||
+			imageDigest == "" || !workspaceImageReferenceWithDigest(imageDigest) ||
+			!exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "reason", "imageDigest"}) {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		row, found, err := app.tables.GetRuntimeOperation(r.Context(), operationID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		if !found {
+			writeError(w, http.StatusNotFound, "workspace_launch_not_found")
+			return
+		}
+		operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+		if err != nil {
+			writeError(w, http.StatusConflict, errWorkspaceLaunchRepairNotEligible.Error())
+			return
+		}
+		exactReplay := operation.RuntimeRepair != nil && operation.RuntimeRepair.AuthorizationID == key &&
+			operation.RuntimeRepair.LaunchVersion == int(launchVersion) && operation.RuntimeRepair.Reason == reason && operation.RuntimeRepair.ImageDigest == imageDigest
+		if !exactReplay && operation.Version != int(launchVersion) {
+			writeError(w, http.StatusConflict, errWorkspaceLaunchRepairNotEligible.Error())
+			return
+		}
+		repaired, err := app.repairWorkspaceLaunchRuntime(r.Context(), service, operationID, int(launchVersion), key, reason, imageDigest)
+		if err != nil {
+			if errors.Is(err, errBillingReviewNotFound) {
+				writeError(w, http.StatusNotFound, "workspace_launch_not_found")
+			} else {
+				writeError(w, http.StatusConflict, err.Error())
+			}
+			return
+		}
+		body, err := workspaceLaunchReconcileResponse(repaired, nil)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		body["repair"] = map[string]any{"operationId": operationID, "authorizationId": key, "reason": reason, "imageDigest": imageDigest}
+		writeJSON(w, http.StatusOK, body)
+	}))
 	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/resume-approval-candidates", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		capabilities := r.Header.Values(productionAcceptanceBCapability)
 		if len(capabilities) != 1 || !secureHeaderMatches(strings.TrimSpace(capabilities[0]), strings.TrimSpace(os.Getenv("OPL_INTERNAL_SERVICE_TOKEN"))) {
