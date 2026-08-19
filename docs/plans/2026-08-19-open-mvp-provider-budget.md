@@ -4,7 +4,7 @@
 
 **Goal:** Deliver provider-driven Basic/Pro availability and a Workspace-scoped Sub2API budget workflow for the customer-owned open MVP.
 
-**Architecture:** Fabric provider profiles remain the package availability authority, Control Plane owns launch admission and Workspace-scoped budget orchestration, and Console consumes only Control Plane APIs. Sub2API remains the live Key/quota/wallet authority; Key rotation copies the live policy under the same Workspace lock and never creates an implicit unlimited replacement.
+**Architecture:** Fabric provider profiles remain the package availability authority, Control Plane owns launch admission and Workspace-scoped budget orchestration, and Console consumes only Control Plane APIs. Sub2API remains the live Key/quota/wallet authority; Key rotation freezes the old Key and transfers only provable remaining quota under the same Workspace lock, never creating an implicit unlimited replacement.
 
 **Tech Stack:** Go, Ent/PostgreSQL, TypeScript/React, Node test runner, typed HTTP JSON contracts, Sub2API client.
 
@@ -55,14 +55,19 @@
 - Modify: the existing Workspace Gateway rotation test owner identified by the
   current call path.
 
-1. Add a failing rotation test with non-zero total and rolling limits plus a
-   disabled Key.
-2. Add a failing test proving rotation stops before replacement when live
-   budget readback fails.
-3. Reuse the Workspace lock for budget mutation and rotation.
-4. Create the replacement Key with the exact live policy before Secret/binding
-   transition; do not default omitted policy fields to unlimited.
-5. Run focused rotation and restart/readback tests and commit.
+1. Add failing tests proving an active Key with quota `Q` and final usage `U`
+   creates a replacement with quota `Q-U`, while `U >= Q` never creates one.
+2. Add failing tests proving rotation disables the old Key, observes zero
+   concurrency, and captures final counters before replacement creation.
+3. Add failing admission tests for non-zero finite rolling-window usage,
+   disabled/quota-exhausted/expired status, and explicit expiry.
+4. Reuse the Workspace lock for budget mutation and rotation and reject either
+   operation while the other has non-terminal durable evidence.
+5. Persist only recovery evidence, create the replacement with the admitted
+   remaining quota and rolling limits, and verify exact live policy readback
+   before Secret/binding transition.
+6. Extend every-phase response-loss and restart tests through disable, drain,
+   snapshot, and replacement policy readback; run focused tests and commit.
 
 ### Task 4: Connect Console and admit the public interface
 

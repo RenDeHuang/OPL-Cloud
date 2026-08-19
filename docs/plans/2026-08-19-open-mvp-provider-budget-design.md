@@ -64,16 +64,42 @@ Gateway Key route continues to reject Workspace-reserved Key mutation.
 ## Rotation And Concurrency
 
 Workspace budget mutation and Key rotation serialize on the same Workspace
-resource lock. Rotation reads the current bound Key budget from Sub2API before
-creating the replacement, creates the new Key with the same quota/rate-limit
-policy and enabled state, installs the replacement Secret, persists the new Key
-binding, then retires the old Key according to the existing rotation sequence.
-The operation must fail closed when the old budget cannot be read or copied;
-rotation must never silently create an unlimited Key.
+resource lock. A live Sub2API read proves the exact bound Key before either
+operation mutates it. A non-terminal rotation durably blocks budget mutation;
+a non-terminal budget mutation durably blocks rotation.
+
+Sub2API cannot import quota or rolling-window usage counters into a replacement
+Key. Rotation therefore must not copy the old limits and reset their usage. For
+an active Key it persists the disable intent, disables the old Key, waits for
+zero current concurrency, then reads the final counters. A finite total quota
+`Q` with final usage `U` transfers as replacement quota `Q-U`; an originally
+unlimited quota remains unlimited. `U >= Q` fails before replacement creation,
+because a zero replacement quota means unlimited rather than no remaining
+budget.
+
+A finite rolling limit may be copied only when its final live usage is zero.
+Any non-zero 5h, 1d, or 7d usage fails closed before replacement creation; P0
+does not permanently reduce the future window or reset the current window.
+Disabled, quota-exhausted, expired, and explicitly expiring Keys also fail
+before mutation because the current Sub2API create API cannot preserve those
+semantics without an active or renewed replacement.
+
+After the frozen policy is admitted, rotation creates one replacement with the
+remaining total quota and admitted rolling limits, verifies live readback,
+installs the replacement Secret, persists the new Key binding, and retires the
+old Key. Model access is unavailable from old-Key disable until replacement
+runtime readback. The operation must fail closed when disable, drain, counters,
+or policy readback cannot be proved; it must never silently create an unlimited
+Key.
 
 Control Plane does not persist a quota replica. Existing durable operation and
 audit evidence may record identifiers, requested mutation, and outcome, but
 all budget readback is live from Sub2API.
+
+The current process lock is sufficient only for the single Control Plane
+replica in the first Local-Docker MVP. Multi-replica TKE qualification requires
+a PostgreSQL advisory lock or atomic durable Workspace operation claim and is
+not proved by this change.
 
 ## Console And Errors
 
