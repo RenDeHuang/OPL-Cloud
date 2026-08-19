@@ -257,15 +257,19 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		"accountId",
 		"operationId",
 		"workspaceId",
+		"ownerUserId",
 		"launchOperationId",
 		"launchReceiptId",
-		"runtimeId",
-		"computeId",
+		"resourceType",
+		"resourceId",
+		"computeAllocationId",
 		"storageId",
 		"attachmentId",
-		"keyId",
-		"secretRef",
-		"fingerprint"
+		"runtimeId",
+		"workspaceApiKeyId",
+		"workspaceKeyFingerprint",
+		"runtimeServiceName",
+		"gatewaySecretRef"
 	]);
 	assert.deepEqual(management.workspaceDeletion.providerNeutralResourceIdentity, {
 		authority: "succeeded_immutable_launch_operation_and_matching_launch_receipt",
@@ -310,8 +314,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		deletionReceiptType: "workspace.deleted.v1",
 		deletionReceiptFailure: "retry_receipt_only_without_repeating_resource_key_or_workspace_deletion",
 		cancelRenewal: "independent_operation_preserves_resources_until_paidThrough",
-		refund: "independent_financial_operation",
-		refundReceiptType: "billing.workspace_refunded.v1"
+		refund: "independent_financial_operation"
 	});
 	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.requestId, "launchOperationId");
 	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.recordIdempotencyKey, "<launchOperationId>:purchase-receipt");
@@ -326,20 +329,29 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		surface: "control_plane",
 		requestId: "workspaceDeleteOperationId",
 		recordIdempotencyKey: "<workspaceDeleteOperationId>:deletion-receipt",
-		ownerRequiredFields: ["accountId", "userId"],
+		ownerRequiredFields: ["accountId", "workspaceId", "ownerUserId"],
 		inputRefs: {
 			requiredFields: ["launchReceiptId"],
 			allowedFields: ["launchReceiptId"]
 		},
 		executionRequiredFields: [
-			"runtimeId",
-			"computeId",
+			"operationId",
+			"resourceType",
+			"resourceId",
+			"computeAllocationId",
 			"storageId",
 			"attachmentId",
-			"keyId",
-			"secretRef",
-			"fingerprint"
+			"runtimeId",
+			"workspaceApiKeyId",
+			"workspaceKeyFingerprint",
+			"runtimeServiceName",
+			"gatewaySecretRef"
 		],
+		executionConstraints: {
+			operationId: "equals_requestId",
+			resourceType: "workspace",
+			resourceId: "equals_workspaceId"
+		},
 		executionIdentity: "exact_provider_neutral_resource_identity_from_the_same_delete_operation",
 		outputRefs: {
 			requiredFields: [
@@ -358,6 +370,10 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		failureRetry: "receipt_only_without_repeating_resource_key_or_workspace_deletion",
 		cardinality: "exactly_one_terminal_deletion_receipt_for_the_workspace_delete_operation"
 	});
+	const forbiddenReceiptFields = new Set(evidence.generalReceiptV1.forbiddenContent.map((field) => field.toLowerCase()));
+	for (const field of evidence.workspaceDeletionReceiptV1.executionRequiredFields) {
+		assert.equal(forbiddenReceiptFields.has(field.toLowerCase()), false, `${field} must be allowed by Ledger forbidden-content rules`);
+	}
 	assert.ok(billing.ledgerEvidencePolicy.receiptTypes.includes("workspace.deleted.v1"));
 	assert.deepEqual(billing.reconciliationPolicy, {
 		reportSchemaContract: "opl-cloud-evidence-ledger-contract.json#reconciliationReportV1",

@@ -102,8 +102,7 @@
     "deletionReceiptType": "workspace.deleted.v1",
     "deletionReceiptFailure": "retry_receipt_only_without_repeating_resource_key_or_workspace_deletion",
     "cancelRenewal": "independent_operation_preserves_resources_until_paidThrough",
-    "refund": "independent_financial_operation",
-    "refundReceiptType": "billing.workspace_refunded.v1"
+    "refund": "independent_financial_operation"
   },
   "walletAdjustmentEvidence": {
     "kinds": ["recharge", "debit", "business_refund"],

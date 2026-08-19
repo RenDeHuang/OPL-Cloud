@@ -346,20 +346,29 @@
     "surface": "control_plane",
     "requestId": "workspaceDeleteOperationId",
     "recordIdempotencyKey": "<workspaceDeleteOperationId>:deletion-receipt",
-    "ownerRequiredFields": ["accountId", "userId"],
+    "ownerRequiredFields": ["accountId", "workspaceId", "ownerUserId"],
     "inputRefs": {
       "requiredFields": ["launchReceiptId"],
       "allowedFields": ["launchReceiptId"]
     },
     "executionRequiredFields": [
-      "runtimeId",
-      "computeId",
+      "operationId",
+      "resourceType",
+      "resourceId",
+      "computeAllocationId",
       "storageId",
       "attachmentId",
-      "keyId",
-      "secretRef",
-      "fingerprint"
+      "runtimeId",
+      "workspaceApiKeyId",
+      "workspaceKeyFingerprint",
+      "runtimeServiceName",
+      "gatewaySecretRef"
     ],
+    "executionConstraints": {
+      "operationId": "equals_requestId",
+      "resourceType": "workspace",
+      "resourceId": "equals_workspaceId"
+    },
     "executionIdentity": "exact_provider_neutral_resource_identity_from_the_same_delete_operation",
     "outputRefs": {
       "requiredFields": [
