@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -196,6 +197,13 @@ type localDockerRuntimeReplayRunner struct {
 func (r *localDockerRuntimeReplayRunner) Run(_ context.Context, _ []byte, args ...string) ([]byte, error) {
 	r.calls = append(r.calls, append([]string(nil), args...))
 	switch {
+	case len(args) == 8 && args[0] == "container" && args[1] == "ls" && args[5] == "label=opl.fabric.kind=runtime":
+		if !r.containerVisible && !(r.containerVisibleOnRead > 0 && r.containerReads >= r.containerVisibleOnRead) {
+			return nil, nil
+		}
+		return json.Marshal(dockerObjectInventoryRow{ID: r.container.ID, Names: strings.TrimPrefix(r.container.Name, "/")})
+	case len(args) == 3 && args[0] == "info" && args[1] == "--format" && args[2] == "{{json .}}":
+		return []byte(`{"NCPU":64,"MemTotal":274877906944}`), nil
 	case len(args) == 7 && args[0] == "network" && args[1] == "ls":
 		return json.Marshal(dockerObjectInventoryRow{ID: r.network.ID, Name: r.network.Name})
 	case len(args) == 3 && args[0] == "network" && args[1] == "inspect":
@@ -234,7 +242,7 @@ func localDockerReadyRuntimeContainer(t *testing.T, name, id, image string, labe
 		}},
 		"State":           map[string]any{"Status": "running", "Running": true, "Health": map[string]any{"Status": "healthy"}},
 		"NetworkSettings": map[string]any{"Ports": map[string]any{"3000/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": "30123"}}}},
-		"HostConfig": map[string]any{"Mounts": []map[string]any{
+		"HostConfig": map[string]any{"NanoCpus": int64(2_000_000_000), "Memory": int64(4_294_967_296), "MemorySwap": int64(4_294_967_296), "Mounts": []map[string]any{
 			{"Type": "bind", "Source": storage.Data, "Target": "/data", "BindOptions": map[string]any{"Propagation": "rprivate"}},
 			{"Type": "bind", "Source": storage.Projects, "Target": "/projects", "BindOptions": map[string]any{"Propagation": "rprivate"}},
 			{"Type": "tmpfs", "Target": "/recovery", "TmpfsOptions": map[string]any{"Mode": 448}},
@@ -260,8 +268,8 @@ func localDockerReadyRuntimeContainer(t *testing.T, name, id, image string, labe
 func localDockerRuntimeReplayFixture(t *testing.T, visibleOnRead int) (*LocalDockerProvider, *localDockerRuntimeReplayRunner, context.Context, OperationStore, WorkspaceRuntimeInput, ComputeAllocation, StorageVolume) {
 	t.Helper()
 	accountID, workspaceID := "acct-runtime", "ws-runtime"
-	compute := ComputeAllocation{ID: "compute-runtime", OperationID: "compute-operation", AccountID: accountID, WorkspaceID: workspaceID}
-	volume := StorageVolume{ID: "storage-runtime", OperationID: "storage-operation", AccountID: accountID, WorkspaceID: workspaceID}
+	compute := ComputeAllocation{ID: "compute-runtime", OperationID: "compute-operation", AccountID: accountID, WorkspaceID: workspaceID, PackageID: "basic"}
+	volume := StorageVolume{ID: "storage-runtime", OperationID: "storage-operation", AccountID: accountID, WorkspaceID: workspaceID, SizeGB: 10}
 	input := WorkspaceRuntimeInput{
 		WorkspaceID: workspaceID, ComputeID: compute.ID, VolumeID: volume.ID, AttachmentID: "attachment-runtime",
 		AttachmentOperationID: "attachment-operation", RuntimeOperationID: "runtime-operation",
@@ -276,6 +284,7 @@ func localDockerRuntimeReplayFixture(t *testing.T, visibleOnRead int) (*LocalDoc
 		"opl.compute.id": input.ComputeID, "opl.storage.id": input.VolumeID, "opl.attachment.id": input.AttachmentID,
 		"opl.attachment.operation.id": input.AttachmentOperationID, "opl.secret.ref": input.GatewaySecretRef, "opl.image.ref": input.ImageID,
 		"opl.secret.version": digest[:16], "opl.secret.fingerprint": "sha256:" + digest,
+		localDockerComputePackageLabel: compute.PackageID, localDockerStorageSizeGBLabel: strconv.Itoa(volume.SizeGB),
 	} {
 		labels[key] = value
 	}
@@ -291,10 +300,10 @@ func localDockerRuntimeReplayFixture(t *testing.T, visibleOnRead int) (*LocalDoc
 		secretArchive:          validRuntimeSecretArchive(t, key, metadata),
 	}
 	storageRoot := localDockerStorageTestRoot(t)
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root, HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1"}, runner)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root, HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1", StorageQuotaBackend: localDockerStorageTestQuota(storageRoot)}, runner)
 	storagePaths, err := provider.ensureStorageDirectories(localDockerStorageMetadata{
-		SchemaVersion: 1, StorageID: volume.ID, AccountID: accountID, WorkspaceID: workspaceID,
-	})
+		SchemaVersion: localDockerStorageMetadataSchemaVersion, StorageID: volume.ID, AccountID: accountID, WorkspaceID: workspaceID, SizeGB: volume.SizeGB,
+	}, volume.SizeGB)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,8 +564,9 @@ func localDockerImageTrustPreflight(t *testing.T, image string) (WorkspaceLaunch
 	t.Helper()
 	runner := &recordingDockerRunner{}
 	store := NewMemoryOperationStore()
+	storageRoot := localDockerStorageTestRoot(t)
 	service := NewServiceWithOperationStore(newLocalDockerProvider(LocalDockerProviderConfig{
-		GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: localDockerStorageTestRoot(t),
+		GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: storageRoot, StorageQuotaBackend: localDockerStorageTestQuota(storageRoot),
 	}, runner), store)
 	result, err := service.PreflightWorkspaceLaunch(context.Background(), WorkspaceLaunchPreflightInput{
 		SchemaVersion: 1, LaunchOperationID: "local-image-trust", AccountID: "acct-local", WorkspaceID: "ws-local",
@@ -771,7 +781,8 @@ func TestLocalDockerDestroyWorkspaceRuntimeDeletesExactSecretAndPreservesSibling
 		runtimeName: localDockerDestroyRuntimeContainer(workspaceID), localRuntimeName(otherWorkspaceID): localDockerDestroyRuntimeContainer(otherWorkspaceID),
 	}, volumes: map[string]dockerVolumeInspect{}, archives: map[string][]byte{}}
 	root := localDockerSecretTestRoot(t)
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root}, runner)
+	storageRoot := localDockerStorageTestRoot(t)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root, HostStorageRoot: storageRoot, StorageQuotaBackend: localDockerStorageTestQuota(storageRoot)}, runner)
 	secretRef := seedLocalDockerGatewaySecret(t, provider, "acct-alpha", workspaceID)
 	otherSecretRef := seedLocalDockerGatewaySecret(t, provider, "acct-beta", otherWorkspaceID)
 	runner.containers[runtimeName], runner.archives[runtimeName] = bindLocalDockerDestroyRuntimeSecret(
@@ -805,7 +816,8 @@ func TestLocalDockerDestroyWorkspaceRuntimeDeletesExactSecretAndPreservesSibling
 func TestLocalDockerDestroyWorkspaceRuntimeSecretOnlyRemnantIsIdempotent(t *testing.T) {
 	workspaceID := "ws-alpha"
 	runner := &localDockerDestroyRunner{containers: map[string]dockerContainerInspect{}, volumes: map[string]dockerVolumeInspect{}}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t)}, runner)
+	storageRoot := localDockerStorageTestRoot(t)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: storageRoot, StorageQuotaBackend: localDockerStorageTestQuota(storageRoot)}, runner)
 	seedLocalDockerGatewaySecret(t, provider, "acct-alpha", workspaceID)
 	for attempt := 0; attempt < 2; attempt++ {
 		runtime, err := provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
@@ -862,8 +874,9 @@ func TestLocalDockerComputeStageSurvivesPostgresJSONBRoundTrip(t *testing.T) {
 			ctx := context.Background()
 			runner := &localDockerComputeRoundTripRunner{}
 			store := NewMemoryOperationStore()
+			storageRoot := localDockerStorageTestRoot(t)
 			provider := newLocalDockerProvider(LocalDockerProviderConfig{
-				GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: localDockerStorageTestRoot(t),
+				GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: storageRoot, StorageQuotaBackend: localDockerStorageTestQuota(storageRoot),
 			}, runner)
 			service := NewServiceWithOperationStore(provider, store)
 			image := defaultLocalDockerWorkspaceImageRepository + "@sha256:" + strings.Repeat("a", 64)
@@ -985,6 +998,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	storageRoot := localDockerStorageTestRoot(t)
 	provider := newLocalDockerProvider(LocalDockerProviderConfig{
 		GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
+		StorageQuotaBackend:          localDockerStorageTestQuota(storageRoot),
 		TrustedWorkspaceImageSources: []string{imageID},
 	}, runner)
 	service := NewServiceWithOperationStore(provider, store)
@@ -1080,6 +1094,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	}
 	restartedProvider := newLocalDockerProvider(LocalDockerProviderConfig{
 		GatewaySecretRoot: provider.gatewaySecretRoot, HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
+		StorageQuotaBackend:          localDockerStorageTestQuota(storageRoot),
 		TrustedWorkspaceImageSources: []string{imageID},
 	}, runner)
 	restartedService := NewServiceWithOperationStore(restartedProvider, store)
@@ -1616,6 +1631,124 @@ func TestLocalDockerRuntimeUsesExactReadOnlySecretBindAndIdentityLabels(t *testi
 	}
 	if strings.Contains(joined, "type=volume,source="+input.GatewaySecretRef) || strings.Contains(joined, " tar ") {
 		t.Fatalf("runtime used legacy secret volume/helper: %q", run)
+	}
+}
+
+func TestLocalDockerRuntimeEnforcesComputePlanCgroupLimits(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		packageID  string
+		cpus       string
+		memoryByte string
+	}{
+		{name: "basic", packageID: "basic", cpus: "2", memoryByte: "4294967296"},
+		{name: "pro", packageID: "pro", cpus: "8", memoryByte: "17179869184"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider, runner, ctx, _, input, compute, volume := localDockerRuntimeReplayFixture(t, 0)
+			compute.PackageID = test.packageID
+			runner.container.Config.Labels["opl.compute.package.id"] = test.packageID
+			setLocalDockerRuntimeHostConfigLimits(t, &runner.container, test.cpus, test.memoryByte)
+
+			runtime, err := provider.CreateWorkspaceRuntime(ctx, input, compute, volume)
+			if err != nil || !runtime.Ready {
+				t.Fatalf("runtime=%#v err=%v", runtime, err)
+			}
+			var run []string
+			for _, call := range runner.calls {
+				if len(call) > 0 && call[0] == "run" {
+					run = call
+					break
+				}
+			}
+			for index := 0; index+1 < len(run); index++ {
+				if run[index] == "--cpus" && run[index+1] == test.cpus {
+					break
+				}
+				if index == len(run)-2 {
+					t.Fatalf("docker run=%q missing --cpus %s", run, test.cpus)
+				}
+			}
+			for _, flag := range []string{"--memory", "--memory-swap"} {
+				found := false
+				for index := 0; index+1 < len(run); index++ {
+					if run[index] == flag && run[index+1] == test.memoryByte {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("docker run=%q missing %s %s", run, flag, test.memoryByte)
+				}
+			}
+		})
+	}
+}
+
+func TestLocalDockerRuntimeFailsClosedOnCgroupReadbackDrift(t *testing.T) {
+	provider, runner, ctx, _, input, compute, volume := localDockerRuntimeReplayFixture(t, 1)
+	compute.PackageID = "basic"
+	runner.container.Config.Labels["opl.compute.package.id"] = compute.PackageID
+	setLocalDockerRuntimeHostConfigLimits(t, &runner.container, "0", "0")
+
+	if _, err := provider.CreateWorkspaceRuntime(ctx, input, compute, volume); err == nil || err.Error() != "local_docker_runtime_readback_mismatch" {
+		t.Fatalf("create err=%v", err)
+	}
+
+	setLocalDockerRuntimeHostConfigLimits(t, &runner.container, "2", "4294967296")
+	if runtime, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err != nil || !runtime.Ready {
+		t.Fatalf("baseline status runtime=%#v err=%v", runtime, err)
+	}
+
+	setLocalDockerRuntimeHostConfigLimits(t, &runner.container, "1", "4294967296")
+	if _, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err == nil || err.Error() != "local_docker_runtime_readback_mismatch" {
+		t.Fatalf("CPU status err=%v", err)
+	}
+
+	setLocalDockerRuntimeHostConfigLimits(t, &runner.container, "2", "4294967296")
+	runner.container.HostConfig.Memory--
+	if _, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err == nil || err.Error() != "local_docker_runtime_readback_mismatch" {
+		t.Fatalf("memory status err=%v", err)
+	}
+
+	setLocalDockerRuntimeHostConfigLimits(t, &runner.container, "2", "4294967296")
+	runner.container.HostConfig.MemorySwap--
+	if _, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err == nil || err.Error() != "local_docker_runtime_readback_mismatch" {
+		t.Fatalf("memory swap status err=%v", err)
+	}
+}
+
+func setLocalDockerRuntimeHostConfigLimits(t *testing.T, container *dockerContainerInspect, cpus, memoryBytes string) {
+	t.Helper()
+	cpuCount, err := strconv.ParseInt(cpus, 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory, err := strconv.ParseInt(memoryBytes, 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(container)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatal(err)
+	}
+	hostConfig, ok := raw["HostConfig"].(map[string]any)
+	if !ok {
+		t.Fatal("missing HostConfig")
+	}
+	hostConfig["NanoCpus"] = cpuCount * 1_000_000_000
+	hostConfig["Memory"] = memory
+	hostConfig["MemorySwap"] = memory
+	body, err = json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, container); err != nil {
+		t.Fatal(err)
 	}
 }
 

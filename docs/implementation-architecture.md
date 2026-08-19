@@ -302,6 +302,24 @@ release-manifest source before Docker access or Fabric operation persistence.
 Its running container ID, service identity, and provider binding are immutable
 Runtime identity facts; Docker-assigned HostPort and URL are live routing facts
 that authoritative Runtime readback refreshes after a restart.
+Its Runtime stage maps the admitted package to Docker cgroup CPU and memory
+limits and requires exact `HostConfig` readback. Its storage stage assigns a
+stable Linux project ID to the Workspace host-directory tree, applies the
+requested `SizeGB` as the project hard block limit, and requires kernel quota
+readback before returning `ready`. The backend requires Linux 5.14+ for
+`quotactl_fd` and a dedicated ext4/XFS filesystem with project quota enabled.
+Readiness verifies that the configured root is the filesystem root of one unique
+visible mount, rejects bind-mounted subdirectories and foreign root inventory,
+and checks kernel quota readback for every retained Workspace. Quota application
+uses fd-relative, no-symlink, no-cross-mount traversal. Storage deletion writes a
+durable Fabric-owned tombstone before removing data, then clears and reads back
+the project quota before removing the tombstone, so retry and process restart do
+not leak a quota record or reuse its project ID.
+Legacy schema-1 directories make the provider fail readiness before Launch and
+must be deleted/recreated with the preceding release; they are not silently
+adopted without a known `SizeGB`. Non-Linux or non-project-quota storage roots
+also fail the existing preflight, with no unenforced-directory fallback. These
+provider-specific mechanics do not add CPU, memory, or disk HTTP routes.
 
 ## Launch Boundary Integration
 
@@ -456,6 +474,32 @@ Compute and storage rows are provider/compatibility facts, not independent
 customer renewal controls. At unpaid expiry, access is denied and auto-renew is
 disabled, but Control Plane performs no Fabric/Tencent stop, renew, destroy, or
 delete mutation; Tencent expiry policy owns eventual provider reclamation.
+
+### Local-Docker Host Capacity Admission
+
+The local-docker Fabric adapter owns host-capacity admission. Control Plane
+continues to call the existing staged Workspace APIs and Console has no direct
+Docker or quota surface. The Runtime stage maps the admitted package to Docker
+CPU, memory, and memory-swap cgroup limits, then reads the exact HostConfig
+values back. Storage maps admitted SizeGB to a Linux project-quota hard limit on
+the host-owned Workspace root.
+
+Before a Runtime is dispatched, Fabric holds the storage-root flock, reads the
+Docker daemon NCPU and MemTotal facts, validates every OPL Runtime label and
+cgroup readback, and sums durable Runtime reservations. The reservation is
+persisted before Docker run. It remains charged after restart or an uncertain
+Docker response and is released only after container absence is read back.
+Malformed capacity evidence, unknown OPL Runtime, drift, inventory errors, and
+arithmetic overflow reject admission. This is an OPL-managed reservation
+boundary, so a shared Docker daemon must reserve capacity for non-OPL workloads
+or be dedicated to Fabric.
+
+Storage uses the same flock to recover journals and sum unique StorageID
+reservations across active roots, staging roots, and deletion tombstones. New
+SizeGB is admitted only when that sum plus the new project-quota limit fits the
+effective filesystem capacity, calculated from Blocks, Bfree, Bavail, and Bsize
+with overflow checks; the immediate writable-block check must also succeed. A
+tombstone stays charged until quota clear and its zero-limit readback complete.
 
 ## Current Medopl Workspace Access Path
 

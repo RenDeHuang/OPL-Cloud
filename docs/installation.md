@@ -13,7 +13,11 @@ removed and must not be used as installation or rollback targets.
 
 ## Requirements
 
-- Linux or macOS with Docker Engine and Docker Compose v2;
+- Linux 5.14+ with Docker Engine and Docker Compose v2 when using the
+  `local-docker` Workspace provider. The local provider requires a dedicated
+  ext4/XFS mount with project quota enabled; macOS and Docker Desktop are not
+  supported for Local-Docker Workspace launches. macOS may run the Cloud
+  control services only when an instance selects another provider;
 - an `amd64` or `arm64` host;
 - a reachable Sub2API installation; `platform_owned` and `managed_tke` require
   administrator credentials, while `customer_owned` requires one ordinary
@@ -92,7 +96,11 @@ overlay (`platform_owned`, `managed_tke`, or `customer_owned`) and exactly one
 Fabric overlay (`local-docker` or `tencent-tke`). The local workspace overlay
 adds the customer-owned PostgreSQL bind and enables Workspace launch; the
 Fabric overlay supplies only the provider authority and provider-specific
-mounts/credentials.
+mounts/credentials. `local-docker` Workspace launches require the Linux
+project-quota host described above. A root from the schema-1 directory layout,
+a non-Linux host, Docker Desktop, a bind-mounted subdirectory, or a filesystem
+without project quota fails readiness before any Launch mutation; existing
+schema-1 Workspaces must be deleted and recreated with the preceding release.
 
 ## Upgrade And Rollback
 

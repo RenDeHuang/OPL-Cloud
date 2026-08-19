@@ -75,11 +75,12 @@ creation and management path for OPL App/WebUI Workspaces; and authoritative
 Gateway accounting through Sub2API without a second wallet. Self-service
 signup, payment/top-up, and detailed UI refinement are later work.
 
-The repository does not yet contain a `local-docker` Workspace provider. The
-portable Compose asset starts PostgreSQL and the three Cloud control services;
-it does not create, read back, or delete an OPL Workspace. See
-[current capability](docs/status.md) for implementation facts and the
-[roadmap](docs/roadmap.md) for the single P0 gap.
+The repository contains a `local-docker` Workspace provider for supported
+Linux hosts. Its portable Compose asset requires a dedicated Linux 5.14+
+ext4/XFS project-quota mount for Workspace storage and fails readiness on
+unsupported hosts rather than claiming unenforced quotas. See [current
+capability](docs/status.md) for implementation facts and the
+[roadmap](docs/roadmap.md) for remaining end-to-end gaps.
 
 ## One Continuous Work Chain
 

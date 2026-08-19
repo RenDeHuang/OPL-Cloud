@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,6 +32,10 @@ const (
 	localDockerRuntimeHealthTimeout           = int64(3 * time.Second)
 	localDockerRuntimeHealthStartPeriod       = int64(10 * time.Second)
 	localDockerRuntimeHealthRetries           = 120
+	localDockerNanoCPUsPerCPU                 = int64(1_000_000_000)
+	localDockerBytesPerGiB                    = int64(1024 * 1024 * 1024)
+	localDockerComputePackageLabel            = "opl.compute.package.id"
+	localDockerStorageSizeGBLabel             = "opl.storage.size-gb"
 )
 
 type localDockerGatewayMetadata struct {
@@ -213,7 +218,10 @@ type dockerContainerInspect struct {
 		Networks map[string]dockerEndpointSettings `json:"Networks"`
 	} `json:"NetworkSettings"`
 	HostConfig struct {
-		Mounts []dockerHostMount `json:"Mounts"`
+		NanoCPUs   int64             `json:"NanoCpus"`
+		Memory     int64             `json:"Memory"`
+		MemorySwap int64             `json:"MemorySwap"`
+		Mounts     []dockerHostMount `json:"Mounts"`
 	} `json:"HostConfig"`
 	Mounts []dockerRuntimeMount `json:"Mounts"`
 }
@@ -613,10 +621,48 @@ func localRuntimeID(workspaceID string) string {
 
 func localRuntimeName(workspaceID string) string { return localDockerName("opl-runtime", workspaceID) }
 
+type localDockerRuntimeCgroupLimits struct {
+	CPU       int
+	NanoCPUs  int64
+	Memory    int64
+	PackageID string
+}
+
+func (p *LocalDockerProvider) runtimeCgroupLimits(packageID string) (localDockerRuntimeCgroupLimits, bool) {
+	plan, ok := providerPlan(p, packageID)
+	if !ok || plan.CPU <= 0 || plan.MemoryGB <= 0 {
+		return localDockerRuntimeCgroupLimits{}, false
+	}
+	return localDockerRuntimeCgroupLimits{
+		CPU: plan.CPU, NanoCPUs: int64(plan.CPU) * localDockerNanoCPUsPerCPU,
+		Memory: int64(plan.MemoryGB) * localDockerBytesPerGiB, PackageID: packageID,
+	}, true
+}
+
+func validRuntimeCgroupLimits(container dockerContainerInspect, limits localDockerRuntimeCgroupLimits) bool {
+	return container.HostConfig.NanoCPUs == limits.NanoCPUs &&
+		container.HostConfig.Memory == limits.Memory &&
+		container.HostConfig.MemorySwap == limits.Memory
+}
+
 func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) (WorkspaceRuntime, error) {
+	var result WorkspaceRuntime
+	err := p.withStorageQuotaLock(func() error {
+		var lockedErr error
+		result, lockedErr = p.createWorkspaceRuntimeLocked(ctx, input, compute, volume)
+		return lockedErr
+	})
+	return result, err
+}
+
+func (p *LocalDockerProvider) createWorkspaceRuntimeLocked(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) (WorkspaceRuntime, error) {
 	computeReadback, err := p.ReadComputeAllocation(ctx, compute)
 	if err != nil {
 		return WorkspaceRuntime{}, err
+	}
+	limits, limitsOK := p.runtimeCgroupLimits(computeReadback.PackageID)
+	if !limitsOK {
+		return WorkspaceRuntime{}, ErrUnsupportedComputePackage
 	}
 	volumeReadback, err := p.ReadStorageVolume(ctx, volume)
 	if err != nil {
@@ -643,6 +689,7 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 		"opl.compute.id": input.ComputeID, "opl.storage.id": input.VolumeID, "opl.attachment.id": input.AttachmentID,
 		"opl.attachment.operation.id": input.AttachmentOperationID, "opl.secret.ref": input.GatewaySecretRef, "opl.image.ref": input.ImageID,
 		"opl.secret.version": secretMetadata.Version, "opl.secret.fingerprint": secretMetadata.Fingerprint,
+		localDockerComputePackageLabel: limits.PackageID, localDockerStorageSizeGBLabel: strconv.Itoa(volumeReadback.SizeGB),
 	} {
 		labels[key] = value
 	}
@@ -667,6 +714,19 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 			}
 		}
 		if !exists {
+			root, rootErr := p.openStorageRoot()
+			if rootErr != nil {
+				return WorkspaceRuntime{}, rootErr
+			}
+			reservation := localDockerRuntimeReservationFor(input, limits)
+			admissionErr := p.localDockerRuntimeCapacityAdmission(ctx, root, reservation)
+			if admissionErr == nil {
+				admissionErr = writeLocalDockerRuntimeReservation(root, reservation)
+			}
+			closeErr := root.Close()
+			if admissionErr != nil || closeErr != nil {
+				return WorkspaceRuntime{}, firstNonNil(admissionErr, closeErr)
+			}
 			if dispatchErr := attempt.markReplayDispatch(ctx); dispatchErr != nil {
 				return WorkspaceRuntime{}, dispatchErr
 			}
@@ -674,6 +734,8 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 			args = append(args,
 				"--health-cmd", localDockerRuntimeHealthCommand,
 				"--health-interval", "5s", "--health-timeout", "3s", "--health-start-period", "10s", "--health-retries", "120",
+				"--cpus", strconv.Itoa(limits.CPU),
+				"--memory", strconv.FormatInt(limits.Memory, 10), "--memory-swap", strconv.FormatInt(limits.Memory, 10),
 				"--network", localDockerName("opl-compute", computeReadback.ID),
 				"--mount", "type=bind,source="+storagePaths.Data+",target=/data,bind-propagation=rprivate",
 				"--mount", "type=bind,source="+storagePaths.Projects+",target=/projects,bind-propagation=rprivate",
@@ -690,6 +752,18 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 				input.ImageID,
 			)
 			if _, err := p.runner.Run(ctx, nil, args...); err != nil {
+				_, stillExists, absentErr := p.inspectContainer(ctx, name)
+				if absentErr == nil && !stillExists {
+					root, rootErr := p.openStorageRoot()
+					if rootErr == nil {
+						rootErr = removeLocalDockerRuntimeReservation(root, reservation.ResourceID)
+						closeErr := root.Close()
+						rootErr = firstNonNil(rootErr, closeErr)
+					}
+					if rootErr != nil {
+						err = firstNonNil(rootErr, err)
+					}
+				}
 				_ = attempt.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, err)
 				return WorkspaceRuntime{}, err
 			}
@@ -697,10 +771,19 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 		}
 	}
 	if inspectErr != nil || !exists || !exactDockerLabels(container.Config.Labels, labels) || !validRuntimeHealthcheck(container) ||
-		!validRuntimeWorkspaceMountViews(container, storagePaths) {
+		!validRuntimeWorkspaceMountViews(container, storagePaths) || !validRuntimeCgroupLimits(container, limits) {
 		readErr := fmt.Errorf("local_docker_runtime_readback_mismatch")
 		_ = attempt.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, readErr)
 		return WorkspaceRuntime{}, readErr
+	}
+	root, rootErr := p.openStorageRoot()
+	if rootErr != nil {
+		return WorkspaceRuntime{}, rootErr
+	}
+	reservationErr := ensureLocalDockerRuntimeReservation(root, localDockerRuntimeReservationFor(input, limits))
+	closeErr := root.Close()
+	if reservationErr != nil || closeErr != nil {
+		return WorkspaceRuntime{}, firstNonNil(reservationErr, closeErr)
 	}
 	if secretMetadata.AccountID != compute.AccountID || secretMetadata.WorkspaceID != input.WorkspaceID || secretMetadata.SecretRef != input.GatewaySecretRef {
 		readErr := fmt.Errorf("local_docker_runtime_secret_binding_mismatch")
@@ -824,6 +907,10 @@ func (p *LocalDockerProvider) WorkspaceRuntimeStatus(ctx context.Context, worksp
 	if !exists {
 		return WorkspaceRuntime{WorkspaceID: workspaceID}, ErrWorkspaceLaunchResourceAbsent
 	}
+	limits, limitsOK := p.runtimeCgroupLimits(container.Config.Labels[localDockerComputePackageLabel])
+	if !limitsOK || !validRuntimeCgroupLimits(container, limits) {
+		return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_readback_mismatch")
+	}
 	secretRef := gatewaySecretName(workspaceID)
 	metadata, err := p.gatewayMetadata(ctx, secretRef)
 	if err != nil {
@@ -835,8 +922,13 @@ func (p *LocalDockerProvider) WorkspaceRuntimeStatus(ctx context.Context, worksp
 	if metadata.WorkspaceID != workspaceID || metadata.SecretRef != secretRef {
 		return WorkspaceRuntime{}, ErrLaunchStageBindingConflict
 	}
+	storageSizeGB, parseErr := strconv.Atoi(container.Config.Labels[localDockerStorageSizeGBLabel])
+	if parseErr != nil || storageSizeGB <= 0 {
+		return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_storage_binding_mismatch")
+	}
 	storage, err := p.ReadStorageVolume(ctx, StorageVolume{
 		ID: container.Config.Labels["opl.storage.id"], AccountID: container.Config.Labels["opl.account.id"], WorkspaceID: workspaceID,
+		SizeGB: storageSizeGB,
 	})
 	if err != nil {
 		return WorkspaceRuntime{}, err
@@ -870,6 +962,16 @@ func (*LocalDockerProvider) WorkspaceRuntimeProviderFacts(runtime WorkspaceRunti
 }
 
 func (p *LocalDockerProvider) DestroyWorkspaceRuntime(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
+	var result WorkspaceRuntime
+	err := p.withStorageQuotaLock(func() error {
+		var lockedErr error
+		result, lockedErr = p.destroyWorkspaceRuntimeLocked(ctx, workspaceID)
+		return lockedErr
+	})
+	return result, err
+}
+
+func (p *LocalDockerProvider) destroyWorkspaceRuntimeLocked(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
 	name := localRuntimeName(workspaceID)
 	container, exists, err := p.inspectContainer(ctx, name)
 	if err != nil {
@@ -903,6 +1005,31 @@ func (p *LocalDockerProvider) DestroyWorkspaceRuntime(ctx context.Context, works
 		if _, err := p.runner.Run(ctx, nil, "container", "rm", "-f", name); err != nil {
 			return result, err
 		}
+	}
+	if _, stillExists, inspectErr := p.inspectContainer(ctx, name); inspectErr != nil || stillExists {
+		return result, firstNonNil(inspectErr, fmt.Errorf("local_docker_runtime_destroy_readback_mismatch"))
+	}
+	root, rootErr := p.openStorageRoot()
+	if rootErr != nil {
+		return result, rootErr
+	}
+	reservation, reservationErr := readLocalDockerRuntimeReservation(root, localDockerRuntimeReservationName(localRuntimeID(workspaceID)))
+	if reservationErr == nil {
+		if reservation.WorkspaceID != workspaceID || reservation.ResourceID != localRuntimeID(workspaceID) {
+			root.Close()
+			return result, fmt.Errorf("local_docker_runtime_destroy_ownership_mismatch")
+		}
+		reservationErr = removeLocalDockerRuntimeReservation(root, reservation.ResourceID)
+	} else if !errors.Is(reservationErr, ErrWorkspaceLaunchResourceAbsent) {
+		root.Close()
+		return result, reservationErr
+	}
+	if errors.Is(reservationErr, ErrWorkspaceLaunchResourceAbsent) {
+		reservationErr = nil
+	}
+	closeErr := root.Close()
+	if reservationErr != nil || closeErr != nil {
+		return result, firstNonNil(reservationErr, closeErr)
 	}
 	if err := p.RemoveGatewaySecret(ctx, workspaceID); err != nil {
 		return result, err

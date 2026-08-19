@@ -188,11 +188,41 @@ jobs:
           go-version: "1.25.x"
           cache-dependency-path: services/fabric/go.sum
 
+      - name: Prepare project quota filesystem
+        env:
+          OPL_TEST_PROJECT_QUOTA_ROOT: ${{ runner.temp }}/opl-project-quota
+        run: |
+          set -euo pipefail
+          quota_image="${RUNNER_TEMP}/opl-project-quota.img"
+          truncate -s 256M "$quota_image"
+          mkfs.ext4 -F -q "$quota_image"
+          sudo mkdir -p "$OPL_TEST_PROJECT_QUOTA_ROOT"
+          sudo mount -o loop,prjquota "$quota_image" "$OPL_TEST_PROJECT_QUOTA_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$OPL_TEST_PROJECT_QUOTA_ROOT"
+
       - name: Test Fabric
         working-directory: services/fabric
         env:
           GO_TEST_ARGS: "-count=1"
         run: *go_test
+
+      - name: Test Linux project quota as privileged capability
+        working-directory: services/fabric
+        env:
+          OPL_TEST_PROJECT_QUOTA_ROOT: ${{ runner.temp }}/opl-project-quota
+        run: |
+          sudo env OPL_TEST_PROJECT_QUOTA_ROOT="$OPL_TEST_PROJECT_QUOTA_ROOT" \
+            go test -tags opl_project_quota -run '^TestLinuxLocalDockerProjectQuotaEnforcesHardLimit$' -count=1 ./internal/fabric
+
+      - name: Remove project quota filesystem
+        if: ${{ always() }}
+        env:
+          OPL_TEST_PROJECT_QUOTA_ROOT: ${{ runner.temp }}/opl-project-quota
+        run: |
+          if mountpoint -q "$OPL_TEST_PROJECT_QUOTA_ROOT"; then
+            sudo umount "$OPL_TEST_PROJECT_QUOTA_ROOT"
+          fi
+          rm -f "${RUNNER_TEMP}/opl-project-quota.img"
 
   validate:
     name: validate

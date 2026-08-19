@@ -153,7 +153,7 @@ func TestLocalDockerProviderFactsParityAndReadOnly(t *testing.T) {
 	}
 	volume := StorageVolume{
 		ID: "storage-local", OperationID: "op-storage-local", AccountID: "acct-local", WorkspaceID: "workspace-local",
-		DiskType: "local-directory", StorageClass: "host-directory", Deadline: "2026-09-12T00:00:00Z", Zone: "local",
+		DiskType: "local-directory", StorageClass: "host-directory", Deadline: "2026-09-12T00:00:00Z", Zone: "local", SizeGB: 10,
 	}
 	attachment := StorageAttachment{ID: "attachment-local", OperationID: "op-attachment-local", WorkspaceID: "workspace-local", ComputeID: compute.ID, VolumeID: volume.ID}
 	runner := &providerFactsDockerRunner{
@@ -161,10 +161,11 @@ func TestLocalDockerProviderFactsParityAndReadOnly(t *testing.T) {
 		networkLabels: localDockerLabels(compute.AccountID, compute.WorkspaceID, compute.ID, "", "compute"),
 		volumeLabels:  localDockerLabels(volume.AccountID, volume.WorkspaceID, volume.ID, "", "storage"),
 	}
-	provider := newLocalDockerProvider(LocalDockerProviderConfig{HostStorageRoot: localDockerStorageTestRoot(t)}, runner)
+	storageRoot := localDockerStorageTestRoot(t)
+	provider := newLocalDockerProvider(localDockerStorageTestConfig(storageRoot), runner)
 	paths, err := provider.ensureStorageDirectories(localDockerStorageMetadata{
-		SchemaVersion: 1, StorageID: volume.ID, AccountID: volume.AccountID, WorkspaceID: volume.WorkspaceID,
-	})
+		SchemaVersion: localDockerStorageMetadataSchemaVersion, StorageID: volume.ID, AccountID: volume.AccountID, WorkspaceID: volume.WorkspaceID, SizeGB: volume.SizeGB,
+	}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
