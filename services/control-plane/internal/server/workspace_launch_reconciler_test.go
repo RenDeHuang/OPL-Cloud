@@ -1849,6 +1849,61 @@ func TestWorkspaceLaunchReceiptReadAcceptsExactCurrentOrLegacyIdentity(t *testin
 	}
 }
 
+func TestWorkspaceLaunchChargedReceiptReadAcceptsExactCurrentOrHistoricalIdentity(t *testing.T) {
+	operation := workspaceLaunchCanonicalActivationOperation(t)
+	current, err := workspaceLaunchPurchaseReceiptInput(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historical := current
+	historical.Execution = cloneMap(current.Execution)
+	delete(historical.Execution, "operationId")
+	delete(historical.Execution, "gatewaySecretRef")
+
+	withHistoricalExecution := func(mutate func(map[string]any)) clients.ReceiptInput {
+		input := historical
+		input.Execution = cloneMap(historical.Execution)
+		mutate(input.Execution)
+		return input
+	}
+
+	for _, test := range []struct {
+		name     string
+		receipts []clients.Receipt
+		wantErr  bool
+	}{
+		{name: "current", receipts: []clients.Receipt{{ReceiptInput: current, ReceiptID: "receipt-current"}}},
+		{name: "historical charged", receipts: []clients.Receipt{{ReceiptInput: historical, ReceiptID: "receipt-historical"}}},
+		{name: "mixed current and historical", receipts: []clients.Receipt{
+			{ReceiptInput: current, ReceiptID: "receipt-current"},
+			{ReceiptInput: historical, ReceiptID: "receipt-historical"},
+		}, wantErr: true},
+		{name: "historical extra field", receipts: []clients.Receipt{{ReceiptInput: withHistoricalExecution(func(execution map[string]any) {
+			execution["operationId"] = operation.ID
+		}), ReceiptID: "receipt-historical-extra"}}, wantErr: true},
+		{name: "historical missing field", receipts: []clients.Receipt{{ReceiptInput: withHistoricalExecution(func(execution map[string]any) {
+			delete(execution, "runtimeId")
+		}), ReceiptID: "receipt-historical-missing"}}, wantErr: true},
+		{name: "historical approximate surface", receipts: []clients.Receipt{{ReceiptInput: func() clients.ReceiptInput {
+			input := historical
+			input.Surface = "workspace"
+			return input
+		}(), ReceiptID: "receipt-historical-near"}}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ledgerClient := workspaceLaunchReceiptLedgerClient{receipts: test.receipts}
+			adapter := &controlPlaneWorkspaceLaunchStageAdapter{service: newTestService(ledgerClient, &fakeFabricClient{})}
+			observation, readErr := adapter.readWorkspaceLaunchReceipt(context.Background(), operation)
+			if (readErr != nil) != test.wantErr {
+				t.Fatalf("observation=%#v err=%v wantErr=%v", observation, readErr, test.wantErr)
+			}
+			if !test.wantErr && (observation.State != workspaceLaunchStageReady || stringValue(observation.Facts["receiptId"]) != test.receipts[0].ReceiptID) {
+				t.Fatalf("receipt read did not close original charged launch: %#v", observation)
+			}
+		})
+	}
+}
+
 func TestWorkspaceLaunchActivationCanonicalOperatorAdvancesToReceipt(t *testing.T) {
 	store := &workspaceLaunchActivationCountingStore{memoryTableStore: newMemoryTableStore()}
 	operation := workspaceLaunchCanonicalActivationOperation(t)

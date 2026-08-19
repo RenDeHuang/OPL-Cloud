@@ -250,17 +250,21 @@ func workspaceLaunchPurchaseReceiptFromLedger(ctx context.Context, adapter *cont
 	var match *clients.Receipt
 	for index := range receipts {
 		receipt := receipts[index]
-		var candidate *clients.ReceiptInput
+		requestMatched, inputMatched := false, false
 		for expectedIndex := range expected {
-			if receipt.RequestID == expected[expectedIndex].RequestID {
-				candidate = &expected[expectedIndex]
+			if receipt.RequestID != expected[expectedIndex].RequestID {
+				continue
+			}
+			requestMatched = true
+			if workspaceLaunchReceiptInputMatches(receipt.ReceiptInput, expected[expectedIndex]) {
+				inputMatched = true
 				break
 			}
 		}
-		if candidate == nil {
+		if !requestMatched {
 			continue
 		}
-		if !workspaceLaunchReceiptInputMatches(receipt.ReceiptInput, *candidate) || receipt.ReceiptID == "" || match != nil {
+		if !inputMatched || receipt.ReceiptID == "" || match != nil {
 			return clients.Receipt{}, false, errors.New("workspace_launch_receipt_identity_mismatch")
 		}
 		match = &receipt

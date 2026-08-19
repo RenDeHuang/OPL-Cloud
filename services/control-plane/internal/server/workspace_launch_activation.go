@@ -110,6 +110,8 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchReceipt(ctx
 	expected := []clients.ReceiptInput{input}
 	if operation.raw["resourceBillingEnabled"] != nil && !operation.boolFact("resourceBillingEnabled") {
 		expected = append(expected, workspaceLaunchLegacyCreatedReceiptInput(operation))
+	} else {
+		expected = append(expected, workspaceLaunchHistoricalChargedReceiptInput(input))
 	}
 	receipt, found, err := workspaceLaunchPurchaseReceiptFromLedger(ctx, a, expected)
 	if err != nil {
@@ -121,6 +123,18 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchReceipt(ctx
 	return workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: map[string]any{
 		"receiptId": receipt.ReceiptID, "receiptOperationId": operation.ID + ":purchase-receipt",
 	}}, nil
+}
+
+func workspaceLaunchHistoricalChargedReceiptInput(current clients.ReceiptInput) clients.ReceiptInput {
+	historical := current
+	historical.Execution = map[string]any{
+		"resourceType": current.Execution["resourceType"], "resourceId": current.Execution["resourceId"],
+		"computeAllocationId": current.Execution["computeAllocationId"], "storageId": current.Execution["storageId"],
+		"attachmentId": current.Execution["attachmentId"], "runtimeId": current.Execution["runtimeId"],
+		"workspaceApiKeyId": current.Execution["workspaceApiKeyId"], "workspaceKeyFingerprint": current.Execution["workspaceKeyFingerprint"],
+		"runtimeServiceName": current.Execution["runtimeServiceName"],
+	}
+	return historical
 }
 
 func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchReceipt(ctx context.Context, operation workspaceLaunchReconcileOperation, idempotencyKey string) error {
