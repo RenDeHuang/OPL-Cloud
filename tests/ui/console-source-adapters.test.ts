@@ -291,14 +291,16 @@ test("critical frontend contracts use named DTOs instead of AnyRecord", async ()
   assert.doesNotMatch(workspaceSource, /AnyRecord|Record<string, any>|map\[string\]any/);
 });
 
-test("Workspace launch requires the authoritative total price and fixed SKU size pair", async () => {
+test("Workspace launch requires the authoritative total price and provider catalog package", async () => {
   const [controller, pages] = await Promise.all([
     source("apps/console-ui/src/app/use-console-controller.ts"),
     source("apps/console-ui/src/pages/CustomerPages.tsx")
   ]);
   assert.match(controller, /selectedPrice/);
-  assert.match(controller, /selectedPlan\.id === "basic" \? 10 : 100/);
-  assert.doesNotMatch(controller, /selectedPlan\.diskGb === 10 \? 10 : 100/);
+  assert.match(controller, /selectedPlan\.id/);
+  assert.doesNotMatch(controller, /selectedPlan\.id === "basic" \? 10 : 100/);
+  assert.doesNotMatch(controller, /selectedPlan\.(?:cpu|memoryGb|diskGb|server)/);
+  assert.doesNotMatch(controller, /sizeGb:\s*selectedPlan\.id ===/);
   assert.match(pages, /preview\.totalChargeUsdMicros/);
   assert.match(pages, /preview\.compute/);
   assert.match(pages, /preview\.storage/);

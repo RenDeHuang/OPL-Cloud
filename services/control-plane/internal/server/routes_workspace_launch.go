@@ -29,9 +29,12 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		name, validName := input["name"].(string)
 		packageID, validPackage := input["packageId"].(string)
 		name, packageID = strings.TrimSpace(name), strings.TrimSpace(packageID)
-		storageGB, validSize := positiveIntegerField(input, "sizeGb")
 		autoRenew, validAutoRenew := input["autoRenew"].(bool)
-		if !validName || !validPackage || name == "" || packageID == "" || !validSize || !validAutoRenew {
+		if !validName || !validPackage || name == "" || packageID == "" || !validAutoRenew {
+			writeError(w, http.StatusBadRequest, "invalid_pricing_input")
+			return
+		}
+		if _, supplied := input["sizeGb"]; supplied {
 			writeError(w, http.StatusBadRequest, "invalid_pricing_input")
 			return
 		}
@@ -72,7 +75,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		}
 		if found {
 			persisted, decodeErr := decodeWorkspaceLaunchReconcileOperation(row)
-			if decodeErr != nil || !workspaceLaunchReconcileRequestMatches(persisted, accountID, ownerUserID, name, packageID, int(storageGB), autoRenew) {
+			if decodeErr != nil || !workspaceLaunchReconcileRequestMatches(persisted, accountID, ownerUserID, name, packageID, autoRenew) {
 				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
 				return
 			}
@@ -112,6 +115,15 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
 			return
 		}
+		computePools, ok := fabricComputePools(w, r, service)
+		if !ok {
+			return
+		}
+		storageGB, packageAvailable := providerPackageStorageGB(computePools, packageID)
+		if !packageAvailable {
+			writePricingError(w, errPackageUnavailable)
+			return
+		}
 
 		admission := controlledBasicPilotAdmissionFromEnv()
 		code := ""
@@ -121,7 +133,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		acceptanceBApproved := false
 		if code == "workspace_launch_admission_disabled" {
 			approval, configured := parseProductionAcceptanceBApproval()
-			if configured && productionAcceptanceBLaunchApproved(r.Header, approval, accountID, stringValue(user["email"]), name, packageID, int(storageGB), autoRenew, key) {
+			if configured && productionAcceptanceBLaunchApproved(r.Header, approval, accountID, stringValue(user["email"]), name, packageID, storageGB, autoRenew, key) {
 				code, acceptanceBApproved = "", true
 			}
 		}
@@ -136,14 +148,14 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		}
 		quote = customerPricingPreviewDTO(quote)
 		quote = app.applyResourceBillingQuote(quote)
-		descriptor, err := newWorkspaceLaunchDescriptor(accountID, ownerUserID, name, packageID, int(storageGB), autoRenew, stringValue(quote["priceVersion"]), key)
+		descriptor, err := newWorkspaceLaunchDescriptor(accountID, ownerUserID, name, packageID, storageGB, autoRenew, stringValue(quote["priceVersion"]), key)
 		if err != nil {
 			writeError(w, http.StatusConflict, "workspace_image_digest_invalid")
 			return
 		}
 		preflightInput := clients.WorkspaceLaunchPreflightInput{
 			SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, LaunchOperationID: descriptor.OperationID,
-			AccountID: accountID, WorkspaceID: descriptor.WorkspaceID, PackageID: packageID, SizeGB: int(storageGB),
+			AccountID: accountID, WorkspaceID: descriptor.WorkspaceID, PackageID: packageID, SizeGB: storageGB,
 			WorkspaceImageDigest: descriptor.WorkspaceImageDigest, RequestHash: descriptor.RequestHash,
 		}
 		preflight, err := service.PreflightWorkspaceLaunch(r.Context(), preflightInput)
@@ -188,9 +200,9 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		created, err := app.createWorkspaceLaunch(r.Context(), service, credential, sub2APIUserID, workspaceLaunchReconcileCreate{
 			OperationID: descriptor.OperationID, RequestHash: descriptor.RequestHash, AccountID: accountID, OwnerUserID: ownerUserID,
 			Sub2APIUserID: sub2APIUserID, WorkspaceKeyGroupID: workspaceKeyGroupID, WorkspaceID: descriptor.WorkspaceID,
-			Name: name, PackageID: packageID, StorageGB: int(storageGB), AutoRenew: autoRenew,
+			Name: name, PackageID: packageID, StorageGB: storageGB, AutoRenew: autoRenew,
 			PriceVersion: stringValue(quote["priceVersion"]), TotalChargeUSDMicros: totalCharge,
-			ProviderProfileRef: preflight.ProviderProfileRef, PreflightBindingRef: preflight.BindingRef,
+			ProviderProfileRef: preflight.ProviderProfileRef, PreflightBindingRef: preflight.BindingRef, SpecDigest: preflight.SpecDigest,
 			WorkspaceImageDigest: descriptor.WorkspaceImageDigest, PreChargeBalanceMicros: preChargeBalance, ResourceBillingEnabled: boolPtr(app.deployment.resourceBillingEnabled()),
 			AcceptanceBCapacitySlot: acceptanceBApproved,
 		})

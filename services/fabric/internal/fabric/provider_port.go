@@ -1,6 +1,14 @@
 package fabric
 
-import "context"
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+)
 
 // ProviderDescriptor keeps provider selection and portable package facts behind
 // the adapter instead of leaking them into Fabric orchestration.
@@ -13,12 +21,76 @@ type ProviderDescriptor struct {
 }
 
 type ComputePlan struct {
-	ID           string
-	Server       string
-	CPU          int
-	MemoryGB     int
-	DiskGB       int
-	InstanceType string
+	ID           string `json:"id"`
+	Server       string `json:"server"`
+	CPU          int    `json:"cpu"`
+	MemoryGB     int    `json:"memoryGb"`
+	DiskGB       int    `json:"diskGb"`
+	InstanceType string `json:"instanceType"`
+}
+
+// WorkspaceLaunchPlanInput is the only plan lookup input Fabric derives from
+// the product launch request. Provider adapters own the returned JSON shape.
+type WorkspaceLaunchPlanInput struct {
+	PackageID string
+	SizeGB    int
+}
+
+type providerPlanResolver interface {
+	ResolveWorkspacePlan(context.Context, WorkspaceLaunchPlanInput) (json.RawMessage, error)
+}
+
+var ErrProviderPlanUnavailable = errors.New("provider_plan_unavailable")
+var ErrProviderPlanInvalid = errors.New("provider_plan_invalid")
+
+func canonicalProviderPlan(raw json.RawMessage) (json.RawMessage, string, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, "", ErrProviderPlanInvalid
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if decoder.Decode(&value) != nil || value == nil {
+		return nil, "", ErrProviderPlanInvalid
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return nil, "", ErrProviderPlanInvalid
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, "", ErrProviderPlanInvalid
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil || len(canonical) == 0 {
+		return nil, "", ErrProviderPlanInvalid
+	}
+	sum := sha256.Sum256(canonical)
+	return json.RawMessage(canonical), hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalProviderPlanEnvelope(providerProfileRef, packageID string, spec json.RawMessage) (json.RawMessage, string, error) {
+	canonicalSpec, _, err := canonicalProviderPlan(spec)
+	if err != nil || providerProfileRef == "" || packageID == "" {
+		return nil, "", ErrProviderPlanInvalid
+	}
+	envelope, err := json.Marshal(struct {
+		PackageID          string          `json:"packageId"`
+		ProviderProfileRef string          `json:"providerProfileRef"`
+		SchemaVersion      int             `json:"schemaVersion"`
+		Spec               json.RawMessage `json:"spec"`
+	}{packageID, providerProfileRef, 1, canonicalSpec})
+	if err != nil {
+		return nil, "", ErrProviderPlanInvalid
+	}
+	return canonicalProviderPlan(envelope)
+}
+
+func providerPlanDigest(raw json.RawMessage) string {
+	_, digest, err := canonicalProviderPlan(raw)
+	if err != nil {
+		return ""
+	}
+	return digest
 }
 
 // plan remains an internal alias for existing validation helpers.
@@ -71,6 +143,7 @@ type Provider interface {
 	ValidateWorkspaceImageReference(string) bool
 	MonthlyPreflight(context.Context, MonthlyPreflightInput) (MonthlyPreflight, error)
 	Readiness(context.Context) (map[string]any, error)
+	providerPlanResolver
 }
 
 type runtimeGatewaySecretProvider interface {

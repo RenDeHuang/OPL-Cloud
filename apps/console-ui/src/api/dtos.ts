@@ -151,7 +151,6 @@ export type PlanId = "basic" | "pro";
 export interface WorkspaceLaunchRequest {
   name: string;
   packageId: PlanId;
-  sizeGb: 10 | 100;
   autoRenew: false;
 }
 
@@ -285,15 +284,6 @@ export interface PricingPlan {
   id: PlanId;
   name: string;
   available: boolean;
-  cpu: number;
-  memoryGb: number;
-  diskGb: number;
-  server: string;
-  price: {
-    priceVersion: string;
-    currency: "USD";
-    chargeUsdMicros: number;
-  };
 }
 
 export interface PricingCatalogResponse {

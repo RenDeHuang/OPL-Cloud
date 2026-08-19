@@ -77,8 +77,8 @@ func (s *Service) Catalog(_ context.Context) Catalog {
 }
 
 func (s *Service) MonthlyPreflight(ctx context.Context, input MonthlyPreflightInput) (MonthlyPreflight, error) {
-	if (input.ResourceType != "compute" && input.ResourceType != "storage") || (input.PackageID != "basic" && input.PackageID != "pro") || input.Zone == "" || input.Zone != strings.TrimSpace(input.Zone) ||
-		(input.ResourceType == "compute" && input.SizeGB != 0) || (input.ResourceType == "storage" && (input.SizeGB < 10 || input.SizeGB%10 != 0)) {
+	if (input.ResourceType != "compute" && input.ResourceType != "storage") || strings.TrimSpace(input.PackageID) == "" || input.PackageID != strings.TrimSpace(input.PackageID) || input.Zone == "" || input.Zone != strings.TrimSpace(input.Zone) ||
+		(input.ResourceType == "compute" && input.SizeGB != 0) || (input.ResourceType == "storage" && input.SizeGB <= 0) {
 		return MonthlyPreflight{}, ErrInvalidMonthlyPreflight
 	}
 	result, err := s.provider.MonthlyPreflight(ctx, input)
@@ -94,7 +94,7 @@ func (s *Service) MonthlyPreflight(ctx context.Context, input MonthlyPreflightIn
 		validRequestIDs = validRequestIDs && strings.TrimSpace(result.ProviderRequestIDs[key]) != ""
 	}
 	pricingValid := !s.provider.Descriptor().RequiresMonthlyPricing ||
-		result.ChargeType == "PREPAID" && result.PeriodMonths == 1 && result.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && result.ProviderPriceCNY > 0
+		strings.TrimSpace(result.ChargeType) != "" && result.PeriodMonths > 0 && strings.TrimSpace(result.RenewFlag) != "" && result.ProviderPriceCNY > 0
 	if result.ResourceType != input.ResourceType || result.PackageID != input.PackageID || result.SizeGB != input.SizeGB || result.Zone != input.Zone || !result.Available ||
 		!pricingValid || math.IsNaN(result.ProviderPriceCNY) || math.IsInf(result.ProviderPriceCNY, 0) || !validRequestIDs ||
 		(input.ResourceType == "compute" && strings.TrimSpace(result.NodePoolID) == "") {

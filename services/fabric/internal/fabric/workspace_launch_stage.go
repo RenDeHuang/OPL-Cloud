@@ -40,14 +40,17 @@ type WorkspaceLaunchPreflight struct {
 	LaunchOperationID  string `json:"launchOperationId"`
 	RequestHash        string `json:"requestHash"`
 	ProviderProfileRef string `json:"providerProfileRef"`
-	BindingRef         string `json:"bindingRef"`
+	ProviderBindingRef string `json:"providerBindingRef"`
+	SpecDigest         string `json:"specDigest"`
 }
 
 type workspaceLaunchPreflightAdmission struct {
-	SchemaVersion      int                           `json:"schemaVersion"`
-	Input              WorkspaceLaunchPreflightInput `json:"input"`
-	ProviderProfileRef string                        `json:"providerProfileRef"`
-	BindingRef         string                        `json:"bindingRef"`
+	SchemaVersion         int                           `json:"schemaVersion"`
+	Input                 WorkspaceLaunchPreflightInput `json:"input"`
+	ProviderProfileRef    string                        `json:"providerProfileRef"`
+	ProviderBindingRef    string                        `json:"providerBindingRef"`
+	CanonicalProviderPlan json.RawMessage               `json:"canonicalProviderPlan"`
+	SpecDigest            string                        `json:"specDigest"`
 }
 
 type WorkspaceLaunchResources struct {
@@ -79,7 +82,8 @@ type WorkspaceLaunchGatewayCredential struct {
 type WorkspaceLaunchStageInput struct {
 	Binding              WorkspaceLaunchStageBinding       `json:"binding"`
 	ProviderProfileRef   string                            `json:"providerProfileRef"`
-	PreflightBindingRef  string                            `json:"preflightBindingRef"`
+	ProviderBindingRef   string                            `json:"providerBindingRef"`
+	SpecDigest           string                            `json:"specDigest"`
 	PackageID            string                            `json:"packageId"`
 	SizeGB               int                               `json:"sizeGb"`
 	WorkspaceImageDigest string                            `json:"workspaceImageDigest"`
@@ -96,13 +100,14 @@ type WorkspaceLaunchStageResult struct {
 }
 
 type workspaceLaunchStageRecord struct {
-	SchemaVersion       int                      `json:"schemaVersion"`
-	ProviderProfileRef  string                   `json:"providerProfileRef"`
-	PreflightBindingRef string                   `json:"preflightBindingRef"`
-	RequestResources    WorkspaceLaunchResources `json:"requestResources"`
-	Resources           WorkspaceLaunchResources `json:"resources"`
-	GatewayKeyID        int64                    `json:"gatewayKeyId,omitempty"`
-	ProviderState       json.RawMessage          `json:"providerState,omitempty"`
+	SchemaVersion      int                      `json:"schemaVersion"`
+	ProviderProfileRef string                   `json:"providerProfileRef"`
+	ProviderBindingRef string                   `json:"providerBindingRef"`
+	SpecDigest         string                   `json:"specDigest"`
+	RequestResources   WorkspaceLaunchResources `json:"requestResources"`
+	Resources          WorkspaceLaunchResources `json:"resources"`
+	GatewayKeyID       int64                    `json:"gatewayKeyId,omitempty"`
+	ProviderState      json.RawMessage          `json:"providerState,omitempty"`
 }
 
 type persistedWorkspaceLaunchStageRecord struct {
@@ -111,9 +116,10 @@ type persistedWorkspaceLaunchStageRecord struct {
 }
 
 type WorkspaceLaunchProviderRequest struct {
-	Input   WorkspaceLaunchStageInput
-	Current workspaceLaunchStageRecord
-	Prior   map[string]workspaceLaunchStageRecord
+	Input        WorkspaceLaunchStageInput
+	Current      workspaceLaunchStageRecord
+	Prior        map[string]workspaceLaunchStageRecord
+	ProviderPlan json.RawMessage
 }
 
 type WorkspaceLaunchProviderResult struct {
@@ -142,27 +148,31 @@ func (s *Service) PreflightWorkspaceLaunch(ctx context.Context, input WorkspaceL
 	if !validWorkspaceLaunchPreflightInput(input) {
 		return WorkspaceLaunchPreflight{}, ErrWorkspaceLaunchInputInvalid
 	}
-	if _, ok := providerPlan(s.provider, input.PackageID); !ok || !s.provider.ValidateWorkspaceImageReference(input.WorkspaceImageDigest) {
+	providerProfileRef := s.provider.Descriptor().Name
+	rawPlan, planErr := s.provider.ResolveWorkspacePlan(ctx, WorkspaceLaunchPlanInput{PackageID: input.PackageID, SizeGB: input.SizeGB})
+	canonicalPlan, _, canonicalErr := canonicalProviderPlan(rawPlan)
+	canonicalPlan, specDigest, envelopeErr := canonicalProviderPlanEnvelope(providerProfileRef, input.PackageID, canonicalPlan)
+	if planErr != nil || canonicalErr != nil || envelopeErr != nil || !s.provider.ValidateWorkspaceImageReference(input.WorkspaceImageDigest) {
 		return WorkspaceLaunchPreflight{
 			SchemaVersion: 1, Available: false, Reason: "provider_profile_unavailable", LaunchOperationID: input.LaunchOperationID,
-			RequestHash: input.RequestHash, ProviderProfileRef: s.provider.Descriptor().Name,
+			RequestHash: input.RequestHash, ProviderProfileRef: providerProfileRef,
 		}, nil
 	}
 	if _, err := s.provider.Readiness(ctx); err != nil {
 		return WorkspaceLaunchPreflight{
 			SchemaVersion: 1, Available: false, Reason: "provider_unavailable", LaunchOperationID: input.LaunchOperationID,
-			RequestHash: input.RequestHash, ProviderProfileRef: s.provider.Descriptor().Name,
+			RequestHash: input.RequestHash, ProviderProfileRef: providerProfileRef,
 		}, nil
 	}
 	result := WorkspaceLaunchPreflight{
 		SchemaVersion: 1, Available: true, Reason: "none", LaunchOperationID: input.LaunchOperationID,
-		RequestHash: input.RequestHash, ProviderProfileRef: s.provider.Descriptor().Name,
+		RequestHash: input.RequestHash, ProviderProfileRef: providerProfileRef, SpecDigest: specDigest,
 	}
 	admission := workspaceLaunchPreflightAdmission{
-		SchemaVersion: 1, Input: input, ProviderProfileRef: result.ProviderProfileRef,
+		SchemaVersion: 1, Input: input, ProviderProfileRef: result.ProviderProfileRef, CanonicalProviderPlan: canonicalPlan, SpecDigest: specDigest,
 	}
-	admission.BindingRef = "fabric-preflight:" + hashInput(admission)
-	result.BindingRef = admission.BindingRef
+	admission.ProviderBindingRef = workspaceLaunchPreflightBindingRef(admission)
+	result.ProviderBindingRef = admission.ProviderBindingRef
 	if err := s.persistWorkspaceLaunchPreflight(ctx, admission); err != nil {
 		return WorkspaceLaunchPreflight{}, err
 	}
@@ -173,9 +183,9 @@ func (s *Service) persistWorkspaceLaunchPreflight(ctx context.Context, admission
 	now := s.now()
 	operation := newOperation(
 		"admit_workspace_launch", "workspace_launch_preflight", admission.Input.LaunchOperationID,
-		admission.Input.AccountID, admission.Input.WorkspaceID, admission.BindingRef, hashInput(admission), now,
+		admission.Input.AccountID, admission.Input.WorkspaceID, admission.ProviderBindingRef, hashInput(admission), now,
 	)
-	operation.ID, operation.OperationID = admission.BindingRef, admission.BindingRef
+	operation.ID, operation.OperationID = admission.ProviderBindingRef, admission.ProviderBindingRef
 	operation.Provider = admission.ProviderProfileRef
 	operation.Status, operation.CreatedAt, operation.FinishedAt = "succeeded", now, now
 	operation.RedactedProviderPayload = map[string]any{workspaceLaunchPreflightPayloadKey: admission}
@@ -183,10 +193,15 @@ func (s *Service) persistWorkspaceLaunchPreflight(ctx context.Context, admission
 	if err != nil {
 		return err
 	}
-	if persisted, ok := decodeWorkspaceLaunchPreflight(stored); !ok || persisted != admission || (!claimed && stored.RequestHash != operation.RequestHash) {
+	if persisted, ok := decodeWorkspaceLaunchPreflight(stored); !ok || hashInput(persisted) != hashInput(admission) || (!claimed && stored.RequestHash != operation.RequestHash) {
 		return ErrLaunchStageBindingConflict
 	}
 	return nil
+}
+
+func workspaceLaunchPreflightBindingRef(admission workspaceLaunchPreflightAdmission) string {
+	admission.ProviderBindingRef = ""
+	return "fabric-provider-binding:" + hashInput(admission)
 }
 
 func decodeWorkspaceLaunchPreflight(operation FabricOperation) (workspaceLaunchPreflightAdmission, bool) {
@@ -198,15 +213,27 @@ func decodeWorkspaceLaunchPreflight(operation FabricOperation) (workspaceLaunchP
 	body, err := json.Marshal(value)
 	if err != nil || json.Unmarshal(body, &admission) != nil || admission.SchemaVersion != 1 ||
 		!validWorkspaceLaunchPreflightInput(admission.Input) || admission.ProviderProfileRef == "" ||
-		admission.BindingRef != "fabric-preflight:"+hashInput(workspaceLaunchPreflightAdmission{
-			SchemaVersion: admission.SchemaVersion, Input: admission.Input, ProviderProfileRef: admission.ProviderProfileRef,
-		}) {
+		admission.ProviderBindingRef != workspaceLaunchPreflightBindingRef(admission) || !validWorkspaceLaunchHash(admission.SpecDigest) {
 		return workspaceLaunchPreflightAdmission{}, false
 	}
-	if operation.ID != admission.BindingRef || operation.OperationID != admission.BindingRef || operation.Action != "admit_workspace_launch" ||
+	canonicalPlan, digest, canonicalErr := canonicalProviderPlan(admission.CanonicalProviderPlan)
+	if canonicalErr != nil || string(canonicalPlan) != string(admission.CanonicalProviderPlan) || digest != admission.SpecDigest {
+		return workspaceLaunchPreflightAdmission{}, false
+	}
+	var envelope struct {
+		PackageID          string         `json:"packageId"`
+		ProviderProfileRef string         `json:"providerProfileRef"`
+		SchemaVersion      int            `json:"schemaVersion"`
+		Spec               map[string]any `json:"spec"`
+	}
+	if json.Unmarshal(canonicalPlan, &envelope) != nil || envelope.SchemaVersion != 1 || envelope.PackageID != admission.Input.PackageID ||
+		envelope.ProviderProfileRef != admission.ProviderProfileRef || len(envelope.Spec) == 0 {
+		return workspaceLaunchPreflightAdmission{}, false
+	}
+	if operation.ID != admission.ProviderBindingRef || operation.OperationID != admission.ProviderBindingRef || operation.Action != "admit_workspace_launch" ||
 		operation.ResourceKind != "workspace_launch_preflight" || operation.ResourceID != admission.Input.LaunchOperationID ||
 		operation.AccountID != admission.Input.AccountID || operation.WorkspaceID != admission.Input.WorkspaceID ||
-		operation.Provider != admission.ProviderProfileRef || operation.IdempotencyKey != admission.BindingRef ||
+		operation.Provider != admission.ProviderProfileRef || operation.IdempotencyKey != admission.ProviderBindingRef ||
 		operation.RequestHash != hashInput(admission) || operation.Status != "succeeded" {
 		return workspaceLaunchPreflightAdmission{}, false
 	}
@@ -230,19 +257,17 @@ func (s *Service) workspaceLaunchPreflight(ctx context.Context, ref string) (wor
 
 func (s *Service) validateWorkspaceLaunchStageInput(ctx context.Context, input WorkspaceLaunchStageInput) error {
 	if !validWorkspaceLaunchStageBinding(input.Binding) || strings.TrimSpace(input.ProviderProfileRef) == "" ||
-		strings.TrimSpace(input.PreflightBindingRef) == "" || strings.TrimSpace(input.PackageID) == "" ||
+		strings.TrimSpace(input.ProviderBindingRef) == "" || !validWorkspaceLaunchHash(input.SpecDigest) || strings.TrimSpace(input.PackageID) == "" ||
 		input.SizeGB < 10 || input.SizeGB%10 != 0 || !s.provider.ValidateWorkspaceImageReference(input.WorkspaceImageDigest) {
 		return ErrWorkspaceLaunchInputInvalid
 	}
-	if _, ok := providerPlan(s.provider, input.PackageID); !ok {
-		return ErrWorkspaceLaunchInputInvalid
-	}
-	admission, err := s.workspaceLaunchPreflight(ctx, input.PreflightBindingRef)
+	admission, err := s.workspaceLaunchPreflight(ctx, input.ProviderBindingRef)
 	if err != nil {
 		return err
 	}
 	preflight := admission.Input
-	if admission.ProviderProfileRef != input.ProviderProfileRef || preflight.LaunchOperationID != input.Binding.LaunchOperationID ||
+	if admission.ProviderProfileRef != input.ProviderProfileRef || admission.ProviderBindingRef != input.ProviderBindingRef || admission.SpecDigest != input.SpecDigest ||
+		preflight.LaunchOperationID != input.Binding.LaunchOperationID ||
 		preflight.AccountID != input.Binding.AccountID || preflight.WorkspaceID != input.Binding.WorkspaceID ||
 		preflight.PackageID != input.PackageID || preflight.SizeGB != input.SizeGB ||
 		preflight.WorkspaceImageDigest != input.WorkspaceImageDigest {
@@ -413,7 +438,7 @@ func decodeWorkspaceLaunchStageRecord(operation FabricOperation) (workspaceLaunc
 	}
 	if (persisted.Record.SchemaVersion != 1 && persisted.Record.SchemaVersion != workspaceLaunchStageRecordSchemaVersion) ||
 		persisted.Digest == "" || persisted.Digest != expectedDigest ||
-		persisted.Record.ProviderProfileRef == "" || persisted.Record.PreflightBindingRef == "" {
+		persisted.Record.ProviderProfileRef == "" || persisted.Record.ProviderBindingRef == "" || !validWorkspaceLaunchHash(persisted.Record.SpecDigest) {
 		return workspaceLaunchStageRecord{}, false
 	}
 	return persisted.Record, true
@@ -429,7 +454,7 @@ func workspaceLaunchStageCredentialKeyID(input WorkspaceLaunchStageInput) int64 
 func newWorkspaceLaunchStageOperation(input WorkspaceLaunchStageInput, provider string, now func() time.Time) (FabricOperation, workspaceLaunchStageRecord, error) {
 	binding := input.Binding
 	record := workspaceLaunchStageRecord{
-		SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: provider, PreflightBindingRef: input.PreflightBindingRef,
+		SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: provider, ProviderBindingRef: input.ProviderBindingRef, SpecDigest: input.SpecDigest,
 		RequestResources: input.Resources, Resources: input.Resources, GatewayKeyID: workspaceLaunchStageCredentialKeyID(input),
 	}
 	operation := newOperation(binding.Action, "workspace_launch_stage", binding.FabricOperationID, binding.AccountID, binding.WorkspaceID, binding.IdempotencyKey, binding.RequestHash, now())
@@ -448,7 +473,7 @@ func workspaceLaunchStageOperationMatches(operation FabricOperation, input Works
 	if !bindingOK || !recordOK || binding != input.Binding || operation.ID != input.Binding.FabricOperationID ||
 		operation.OperationID != input.Binding.FabricOperationID || operation.Action != input.Binding.Action ||
 		operation.ResourceKind != "workspace_launch_stage" || operation.ResourceID != input.Binding.FabricOperationID ||
-		operation.Provider != provider || record.ProviderProfileRef != provider || record.PreflightBindingRef != input.PreflightBindingRef ||
+		operation.Provider != provider || record.ProviderProfileRef != provider || record.ProviderBindingRef != input.ProviderBindingRef || record.SpecDigest != input.SpecDigest ||
 		record.RequestResources != input.Resources {
 		return workspaceLaunchStageRecord{}, false
 	}
@@ -501,7 +526,11 @@ func workspaceLaunchAttachmentID(binding WorkspaceLaunchStageBinding) string {
 }
 
 func (s *Service) WorkspaceLaunchProviderRequest(ctx context.Context, input WorkspaceLaunchStageInput, current workspaceLaunchStageRecord) (WorkspaceLaunchProviderRequest, error) {
-	request := WorkspaceLaunchProviderRequest{Input: input, Current: current, Prior: map[string]workspaceLaunchStageRecord{}}
+	admission, err := s.workspaceLaunchPreflight(ctx, input.ProviderBindingRef)
+	if err != nil || admission.SpecDigest != input.SpecDigest || admission.ProviderProfileRef != input.ProviderProfileRef {
+		return WorkspaceLaunchProviderRequest{}, ErrLaunchStageBindingConflict
+	}
+	request := WorkspaceLaunchProviderRequest{Input: input, Current: current, Prior: map[string]workspaceLaunchStageRecord{}, ProviderPlan: append(json.RawMessage(nil), admission.CanonicalProviderPlan...)}
 	for _, stage := range workspaceLaunchRequiredPriorStages(input.Binding.Stage) {
 		ref := workspaceLaunchStageBindingRef(stage, input.Resources)
 		if ref == "" {
@@ -515,7 +544,7 @@ func (s *Service) WorkspaceLaunchProviderRequest(ctx context.Context, input Work
 		record, recordOK := decodeWorkspaceLaunchStageRecord(operation)
 		if !bindingOK || !recordOK || operation.Status != "succeeded" || operation.ID != ref || binding.Stage != stage ||
 			binding.LaunchOperationID != input.Binding.LaunchOperationID || binding.AccountID != input.Binding.AccountID ||
-			binding.WorkspaceID != input.Binding.WorkspaceID || record.ProviderProfileRef != input.ProviderProfileRef ||
+			binding.WorkspaceID != input.Binding.WorkspaceID || record.ProviderProfileRef != input.ProviderProfileRef || record.ProviderBindingRef != input.ProviderBindingRef || record.SpecDigest != input.SpecDigest ||
 			workspaceLaunchStageBindingRef(stage, record.Resources) != ref || !workspaceLaunchResourcesContain(input.Resources, record.Resources) {
 			return WorkspaceLaunchProviderRequest{}, ErrLaunchStageBindingConflict
 		}

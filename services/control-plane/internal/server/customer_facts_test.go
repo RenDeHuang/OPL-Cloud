@@ -426,7 +426,7 @@ func TestBillingReconciliationMismatchBlocksPurchasesWithoutMutation(t *testing.
 			assertReconciliationReport(t, body, "mismatch", 2, 1, 1)
 			assertReconciliationException(t, body["report"].(map[string]any), "compute", "compute-reconcile", tc.code)
 
-			blocked := requestWithMutationKeyForTest(t, fixture.server, fixture.member, http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "blocked-after-reconciliation")
+			blocked := requestWithMutationKeyForTest(t, fixture.server, fixture.member, http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","autoRenew":false}`, "blocked-after-reconciliation")
 			assertErrorResponse(t, blocked.Code, blocked.Body.String(), http.StatusConflict, "billing_reconciliation_blocked")
 			assertReconciliationReadOnly(t, fixture)
 		})

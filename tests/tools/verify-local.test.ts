@@ -15,7 +15,8 @@ import {
   productMatrixRequiredPackages,
   productMatrixRequiredTests,
   productMatrixStages,
-  runVerification
+  runVerification,
+  summarizeGoTestFailures
 } from "../../tools/verify-local.ts";
 
 test("verify-local exposes one default gate across Node, builds, and every Go module", () => {
@@ -46,6 +47,26 @@ test("verify-local exposes one default gate across Node, builds, and every Go mo
   for (const spec of databaseFreeGoTestSpecs) {
     assert.ok(names.includes(`${spec.cwd} database-free tests`));
   }
+});
+
+test("verify-local reports leaf Go test failures separately from package failures", () => {
+  const summary = summarizeGoTestFailures([
+    { Action: "fail", Package: "opl-cloud/services/fabric/internal/fabric", Test: "TestRuntime/invalid" },
+    { Action: "fail", Package: "opl-cloud/services/fabric/internal/fabric", Test: "TestRuntime" },
+    { Action: "fail", Package: "opl-cloud/services/fabric/internal/fabric" },
+    { Action: "fail", Package: "opl-cloud/services/control-plane/internal/server", Test: "TestLaunch" },
+    { Action: "fail", Package: "opl-cloud/services/control-plane/internal/server" }
+  ]);
+  assert.deepEqual(summary, {
+    tests: [
+      { package: "opl-cloud/services/control-plane/internal/server", name: "TestLaunch" },
+      { package: "opl-cloud/services/fabric/internal/fabric", name: "TestRuntime/invalid" }
+    ],
+    packages: [
+      "opl-cloud/services/control-plane/internal/server",
+      "opl-cloud/services/fabric/internal/fabric"
+    ]
+  });
 });
 
 function completeProductMatrixResults() {

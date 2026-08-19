@@ -62,7 +62,7 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) workspaceLaunchFabricStageInpu
 	binding.ExpectedResourceBinding = workspaceLaunchCurrentStageBinding(operation)
 	input := clients.WorkspaceLaunchStageInput{
 		Binding: binding, ProviderProfileRef: operation.stringFact("providerProfileRef"),
-		PreflightBindingRef: operation.stringFact("preflightBindingRef"), PackageID: operation.stringFact("packageId"),
+		PreflightBindingRef: operation.stringFact("preflightBindingRef"), SpecDigest: operation.stringFact("specDigest"), PackageID: operation.stringFact("packageId"),
 		SizeGB: operation.intFact("sizeGb"), WorkspaceImageDigest: operation.stringFact("workspaceImageDigest"), Resources: resources,
 	}
 	input.Binding.RequestHash = workspaceLaunchFabricRequestHash(input, operation.stringFact("requestHash"))

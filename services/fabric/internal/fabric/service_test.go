@@ -666,6 +666,7 @@ func TestCreateComputeAllocationPersistsExplicitNodePoolID(t *testing.T) {
 }
 
 func TestCreateComputeAllocationRequiresExactNodePoolID(t *testing.T) {
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "")
 	service := NewService(testProvider{})
 
 	allocation, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{
@@ -2340,7 +2341,7 @@ func canonicalAttachmentReplayFixtureFor(t *testing.T, providerProfile, suffix s
 		t.Fatal(err)
 	}
 	setWorkspaceLaunchStageRecord(&parent, workspaceLaunchStageRecord{
-		SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: providerProfile, PreflightBindingRef: "preflight-" + suffix,
+		SchemaVersion: workspaceLaunchStageRecordSchemaVersion, ProviderProfileRef: providerProfile, ProviderBindingRef: "preflight-" + suffix, SpecDigest: strings.Repeat("a", 64),
 		RequestResources: WorkspaceLaunchResources{ComputeAllocationID: attachment.ComputeID, ComputeBindingRef: parentBinding.LaunchOperationID + ":compute", StorageID: attachment.VolumeID, StorageBindingRef: parentBinding.LaunchOperationID + ":storage"},
 		Resources:        WorkspaceLaunchResources{ComputeAllocationID: attachment.ComputeID, ComputeBindingRef: parentBinding.LaunchOperationID + ":compute", StorageID: attachment.VolumeID, StorageBindingRef: parentBinding.LaunchOperationID + ":storage", AttachmentID: attachment.ID, AttachmentBindingRef: parentBinding.FabricOperationID},
 		ProviderState:    state,
@@ -3138,6 +3139,17 @@ type testProvider struct{}
 
 func (testProvider) Descriptor() ProviderDescriptor {
 	return NewTencentProvider().Descriptor()
+}
+
+func (testProvider) ResolveWorkspacePlan(_ context.Context, input WorkspaceLaunchPlanInput) (json.RawMessage, error) {
+	plan, ok := providerPlan(testProvider{}, input.PackageID)
+	if !ok {
+		return nil, ErrProviderPlanUnavailable
+	}
+	return json.Marshal(map[string]any{
+		"compute": plan,
+		"storage": map[string]any{"sizeGb": input.SizeGB},
+	})
 }
 
 func (testProvider) ValidateComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {

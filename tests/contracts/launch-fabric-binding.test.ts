@@ -189,14 +189,18 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
       "workspaceImageDigest", "requestHash"
     ],
     forbiddenRequestFields: ["resources"],
-    responseIdentityFields: ["schemaVersion", "launchOperationId", "requestHash", "providerProfileRef", "bindingRef"]
+    responseIdentityFields: ["schemaVersion", "launchOperationId", "requestHash", "providerProfileRef", "providerBindingRef", "specDigest"],
+    responseForbiddenFields: ["canonicalProviderPlan", "providerPlan", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag"]
   });
   assert.deepEqual(contract.stageInput, {
     fields: [
-      "binding", "providerProfileRef", "preflightBindingRef", "packageId", "sizeGb",
+      "binding", "providerProfileRef", "providerBindingRef", "specDigest", "packageId", "sizeGb",
       "workspaceImageDigest", "resources", "gatewayCredential"
     ],
-    forbiddenFields: ["resumeAuthorizationDigest", "mutationBudget"],
+    forbiddenFields: [
+      "resumeAuthorizationDigest", "mutationBudget", "canonicalProviderPlan", "providerPlan", "cpu", "memoryGb",
+      "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag"
+    ],
     gatewayCredential: "optional_secret_stage_transport_only_never_hashed_or_persisted"
   });
   assert.deepEqual(contract.runtimeRepair.preserved, [
@@ -230,7 +234,7 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
     "idempotencyKey", "requestHash", "expectedResourceBinding"
   ]);
   assert.deepEqual(contract.stageRequestHash.excludedStageInputFields, [
-    "providerProfileRef", "preflightBindingRef", "gatewayCredential"
+    "providerProfileRef", "providerBindingRef", "specDigest", "gatewayCredential"
   ]);
   assert.deepEqual(contract.stageRequestHash.consumerModules, ["services/control-plane", "services/fabric"]);
   assert.equal(

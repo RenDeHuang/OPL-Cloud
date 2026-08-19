@@ -34,6 +34,10 @@ func (p *TencentProvider) createWorkspaceRuntime(ctx context.Context, input Work
 	if !validWorkspaceRuntimeImageIdentity(input.ImageID) {
 		return WorkspaceRuntime{}, fmt.Errorf("workspace_image_identity_invalid")
 	}
+	workspacePlan, planErr := p.workspacePlanForContext(ctx, compute.PackageID)
+	if planErr != nil {
+		return WorkspaceRuntime{}, planErr
+	}
 	now := time.Now().UTC()
 	serviceName := firstNonEmpty(compute.ServiceName, k8sName(compute.ID))
 	credentialSeed := stableID(input.WorkspaceID, input.IdempotencyKey)[:24]
@@ -58,7 +62,7 @@ func (p *TencentProvider) createWorkspaceRuntime(ctx context.Context, input Work
 				if dispatchErr := mutation.markReplayDispatch(ctx); dispatchErr != nil {
 					return WorkspaceRuntime{}, dispatchErr
 				}
-				if _, readErr = p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifestWithGatewayBinding(input, input.WorkspaceID, credentialSeed, runtimeID, serviceName, compute, volume, tags, gateway), runtimeTarget); readErr == nil {
+				if _, readErr = p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifestWithGatewayPlan(input, input.WorkspaceID, credentialSeed, runtimeID, serviceName, compute, volume, tags, gateway, workspacePlan.Compute), runtimeTarget); readErr == nil {
 					runtime, readErr = p.readWorkspaceRuntime(ctx, input, runtimeID, serviceName, tags, gateway)
 				}
 			}
@@ -72,7 +76,7 @@ func (p *TencentProvider) createWorkspaceRuntime(ctx context.Context, input Work
 		}
 		return runtime, nil
 	}
-	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifestWithGatewayBinding(input, input.WorkspaceID, credentialSeed, runtimeID, serviceName, compute, volume, tags, gateway), runtimeTarget); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifestWithGatewayPlan(input, input.WorkspaceID, credentialSeed, runtimeID, serviceName, compute, volume, tags, gateway, workspacePlan.Compute), runtimeTarget); err != nil {
 		_ = mutation.complete(ctx, "", WorkspaceRuntime{ID: runtimeID, WorkspaceID: input.WorkspaceID}, err)
 		return WorkspaceRuntime{}, err
 	}

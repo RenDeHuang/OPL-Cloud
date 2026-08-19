@@ -16,20 +16,17 @@ import (
 )
 
 func (p *TencentProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
-	packagePlan, err := configuredPackagePlan(input.PackageID)
+	workspacePlan, err := p.workspacePlanForContext(ctx, input.PackageID)
 	if err != nil {
 		return ComputeAllocationPreparation{}, err
 	}
-	poolConfig, err := configuredPackageNodePool(input.PackageID)
-	prepared := ComputeAllocationPreparation{PoolID: packagePlan.ID, PackageID: input.PackageID, NodePoolID: poolConfig.NodePoolID, InstanceType: packagePlan.InstanceType, MaxReplicas: poolConfig.MaxReplicas}
-	if err != nil {
-		return prepared, err
-	}
+	packagePlan := workspacePlan.Compute
+	prepared := ComputeAllocationPreparation{PoolID: packagePlan.ID, PackageID: input.PackageID, NodePoolID: workspacePlan.NodePoolID, InstanceType: packagePlan.InstanceType, Zone: workspacePlan.Zone, MaxReplicas: workspacePlan.MaxReplicas}
 	if strings.TrimSpace(input.NodePoolID) != prepared.NodePoolID {
 		return prepared, protectedresource.ErrPackagePoolMismatch
 	}
 	response, err := p.provision(ctx, provisionerRequest{
-		Action: "prepare_compute_allocation", DryRun: input.DryRun, PackageID: input.PackageID,
+		Action: "prepare_compute_allocation", DryRun: input.DryRun, PackageID: input.PackageID, Zone: workspacePlan.Zone,
 		Pool: provisionerPool{
 			ID: packagePlan.ID, PackageID: input.PackageID, InstanceType: packagePlan.InstanceType,
 			CPU: uint64(packagePlan.CPU), MemoryGB: uint64(packagePlan.MemoryGB), NodePoolID: prepared.NodePoolID, MaxReplicas: prepared.MaxReplicas,
@@ -59,7 +56,11 @@ type tencentComputeMutationState struct {
 
 func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
 	allocation, prepared := input.Allocation, input.Plan
-	packagePlan := packagePlan(prepared.PackageID)
+	workspacePlan, planErr := p.workspacePlanForContext(ctx, prepared.PackageID)
+	if planErr != nil {
+		return allocation, planErr
+	}
+	packagePlan := workspacePlan.Compute
 	var mutation *providerMutationAttempt
 	var err error
 	if !input.DryRun {
@@ -105,7 +106,7 @@ func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input Com
 		}
 	}
 	response, err := p.provision(ctx, provisionerRequest{
-		Action: "create_compute_allocation", DryRun: input.DryRun, AccountID: allocation.AccountID, PackageID: allocation.PackageID,
+		Action: "create_compute_allocation", DryRun: input.DryRun, AccountID: allocation.AccountID, PackageID: allocation.PackageID, Zone: workspacePlan.Zone,
 		Tags: oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, allocation.ProviderRequestID),
 		Pool: provisionerPool{
 			ID: prepared.PoolID, PackageID: prepared.PackageID, InstanceType: prepared.InstanceType, NodePoolID: prepared.NodePoolID,
@@ -151,9 +152,13 @@ func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input Com
 }
 
 func (p *TencentProvider) DiscoverComputeAllocation(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation) (ComputeAllocation, error) {
-	packagePlan := packagePlan(prepared.PackageID)
+	workspacePlan, planErr := p.workspacePlanForContext(ctx, prepared.PackageID)
+	if planErr != nil {
+		return allocation, planErr
+	}
+	packagePlan := workspacePlan.Compute
 	response, err := p.provision(ctx, provisionerRequest{
-		Action: "read_compute_allocation", AccountID: allocation.AccountID, PackageID: allocation.PackageID,
+		Action: "read_compute_allocation", AccountID: allocation.AccountID, PackageID: allocation.PackageID, Zone: workspacePlan.Zone,
 		Pool: provisionerPool{
 			ID: prepared.PoolID, PackageID: prepared.PackageID, InstanceType: prepared.InstanceType, NodePoolID: prepared.NodePoolID,
 			CPU: uint64(packagePlan.CPU), MemoryGB: uint64(packagePlan.MemoryGB), MaxReplicas: prepared.MaxReplicas,
@@ -199,9 +204,12 @@ func (p *TencentProvider) DiscoverComputeAllocation(ctx context.Context, allocat
 
 func (p *TencentProvider) ProveComputeClaimRecovery(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderProof, error) {
 	proof := ComputeClaimProviderProof{Reason: "identity_mismatch"}
-	plan := packagePlan(allocation.PackageID)
+	plan, planErr := p.computePlanForAllocation(ctx, allocation)
+	if planErr != nil {
+		return proof, planErr
+	}
 	instanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
-	if allocation.ID == "" || allocation.AccountID == "" || allocation.WorkspaceID == "" || (allocation.PackageID != "basic" && allocation.PackageID != "pro") ||
+	if allocation.ID == "" || allocation.AccountID == "" || allocation.WorkspaceID == "" || strings.TrimSpace(allocation.PackageID) == "" ||
 		allocation.PoolID != prepared.PoolID || allocation.NodePoolID != prepared.NodePoolID || prepared.PackageID != allocation.PackageID ||
 		prepared.InstanceType != plan.InstanceType || allocation.InstanceType != prepared.InstanceType || prepared.MaxReplicas <= 0 || prepared.BaselineReplicas < 0 ||
 		prepared.TargetReplicas != prepared.BaselineReplicas+1 || int64(len(prepared.BeforeMachineNames)) != prepared.BaselineReplicas ||
@@ -615,7 +623,7 @@ func (p *TencentProvider) SyncComputeAllocation(ctx context.Context, allocation 
 	if allocation.ID == "" {
 		return ComputeAllocation{}, fmt.Errorf("compute_allocation_id_required")
 	}
-	plan, err := configuredPackagePlan(firstNonEmpty(allocation.PackageID, "basic"))
+	plan, err := p.computePlanForAllocation(ctx, allocation)
 	if err != nil {
 		return allocation, err
 	}
@@ -672,6 +680,23 @@ func (p *TencentProvider) SyncComputeAllocation(ctx context.Context, allocation 
 		return allocation, fmt.Errorf("compute_resource_shape_mismatch")
 	}
 	return allocation, nil
+}
+
+func (p *TencentProvider) computePlanForAllocation(ctx context.Context, allocation ComputeAllocation) (ComputePlan, error) {
+	instanceType := strings.TrimSpace(firstNonEmpty(allocation.InstanceType, allocation.ProviderData["instanceType"]))
+	cpu, cpuErr := strconv.Atoi(strings.TrimSpace(allocation.ProviderData["cpu"]))
+	memoryGB, memoryErr := strconv.Atoi(strings.TrimSpace(allocation.ProviderData["memoryGb"]))
+	if strings.TrimSpace(allocation.PackageID) == "" || allocation.PoolID == "" {
+		return ComputePlan{}, ErrProviderPlanUnavailable
+	}
+	if instanceType == "" || cpuErr != nil || memoryErr != nil || cpu <= 0 || memoryGB <= 0 {
+		workspacePlan, err := p.workspacePlanForContext(ctx, allocation.PackageID)
+		if err != nil {
+			return ComputePlan{}, err
+		}
+		return workspacePlan.Compute, nil
+	}
+	return ComputePlan{ID: allocation.PoolID, CPU: cpu, MemoryGB: memoryGB, InstanceType: instanceType}, nil
 }
 
 func (p *TencentProvider) ReadComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {

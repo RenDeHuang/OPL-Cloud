@@ -27,6 +27,7 @@ const (
 )
 
 var workspaceImageDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+var workspaceProviderSpecDigestPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 type workspaceLaunchDescriptor struct {
 	OperationID          string
@@ -199,14 +200,15 @@ func workspaceLaunchResumeAuthorizationReadback(operation workspaceLaunchReconci
 	}, true
 }
 
-func workspaceLaunchReconcileRequestMatches(operation workspaceLaunchReconcileOperation, accountID, ownerUserID, name, packageID string, storageGB int, autoRenew bool) bool {
+func workspaceLaunchReconcileRequestMatches(operation workspaceLaunchReconcileOperation, accountID, ownerUserID, name, packageID string, autoRenew bool) bool {
 	return operation.stringFact("accountId") == accountID && operation.stringFact("ownerUserId") == ownerUserID &&
 		operation.stringFact("name") == name && operation.stringFact("packageId") == packageID &&
-		operation.intFact("sizeGb") == storageGB && operation.boolFact("autoRenew") == autoRenew
+		operation.boolFact("autoRenew") == autoRenew
 }
 
 func workspaceLaunchPreflightConfirmed(input clients.WorkspaceLaunchPreflightInput, result clients.WorkspaceLaunchPreflight) bool {
 	return result.SchemaVersion == clients.WorkspaceLaunchFabricSchemaVersion && result.Available && result.Reason == "none" &&
 		result.LaunchOperationID == input.LaunchOperationID && result.RequestHash == input.RequestHash &&
-		strings.TrimSpace(result.ProviderProfileRef) != "" && strings.TrimSpace(result.BindingRef) != ""
+		strings.TrimSpace(result.ProviderProfileRef) != "" && strings.TrimSpace(result.BindingRef) != "" &&
+		workspaceProviderSpecDigestPattern.MatchString(result.SpecDigest)
 }

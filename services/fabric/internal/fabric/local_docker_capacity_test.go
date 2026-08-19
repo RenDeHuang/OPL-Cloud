@@ -9,6 +9,41 @@ import (
 	"testing"
 )
 
+func TestLocalDockerProviderRequiresDeploymentOwnedProfile(t *testing.T) {
+	t.Setenv(localDockerProviderProfileEnv, "")
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{}, &recordingDockerRunner{})
+	if _, err := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: "basic", SizeGB: 10}); err == nil || err.Error() != "provider_plan_unavailable" {
+		t.Fatalf("missing profile resolve err=%v", err)
+	}
+	if _, err := provider.Readiness(context.Background()); err == nil || err.Error() != "local_docker_provider_profile_required" {
+		t.Fatalf("missing profile readiness err=%v", err)
+	}
+	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "local"}); !errors.Is(err, ErrProviderPlanUnavailable) {
+		t.Fatalf("missing profile monthly preflight err=%v", err)
+	}
+}
+
+func TestLocalDockerMonthlyPreflightRequiresAvailableProfilePackage(t *testing.T) {
+	profile := []byte(`{"schemaVersion":1,"packages":[{"id":"basic","name":"Small Workspace","available":false,"compute":{"id":"configured-small","server":"1c2g","cpu":1,"memoryGb":2,"diskGb":10,"instanceType":"configured-1c2g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}}]}`)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{ProviderProfileJSON: profile}, &recordingDockerRunner{})
+	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "local"}); !errors.Is(err, ErrProviderPlanUnavailable) {
+		t.Fatalf("unavailable package monthly preflight err=%v", err)
+	}
+}
+
+func TestLocalDockerProviderUsesConfiguredProfileForCatalogAndPlan(t *testing.T) {
+	profile := []byte(`{"schemaVersion":1,"packages":[{"id":"basic","name":"Small Workspace","available":true,"compute":{"id":"configured-small","server":"1c2g","cpu":1,"memoryGb":2,"diskGb":10,"instanceType":"configured-1c2g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}}]}`)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{ProviderProfileJSON: profile}, &recordingDockerRunner{})
+	descriptor := provider.Descriptor()
+	if len(descriptor.Plans) != 1 || descriptor.Plans["basic"].CPU != 1 || descriptor.Plans["basic"].MemoryGB != 2 || descriptor.Plans["basic"].InstanceType != "configured-1c2g" {
+		t.Fatalf("descriptor=%#v", descriptor)
+	}
+	plan, err := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: "basic", SizeGB: 10})
+	if err != nil || !strings.Contains(string(plan), `"cpu":1`) || !strings.Contains(string(plan), `"memoryGb":2`) {
+		t.Fatalf("configured plan=%s err=%v", plan, err)
+	}
+}
+
 type localDockerCapacityRunner struct {
 	info      []byte
 	container dockerContainerInspect

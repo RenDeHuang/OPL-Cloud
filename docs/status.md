@@ -246,6 +246,15 @@ Sub2API management origin and credentials are never exposed to the browser.
   instance-owned callers and protected workflow boundary, but this remains
   source and CI evidence, not a complete Console-to-Workspace installation or
   successful Instance Provider Acceptance.
+- Provider package infrastructure facts now come only from the selected
+  deployment-owned Provider Profile. Tencent/TKE entries include compute shape,
+  CVM instance type, NodePool, replica ceiling, zone, CBS disk and renewal
+  facts; Local-Docker entries include compute, storage and quota policy. A
+  missing or invalid Tencent profile exposes no plans and fails launch closed.
+  Fabric persists the canonical Provider plan and `specDigest`; Tencent replay,
+  operator recovery, destroy, and readback use that immutable binding or
+  persisted resource facts instead of legacy `basic`/`pro` literals. This
+  source change has no Tencent live mutation or production readback evidence.
 - The Fabric resource catalog contract now retains only provider-neutral package,
   storage-class, ingress, availability, and capacity boundaries. Its unused
   `workspacePackageNodePools` provider-specific subtree was removed through

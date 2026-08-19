@@ -15,7 +15,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -753,7 +755,7 @@ func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *te
 		IdempotencyKey: "launch-alpha:ensure_compute_allocation",
 	}
 	input := fabric.WorkspaceLaunchStageInput{
-		Binding: binding, ProviderProfileRef: "tencent-tke", PreflightBindingRef: preflight.BindingRef,
+		Binding: binding, ProviderProfileRef: "tencent-tke", ProviderBindingRef: preflight.ProviderBindingRef, SpecDigest: preflight.SpecDigest,
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest,
 	}
 	input.Binding.RequestHash = "ddb1c0c5195c4e04c1d23230a493da582a2ca56af528a7abcf67d781f81c3fe1"
@@ -807,7 +809,7 @@ func TestWorkspaceLaunchEnsureCapabilityUsesFabricOperationOwnerIdentity(t *test
 			IdempotencyKey: "launch-alpha:ensure_compute_allocation",
 			RequestHash:    "ddb1c0c5195c4e04c1d23230a493da582a2ca56af528a7abcf67d781f81c3fe1",
 		},
-		ProviderProfileRef: "tencent-tke", PreflightBindingRef: preflight.BindingRef,
+		ProviderProfileRef: "tencent-tke", ProviderBindingRef: preflight.ProviderBindingRef, SpecDigest: preflight.SpecDigest,
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest,
 	}
 	body, err := json.Marshal(input)
@@ -1329,6 +1331,60 @@ func TestCatalogHTTP(t *testing.T) {
 	}
 }
 
+func TestFabricCatalogContractKeepsConsoleProjectionProductOnly(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	contractPath := filepath.Join(filepath.Dir(sourceFile), "../../../../packages/contracts/opl-cloud-fabric-resource-catalog-contract.json")
+	data, err := os.ReadFile(contractPath)
+	if err != nil {
+		t.Fatalf("read catalog contract: %v", err)
+	}
+	var contract struct {
+		SchemaVersion     int `json:"schemaVersion"`
+		ConsoleProjection struct {
+			Fields              []string `json:"fields"`
+			SelectionInput      string   `json:"selectionInput"`
+			ForbiddenFields     []string `json:"forbiddenFields"`
+			InfrastructureOwner string   `json:"infrastructureOwnership"`
+		} `json:"consoleProjection"`
+	}
+	if err := json.Unmarshal(data, &contract); err != nil {
+		t.Fatalf("decode catalog contract: %v", err)
+	}
+	if contract.SchemaVersion != 7 {
+		t.Fatalf("catalog contract schemaVersion=%d, want 7", contract.SchemaVersion)
+	}
+	if !reflect.DeepEqual(contract.ConsoleProjection.Fields, []string{"id", "name", "available"}) {
+		t.Fatalf("console catalog fields=%v", contract.ConsoleProjection.Fields)
+	}
+	if contract.ConsoleProjection.SelectionInput != "packageId_only" || contract.ConsoleProjection.InfrastructureOwner != "Fabric Provider Profile and adapter only" {
+		t.Fatalf("console projection ownership=%#v", contract.ConsoleProjection)
+	}
+	allowed := map[string]bool{}
+	for _, field := range contract.ConsoleProjection.Fields {
+		allowed[field] = true
+	}
+	for _, field := range contract.ConsoleProjection.ForbiddenFields {
+		if allowed[field] {
+			t.Fatalf("catalog field %q is both allowed and forbidden", field)
+		}
+	}
+	for _, field := range []string{"provider", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag", "canonicalProviderPlan", "providerBindingRef", "specDigest"} {
+		found := false
+		for _, forbidden := range contract.ConsoleProjection.ForbiddenFields {
+			if forbidden == field {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("catalog contract does not forbid provider field %q", field)
+		}
+	}
+}
+
 func TestWriteComputeAllocationResultPreservesTerminalEvidence(t *testing.T) {
 	allocation := fabric.ComputeAllocation{
 		ID: "compute-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture", PackageID: "basic", Status: "quarantined",
@@ -1762,6 +1818,13 @@ func (testProvider) Descriptor() fabric.ProviderDescriptor {
 			WorkspacePackages: []fabric.WorkspacePackage{{ID: "basic", Provider: "tencent-tke", Available: true}},
 		},
 	}
+}
+
+func (testProvider) ResolveWorkspacePlan(_ context.Context, input fabric.WorkspaceLaunchPlanInput) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{
+		"compute": map[string]any{"cpu": 2, "memoryGb": 4},
+		"storage": map[string]any{"sizeGb": input.SizeGB},
+	})
 }
 
 func (testProvider) ValidateComputeAllocation(allocation fabric.ComputeAllocation, prepared fabric.ComputeAllocationPreparation) error {

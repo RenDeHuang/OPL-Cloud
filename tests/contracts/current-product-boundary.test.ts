@@ -161,13 +161,17 @@ test("Fabric uses explicit immutable launch-stage binding and typed routes", asy
       "workspaceImageDigest", "requestHash"
     ],
     forbiddenRequestFields: ["resources"],
-    responseIdentityFields: ["schemaVersion", "launchOperationId", "requestHash", "providerProfileRef", "bindingRef"]
+    responseIdentityFields: ["schemaVersion", "launchOperationId", "requestHash", "providerProfileRef", "providerBindingRef", "specDigest"],
+    responseForbiddenFields: ["canonicalProviderPlan", "providerPlan", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag"]
   });
   assert.deepEqual(contract.stageInput.fields, [
-    "binding", "providerProfileRef", "preflightBindingRef", "packageId", "sizeGb",
+    "binding", "providerProfileRef", "providerBindingRef", "specDigest", "packageId", "sizeGb",
     "workspaceImageDigest", "resources", "gatewayCredential"
   ]);
-  assert.deepEqual(contract.stageInput.forbiddenFields, ["resumeAuthorizationDigest", "mutationBudget"]);
+  assert.deepEqual(contract.stageInput.forbiddenFields, [
+    "resumeAuthorizationDigest", "mutationBudget", "canonicalProviderPlan", "providerPlan", "cpu", "memoryGb",
+    "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag"
+  ]);
   assert.deepEqual(contract.launchBinding.fields, [
     "schemaVersion",
     "launchOperationId",
@@ -199,7 +203,7 @@ test("Fabric uses explicit immutable launch-stage binding and typed routes", asy
     "idempotencyKey", "requestHash", "expectedResourceBinding"
   ]);
   assert.deepEqual(contract.stageRequestHash.excludedStageInputFields, [
-    "providerProfileRef", "preflightBindingRef", "gatewayCredential"
+    "providerProfileRef", "providerBindingRef", "specDigest", "gatewayCredential"
   ]);
   assert.deepEqual(contract.stageRequestHash.consumerModules, ["services/control-plane", "services/fabric"]);
   assert.equal(contract.stageRequestHash.goldenVectors.length, 5);

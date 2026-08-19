@@ -629,8 +629,15 @@ type localDockerRuntimeCgroupLimits struct {
 }
 
 func (p *LocalDockerProvider) runtimeCgroupLimits(packageID string) (localDockerRuntimeCgroupLimits, bool) {
-	plan, ok := providerPlan(p, packageID)
-	if !ok || plan.CPU <= 0 || plan.MemoryGB <= 0 {
+	item, ok := p.localDockerPackagePlan(packageID)
+	if !ok {
+		return localDockerRuntimeCgroupLimits{}, false
+	}
+	return p.runtimeCgroupLimitsForPlan(packageID, item.Compute)
+}
+
+func (p *LocalDockerProvider) runtimeCgroupLimitsForPlan(packageID string, plan ComputePlan) (localDockerRuntimeCgroupLimits, bool) {
+	if plan.CPU <= 0 || plan.MemoryGB <= 0 {
 		return localDockerRuntimeCgroupLimits{}, false
 	}
 	return localDockerRuntimeCgroupLimits{
@@ -646,21 +653,29 @@ func validRuntimeCgroupLimits(container dockerContainerInspect, limits localDock
 }
 
 func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) (WorkspaceRuntime, error) {
+	item, ok := p.localDockerPackagePlan(compute.PackageID)
+	if !ok {
+		return WorkspaceRuntime{}, ErrUnsupportedComputePackage
+	}
+	return p.createWorkspaceRuntimeWithPlan(ctx, input, compute, volume, item.Compute)
+}
+
+func (p *LocalDockerProvider) createWorkspaceRuntimeWithPlan(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume, plan ComputePlan) (WorkspaceRuntime, error) {
 	var result WorkspaceRuntime
 	err := p.withStorageQuotaLock(func() error {
 		var lockedErr error
-		result, lockedErr = p.createWorkspaceRuntimeLocked(ctx, input, compute, volume)
+		result, lockedErr = p.createWorkspaceRuntimeLocked(ctx, input, compute, volume, plan)
 		return lockedErr
 	})
 	return result, err
 }
 
-func (p *LocalDockerProvider) createWorkspaceRuntimeLocked(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) (WorkspaceRuntime, error) {
+func (p *LocalDockerProvider) createWorkspaceRuntimeLocked(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume, plan ComputePlan) (WorkspaceRuntime, error) {
 	computeReadback, err := p.ReadComputeAllocation(ctx, compute)
 	if err != nil {
 		return WorkspaceRuntime{}, err
 	}
-	limits, limitsOK := p.runtimeCgroupLimits(computeReadback.PackageID)
+	limits, limitsOK := p.runtimeCgroupLimitsForPlan(computeReadback.PackageID, plan)
 	if !limitsOK {
 		return WorkspaceRuntime{}, ErrUnsupportedComputePackage
 	}
@@ -908,7 +923,29 @@ func (p *LocalDockerProvider) WorkspaceRuntimeStatus(ctx context.Context, worksp
 		return WorkspaceRuntime{WorkspaceID: workspaceID}, ErrWorkspaceLaunchResourceAbsent
 	}
 	limits, limitsOK := p.runtimeCgroupLimits(container.Config.Labels[localDockerComputePackageLabel])
-	if !limitsOK || !validRuntimeCgroupLimits(container, limits) {
+	if !limitsOK {
+		return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_readback_mismatch")
+	}
+	return p.workspaceRuntimeStatusWithLimits(ctx, workspaceID, limits)
+}
+
+func (p *LocalDockerProvider) workspaceRuntimeStatusWithPlan(ctx context.Context, workspaceID string, plan ComputePlan) (WorkspaceRuntime, error) {
+	limits, limitsOK := p.runtimeCgroupLimitsForPlan("", plan)
+	if !limitsOK {
+		return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_readback_mismatch")
+	}
+	return p.workspaceRuntimeStatusWithLimits(ctx, workspaceID, limits)
+}
+
+func (p *LocalDockerProvider) workspaceRuntimeStatusWithLimits(ctx context.Context, workspaceID string, limits localDockerRuntimeCgroupLimits) (WorkspaceRuntime, error) {
+	container, exists, err := p.inspectContainer(ctx, localRuntimeName(workspaceID))
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	if !exists {
+		return WorkspaceRuntime{WorkspaceID: workspaceID}, ErrWorkspaceLaunchResourceAbsent
+	}
+	if !validRuntimeCgroupLimits(container, limits) {
 		return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_readback_mismatch")
 	}
 	secretRef := gatewaySecretName(workspaceID)

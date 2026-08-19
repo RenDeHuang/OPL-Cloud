@@ -74,9 +74,9 @@ func validMonthlyProviderTruthIdentity(compute ComputeAllocation, storage Storag
 	instanceType := firstNonEmpty(compute.InstanceType, compute.ProviderData["instanceType"])
 	computeZone := firstNonEmpty(compute.Zone, compute.ProviderData["zone"])
 	return compute.ID != "" && compute.AccountID != "" && compute.WorkspaceID != "" &&
-		(compute.PackageID == "basic" || compute.PackageID == "pro") && compute.Provider == "tencent-tke" && compute.ProviderResourceID != "" &&
+		compute.PackageID != "" && compute.Provider == "tencent-tke" && compute.ProviderResourceID != "" &&
 		compute.NodePoolID != "" && firstNonEmpty(compute.MachineName, compute.ProviderData["machineName"]) != "" && strings.HasPrefix(instanceID, "ins-") && compute.PrivateIP != "" &&
-		instanceType == packagePlan(compute.PackageID).InstanceType && computeZone != "" && validMonthlyTruthTags(compute.CostTags, compute.AccountID, compute.WorkspaceID, compute.ID) &&
+		instanceType != "" && computeZone != "" && validMonthlyTruthTags(compute.CostTags, compute.AccountID, compute.WorkspaceID, compute.ID) &&
 		storage.ID != "" && storage.AccountID == compute.AccountID && storage.WorkspaceID == compute.WorkspaceID && storage.Provider == "tencent-tke" &&
 		strings.HasPrefix(storage.ProviderResourceID, "disk-") && storage.SizeGB > 0 && storage.DiskType != "" && storage.Zone == computeZone &&
 		validMonthlyTruthTags(storage.CostTags, storage.AccountID, storage.WorkspaceID, storage.ID)

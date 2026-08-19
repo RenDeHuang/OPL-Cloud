@@ -35,19 +35,23 @@ func localDockerWorkspaceLaunchResources(input WorkspaceLaunchStageInput) Worksp
 
 func (p *LocalDockerProvider) EnsureWorkspaceLaunchStage(ctx context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
 	input, binding := request.Input, request.Input.Binding
+	boundPlan, planErr := decodeLocalDockerPlanEnvelope(request.ProviderPlan, input.PackageID, input.SizeGB)
+	if planErr != nil {
+		return WorkspaceLaunchProviderResult{}, planErr
+	}
 	resources := localDockerWorkspaceLaunchResources(input)
 	state := localDockerWorkspaceLaunchState{}
 	switch binding.Stage {
 	case "ensure_compute_allocation":
 		computeID := firstNonEmpty(resources.ComputeAllocationID, workspaceLaunchComputeID(binding))
-		poolID := p.Descriptor().DefaultComputePoolIDs[input.PackageID]
+		poolID := "local-docker"
 		allocation := ComputeAllocation{
 			ID: computeID, OperationID: binding.FabricOperationID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID,
 			PackageID: input.PackageID, Status: "provisioning", Provider: p.Descriptor().Name,
 		}
-		prepared, err := p.PrepareComputeAllocation(ctx, ComputeAllocationInput{
+		prepared, err := p.prepareComputeAllocationWithPlan(ctx, ComputeAllocationInput{
 			ID: computeID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, PackageID: input.PackageID, NodePoolID: poolID,
-		})
+		}, boundPlan.Compute)
 		if err != nil {
 			return WorkspaceLaunchProviderResult{}, err
 		}
@@ -70,7 +74,7 @@ func (p *LocalDockerProvider) EnsureWorkspaceLaunchStage(ctx context.Context, re
 		storageID := firstNonEmpty(resources.StorageID, workspaceLaunchStorageID(binding))
 		volume, err := p.CreateStorageVolume(ctx, StorageVolumeInput{
 			ID: storageID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, ComputeID: prior.Compute.ID,
-			Zone: prior.Compute.Zone, SizeGB: input.SizeGB, IdempotencyKey: binding.IdempotencyKey, OperationID: binding.FabricOperationID,
+			Zone: prior.Compute.Zone, SizeGB: boundPlan.Storage.SizeGB, IdempotencyKey: binding.IdempotencyKey, OperationID: binding.FabricOperationID,
 		})
 		if err != nil {
 			return WorkspaceLaunchProviderResult{}, err
@@ -133,12 +137,12 @@ func (p *LocalDockerProvider) EnsureWorkspaceLaunchStage(ctx context.Context, re
 			storageState.Storage == nil || attachmentState.Attachment == nil || secretState.Secret == nil {
 			return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
 		}
-		runtime, err := p.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{
+		runtime, err := p.createWorkspaceRuntimeWithPlan(ctx, WorkspaceRuntimeInput{
 			WorkspaceID: binding.WorkspaceID, ComputeID: computeState.Compute.ID, VolumeID: storageState.Storage.ID,
 			AttachmentID: attachmentState.Attachment.ID, AttachmentOperationID: attachmentState.Attachment.OperationID,
 			RuntimeOperationID: binding.FabricOperationID, ImageID: input.WorkspaceImageDigest, GatewaySecretRef: secretState.Secret.SecretRef,
 			IdempotencyKey: binding.IdempotencyKey, OperationID: binding.FabricOperationID,
-		}, *computeState.Compute, *storageState.Storage)
+		}, *computeState.Compute, *storageState.Storage, boundPlan.Compute)
 		if err != nil {
 			return WorkspaceLaunchProviderResult{}, err
 		}
@@ -156,6 +160,10 @@ func (p *LocalDockerProvider) EnsureWorkspaceLaunchStage(ctx context.Context, re
 
 func (p *LocalDockerProvider) ReadWorkspaceLaunchStage(ctx context.Context, request WorkspaceLaunchProviderRequest) (WorkspaceLaunchProviderResult, error) {
 	input, binding := request.Input, request.Input.Binding
+	boundPlan, planErr := decodeLocalDockerPlanEnvelope(request.ProviderPlan, input.PackageID, input.SizeGB)
+	if planErr != nil {
+		return WorkspaceLaunchProviderResult{}, planErr
+	}
 	resources := input.Resources
 	state, stateErr := decodeLocalDockerWorkspaceLaunchState(request.Current)
 	switch binding.Stage {
@@ -223,7 +231,7 @@ func (p *LocalDockerProvider) ReadWorkspaceLaunchStage(ctx context.Context, requ
 		resources.GatewaySecretRef, resources.GatewaySecretVersion = readback.SecretRef, readback.Version
 		resources.GatewaySecretFingerprint, resources.SecretBindingRef = readback.Fingerprint, binding.FabricOperationID
 	case "runtime":
-		readback, err := p.WorkspaceRuntimeStatus(ctx, binding.WorkspaceID)
+		readback, err := p.workspaceRuntimeStatusWithPlan(ctx, binding.WorkspaceID, boundPlan.Compute)
 		if err != nil && readback.Status == "not_found" {
 			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchResourceAbsent
 		}

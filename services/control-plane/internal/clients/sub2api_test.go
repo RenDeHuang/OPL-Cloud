@@ -2048,7 +2048,11 @@ func TestSub2APIFinancialBalanceHistoryByCodesUsesOneAbsoluteDeadline(t *testing
 		}
 		requests.Add(1)
 		<-r.Context().Done()
-	}, 25*time.Millisecond)
+	}, 5*time.Second)
+	if _, err := client.token(context.Background()); err != nil {
+		t.Fatalf("warm Sub2API authentication: %v", err)
+	}
+	client.timeout = 25 * time.Millisecond
 	if _, err := client.FinancialBalanceHistoryByCodes(context.Background(), 41, []string{"opl:target"}); err == nil {
 		t.Fatal("financial history deadline was ignored")
 	}

@@ -265,7 +265,7 @@ func (f *acceptanceBAccountReconcileFixture) storeApprovedLaunch(totalChargeUSDM
 		OwnerUserID: f.userID, Sub2APIUserID: 41, WorkspaceKeyGroupID: 9, WorkspaceID: f.approval.Launch.WorkspaceID,
 		Name: f.approval.Launch.Name, PackageID: f.approval.Launch.PackageID, StorageGB: f.approval.Launch.SizeGB,
 		AutoRenew: f.approval.Launch.AutoRenew, PriceVersion: pilotPriceVersion, TotalChargeUSDMicros: totalChargeUSDMicros,
-		ProviderProfileRef: "provider-profile-acceptance-b", PreflightBindingRef: "binding-acceptance-b",
+		ProviderProfileRef: "provider-profile-acceptance-b", PreflightBindingRef: "binding-acceptance-b", SpecDigest: strings.Repeat("c", 64),
 		WorkspaceImageDigest: strings.TrimSpace(os.Getenv("OPL_WORKSPACE_IMAGE")), PreChargeBalanceMicros: 60_000_000,
 	})
 	if err != nil {

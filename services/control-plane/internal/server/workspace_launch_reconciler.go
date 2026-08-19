@@ -255,6 +255,7 @@ type workspaceLaunchReconcileCreate struct {
 	TotalChargeUSDMicros    int64
 	ProviderProfileRef      string
 	PreflightBindingRef     string
+	SpecDigest              string
 	WorkspaceImageDigest    string
 	PreChargeBalanceMicros  int64
 	AcceptanceBCapacitySlot bool
@@ -959,7 +960,7 @@ func newWorkspaceLaunchReconcileOperation(command workspaceLaunchReconcileCreate
 		strings.TrimSpace(command.OwnerUserID) == "" || strings.TrimSpace(command.WorkspaceID) == "" || strings.TrimSpace(command.Name) == "" ||
 		command.Sub2APIUserID <= 0 || command.WorkspaceKeyGroupID <= 0 || strings.TrimSpace(command.PackageID) == "" || command.StorageGB <= 0 ||
 		strings.TrimSpace(command.PriceVersion) == "" || command.TotalChargeUSDMicros < 0 || command.ResourceBillingEnabled != nil && *command.ResourceBillingEnabled && command.TotalChargeUSDMicros <= 0 || strings.TrimSpace(command.ProviderProfileRef) == "" ||
-		strings.TrimSpace(command.PreflightBindingRef) == "" || strings.TrimSpace(command.WorkspaceImageDigest) == "" {
+		strings.TrimSpace(command.PreflightBindingRef) == "" || !workspaceProviderSpecDigestPattern.MatchString(command.SpecDigest) || strings.TrimSpace(command.WorkspaceImageDigest) == "" {
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 	}
 	facts := map[string]any{
@@ -980,6 +981,7 @@ func newWorkspaceLaunchReconcileOperation(command workspaceLaunchReconcileCreate
 		"totalChargeUsdMicros":      command.TotalChargeUSDMicros,
 		"providerProfileRef":        command.ProviderProfileRef,
 		"preflightBindingRef":       command.PreflightBindingRef,
+		"specDigest":                command.SpecDigest,
 		"workspaceImageDigest":      command.WorkspaceImageDigest,
 		"sub2apiRedeemCode":         monthlyRedeemCode(monthlyEnvironment(), command.OperationID),
 		"preChargeBalanceUsdMicros": command.PreChargeBalanceMicros,
@@ -1208,7 +1210,7 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 		operation.int64Fact("sub2apiUserId") <= 0 || operation.int64Fact("workspaceKeyGroupId") <= 0 ||
 		operation.stringFact("workspaceId") == "" || operation.stringFact("name") == "" || operation.stringFact("packageId") == "" ||
 		operation.stringFact("priceVersion") == "" || operation.intFact("sizeGb") <= 0 || operation.int64Fact("totalChargeUsdMicros") < 0 || operation.boolFact("resourceBillingEnabled") && operation.int64Fact("totalChargeUsdMicros") <= 0 ||
-		operation.stringFact("providerProfileRef") == "" || operation.stringFact("preflightBindingRef") == "" ||
+		operation.stringFact("providerProfileRef") == "" || operation.stringFact("preflightBindingRef") == "" || !workspaceProviderSpecDigestPattern.MatchString(operation.stringFact("specDigest")) ||
 		operation.stringFact("workspaceImageDigest") == "" || operation.stringFact("sub2apiRedeemCode") == "" ||
 		stringValue(row["action"]) != "" && stringValue(row["action"]) != workspaceLaunchAction ||
 		stringValue(row["accountId"]) != "" && stringValue(row["accountId"]) != operation.stringFact("accountId") ||

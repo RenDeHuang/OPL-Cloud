@@ -198,7 +198,7 @@ func workspaceLaunchUnitCommand() workspaceLaunchReconcileCreate {
 	return workspaceLaunchReconcileCreate{
 		OperationID: "workspace-launch-unit", RequestHash: strings.Repeat("a", 64), AccountID: "acct-unit", OwnerUserID: "usr-unit",
 		Sub2APIUserID: 11, WorkspaceKeyGroupID: 7, WorkspaceID: "ws-unit", Name: "Unit", PackageID: "basic", StorageGB: 10,
-		PriceVersion: pricingCatalogVersion, TotalChargeUSDMicros: 52_580_000, ProviderProfileRef: "profile-unit", PreflightBindingRef: "binding-unit",
+		PriceVersion: pricingCatalogVersion, TotalChargeUSDMicros: 52_580_000, ProviderProfileRef: "profile-unit", PreflightBindingRef: "binding-unit", SpecDigest: strings.Repeat("c", 64),
 		WorkspaceImageDigest: "repo.example/workspace@sha256:" + strings.Repeat("b", 64), PreChargeBalanceMicros: 100_000_000,
 		CreatedAt: time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC),
 	}
@@ -1541,7 +1541,7 @@ func TestWorkspaceLaunchFiveFabricStageCallersUseCanonicalHashPayload(t *testing
 				t.Fatal(err)
 			}
 			launchRequestHash := current.stringFact("requestHash")
-			if input.ProviderProfileRef != current.stringFact("providerProfileRef") || input.PreflightBindingRef != current.stringFact("preflightBindingRef") ||
+			if input.ProviderProfileRef != current.stringFact("providerProfileRef") || input.PreflightBindingRef != current.stringFact("preflightBindingRef") || input.SpecDigest != current.stringFact("specDigest") ||
 				input.Binding.FabricOperationID != current.ID+":"+stage.stage || input.Binding.LaunchOperationID != current.ID ||
 				input.Binding.AccountID != current.stringFact("accountId") || input.Binding.WorkspaceID != current.stringFact("workspaceId") ||
 				input.Binding.Stage != stage.stage || input.Binding.Action != stage.action || input.Binding.IdempotencyKey != workspaceLaunchStageIdempotencyKey(current, 1) ||
@@ -1570,6 +1570,7 @@ func TestWorkspaceLaunchFiveFabricStageCallersUseCanonicalHashPayload(t *testing
 			excluded := input
 			excluded.ProviderProfileRef += "-changed"
 			excluded.PreflightBindingRef += "-changed"
+			excluded.SpecDigest = strings.Repeat("d", 64)
 			excluded.GatewayCredential = &clients.WorkspaceLaunchGatewayCredential{KeyID: 9, Value: "credential-value"}
 			excluded.Binding.SchemaVersion++
 			excluded.Binding.LaunchOperationID += "-changed"

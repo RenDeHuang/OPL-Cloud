@@ -17,17 +17,24 @@ import (
 	"opl-cloud/services/fabric/internal/protectedresource"
 )
 
+const testTencentProviderProfile = `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic Workspace","available":true,"compute":{"id":"pool-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"SA5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}},{"id":"pro","name":"Pro Workspace","available":true,"compute":{"id":"pool-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"SA5.2XLARGE16"},"nodePoolId":"np-pro","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":100,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`
+
+const testDefaultTencentProviderProfile = `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic Workspace","available":true,"compute":{"id":"pool-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"SA5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":20,"zone":"na-siliconvalley-1","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}},{"id":"pro","name":"Pro Workspace","available":true,"compute":{"id":"pool-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"SA5.2XLARGE16"},"nodePoolId":"np-pro","maxReplicas":20,"zone":"na-siliconvalley-1","storage":{"sizeGb":100,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`
+
 func TestMain(m *testing.M) {
 	for key, value := range map[string]string{
-		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID": "np-system",
-		"OPL_SYSTEM_COMPUTE_MACHINE_ID":   "machine-system",
-		"OPL_SYSTEM_COMPUTE_NODE_NAME":    "10.66.0.42",
-		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE": "NativeCVM",
-		"OPL_SYSTEM_COMPUTE_CVM_ID":       "ins-system",
-		"OPL_BASIC_COMPUTE_NODE_POOL_ID":  "np-basic",
-		"OPL_PRO_COMPUTE_NODE_POOL_ID":    "np-pro",
-		"OPL_BASIC_COMPUTE_INSTANCE_TYPE": "SA5.MEDIUM4",
-		"OPL_PRO_COMPUTE_INSTANCE_TYPE":   "SA5.2XLARGE16",
+		tencentProviderProfileEnv:                       testDefaultTencentProviderProfile,
+		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID":               "np-system",
+		"OPL_SYSTEM_COMPUTE_MACHINE_ID":                 "machine-system",
+		"OPL_SYSTEM_COMPUTE_NODE_NAME":                  "10.66.0.42",
+		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE":               "NativeCVM",
+		"OPL_SYSTEM_COMPUTE_CVM_ID":                     "ins-system",
+		"OPL_BASIC_COMPUTE_NODE_POOL_ID":                "np-basic",
+		"OPL_PRO_COMPUTE_NODE_POOL_ID":                  "np-pro",
+		"OPL_BASIC_COMPUTE_INSTANCE_TYPE":               "SA5.MEDIUM4",
+		"OPL_PRO_COMPUTE_INSTANCE_TYPE":                 "SA5.2XLARGE16",
+		"TENCENT_CBS_DISK_TYPE":                         "CLOUD_BSSD",
+		"OPL_FABRIC_LOCAL_DOCKER_PROVIDER_PROFILE_JSON": `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic Workspace","available":true,"compute":{"id":"local-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"local-2c4g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}},{"id":"pro","name":"Pro Workspace","available":true,"compute":{"id":"local-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"local-8c16g"},"storage":{"sizeGb":100,"quotaPolicy":"linux-project"}}]}`,
 	} {
 		_ = os.Setenv(key, value)
 	}
@@ -49,6 +56,11 @@ func setProtectedResourceEnv(t *testing.T) {
 	}
 }
 
+func setTencentProviderProfileEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv(tencentProviderProfileEnv, testTencentProviderProfile)
+}
+
 func TestKubernetesMutationRequiresProtectedResourceConfiguration(t *testing.T) {
 	for _, key := range []string{
 		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID", "OPL_SYSTEM_COMPUTE_MACHINE_ID", "OPL_SYSTEM_COMPUTE_NODE_NAME",
@@ -68,6 +80,67 @@ func TestKubernetesMutationRequiresProtectedResourceConfiguration(t *testing.T) 
 	}
 	if _, err := provider.callKubectl(context.Background(), []string{"get", "pods", "-o", "json"}, nil, protectedresource.Target{}); err != nil || calls != 1 {
 		t.Fatalf("read-only err=%v calls=%d", err, calls)
+	}
+}
+
+func TestTencentProviderProfileBindsWorkspaceFactsAndIgnoresLaterProfileDrift(t *testing.T) {
+	profile := `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic Workspace","available":true,"compute":{"id":"pool-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"SA5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`
+	t.Setenv(tencentProviderProfileEnv, profile)
+	provider := NewTencentProvider()
+	first, err := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: "basic", SizeGB: 10})
+	if err != nil {
+		t.Fatalf("resolve profile plan: %v", err)
+	}
+	var resolved tencentWorkspacePlan
+	if err := json.Unmarshal(first, &resolved); err != nil || resolved.NodePoolID != "np-basic" || resolved.Zone != "ap-guangzhou-3" || resolved.Storage.DiskType != "CLOUD_BSSD" || resolved.Billing.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" {
+		t.Fatalf("resolved plan=%#v err=%v", resolved, err)
+	}
+
+	rotated := strings.ReplaceAll(profile, "np-basic", "np-basic-rotated")
+	rotated = strings.ReplaceAll(rotated, "SA5.MEDIUM4", "SA5.MEDIUM8")
+	t.Setenv(tencentProviderProfileEnv, rotated)
+	second, err := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: "basic", SizeGB: 10})
+	if err != nil || string(first) != string(second) {
+		t.Fatalf("loaded profile drifted after environment change: first=%s second=%s err=%v", first, second, err)
+	}
+}
+
+func TestTencentProviderProfileRejectsMissingProviderFacts(t *testing.T) {
+	for _, raw := range []string{
+		`{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic","available":true,"compute":{"id":"pool-basic","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"SA5.MEDIUM4"},"nodePoolId":"","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`,
+		`{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic","available":true,"compute":{"id":"pool-basic","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"SA5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":20,"zone":"","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`,
+		`{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic","available":true,"compute":{"id":"pool-basic","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"SA5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":10,"diskType":""},"billing":{"chargeType":"POSTPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`,
+	} {
+		t.Setenv(tencentProviderProfileEnv, raw)
+		provider := NewTencentProvider()
+		if _, err := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: "basic", SizeGB: 10}); !errors.Is(err, ErrProviderPlanUnavailable) {
+			t.Fatalf("invalid profile resolve err=%v", err)
+		}
+	}
+}
+
+func TestTencentProviderRequiresProfileAndFailsClosed(t *testing.T) {
+	t.Setenv(tencentProviderProfileEnv, "")
+	provider := NewTencentProvider()
+	descriptor := provider.Descriptor()
+	if len(descriptor.Plans) != 0 || len(descriptor.Catalog.WorkspacePackages) != 0 || len(descriptor.DefaultComputePoolIDs) != 0 {
+		t.Fatalf("missing profile exposed provider plans: %#v", descriptor)
+	}
+	if _, err := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: "basic", SizeGB: 10}); !errors.Is(err, ErrProviderPlanUnavailable) {
+		t.Fatalf("missing profile resolve err=%v", err)
+	}
+}
+
+func TestTencentProviderDescriptorUsesConfiguredPackageIdentity(t *testing.T) {
+	t.Setenv(tencentProviderProfileEnv, `{"schemaVersion":1,"packages":[{"id":"starter","name":"Starter","available":true,"compute":{"id":"pool-starter","server":"configured","cpu":3,"memoryGb":6,"diskGb":30,"instanceType":"S6.MEDIUM6"},"nodePoolId":"np-starter","maxReplicas":7,"zone":"ap-guangzhou-3","storage":{"sizeGb":30,"diskType":"CLOUD_PREMIUM"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`)
+	provider := NewTencentProvider()
+	descriptor := provider.Descriptor()
+	plan, ok := descriptor.Plans["starter"]
+	if !ok || plan.ID != "pool-starter" || plan.CPU != 3 || plan.MemoryGB != 6 || descriptor.DefaultComputePoolIDs["starter"] != "np-starter" {
+		t.Fatalf("configured starter plan not exposed: %#v", descriptor)
+	}
+	if _, err := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: "starter", SizeGB: 30}); err != nil {
+		t.Fatalf("starter plan resolve err=%v", err)
 	}
 }
 
@@ -368,8 +441,6 @@ func TestTencentProviderMonthlyPreflightRequiresLiveMutationFlag(t *testing.T) {
 func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testing.T) {
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-basic")
 	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_ID", "np-pro")
-	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
-	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS", "12")
 	for _, tc := range []struct {
 		name  string
 		input MonthlyPreflightInput
@@ -379,7 +450,7 @@ func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testin
 		{
 			name: "compute", input: MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"},
 			check: func(t *testing.T, request provisionerRequest) {
-				if request.Action != "capacity_preflight" || request.PackageID != "basic" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-basic-2c4g" || request.Pool.NodePoolID != "np-basic" || request.Pool.InstanceType != "SA5.MEDIUM4" || request.Pool.CPU != 2 || request.Pool.MemoryGB != 4 || request.Pool.DesiredReplicas != 1 || request.Pool.MaxReplicas != 40 {
+				if request.Action != "capacity_preflight" || request.PackageID != "basic" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-basic-2c4g" || request.Pool.NodePoolID != "np-basic" || request.Pool.InstanceType != "SA5.MEDIUM4" || request.Pool.CPU != 2 || request.Pool.MemoryGB != 4 || request.Pool.DesiredReplicas != 1 || request.Pool.MaxReplicas != 20 {
 					t.Fatalf("compute preflight request = %#v", request)
 				}
 			},
@@ -392,7 +463,7 @@ func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testin
 		{
 			name: "pro compute", input: MonthlyPreflightInput{ResourceType: "compute", PackageID: "pro", Zone: "na-siliconvalley-1"},
 			check: func(t *testing.T, request provisionerRequest) {
-				if request.Action != "capacity_preflight" || request.PackageID != "pro" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-pro-8c16g" || request.Pool.NodePoolID != "np-pro" || request.Pool.InstanceType != "SA5.2XLARGE16" || request.Pool.CPU != 8 || request.Pool.MemoryGB != 16 || request.Pool.DesiredReplicas != 1 || request.Pool.MaxReplicas != 12 {
+				if request.Action != "capacity_preflight" || request.PackageID != "pro" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-pro-8c16g" || request.Pool.NodePoolID != "np-pro" || request.Pool.InstanceType != "SA5.2XLARGE16" || request.Pool.CPU != 8 || request.Pool.MemoryGB != 16 || request.Pool.DesiredReplicas != 1 || request.Pool.MaxReplicas != 20 {
 					t.Fatalf("Pro compute preflight request = %#v", request)
 				}
 			},
@@ -665,37 +736,32 @@ func TestTencentProviderPreservesProvisionerTKECapacityDependencyStages(t *testi
 
 func TestTencentProviderMonthlyComputePreflightFailsBeforeProvisionerWithoutPoolConfiguration(t *testing.T) {
 	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
-	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "")
-	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "")
+	t.Setenv(tencentProviderProfileEnv, strings.Replace(testDefaultTencentProviderProfile, `"nodePoolId":"np-basic"`, `"nodePoolId":""`, 1))
 	provider := NewTencentProvider()
 	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
 		t.Fatal("missing exact pool configuration reached provisioner")
 		return provisionerResponse{}, nil
 	}
-	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"}); err == nil || err.Error() != "compute_node_pool_configuration_required" {
+	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"}); err == nil || !errors.Is(err, ErrProviderPlanUnavailable) {
 		t.Fatalf("error=%v", err)
 	}
 }
 
 func TestTencentProviderCustomerComputeRequiresReleaseOwnerResolvedInstanceType(t *testing.T) {
 	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
-	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_ID", "np-pro")
-	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS", "12")
-	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "")
+	t.Setenv(tencentProviderProfileEnv, strings.Replace(testDefaultTencentProviderProfile, `"instanceType":"SA5.2XLARGE16"`, `"instanceType":""`, 1))
 	provider := NewTencentProvider()
 	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
 		t.Fatal("missing release-owner resolved SKU reached provisioner")
 		return provisionerResponse{}, nil
 	}
-	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "pro", Zone: "na-siliconvalley-1"}); err == nil || err.Error() != "compute_instance_type_configuration_required" {
+	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "pro", Zone: "na-siliconvalley-1"}); err == nil || !errors.Is(err, ErrProviderPlanUnavailable) {
 		t.Fatalf("error=%v", err)
 	}
 }
 
 func TestTencentProviderPrepareComputeAllocationPersistsConfiguredPoolLimit(t *testing.T) {
-	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-basic")
-	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_ID", "np-pro")
-	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
+	t.Setenv(tencentProviderProfileEnv, strings.Replace(testDefaultTencentProviderProfile, `"maxReplicas":20`, `"maxReplicas":40`, 1))
 	provider := NewTencentProvider()
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
 		if request.Action != "prepare_compute_allocation" || request.Pool.NodePoolID != "np-basic" || request.Pool.MaxReplicas != 40 {
@@ -978,6 +1044,7 @@ func computeClaimProviderFixture() (ComputeAllocation, ComputeAllocationPreparat
 
 func TestTencentProviderComputeClaimRecoveryProofCombinesTencentAndNodeReadOnlyTruth(t *testing.T) {
 	setProtectedResourceEnv(t)
+	setTencentProviderProfileEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()
 	provider := NewTencentProvider()
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
@@ -1025,6 +1092,7 @@ func TestTencentProviderComputeClaimRecoveryProofClassifiesNodeAndDependencyFail
 		{name: "malformed", wantReason: "identity_mismatch", kubectlRaw: []byte(`{"metadata":{"name":"10.0.0.8"}}`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			setTencentProviderProfileEnv(t)
 			allocation, plan, ownership := computeClaimProviderFixture()
 			provider := NewTencentProvider()
 			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
@@ -1049,6 +1117,7 @@ func TestTencentProviderComputeClaimRecoveryProofClassifiesNodeAndDependencyFail
 
 func TestTencentProviderComputeClaimRecoveryProofPreservesRedactedProviderIdentityFailure(t *testing.T) {
 	setProtectedResourceEnv(t)
+	setTencentProviderProfileEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()
 	provider := NewTencentProvider()
 	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
@@ -1091,6 +1160,7 @@ func TestComputeClaimProviderIdentityFailureDoesNotSynthesizeUnknownDigest(t *te
 
 func TestTencentProviderComputeClaimRecoveryProofRejectsProtectedSystemIdentityBeforeRead(t *testing.T) {
 	setProtectedResourceEnv(t)
+	setTencentProviderProfileEnv(t)
 	for _, test := range []struct {
 		name   string
 		mutate func(*ComputeAllocation, *ComputeAllocationPreparation, *MachineOwnership)
@@ -1142,7 +1212,7 @@ func TestSyncComputeAllocationRestoresClaimedMachineSelector(t *testing.T) {
 		}, nil
 	}
 
-	allocation, err := provider.SyncComputeAllocation(context.Background(), ComputeAllocation{ID: "compute-alpha", PackageID: "basic"})
+	allocation, err := provider.SyncComputeAllocation(context.Background(), ComputeAllocation{ID: "compute-alpha", PackageID: "basic", PoolID: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4", "cpu": "2", "memoryGb": "4"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1159,7 +1229,7 @@ func TestSyncComputeAllocationPreservesPaidIdentityWhenProviderReadbackFails(t *
 		}
 		return provisionerResponse{OK: false, ErrorCode: "compute_provider_partial_identity", ProviderRequestID: "req-sync", ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4"}}, nil
 	}
-	input := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", NodePoolID: "np-basic", MachineName: "machine-alpha", InstanceID: "ins-alpha", CVMInstanceID: "ins-alpha", NodeName: "node-alpha", Deadline: "2026-08-16T00:00:00Z"}
+	input := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", PoolID: "pool-basic-2c4g", NodePoolID: "np-basic", InstanceType: "SA5.MEDIUM4", ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4", "cpu": "2", "memoryGb": "4"}, MachineName: "machine-alpha", InstanceID: "ins-alpha", CVMInstanceID: "ins-alpha", NodeName: "node-alpha", Deadline: "2026-08-16T00:00:00Z"}
 
 	allocation, err := provider.SyncComputeAllocation(context.Background(), input)
 	if err == nil || allocation.ID != input.ID || allocation.InstanceID != input.InstanceID || allocation.MachineName != input.MachineName || allocation.Deadline != input.Deadline || allocation.ProviderRequestID != "req-sync" {
@@ -1920,6 +1990,7 @@ func TestWorkspaceManifestSkipsGatewaySecretWhenCodexKeyMissing(t *testing.T) {
 
 func TestTencentRuntimeCreationIsDeterministicAndUsesActualReadinessAfterApply(t *testing.T) {
 	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
+	setTencentProviderProfileEnv(t)
 	workspaceImage := workspaceImageRepository + "@sha256:" + strings.Repeat("a", 64)
 	provider := NewTencentProvider()
 	var calls [][]string
@@ -1976,11 +2047,11 @@ func TestTencentRuntimeCreationIsDeterministicAndUsesActualReadinessAfterApply(t
 		AttachmentID: "att-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment",
 		RuntimeOperationID: "runtime-unready", ImageID: workspaceImage, GatewaySecretRef: "opl-gateway-acct-alpha", IdempotencyKey: "runtime-unready",
 	}
-	runtime, err := provider.CreateWorkspaceRuntime(context.Background(), input, ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", ServiceName: "opl-compute-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "pvc/opl-storage-alpha-data"})
+	runtime, err := provider.CreateWorkspaceRuntime(context.Background(), input, ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", ServiceName: "opl-compute-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "pvc/opl-storage-alpha-data"})
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
 	}
-	replayed, replayErr := provider.CreateWorkspaceRuntime(context.Background(), input, ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", ServiceName: "opl-compute-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "pvc/opl-storage-alpha-data"})
+	replayed, replayErr := provider.CreateWorkspaceRuntime(context.Background(), input, ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", ServiceName: "opl-compute-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "pvc/opl-storage-alpha-data"})
 	if runtime.Ready || runtime.Status != "unready" || replayErr != nil || replayed.ID != runtime.ID || replayed.Status != "unready" || len(calls) != 10 {
 		t.Fatalf("apply must be deterministic and followed by actual readiness: runtime=%#v replayed=%#v replayErr=%v calls=%#v", runtime, replayed, replayErr, calls)
 	}
@@ -2702,6 +2773,7 @@ func TestTencentProviderCBSResponseLossDiscoversExactDiskWithoutPersistedProvide
 
 func TestTencentProviderAuthoritativeAbsentReadbacksAreTypedAndMutationFree(t *testing.T) {
 	t.Run("compute exact persisted baseline", func(t *testing.T) {
+		setTencentProviderProfileEnv(t)
 		provider := NewTencentProvider()
 		calls := 0
 		present := false

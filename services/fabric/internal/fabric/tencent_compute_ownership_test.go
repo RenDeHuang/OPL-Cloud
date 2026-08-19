@@ -68,6 +68,7 @@ func TestTencentComputeChildPackageBindingWouldChangePersistedOperationIdentity(
 
 func TestTencentTagComputeMachineReplaysDeterministicOwnershipChildrenFromAuthoritativeReadback(t *testing.T) {
 	setProtectedResourceEnv(t)
+	setTencentProviderProfileEnv(t)
 	allocation, prepared, ownership := computeClaimProviderFixture()
 	ownership.ProviderRequestID = "req-ownership"
 	provider := NewTencentProvider()
@@ -151,6 +152,7 @@ func TestTencentOwnershipReservedOrUnknownChildrenReplayWithGETOnly(t *testing.T
 	for _, status := range []string{"started", "failed"} {
 		t.Run(status, func(t *testing.T) {
 			setProtectedResourceEnv(t)
+			setTencentProviderProfileEnv(t)
 			allocation, prepared, ownership := computeClaimProviderFixture()
 			ownership.ProviderRequestID = "req-ownership"
 			provider := NewTencentProvider()
@@ -232,6 +234,7 @@ func TestTencentOwnershipReservedChildrenReplayAuthoritativeAbsenceOnce(t *testi
 	for _, status := range []string{"started", "failed"} {
 		t.Run(status, func(t *testing.T) {
 			setProtectedResourceEnv(t)
+			setTencentProviderProfileEnv(t)
 			allocation, prepared, ownership := computeClaimProviderFixture()
 			ownership.ProviderRequestID = "req-ownership-replay"
 			provider := NewTencentProvider()
@@ -346,6 +349,7 @@ type tencentOwnershipReplayFixture struct {
 func newTencentOwnershipReplayFixture(t *testing.T, suffix string) tencentOwnershipReplayFixture {
 	t.Helper()
 	setProtectedResourceEnv(t)
+	setTencentProviderProfileEnv(t)
 	allocation, prepared, ownership := computeClaimProviderFixture()
 	ownership.ProviderRequestID = "req-ownership-" + suffix
 	provider := NewTencentProvider()
@@ -628,6 +632,7 @@ func TestTencentOwnershipReplayConcurrentResumeHasOneWriter(t *testing.T) {
 
 func TestTencentWorkspaceLaunchComputeReplayReusesOwnershipCoreWithoutRepeatedMutation(t *testing.T) {
 	setProtectedResourceEnv(t)
+	setTencentProviderProfileEnv(t)
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "20")
 	provider := NewTencentProvider()
 	provider.convergenceWait = func(context.Context, int) error { return nil }
@@ -640,13 +645,15 @@ func TestTencentWorkspaceLaunchComputeReplayReusesOwnershipCoreWithoutRepeatedMu
 		SchemaVersion: 1, LaunchOperationID: "launch-workspace-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image, RequestHash: launchHash,
 	}
-	admission := workspaceLaunchPreflightAdmission{SchemaVersion: 1, Input: preflightInput, ProviderProfileRef: "tencent-tke"}
-	admission.BindingRef = "fabric-preflight:" + hashInput(admission)
+	admission := workspaceLaunchPreflightAdmission{SchemaVersion: 1, Input: preflightInput, ProviderProfileRef: "tencent-tke",
+		CanonicalProviderPlan: json.RawMessage(`{"packageId":"basic","providerProfileRef":"tencent-tke","schemaVersion":1,"spec":{"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"},"compute":{"cpu":2,"diskGb":10,"id":"pool-basic-2c4g","instanceType":"SA5.MEDIUM4","memoryGb":4,"server":"2c4g"},"maxReplicas":20,"nodePoolId":"np-basic","packageId":"basic","storage":{"diskType":"CLOUD_BSSD","sizeGb":10},"zone":"ap-guangzhou-3"}}`)}
+	admission.SpecDigest = providerPlanDigest(admission.CanonicalProviderPlan)
+	admission.ProviderBindingRef = workspaceLaunchPreflightBindingRef(admission)
 	if err := service.persistWorkspaceLaunchPreflight(context.Background(), admission); err != nil {
 		t.Fatal(err)
 	}
 	input := workspaceLaunchStageFixtureInput(
-		WorkspaceLaunchPreflight{BindingRef: admission.BindingRef}, image, launchHash,
+		WorkspaceLaunchPreflight{ProviderBindingRef: admission.ProviderBindingRef, SpecDigest: admission.SpecDigest}, image, launchHash,
 		"ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{},
 	)
 	input.Binding.LaunchOperationID = preflightInput.LaunchOperationID
@@ -728,14 +735,10 @@ func TestTencentWorkspaceLaunchComputeReplayReusesOwnershipCoreWithoutRepeatedMu
 	if _, err := service.EnsureWorkspaceLaunchStage(context.Background(), input); err == nil || err.Error() != "readback temporarily unavailable" {
 		t.Fatalf("first ensure error=%v", err)
 	}
+	// The Provider Profile was captured in the immutable launch plan. Changing
+	// deployment environment variables after the first attempt must not alter
+	// the replay binding or trigger a second resource mutation.
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-basic-rotated")
-	if _, err := service.EnsureWorkspaceLaunchStage(context.Background(), input); !errors.Is(err, ErrLaunchStageBindingConflict) {
-		t.Fatalf("NodePool configuration drift err=%v", err)
-	}
-	if prepareCalls != 1 || scaleCalls != 1 || tagCalls != 0 || patchCalls != 1 || truthCalls != 1 || readCalls != 2 {
-		t.Fatalf("configuration drift repeated API call: prepareCalls=%d scaleCalls=%d tagCalls=%d patchCalls=%d truthCalls=%d readCalls=%d", prepareCalls, scaleCalls, tagCalls, patchCalls, truthCalls, readCalls)
-	}
-	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", prepared.NodePoolID)
 	result, err := service.EnsureWorkspaceLaunchStage(context.Background(), input)
 	if err != nil || result.State != "ready" || result.Resources.ComputeAllocationID != computeID || result.Resources.ComputeBindingRef != input.Binding.FabricOperationID {
 		t.Fatalf("replayed result=%#v err=%v", result, err)
@@ -744,7 +747,7 @@ func TestTencentWorkspaceLaunchComputeReplayReusesOwnershipCoreWithoutRepeatedMu
 	if err != nil || ownership.Status != "active" || ownership.InstanceID != allocation.InstanceID || ownership.NodeName != allocation.NodeName {
 		t.Fatalf("ownership=%#v err=%v", ownership, err)
 	}
-	if prepareCalls != 1 || scaleCalls != 1 || tagCalls != 0 || patchCalls != 1 || truthCalls != 2 || readCalls != 3 {
+	if prepareCalls != 1 || scaleCalls != 1 || tagCalls != 0 || patchCalls != 1 || truthCalls != 2 || readCalls != 2 {
 		t.Fatalf("prepareCalls=%d scaleCalls=%d tagCalls=%d patchCalls=%d truthCalls=%d readCalls=%d", prepareCalls, scaleCalls, tagCalls, patchCalls, truthCalls, readCalls)
 	}
 	assertTencentOwnershipChildOperations(t, store, input.Binding, allocation)
@@ -960,6 +963,7 @@ func TestTencentWorkspaceLaunchComputeReadMissingOwnershipFailsClosedOnAuthorita
 
 func TestTencentWorkspaceLaunchComputeStateUsesPersistedNodePoolAfterConfigurationDrift(t *testing.T) {
 	setProtectedResourceEnv(t)
+	setTencentProviderProfileEnv(t)
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "20")
 	allocation, prepared, ownership := computeClaimProviderFixture()
 	parent := WorkspaceLaunchStageBinding{
@@ -1028,6 +1032,7 @@ func TestTencentWorkspaceLaunchComputeStateRejectsPersistedPackageOrNodePoolDrif
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			setProtectedResourceEnv(t)
+			setTencentProviderProfileEnv(t)
 			allocation, prepared, ownership := computeClaimProviderFixture()
 			parent := WorkspaceLaunchStageBinding{
 				SchemaVersion: 1, LaunchOperationID: "launch-readback-drift", AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
@@ -1078,6 +1083,7 @@ func TestTencentOwnershipTargetOwnedRejectsAuthoritativePoolOrNodePoolDrift(t *t
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			setProtectedResourceEnv(t)
+			setTencentProviderProfileEnv(t)
 			allocation, prepared, ownership := computeClaimProviderFixture()
 			provider := NewTencentProvider()
 			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {

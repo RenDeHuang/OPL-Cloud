@@ -26,11 +26,13 @@ func newTencentWorkspaceLaunchService(t *testing.T) (*Service, *MemoryOperationS
 		},
 		ProviderProfileRef: "tencent-tke",
 	}
-	admission.BindingRef = "fabric-preflight:" + hashInput(admission)
+	admission.CanonicalProviderPlan = json.RawMessage(`{"packageId":"basic","providerProfileRef":"tencent-tke","schemaVersion":1,"spec":{"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"},"compute":{"cpu":2,"diskGb":10,"id":"pool-basic-2c4g","instanceType":"SA5.MEDIUM4","memoryGb":4,"server":"2c4g"},"maxReplicas":20,"nodePoolId":"np-basic","packageId":"basic","storage":{"diskType":"CLOUD_BSSD","sizeGb":10},"zone":"ap-guangzhou-3"}}`)
+	admission.SpecDigest = providerPlanDigest(admission.CanonicalProviderPlan)
+	admission.ProviderBindingRef = workspaceLaunchPreflightBindingRef(admission)
 	if err := service.persistWorkspaceLaunchPreflight(context.Background(), admission); err != nil {
 		t.Fatal(err)
 	}
-	return service, store, provider, WorkspaceLaunchPreflight{BindingRef: admission.BindingRef}, image, launchHash
+	return service, store, provider, WorkspaceLaunchPreflight{ProviderBindingRef: admission.ProviderBindingRef, SpecDigest: admission.SpecDigest}, image, launchHash
 }
 
 func seedTencentWorkspaceLaunchStage(t *testing.T, store OperationStore, preflight WorkspaceLaunchPreflight, image, launchHash, stage, action string, requestResources, resultResources WorkspaceLaunchResources, state tencentWorkspaceLaunchState, gatewayKeyID int64) {

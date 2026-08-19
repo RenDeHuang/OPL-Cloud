@@ -272,11 +272,29 @@ async function withTemporaryPostgres(callback) {
   }
 }
 
+export function summarizeGoTestFailures(events) {
+  const failedTests = new Map();
+  const failedPackages = new Set();
+  for (const event of events) {
+    if (event?.Action !== "fail" || typeof event.Package !== "string" || !event.Package) continue;
+    if (typeof event.Test === "string" && event.Test) {
+      failedTests.set(`${event.Package}\0${event.Test}`, { package: event.Package, name: event.Test });
+    } else {
+      failedPackages.add(event.Package);
+    }
+  }
+  const values = [...failedTests.values()];
+  const tests = values.filter((candidate) => !values.some((other) =>
+    other.package === candidate.package && other.name.startsWith(`${candidate.name}/`)
+  )).sort((left, right) => left.package.localeCompare(right.package) || left.name.localeCompare(right.name));
+  return { tests, packages: [...failedPackages].sort() };
+}
+
 function runGoJSONWithoutSkips(args, { cwd, env }) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn("go", args, { cwd, env, stdio: ["ignore", "pipe", "inherit"] });
     let pending = "";
-    let failed = 0;
+    const failureEvents = [];
     let skipped = 0;
     let outputLog = "";
     let parseError;
@@ -286,7 +304,7 @@ function runGoJSONWithoutSkips(args, { cwd, env }) {
       if (!line.trim()) return;
       try {
         const event = JSON.parse(line);
-        if (event.Action === "fail") failed += 1;
+        if (event.Action === "fail") failureEvents.push(event);
         if (event.Action === "skip") skipped += 1;
         if (event.Action === "pass" && !event.Test && event.Package) {
           passedPackages.add(event.Package);
@@ -309,11 +327,17 @@ function runGoJSONWithoutSkips(args, { cwd, env }) {
     child.on("error", reject);
     child.on("close", (code, signal) => {
       consume(pending);
+      const failures = summarizeGoTestFailures(failureEvents);
+      const failed = failures.tests.length + failures.packages.length;
       if (parseError) {
         reject(new Error(`invalid go test JSON output: ${parseError.message}`));
-      } else if (code !== 0 || failed > 0 || skipped > 0) {
+      } else if (code !== 0 || failures.tests.length > 0 || failures.packages.length > 0 || skipped > 0) {
         if (outputLog) process.stderr.write(outputLog.slice(-2_000_000));
-        reject(new Error(`Go FAIL ${failed} SKIP ${skipped}; process=${signal || code}`));
+        const details = [
+          failures.tests.length > 0 ? `tests=${failures.tests.map((entry) => `${entry.package}:${entry.name}`).join(",")}` : "",
+          failures.packages.length > 0 ? `packages=${failures.packages.join(",")}` : ""
+        ].filter(Boolean).join("; ");
+        reject(new Error(`Go FAIL tests=${failures.tests.length} packages=${failures.packages.length} SKIP ${skipped}; process=${signal || code}${details ? `; ${details}` : ""}`));
       } else {
         process.stdout.write(`Go packages passed: ${passedPackages.size}; skipped: 0\n`);
         resolvePromise({

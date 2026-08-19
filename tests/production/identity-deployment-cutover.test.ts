@@ -4,7 +4,13 @@ import test from "node:test";
 
 import { productionManifestRequiredEnv } from "../../services/control-plane/ops/production-manifest.ts";
 
-const retiredInput = "OPL_CONSOLE_USERS_JSON";
+const retiredInputs = [
+  "OPL_CONSOLE_USERS_JSON",
+  "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+  "OPL_PRO_COMPUTE_NODE_POOL_ID",
+  "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS",
+  "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"
+];
 
 test("Cloud product inputs no longer inject the retired local Console user seed", async () => {
   const paths = [
@@ -13,7 +19,12 @@ test("Cloud product inputs no longer inject the retired local Console user seed"
     "services/fabric/ops/production-readiness.ts"
   ];
   for (const path of paths) {
-    assert.doesNotMatch(await readFile(path, "utf8"), new RegExp(retiredInput), path);
+    const source = await readFile(path, "utf8");
+    for (const retiredInput of retiredInputs) {
+      assert.doesNotMatch(source, new RegExp(retiredInput), `${path}:${retiredInput}`);
+    }
   }
-  assert.equal(productionManifestRequiredEnv().includes(retiredInput), false);
+  for (const retiredInput of retiredInputs) {
+    assert.equal(productionManifestRequiredEnv().includes(retiredInput), false, retiredInput);
+  }
 });

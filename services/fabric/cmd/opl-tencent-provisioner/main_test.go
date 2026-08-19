@@ -120,6 +120,7 @@ func protectedResourceEnv() map[string]string {
 		"OPL_SYSTEM_COMPUTE_NODE_NAME":             "10.66.0.42",
 		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE":          "NativeCVM",
 		"OPL_SYSTEM_COMPUTE_CVM_ID":                "ins-system",
+		tencentProviderProfileEnv:                  `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic","available":true,"compute":{"id":"pool-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"S5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}},{"id":"pro","name":"Pro","available":true,"compute":{"id":"pool-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"S5.2XLARGE16"},"nodePoolId":"np-pro","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":100,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`,
 		"OPL_BASIC_COMPUTE_NODE_POOL_ID":           "np-basic",
 		"OPL_PRO_COMPUTE_NODE_POOL_ID":             "np-pro",
 		"OPL_BASIC_COMPUTE_INSTANCE_TYPE":          basicResolvedInstanceType,
@@ -1931,7 +1932,7 @@ func TestWorkspaceSKUInventoryRedactsProviderErrors(t *testing.T) {
 	}
 }
 
-func TestBootstrapComputeNodePoolsDryRunUsesRecommendedWorkspaceSKUs(t *testing.T) {
+func TestBootstrapComputeNodePoolsDryRunUsesProviderProfileSKUs(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 	env := workspaceInventoryEnv()
@@ -1944,8 +1945,8 @@ func TestBootstrapComputeNodePoolsDryRunUsesRecommendedWorkspaceSKUs(t *testing.
 	if !response.Ok || response.Status != "missing" || response.MutationCount != 0 || len(response.NodePools) != 2 {
 		t.Fatalf("bootstrap dry-run=%#v", response)
 	}
-	if response.NodePools[0].InstanceType != "SA5.MEDIUM4" || response.NodePools[1].InstanceType != "SA5.2XLARGE16" || response.NodePools[0].MaxReplicas != 50 || response.NodePools[1].MaxReplicas != 50 {
-		t.Fatalf("recommended package specs=%#v", response.NodePools)
+	if response.NodePools[0].InstanceType != basicResolvedInstanceType || response.NodePools[1].InstanceType != proResolvedInstanceType || response.NodePools[0].MaxReplicas != 50 || response.NodePools[1].MaxReplicas != 50 {
+		t.Fatalf("provider profile package specs=%#v", response.NodePools)
 	}
 	if len(tkeAPI.createNodePoolRequests) != 0 {
 		t.Fatalf("dry-run created NodePool: %#v", tkeAPI.createNodePoolRequests)
@@ -1988,7 +1989,7 @@ func TestBootstrapComputeNodePoolsRevalidatesSelectedSKUImmediatelyBeforeMutatio
 	env := bootstrapEnv()
 	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
 	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
-	env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = "S5.MEDIUM4-NO-LONGER-SELLING"
+	env[tencentProviderProfileEnv] = strings.Replace(env[tencentProviderProfileEnv], basicResolvedInstanceType, "S5.MEDIUM4-NO-LONGER-SELLING", 1)
 
 	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
 
@@ -2047,33 +2048,33 @@ func TestBootstrapComputeNodePoolsInventoriesAllPoolsBeforeMutation(t *testing.T
 	}
 }
 
-func TestBootstrapComputeNodePoolsRequiresResolvedBasicInstanceTypeBeforeMutation(t *testing.T) {
+func TestBootstrapComputeNodePoolsRequiresProviderProfileBeforeMutation(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	env := bootstrapEnv()
-	delete(env, "OPL_BASIC_COMPUTE_INSTANCE_TYPE")
+	delete(env, tencentProviderProfileEnv)
 
 	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, env, newBootstrapTencentSDKClient(tkeAPI))
 
-	if response.Ok || response.ErrorCode != "instance_type_required" {
-		t.Fatalf("missing approved Basic instance type response=%#v", response)
+	if response.Ok || response.ErrorCode != "workspace_sku_inventory_invalid" {
+		t.Fatalf("missing Provider Profile response=%#v", response)
 	}
 	if len(tkeAPI.createNodePoolRequests) != 0 {
-		t.Fatalf("missing approved Basic instance type must perform zero CreateNodePool calls: %#v", tkeAPI.createNodePoolRequests)
+		t.Fatalf("missing Provider Profile must perform zero CreateNodePool calls: %#v", tkeAPI.createNodePoolRequests)
 	}
 }
 
-func TestBootstrapComputeNodePoolsRequiresResolvedProInstanceTypeBeforeMutation(t *testing.T) {
+func TestBootstrapComputeNodePoolsRejectsProfileWithoutInstanceTypeBeforeMutation(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	env := bootstrapEnv()
-	delete(env, "OPL_PRO_COMPUTE_INSTANCE_TYPE")
+	env[tencentProviderProfileEnv] = strings.Replace(env[tencentProviderProfileEnv], proResolvedInstanceType, "", 1)
 
 	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, env, newBootstrapTencentSDKClient(tkeAPI))
 
-	if response.Ok || response.ErrorCode != "instance_type_required" {
-		t.Fatalf("missing approved Pro instance type response=%#v", response)
+	if response.Ok || response.ErrorCode != "workspace_sku_inventory_invalid" {
+		t.Fatalf("missing Provider Profile instance type response=%#v", response)
 	}
 	if len(tkeAPI.createNodePoolRequests) != 0 {
-		t.Fatalf("missing Pro instance type must block every mutation: %#v", tkeAPI.createNodePoolRequests)
+		t.Fatalf("invalid Provider Profile must block every mutation: %#v", tkeAPI.createNodePoolRequests)
 	}
 }
 
@@ -2220,7 +2221,7 @@ func TestBootstrapComputeNodePoolsReportsPartialStateAndRetryOnlyCreatesMissingP
 	}
 }
 
-func TestBootstrapComputeNodePoolsRetryPreservesExistingPoolWhenRecommendationChanges(t *testing.T) {
+func TestBootstrapComputeNodePoolsRetryPreservesProfileSKUsWhenInventoryRecommendationChanges(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system"), createNodePoolErrAt: 2}
 	client := newBootstrapTencentSDKClient(tkeAPI)
 	env := bootstrapEnv()
@@ -2236,8 +2237,6 @@ func TestBootstrapComputeNodePoolsRetryPreservesExistingPoolWhenRecommendationCh
 		workspaceSKUItem("C6.2XLARGE16", 8, 16, "PREPAID", "SELL", 130),
 		workspaceSKUItem(proResolvedInstanceType, 8, 16, "PREPAID", "SELL", 160),
 	}
-	env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = "C6.MEDIUM4"
-	env["OPL_PRO_COMPUTE_INSTANCE_TYPE"] = "C6.2XLARGE16"
 	tkeAPI.createNodePoolErrAt = 0
 
 	second := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, env, client)
@@ -2248,8 +2247,8 @@ func TestBootstrapComputeNodePoolsRetryPreservesExistingPoolWhenRecommendationCh
 	if second.NodePools[0].InstanceType != basicResolvedInstanceType || second.NodePools[0].Status != "registered" {
 		t.Fatalf("existing Basic pool was not preserved: %#v", second.NodePools[0])
 	}
-	if second.NodePools[1].InstanceType != "C6.2XLARGE16" || second.NodePools[1].Status != "created" {
-		t.Fatalf("missing Pro pool did not use the current recommendation: %#v", second.NodePools[1])
+	if second.NodePools[1].InstanceType != proResolvedInstanceType || second.NodePools[1].Status != "created" {
+		t.Fatalf("missing Pro pool did not preserve the Provider Profile SKU: %#v", second.NodePools[1])
 	}
 	if len(tkeAPI.createNodePoolRequests) != 3 || stringValue(tkeAPI.createNodePoolRequests[2].Name) != "pool-pro-8c16g" {
 		t.Fatalf("retry must only create missing Pro pool: %#v", tkeAPI.createNodePoolRequests)
@@ -2334,9 +2333,9 @@ func TestBootstrapComputeNodePoolsDryRunReportsMissingWithoutMutation(t *testing
 	}
 	for _, raw := range report["nodePools"].([]any) {
 		pool := raw.(map[string]any)
-		if pool["maxReplicasSource"] != "workflow_input" || pool["maxReplicasDecision"] != "release_owner_approval_required" ||
+		if pool["maxReplicasSource"] != "provider_profile" || pool["maxReplicasDecision"] != "deployment_profile_approved" ||
 			pool["maxReplicasConstraint"] != "positive_integer_subject_to_current_tencent_account_region_quota" ||
-			pool["maxReplicasRecommendation"] != "release_owner_selects_after_inventory_and_quota_review" {
+			pool["maxReplicasRecommendation"] != "deployment_owner_updates_provider_profile_after_inventory_and_quota_review" {
 			t.Fatalf("dry-run maxReplicas policy missing: %#v", pool)
 		}
 	}
@@ -2351,6 +2350,8 @@ func bootstrapEnv() map[string]string {
 	env["RUN_TENCENT_NODE_POOL_BOOTSTRAP"] = "1"
 	env["RUN_TENCENT_NODE_POOL_BOOTSTRAP_CONFIRMATION"] = nodePoolBootstrapMutationConfirmation
 	env["TENCENT_CVM_SUBNET_ID"] = "subnet-workspace"
+	env["TENCENT_CVM_SYSTEM_DISK_TYPE"] = "CLOUD_BSSD"
+	env["TENCENT_CVM_SYSTEM_DISK_SIZE_GB"] = "50"
 	env["OPL_TENCENT_ZONE"] = "na-siliconvalley-1"
 	env["TENCENT_CVM_SECURITY_GROUP_IDS"] = "sg-workspace"
 	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
@@ -2359,6 +2360,7 @@ func bootstrapEnv() map[string]string {
 	env["OPL_PRO_COMPUTE_NODE_POOL_ID"] = ""
 	env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = basicResolvedInstanceType
 	env["OPL_PRO_COMPUTE_INSTANCE_TYPE"] = proResolvedInstanceType
+	env[tencentProviderProfileEnv] = `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic","available":true,"compute":{"id":"pool-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"S5.MEDIUM4"},"nodePoolId":"","maxReplicas":50,"zone":"na-siliconvalley-1","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}},{"id":"pro","name":"Pro","available":true,"compute":{"id":"pool-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"S5.2XLARGE16"},"nodePoolId":"","maxReplicas":50,"zone":"na-siliconvalley-1","storage":{"sizeGb":100,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`
 	return env
 }
 
@@ -2376,6 +2378,7 @@ func workspaceInventoryEnv() map[string]string {
 	env := protectedResourceEnv()
 	env["TENCENTCLOUD_REGION"] = "na-siliconvalley"
 	env["OPL_TENCENT_ZONE"] = "na-siliconvalley-1"
+	env[tencentProviderProfileEnv] = `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic","available":true,"compute":{"id":"pool-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"S5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":50,"zone":"na-siliconvalley-1","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}},{"id":"pro","name":"Pro","available":true,"compute":{"id":"pool-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"S5.2XLARGE16"},"nodePoolId":"np-pro","maxReplicas":50,"zone":"na-siliconvalley-1","storage":{"sizeGb":100,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`
 	env["TENCENT_CVM_SUBNET_ID"] = "subnet-workspace"
 	env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = ""
 	env["OPL_PRO_COMPUTE_INSTANCE_TYPE"] = ""

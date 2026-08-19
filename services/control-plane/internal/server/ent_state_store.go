@@ -74,7 +74,15 @@ func newPostgresEntStateStore(databaseURL string) (StateStore, error) {
 	driver := entsql.OpenDB(dialect.Postgres, db)
 	client := controlplaneent.NewClient(controlplaneent.Driver(driver))
 	ctx := context.Background()
-	if err := postgresmigrate.Apply(ctx, db, "control-plane", []postgresmigrate.Migration{
+	if err := postgresmigrate.Apply(ctx, db, "control-plane", controlPlaneMigrations(client, driver)); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return &postgresEntStateStore{client: client}, nil
+}
+
+func controlPlaneMigrations(client *controlplaneent.Client, driver dialect.Driver) []postgresmigrate.Migration {
+	return []postgresmigrate.Migration{
 		{Version: "202607140001_sub2api_monthly_hard_cut", Run: func(ctx context.Context) error {
 			return controlplanemigrations.Apply(ctx, driver)
 		}},
@@ -129,11 +137,7 @@ func newPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		{Version: "202608180001_workspace_purchase_eligibility", Run: func(ctx context.Context) error {
 			return controlplanemigrations.ApplyWorkspacePurchaseEligibility(ctx, driver)
 		}},
-	}); err != nil {
-		_ = client.Close()
-		return nil, err
 	}
-	return &postgresEntStateStore{client: client}, nil
 }
 
 func validateAndNormalizeLegacyMemberships(ctx context.Context, driver dialect.Driver) error {
