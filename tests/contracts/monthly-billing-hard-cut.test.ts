@@ -244,6 +244,17 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		"runtimeServiceName",
 		"gatewaySecretRef"
 	];
+	const historicalChargedFulfillmentFields = [
+		"resourceType",
+		"resourceId",
+		"computeAllocationId",
+		"storageId",
+		"attachmentId",
+		"runtimeId",
+		"workspaceApiKeyId",
+		"workspaceKeyFingerprint",
+		"runtimeServiceName"
+	];
 	assert.deepEqual(evidence.workspaceLaunchReceiptV1, {
 		state: "current",
 		authority: "unique_current_workspace_launch_receipt_union",
@@ -284,6 +295,39 @@ test("receipt contract exposes monthly product behavior only", async () => {
 				cost: "must_be_empty",
 				financialFields: "forbidden"
 			}
+		},
+		historicalChargedReadOnlyMatcher: {
+			type: "billing.workspace_purchased.v1",
+			status: "completed",
+			surface: "control_plane",
+			topLevelIdentity: {
+				requiredFields: ["accountId", "workspaceId"],
+				allowedFields: ["accountId", "workspaceId"],
+				extraFields: "reject"
+			},
+			requestId: "launchOperationId",
+			owner: {
+				requiredFields: ["accountId", "workspaceId", "ownerUserId"],
+				allowedFields: ["accountId", "workspaceId", "ownerUserId"],
+				extraFields: "reject"
+			},
+			cost: "required_exact_workspace_monthly_billing_cost",
+			costSchemaContract: "opl-cloud-evidence-ledger-contract.json#workspaceMonthlyBillingReceiptV1",
+			debit: "exact_sub2api_user_redeem_code_and_total_usd_micros",
+			execution: {
+				requiredFields: historicalChargedFulfillmentFields,
+				allowedFields: historicalChargedFulfillmentFields,
+				extraFields: "reject",
+				constraints: {
+					resourceType: "workspace",
+					resourceId: "equals_workspaceId"
+				},
+				providerSpecificFields: false
+			},
+			currentOrHistoricalCardinality: "exactly_one",
+			mixedOrDuplicate: "reject",
+			existingReceiptsReadable: true,
+			newWritesAllowed: false
 		},
 		retry: "receipt_only_after_activation_without_repeating_key_debit_fabric_or_activation"
 	});

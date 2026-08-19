@@ -314,6 +314,59 @@
         "financialFields": "forbidden"
       }
     },
+    "historicalChargedReadOnlyMatcher": {
+      "type": "billing.workspace_purchased.v1",
+      "status": "completed",
+      "surface": "control_plane",
+      "topLevelIdentity": {
+        "requiredFields": ["accountId", "workspaceId"],
+        "allowedFields": ["accountId", "workspaceId"],
+        "extraFields": "reject"
+      },
+      "requestId": "launchOperationId",
+      "owner": {
+        "requiredFields": ["accountId", "workspaceId", "ownerUserId"],
+        "allowedFields": ["accountId", "workspaceId", "ownerUserId"],
+        "extraFields": "reject"
+      },
+      "cost": "required_exact_workspace_monthly_billing_cost",
+      "costSchemaContract": "opl-cloud-evidence-ledger-contract.json#workspaceMonthlyBillingReceiptV1",
+      "debit": "exact_sub2api_user_redeem_code_and_total_usd_micros",
+      "execution": {
+        "requiredFields": [
+          "resourceType",
+          "resourceId",
+          "computeAllocationId",
+          "storageId",
+          "attachmentId",
+          "runtimeId",
+          "workspaceApiKeyId",
+          "workspaceKeyFingerprint",
+          "runtimeServiceName"
+        ],
+        "allowedFields": [
+          "resourceType",
+          "resourceId",
+          "computeAllocationId",
+          "storageId",
+          "attachmentId",
+          "runtimeId",
+          "workspaceApiKeyId",
+          "workspaceKeyFingerprint",
+          "runtimeServiceName"
+        ],
+        "extraFields": "reject",
+        "constraints": {
+          "resourceType": "workspace",
+          "resourceId": "equals_workspaceId"
+        },
+        "providerSpecificFields": false
+      },
+      "currentOrHistoricalCardinality": "exactly_one",
+      "mixedOrDuplicate": "reject",
+      "existingReceiptsReadable": true,
+      "newWritesAllowed": false
+    },
     "retry": "receipt_only_after_activation_without_repeating_key_debit_fabric_or_activation"
   },
   "workspaceMonthlyBillingReceiptV1": {
