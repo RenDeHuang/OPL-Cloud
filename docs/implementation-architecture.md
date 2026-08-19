@@ -499,6 +499,15 @@ Docker daemon NCPU and MemTotal facts, validates every OPL Runtime label and
 cgroup readback, and sums durable Runtime reservations. The reservation is
 persisted before Docker run. It remains charged after restart or an uncertain
 Docker response and is released only after container absence is read back.
+An existing reservation retains its admitted CPU and memory facts independently
+of later Provider Profile changes and must match the live labels and cgroup
+limits exactly. A missing reservation is recovered only from complete positive
+live cgroup limits, one canonical Runtime name, and deterministic identity; an
+unbounded legacy Runtime is not inferred from the current profile. Public
+Local-Docker Runtime status uses the same locked reservation reconciliation
+before its storage, Secret, network, and health readback. Lock acquisition
+honors the caller context so status and mutation deadlines remain bounded while
+another Local-Docker operation owns the storage-root lock.
 Malformed capacity evidence, unknown OPL Runtime, drift, inventory errors, and
 arithmetic overflow reject admission. This is an OPL-managed reservation
 boundary, so a shared Docker daemon must reserve capacity for non-OPL workloads

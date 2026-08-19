@@ -319,13 +319,33 @@ Sub2API management origin and credentials are never exposed to the browser.
   same durable storage-root flock. Runtime creation reads Docker host CPU and
   memory capacity, persists a Runtime reservation before dispatch, validates
   labels and cgroup HostConfig readback, and releases the reservation only after
-  container-absence readback. Storage admission sums active, staging, and
-  tombstoned SizeGB reservations against the effective filesystem capacity while
-  retaining the immediate writable-block check. Unknown inventory, malformed
+  container-absence readback. Existing Runtime inventory uses the durable
+  reservation's exact admitted CPU and memory rather than reinterpreting its
+  package through the current Provider Profile; a missing reservation is
+  recovered only from one canonical identity and complete positive live limits,
+  while an unbounded legacy Runtime fails closed. Public Local-Docker Runtime
+  status uses the same context-bounded locked reservation facts. Storage
+  admission sums active, staging, and tombstoned SizeGB reservations against the
+  effective filesystem capacity while retaining the immediate writable-block
+  check. Unknown inventory, malformed
   evidence, drift, and overflow fail closed. Focused tests cover strict capacity
-  evidence, aggregate boundaries, metadata/tombstone deduplication, stale
-  reservation recovery, and overflow; Linux project-quota enforcement remains
-  qualified through the existing Linux workflow.
+  evidence, Provider Profile drift, exact live reservation recovery, aggregate
+  boundaries, metadata/tombstone deduplication, stale reservation recovery, and
+  overflow; Linux project-quota enforcement remains qualified through the
+  existing Linux workflow.
+- The 2026-08-19 Runtime reservation reconciliation slice passes focused Fabric
+  tests, focused `-race`, `go vet`, `git diff --check`, and
+  `npm run verify:local`. The four pre-reservation test Runtimes were retired as
+  a separately authorized local-environment operation; this source slice does
+  not migrate, archive, or delete historical resources. After that retirement,
+  `npm run verify:local:full` proceeds through the Local-Docker inventory instead
+  of failing with `local_docker_runtime_reservation_inventory_invalid`. Two full
+  aggregate attempts are not yet green: one failed only
+  `TestAnnouncementPublishReplaySurvivesServerRestart`, and the next failed only
+  `TestLocalDockerWorkspaceCorePath`; each exact test passed when repeated alone,
+  including the complete real-Docker Workspace path. Final integration must
+  still obtain one green aggregate full gate rather than treating those focused
+  reruns as equivalent evidence.
 - Create and Resume now enter one durable Control Plane Reconciler. Its resource
   stages call the typed Fabric HTTP contract and consume the same six-field
   request-hash vectors as Fabric. Activation readback uses the canonical

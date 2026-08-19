@@ -163,7 +163,7 @@ func TestLocalDockerProviderFactsParityAndReadOnly(t *testing.T) {
 	}
 	storageRoot := localDockerStorageTestRoot(t)
 	provider := newLocalDockerProvider(localDockerStorageTestConfig(storageRoot), runner)
-	paths, err := provider.ensureStorageDirectories(localDockerStorageMetadata{
+	paths, err := provider.ensureStorageDirectories(context.Background(), localDockerStorageMetadata{
 		SchemaVersion: localDockerStorageMetadataSchemaVersion, StorageID: volume.ID, AccountID: volume.AccountID, WorkspaceID: volume.WorkspaceID, SizeGB: volume.SizeGB,
 	}, 10)
 	if err != nil {

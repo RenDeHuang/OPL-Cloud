@@ -91,8 +91,9 @@ func TestLocalDockerProviderProfileControlsBasicAndProAvailability(t *testing.T)
 }
 
 type localDockerCapacityRunner struct {
-	info      []byte
-	container dockerContainerInspect
+	info                        []byte
+	container                   dockerContainerInspect
+	excludeFromRuntimeInventory bool
 }
 
 func (r *localDockerCapacityRunner) Run(_ context.Context, _ []byte, args ...string) ([]byte, error) {
@@ -100,7 +101,7 @@ func (r *localDockerCapacityRunner) Run(_ context.Context, _ []byte, args ...str
 	case len(args) == 3 && args[0] == "info":
 		return append([]byte(nil), r.info...), nil
 	case len(args) == 8 && args[0] == "container" && args[1] == "ls" && args[5] == "label=opl.fabric.kind=runtime":
-		if r.container.ID == "" {
+		if r.container.ID == "" || r.excludeFromRuntimeInventory {
 			return nil, nil
 		}
 		return json.Marshal(dockerObjectInventoryRow{ID: r.container.ID, Names: r.container.Name})
@@ -156,6 +157,151 @@ func TestLocalDockerRuntimeCapacityCountsDurableReservations(t *testing.T) {
 	over := localDockerRuntimeReservation{SchemaVersion: 1, WorkspaceID: "ws-over", ResourceID: "rt-over", PackageID: "basic", NanoCPUs: 3_000_000_000, MemoryBytes: 5_368_709_120}
 	if err := provider.localDockerRuntimeCapacityAdmission(context.Background(), root, over); err == nil || err.Error() != "local_docker_runtime_capacity_insufficient" {
 		t.Fatalf("over-capacity err=%v", err)
+	}
+}
+
+func TestLocalDockerRuntimeCapacityUsesDurableReservationAcrossProfileDrift(t *testing.T) {
+	rootPath := localDockerStorageTestRoot(t)
+	workspaceID := "ws-existing"
+	resourceID := localRuntimeID(workspaceID)
+	runner := &localDockerCapacityRunner{info: []byte("{\"NCPU\":8,\"MemTotal\":17179869184}")}
+	runner.container.ID, runner.container.Name = "container-existing", localRuntimeName(workspaceID)
+	runner.container.Config.Labels = map[string]string{
+		"opl.fabric.provider": "local-docker", "opl.fabric.kind": "runtime", "opl.workspace.id": workspaceID,
+		"opl.resource.id": resourceID, localDockerComputePackageLabel: "basic",
+	}
+	runner.container.HostConfig.NanoCPUs, runner.container.HostConfig.Memory, runner.container.HostConfig.MemorySwap = 2_000_000_000, 4_294_967_296, 4_294_967_296
+	profile := []byte(`{"schemaVersion":1,"packages":[{"id":"basic","name":"Current Basic","available":true,"compute":{"id":"current-basic","server":"4c8g","cpu":4,"memoryGb":8,"instanceType":"current-4c8g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}}]}`)
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{HostStorageRoot: rootPath, ProviderProfileJSON: profile}, runner)
+	root, err := provider.openStorageRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	existing := localDockerRuntimeReservation{SchemaVersion: 1, WorkspaceID: workspaceID, ResourceID: resourceID, PackageID: "basic", NanoCPUs: 2_000_000_000, MemoryBytes: 4_294_967_296}
+	if err := writeLocalDockerRuntimeReservation(root, existing); err != nil {
+		t.Fatal(err)
+	}
+	requested := localDockerRuntimeReservation{SchemaVersion: 1, WorkspaceID: "ws-new", ResourceID: localRuntimeID("ws-new"), PackageID: "basic", NanoCPUs: 4_000_000_000, MemoryBytes: 8_589_934_592}
+	if err := provider.localDockerRuntimeCapacityAdmission(context.Background(), root, requested); err != nil {
+		t.Fatalf("profile drift rejected immutable reservation: %v", err)
+	}
+	stored, err := readLocalDockerRuntimeReservation(root, localDockerRuntimeReservationName(resourceID))
+	if err != nil || stored != existing {
+		t.Fatalf("stored reservation=%#v err=%v", stored, err)
+	}
+	runner.container.HostConfig.NanoCPUs, runner.container.HostConfig.Memory, runner.container.HostConfig.MemorySwap = 4_000_000_000, 8_589_934_592, 8_589_934_592
+	if err := provider.localDockerRuntimeCapacityAdmission(context.Background(), root, requested); err == nil || err.Error() != localDockerRuntimeReservationInventoryError {
+		t.Fatalf("live limits replaced immutable reservation: %v", err)
+	}
+}
+
+func TestLocalDockerRuntimeCapacityRecoversMissingReservationFromLiveLimits(t *testing.T) {
+	rootPath := localDockerStorageTestRoot(t)
+	workspaceID := "ws-existing"
+	resourceID := localRuntimeID(workspaceID)
+	runner := &localDockerCapacityRunner{info: []byte("{\"NCPU\":8,\"MemTotal\":17179869184}")}
+	runner.container.ID, runner.container.Name = "container-existing", localRuntimeName(workspaceID)
+	runner.container.Config.Labels = map[string]string{
+		"opl.fabric.provider": "local-docker", "opl.fabric.kind": "runtime", "opl.workspace.id": workspaceID,
+		"opl.resource.id": resourceID, localDockerComputePackageLabel: "retired-package",
+	}
+	runner.container.HostConfig.NanoCPUs, runner.container.HostConfig.Memory, runner.container.HostConfig.MemorySwap = 2_000_000_000, 4_294_967_296, 4_294_967_296
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{HostStorageRoot: rootPath}, runner)
+	root, err := provider.openStorageRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	requested := localDockerRuntimeReservation{SchemaVersion: 1, WorkspaceID: "ws-new", ResourceID: localRuntimeID("ws-new"), PackageID: "basic", NanoCPUs: 2_000_000_000, MemoryBytes: 4_294_967_296}
+	if err := provider.localDockerRuntimeCapacityAdmission(context.Background(), root, requested); err != nil {
+		t.Fatalf("exact live reservation recovery failed: %v", err)
+	}
+	want := localDockerRuntimeReservation{SchemaVersion: 1, WorkspaceID: workspaceID, ResourceID: resourceID, PackageID: "retired-package", NanoCPUs: 2_000_000_000, MemoryBytes: 4_294_967_296}
+	stored, err := readLocalDockerRuntimeReservation(root, localDockerRuntimeReservationName(resourceID))
+	if err != nil || stored != want {
+		t.Fatalf("recovered reservation=%#v want=%#v err=%v", stored, want, err)
+	}
+}
+
+func TestLocalDockerRuntimeCapacityRejectsUnboundedLegacyContainer(t *testing.T) {
+	rootPath := localDockerStorageTestRoot(t)
+	workspaceID := "ws-legacy"
+	resourceID := localRuntimeID(workspaceID)
+	runner := &localDockerCapacityRunner{info: []byte("{\"NCPU\":8,\"MemTotal\":17179869184}")}
+	runner.container.ID, runner.container.Name = "container-legacy", localRuntimeName(workspaceID)
+	runner.container.Config.Labels = map[string]string{
+		"opl.fabric.provider": "local-docker", "opl.fabric.kind": "runtime", "opl.workspace.id": workspaceID,
+		"opl.resource.id": resourceID, localDockerComputePackageLabel: "basic",
+	}
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{HostStorageRoot: rootPath}, runner)
+	root, err := provider.openStorageRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	requested := localDockerRuntimeReservation{SchemaVersion: 1, WorkspaceID: "ws-new", ResourceID: localRuntimeID("ws-new"), PackageID: "basic", NanoCPUs: 2_000_000_000, MemoryBytes: 4_294_967_296}
+	err = provider.localDockerRuntimeCapacityAdmission(context.Background(), root, requested)
+	if err == nil || err.Error() != "local_docker_runtime_reservation_inventory_invalid" {
+		t.Fatalf("unbounded legacy runtime err=%v", err)
+	}
+	if _, err := readLocalDockerRuntimeReservation(root, localDockerRuntimeReservationName(resourceID)); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("unbounded legacy runtime created reservation: %v", err)
+	}
+}
+
+func TestLocalDockerRuntimeCapacityRejectsNonCanonicalContainerName(t *testing.T) {
+	rootPath := localDockerStorageTestRoot(t)
+	workspaceID := "ws-existing"
+	resourceID := localRuntimeID(workspaceID)
+	runner := &localDockerCapacityRunner{info: []byte("{\"NCPU\":8,\"MemTotal\":17179869184}")}
+	runner.container.ID, runner.container.Name = "container-existing", "foreign-runtime-name"
+	runner.container.Config.Labels = map[string]string{
+		"opl.fabric.provider": "local-docker", "opl.fabric.kind": "runtime", "opl.workspace.id": workspaceID,
+		"opl.resource.id": resourceID, localDockerComputePackageLabel: "basic",
+	}
+	runner.container.HostConfig.NanoCPUs, runner.container.HostConfig.Memory, runner.container.HostConfig.MemorySwap = 2_000_000_000, 4_294_967_296, 4_294_967_296
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{HostStorageRoot: rootPath}, runner)
+	root, err := provider.openStorageRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	requested := localDockerRuntimeReservation{SchemaVersion: 1, WorkspaceID: "ws-new", ResourceID: localRuntimeID("ws-new"), PackageID: "basic", NanoCPUs: 2_000_000_000, MemoryBytes: 4_294_967_296}
+	err = provider.localDockerRuntimeCapacityAdmission(context.Background(), root, requested)
+	if err == nil || err.Error() != "local_docker_runtime_reservation_inventory_invalid" {
+		t.Fatalf("non-canonical runtime err=%v", err)
+	}
+	if _, err := readLocalDockerRuntimeReservation(root, localDockerRuntimeReservationName(resourceID)); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("non-canonical runtime created reservation: %v", err)
+	}
+}
+
+func TestLocalDockerRuntimeCapacityRejectsStaleReservationBoundToUnmanagedContainer(t *testing.T) {
+	rootPath := localDockerStorageTestRoot(t)
+	workspaceID := "ws-existing"
+	resourceID := localRuntimeID(workspaceID)
+	runner := &localDockerCapacityRunner{info: []byte("{\"NCPU\":8,\"MemTotal\":17179869184}"), excludeFromRuntimeInventory: true}
+	runner.container.ID, runner.container.Name = "container-existing", localRuntimeName(workspaceID)
+	runner.container.Config.Labels = map[string]string{"opl.workspace.id": workspaceID, "opl.resource.id": resourceID, localDockerComputePackageLabel: "basic"}
+	provider := newLocalDockerProvider(LocalDockerProviderConfig{HostStorageRoot: rootPath}, runner)
+	root, err := provider.openStorageRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	existing := localDockerRuntimeReservation{SchemaVersion: 1, WorkspaceID: workspaceID, ResourceID: resourceID, PackageID: "basic", NanoCPUs: 2_000_000_000, MemoryBytes: 4_294_967_296}
+	if err := writeLocalDockerRuntimeReservation(root, existing); err != nil {
+		t.Fatal(err)
+	}
+	requested := localDockerRuntimeReservation{SchemaVersion: 1, WorkspaceID: "ws-new", ResourceID: localRuntimeID("ws-new"), PackageID: "basic", NanoCPUs: 2_000_000_000, MemoryBytes: 4_294_967_296}
+	err = provider.localDockerRuntimeCapacityAdmission(context.Background(), root, requested)
+	if err == nil || err.Error() != "local_docker_runtime_reservation_inventory_invalid" {
+		t.Fatalf("unmanaged canonical runtime err=%v", err)
+	}
+	stored, err := readLocalDockerRuntimeReservation(root, localDockerRuntimeReservationName(resourceID))
+	if err != nil || stored != existing {
+		t.Fatalf("unmanaged runtime reservation=%#v err=%v", stored, err)
 	}
 }
 

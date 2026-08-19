@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -303,7 +304,7 @@ func localDockerRuntimeReplayFixture(t *testing.T, visibleOnRead int) (*LocalDoc
 	}
 	storageRoot := localDockerStorageTestRoot(t)
 	provider := newLocalDockerProvider(LocalDockerProviderConfig{GatewaySecretRoot: root, HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1", StorageQuotaBackend: localDockerStorageTestQuota(storageRoot)}, runner)
-	storagePaths, err := provider.ensureStorageDirectories(localDockerStorageMetadata{
+	storagePaths, err := provider.ensureStorageDirectories(context.Background(), localDockerStorageMetadata{
 		SchemaVersion: localDockerStorageMetadataSchemaVersion, StorageID: volume.ID, AccountID: accountID, WorkspaceID: workspaceID, SizeGB: volume.SizeGB,
 	}, volume.SizeGB)
 	if err != nil {
@@ -834,13 +835,54 @@ func TestLocalDockerDestroyWorkspaceRuntimeSecretOnlyRemnantIsIdempotent(t *test
 
 func TestLocalDockerWorkspaceRuntimeStatusReturnsTypedAbsence(t *testing.T) {
 	provider := newLocalDockerProvider(
-		LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t)},
+		LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: localDockerStorageTestRoot(t)},
 		&localDockerDestroyRunner{containers: map[string]dockerContainerInspect{}, volumes: map[string]dockerVolumeInspect{}},
 	)
 
 	runtime, err := provider.WorkspaceRuntimeStatus(context.Background(), "ws-absent")
 	if !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) || runtime.WorkspaceID != "ws-absent" || runtime.ID != "" || runtime.Status != "" {
 		t.Fatalf("runtime=%#v err=%v", runtime, err)
+	}
+}
+
+func TestLocalDockerWorkspaceRuntimeStatusHonorsDeadlineWhileMutationLockIsHeld(t *testing.T) {
+	storageRoot := localDockerStorageTestRoot(t)
+	provider := newLocalDockerProvider(
+		LocalDockerProviderConfig{GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: storageRoot},
+		&localDockerDestroyRunner{containers: map[string]dockerContainerInspect{}, volumes: map[string]dockerVolumeInspect{}},
+	)
+	lock, err := os.OpenFile(filepath.Join(storageRoot, localDockerStorageQuotaLockFile), os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	locked := true
+	defer func() {
+		if locked {
+			_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, statusErr := provider.WorkspaceRuntimeStatus(ctx, "ws-creating")
+		result <- statusErr
+	}()
+	select {
+	case statusErr := <-result:
+		if !errors.Is(statusErr, context.DeadlineExceeded) {
+			t.Fatalf("status returned before the mutation lock was released: %v", statusErr)
+		}
+	case <-time.After(time.Second):
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		locked = false
+		<-result
+		t.Fatal("status ignored its context deadline while waiting for the mutation lock")
 	}
 }
 
@@ -1719,6 +1761,23 @@ func TestLocalDockerRuntimeFailsClosedOnCgroupReadbackDrift(t *testing.T) {
 	runner.container.HostConfig.MemorySwap--
 	if _, err := provider.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID); err == nil || err.Error() != "local_docker_runtime_readback_mismatch" {
 		t.Fatalf("memory swap status err=%v", err)
+	}
+}
+
+func TestLocalDockerRuntimeStatusUsesDurableReservationAcrossProfileDrift(t *testing.T) {
+	provider, runner, ctx, _, input, compute, volume := localDockerRuntimeReplayFixture(t, 0)
+	runtime, err := provider.CreateWorkspaceRuntime(ctx, input, compute, volume)
+	if err != nil || !runtime.Ready {
+		t.Fatalf("create runtime=%#v err=%v", runtime, err)
+	}
+	profile := []byte(`{"schemaVersion":1,"packages":[{"id":"basic","name":"Current Basic","available":true,"compute":{"id":"current-basic","server":"4c8g","cpu":4,"memoryGb":8,"instanceType":"current-4c8g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}}]}`)
+	drifted := newLocalDockerProvider(LocalDockerProviderConfig{
+		GatewaySecretRoot: provider.gatewaySecretRoot, HostStorageRoot: provider.hostStorageRoot, RuntimeHost: provider.runtimeHost,
+		StorageQuotaBackend: provider.storageQuota, ProviderProfileJSON: profile,
+	}, runner)
+	status, err := drifted.WorkspaceRuntimeStatus(context.Background(), input.WorkspaceID)
+	if err != nil || !status.Ready || status.ID != runtime.ID {
+		t.Fatalf("profile-drifted status=%#v err=%v", status, err)
 	}
 }
 
