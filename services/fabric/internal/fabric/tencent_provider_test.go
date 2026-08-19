@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"opl-cloud/services/fabric/internal/protectedresource"
 )
@@ -24,6 +27,7 @@ const testDefaultTencentProviderProfile = `{"schemaVersion":1,"packages":[{"id":
 func TestMain(m *testing.M) {
 	for key, value := range map[string]string{
 		tencentProviderProfileEnv:                       testDefaultTencentProviderProfile,
+		tencentProviderRegionEnv:                        "ap-guangzhou",
 		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID":               "np-system",
 		"OPL_SYSTEM_COMPUTE_MACHINE_ID":                 "machine-system",
 		"OPL_SYSTEM_COMPUTE_NODE_NAME":                  "10.66.0.42",
@@ -59,6 +63,7 @@ func setProtectedResourceEnv(t *testing.T) {
 func setTencentProviderProfileEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv(tencentProviderProfileEnv, testTencentProviderProfile)
+	t.Setenv(tencentProviderRegionEnv, "ap-guangzhou")
 }
 
 func TestKubernetesMutationRequiresProtectedResourceConfiguration(t *testing.T) {
@@ -86,13 +91,14 @@ func TestKubernetesMutationRequiresProtectedResourceConfiguration(t *testing.T) 
 func TestTencentProviderProfileBindsWorkspaceFactsAndIgnoresLaterProfileDrift(t *testing.T) {
 	profile := `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic Workspace","available":true,"compute":{"id":"pool-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"SA5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`
 	t.Setenv(tencentProviderProfileEnv, profile)
+	t.Setenv(tencentProviderRegionEnv, "ap-guangzhou")
 	provider := NewTencentProvider()
 	first, err := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: "basic", SizeGB: 10})
 	if err != nil {
 		t.Fatalf("resolve profile plan: %v", err)
 	}
 	var resolved tencentWorkspacePlan
-	if err := json.Unmarshal(first, &resolved); err != nil || resolved.NodePoolID != "np-basic" || resolved.Zone != "ap-guangzhou-3" || resolved.Storage.DiskType != "CLOUD_BSSD" || resolved.Billing.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" {
+	if err := json.Unmarshal(first, &resolved); err != nil || resolved.NodePoolID != "np-basic" || resolved.Region != "ap-guangzhou" || resolved.Zone != "ap-guangzhou-3" || resolved.Storage.DiskType != "CLOUD_BSSD" || resolved.Billing.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" {
 		t.Fatalf("resolved plan=%#v err=%v", resolved, err)
 	}
 
@@ -1391,7 +1397,7 @@ func TestTencentTagComputeMachineRejectsProtectedSystemIdentityBeforeMutation(t 
 	}
 }
 
-func TestDestroyComputeAllocationWithoutClaimedMachineSkipsProviderMutation(t *testing.T) {
+func TestDestroyComputeAllocationWithoutClaimedMachineFailsClosedWithoutProviderMutation(t *testing.T) {
 	provider := NewTencentProvider()
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
 		t.Fatalf("unexpected provider mutation: %#v", request)
@@ -1399,17 +1405,619 @@ func TestDestroyComputeAllocationWithoutClaimedMachineSkipsProviderMutation(t *t
 	}
 
 	allocation, err := provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{ID: "compute-alpha", NodePoolID: "np-basic", ProviderRequestID: "local-request-only", Status: "provisioning"})
-	if err != nil || allocation.Status != "destroyed" {
+	if err == nil || err.Error() != "compute_allocation_destroy_identity_required" || allocation.Status != "provisioning" || allocation.Provider != "" {
 		t.Fatalf("destroy unclaimed compute = %#v err=%v", allocation, err)
 	}
 }
 
-func TestDestroyExternallyDeletedComputeSkipsProviderMutation(t *testing.T) {
+func TestTencentProviderDestroyComputeRequiresDurableStableIdentityBeforeProvisioner(t *testing.T) {
+	base := canonicalTencentComputeDestroyFixture()
+	tests := []struct {
+		name   string
+		mutate func(*ComputeAllocation)
+	}{
+		{name: "account missing", mutate: func(allocation *ComputeAllocation) { allocation.AccountID = "" }},
+		{name: "workspace missing", mutate: func(allocation *ComputeAllocation) { allocation.WorkspaceID = "" }},
+		{name: "package missing", mutate: func(allocation *ComputeAllocation) { allocation.PackageID = "" }},
+		{name: "provider missing", mutate: func(allocation *ComputeAllocation) { allocation.Provider = "" }},
+		{name: "provider mismatch", mutate: func(allocation *ComputeAllocation) { allocation.Provider = "local-docker" }},
+		{name: "machine name only in ProviderData", mutate: func(allocation *ComputeAllocation) {
+			allocation.MachineName = ""
+			allocation.ProviderData["machineName"] = "machine-alpha"
+		}},
+		{name: "pool missing", mutate: func(allocation *ComputeAllocation) { allocation.PoolID = "" }},
+		{name: "machine name missing", mutate: func(allocation *ComputeAllocation) { allocation.MachineName = "" }},
+		{name: "node name missing", mutate: func(allocation *ComputeAllocation) { allocation.NodeName = "" }},
+		{name: "node pool missing", mutate: func(allocation *ComputeAllocation) { allocation.NodePoolID = "" }},
+		{name: "private IP missing", mutate: func(allocation *ComputeAllocation) { allocation.PrivateIP = "" }},
+		{name: "instance identity missing", mutate: func(allocation *ComputeAllocation) { allocation.InstanceID, allocation.CVMInstanceID = "", "" }},
+		{name: "instance identity conflict", mutate: func(allocation *ComputeAllocation) { allocation.CVMInstanceID = "ins-other" }},
+		{name: "zone missing", mutate: func(allocation *ComputeAllocation) { allocation.Zone = "" }},
+		{name: "provider zone missing", mutate: func(allocation *ComputeAllocation) { delete(allocation.ProviderData, "zone") }},
+		{name: "zone conflict", mutate: func(allocation *ComputeAllocation) { allocation.ProviderData["zone"] = "na-siliconvalley-2" }},
+		{name: "instance type missing", mutate: func(allocation *ComputeAllocation) { allocation.InstanceType = "" }},
+		{name: "provider instance type missing", mutate: func(allocation *ComputeAllocation) { delete(allocation.ProviderData, "instanceType") }},
+		{name: "instance type conflict", mutate: func(allocation *ComputeAllocation) { allocation.ProviderData["instanceType"] = "SA5.LARGE8" }},
+		{name: "CPU malformed", mutate: func(allocation *ComputeAllocation) { allocation.ProviderData["cpu"] = "two" }},
+		{name: "CPU nonpositive", mutate: func(allocation *ComputeAllocation) { allocation.ProviderData["cpu"] = "0" }},
+		{name: "CPU missing", mutate: func(allocation *ComputeAllocation) { delete(allocation.ProviderData, "cpu") }},
+		{name: "memory malformed", mutate: func(allocation *ComputeAllocation) { allocation.ProviderData["memoryGb"] = "four" }},
+		{name: "memory nonpositive", mutate: func(allocation *ComputeAllocation) { allocation.ProviderData["memoryGb"] = "0" }},
+		{name: "memory missing", mutate: func(allocation *ComputeAllocation) { delete(allocation.ProviderData, "memoryGb") }},
+		{name: "missing shape conflicts with provider plan", mutate: func(allocation *ComputeAllocation) {
+			delete(allocation.ProviderData, "cpu")
+			delete(allocation.ProviderData, "memoryGb")
+		}},
+		{name: "cluster missing", mutate: func(allocation *ComputeAllocation) { delete(allocation.ProviderData, "clusterId") }},
+		{name: "region missing", mutate: func(allocation *ComputeAllocation) { delete(allocation.ProviderData, "region") }},
+		{name: "account tag missing", mutate: func(allocation *ComputeAllocation) { delete(allocation.CostTags, "opl_account_id") }},
+		{name: "account tag conflict", mutate: func(allocation *ComputeAllocation) { allocation.CostTags["opl_account_id"] = "acct-other" }},
+		{name: "workspace tag missing", mutate: func(allocation *ComputeAllocation) { delete(allocation.CostTags, "opl_workspace_id") }},
+		{name: "workspace tag conflict", mutate: func(allocation *ComputeAllocation) { allocation.CostTags["opl_workspace_id"] = "ws-other" }},
+		{name: "resource tag missing", mutate: func(allocation *ComputeAllocation) { delete(allocation.CostTags, "opl_resource_id") }},
+		{name: "resource tag conflict", mutate: func(allocation *ComputeAllocation) { allocation.CostTags["opl_resource_id"] = "compute-other" }},
+		{name: "operation tag missing", mutate: func(allocation *ComputeAllocation) { delete(allocation.CostTags, "opl_operation_id") }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			allocation := cloneComputeAllocation(base)
+			test.mutate(&allocation)
+			provider := NewTencentProvider()
+			calls := 0
+			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				calls++
+				return provisionerResponse{}, nil
+			}
+			if _, err := provider.DestroyComputeAllocation(context.Background(), allocation); err == nil || calls != 0 {
+				t.Fatalf("incomplete durable identity reached provisioner: allocation=%#v calls=%d err=%v", allocation, calls, err)
+			}
+		})
+	}
+}
+
+func canonicalTencentComputeDestroyFixture() ComputeAllocation {
+	return ComputeAllocation{
+		ID: "compute-alpha", OperationID: "op-compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", Status: "running", Provider: "tencent-tke",
+		PoolID: "pool-basic", NodePoolID: "np-basic", MachineName: "machine-alpha", NodeName: "node-alpha", PrivateIP: "10.0.0.8",
+		InstanceID: "ins-alpha", CVMInstanceID: "ins-alpha", InstanceType: "SA5.MEDIUM4", Zone: "na-siliconvalley-1",
+		CostTags: map[string]string{
+			"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "compute-alpha", "opl_operation_id": "owner-compute-alpha",
+		},
+		ProviderData: map[string]string{
+			"clusterId": "cls-alpha", "region": "na-siliconvalley", "instanceType": "SA5.MEDIUM4", "cpu": "2", "memoryGb": "4", "zone": "na-siliconvalley-1",
+			"machineType": "NativeCVM", "cvmApplicable": "true",
+		},
+	}
+}
+
+func TestTencentProviderDestroyComputeRejectsMissingShapeWithoutProvisionerCall(t *testing.T) {
+	allocation := canonicalTencentComputeDestroyFixture()
+	allocation.Status = "destroying"
+	allocation.PoolID = "pool-basic-2c4g"
+	delete(allocation.ProviderData, "cpu")
+	delete(allocation.ProviderData, "memoryGb")
+	provider := NewTencentProvider()
+	calls := 0
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		calls++
+		return provisionerResponse{}, nil
+	}
+	result, err := provider.DestroyComputeAllocation(context.Background(), allocation)
+	if err == nil || err.Error() != "compute_allocation_destroy_identity_required" || calls != 0 || !reflect.DeepEqual(result, allocation) {
+		t.Fatalf("missing shape result=%#v calls=%d err=%v", result, calls, err)
+	}
+}
+
+func TestTencentProviderDestroyComputeRejectsUntrustedResponseWithoutProviderDataPollution(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		data          map[string]string
+		wantAttempted bool
+	}{
+		{name: "cluster drift", data: map[string]string{"clusterId": "cls-other"}},
+		{name: "region drift", data: map[string]string{"region": "ap-shanghai"}},
+		{name: "shape drift", data: map[string]string{"instanceType": "SA5.LARGE8", "cpu": "4", "memoryGb": "8"}},
+		{name: "provider error fields are discarded", data: map[string]string{"providerErrorClass": "unknown", "providerErrorMessage": "untrusted"}, wantAttempted: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			input := canonicalTencentComputeDestroyFixture()
+			if testCase.wantAttempted {
+				input.Status = "destroying"
+			}
+			provider := NewTencentProvider()
+			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+				data := map[string]string{
+					"deleteMethod": "DeleteClusterMachines", "scaleDown": "true", "deleteMode": "terminate",
+					"describeNodePoolRequestId": "req-node-pool", "machineType": "NativeCVM", "cvmApplicable": "true",
+				}
+				for key, value := range testCase.data {
+					data[key] = value
+				}
+				return provisionerResponse{
+					OK: false, ErrorCode: "compute_delete_untrusted", ProviderRequestID: "req-untrusted", CVMStatus: "UNKNOWN",
+					MutationCount: 1, InstanceID: request.Allocation.InstanceID, NodePoolID: request.Pool.NodePoolID, NodeName: request.Allocation.NodeName,
+					ProviderData: data,
+				}, nil
+			}
+			result, err := provider.DestroyComputeAllocation(context.Background(), input)
+			if testCase.wantAttempted {
+				_, hasProviderClass := result.ProviderData["providerErrorClass"]
+				_, hasProviderMessage := result.ProviderData["providerErrorMessage"]
+				if err == nil || err.Error() != "compute_delete_untrusted" || !validTencentComputeDestroyAttemptEvidence(result) ||
+					hasProviderClass || hasProviderMessage || !sameComputeDestroyStableIdentity(input, result) {
+					t.Fatalf("provider diagnostics entered durable evidence: result=%#v input=%#v err=%v", result, input, err)
+				}
+				return
+			}
+			if err == nil || err.Error() != "compute_delete_untrusted" || !reflect.DeepEqual(result, input) {
+				t.Fatalf("untrusted response changed canonical resource: result=%#v input=%#v err=%v", result, input, err)
+			}
+		})
+	}
+}
+
+func TestTencentServiceRestartKeepsCanonicalResourceAfterUntrustedDestroyResponse(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	resource := canonicalTencentComputeDestroyFixture()
+	resource.ProviderRequestID = "req-create-machine"
+	seedTencentComputeCreateOperation(t, store, resource)
+	provider := NewTencentProvider()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		return provisionerResponse{
+			OK: false, ErrorCode: "compute_delete_untrusted", ProviderRequestID: "req-untrusted", MutationCount: 2,
+			InstanceID: request.Allocation.InstanceID, NodePoolID: request.Pool.NodePoolID, NodeName: request.Allocation.NodeName,
+			ProviderData: map[string]string{
+				"clusterId": "cls-other", "region": "ap-shanghai", "instanceType": "SA5.LARGE8", "cpu": "4", "memoryGb": "8",
+				"machineType": "NativeCVM", "cvmApplicable": "true", "deleteMethod": "DeleteClusterMachines", "scaleDown": "true", "deleteMode": "terminate",
+				"describeNodePoolRequestId": "req-node-pool", "providerErrorMessage": "untrusted",
+			},
+		}, nil
+	}
+	first := NewServiceWithOperationStore(provider, store)
+	if _, err := first.DestroyComputeAllocation(ctx, resource.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, first, "destroy_compute_allocation", "compute_allocation", resource.ID, "failed")
+	failed, ok := first.GetComputeAllocation(ctx, resource.ID)
+	if !ok || !sameComputeDestroyStableIdentity(resource, failed) || failed.ProviderData["clusterId"] != resource.ProviderData["clusterId"] ||
+		failed.ProviderData[tencentComputeDestroyPhaseKey] != tencentComputeDestroyPhaseDispatchAuthorized {
+		t.Fatalf("same-process canonical resource changed: failed=%#v ok=%v", failed, ok)
+	}
+
+	restored, ok := NewServiceWithOperationStore(provider, store).GetComputeAllocation(ctx, resource.ID)
+	if !ok || !reflect.DeepEqual(restored, failed) {
+		t.Fatalf("restart changed canonical resource: restored=%#v failed=%#v ok=%v", restored, failed, ok)
+	}
+}
+
+func TestTencentProviderDestroyComputePreservesAuthoritativeAbsenceEvidence(t *testing.T) {
 	provider := NewTencentProvider()
 	kubectlCalled := false
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
-		t.Fatalf("unexpected provider mutation: %#v", request)
-		return provisionerResponse{}, nil
+		if request.Action != "destroy_compute_allocation" || request.Region != "na-siliconvalley" || request.Pool.ClusterID != "cls-alpha" ||
+			request.Allocation.InstanceID != "ins-alpha" || request.Allocation.MachineName != "machine-alpha" {
+			t.Fatalf("compute destroy request=%#v", request)
+		}
+		machinePresent := false
+		return provisionerResponse{
+			OK: true, NodePoolID: request.Pool.NodePoolID, InstanceID: "ins-alpha", NodeName: request.Allocation.NodeName,
+			MachinePresent: &machinePresent, CVMStatus: "NOT_FOUND", TKEStatus: "NOT_FOUND", Status: "external_deleted", ProviderRequestID: "req-delete-machine",
+			ProviderData: map[string]string{"describeNodePoolRequestId": "req-node-pool", "verifyMachineDeletedReqId": "req-machine-absent", "describeCvmRequestId": "req-cvm-absent", "machinePresent": "false", "tkeStatus": "NOT_FOUND", "cvmStatus": "NOT_FOUND", "machineType": "NativeCVM", "cvmApplicable": "true"},
+		}, nil
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		kubectlCalled = true
+		return nil, nil
+	}
+	allocation, err := provider.DestroyComputeAllocation(context.Background(), canonicalTencentComputeDestroyFixture())
+	if err != nil || !kubectlCalled || allocation.Status != "external_deleted" || allocation.CVMStatus != "NOT_FOUND" || allocation.ProviderRequestID != "req-delete-machine" || allocation.ProviderData["verifyMachineDeletedReqId"] != "req-machine-absent" || allocation.ProviderData["describeCvmRequestId"] != "req-cvm-absent" {
+		t.Fatalf("destroyed allocation=%#v err=%v", allocation, err)
+	}
+}
+
+func TestTencentProviderDestroyComputeConfigDriftDoesNotCleanupRuntime(t *testing.T) {
+	provider := NewTencentProvider()
+	input := canonicalTencentComputeDestroyFixture()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Region != input.ProviderData["region"] || request.Pool.ClusterID != input.ProviderData["clusterId"] {
+			t.Fatalf("persisted provider identity missing from request: %#v", request)
+		}
+		return provisionerResponse{OK: false, ErrorCode: "compute_provider_config_identity_mismatch", MutationCount: 0}, nil
+	}
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		t.Fatalf("provider config drift reached runtime cleanup: %#v", args)
+		return nil, nil
+	}
+	result, err := provider.DestroyComputeAllocation(context.Background(), input)
+	if err == nil || err.Error() != "compute_provider_config_identity_mismatch" || !reflect.DeepEqual(result, input) {
+		t.Fatalf("config drift result=%#v err=%v", result, err)
+	}
+}
+
+func TestTencentProviderDestroyComputeUsesAuthoritativeMachineApplicabilityFacts(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		persistedData     map[string]string
+		responseData      map[string]string
+		legacyIdentity    bool
+		cvmStatus         string
+		wantOK            bool
+		wantProvisionCall bool
+		wantError         string
+	}{
+		{
+			name: "legacy Native ins identity", persistedData: map[string]string{"machineType": "Native", "cvmApplicable": "false"}, legacyIdentity: true,
+			responseData: map[string]string{"machineType": "Native", "cvmApplicable": "false", "machinePresent": "false", "tkeStatus": "NOT_FOUND", "describeNodePoolRequestId": "req-node-pool", "verifyMachineDeletedReqId": "req-machine-absent"},
+			wantOK:       true, wantProvisionCall: true,
+		},
+		{name: "missing machine type", persistedData: map[string]string{"machineType": "", "cvmApplicable": "true"}, wantError: "compute_allocation_destroy_identity_required"},
+		{name: "missing applicability", persistedData: map[string]string{"machineType": "NativeCVM", "cvmApplicable": ""}, wantError: "compute_allocation_destroy_identity_required"},
+		{name: "malformed applicability", persistedData: map[string]string{"machineType": "NativeCVM", "cvmApplicable": "yes"}, wantError: "compute_allocation_destroy_identity_required"},
+		{
+			name: "NativeCVM response conflict", persistedData: map[string]string{"machineType": "NativeCVM", "cvmApplicable": "true"}, cvmStatus: "NOT_FOUND",
+			responseData:      map[string]string{"machineType": "NativeCVM", "cvmApplicable": "false", "machinePresent": "false", "tkeStatus": "NOT_FOUND", "describeNodePoolRequestId": "req-node-pool", "verifyMachineDeletedReqId": "req-machine-absent"},
+			wantProvisionCall: true, wantError: "compute_allocation_destroy_readback_mismatch",
+		},
+		{
+			name: "legacy response conflict", persistedData: map[string]string{"machineType": "CXM", "cvmApplicable": "false"}, legacyIdentity: true,
+			responseData:      map[string]string{"machineType": "CXM", "cvmApplicable": "true", "machinePresent": "false", "tkeStatus": "NOT_FOUND", "describeNodePoolRequestId": "req-node-pool", "verifyMachineDeletedReqId": "req-machine-absent"},
+			wantProvisionCall: true, wantError: "compute_allocation_destroy_readback_mismatch",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := NewTencentProvider()
+			provisionCalls := 0
+			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+				provisionCalls++
+				machinePresent := false
+				return provisionerResponse{OK: true, NodePoolID: request.Pool.NodePoolID, InstanceID: "ins-legacy-1", NodeName: request.Allocation.NodeName,
+					MachinePresent: &machinePresent, CVMStatus: test.cvmStatus, TKEStatus: "NOT_FOUND", Status: "external_deleted", ProviderRequestID: "req-delete-machine", ProviderData: test.responseData}, nil
+			}
+			provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) { return nil, nil }
+			input := canonicalTencentComputeDestroyFixture()
+			input.InstanceID, input.CVMInstanceID = "ins-legacy-1", "ins-legacy-1"
+			if test.legacyIdentity {
+				input.CVMInstanceID = ""
+			}
+			for key, value := range test.persistedData {
+				if value == "" {
+					delete(input.ProviderData, key)
+				} else {
+					input.ProviderData[key] = value
+				}
+			}
+			allocation, err := provider.DestroyComputeAllocation(context.Background(), input)
+			if test.wantOK {
+				if err != nil || allocation.Status != "external_deleted" || allocation.CVMInstanceID != "" || allocation.ProviderData["machineType"] != "Native" || provisionCalls != 1 {
+					t.Fatalf("legacy allocation=%#v err=%v", allocation, err)
+				}
+				return
+			}
+			wantCalls := 0
+			if test.wantProvisionCall {
+				wantCalls = 1
+			}
+			if err == nil || err.Error() != test.wantError || provisionCalls != wantCalls || !reflect.DeepEqual(allocation, input) {
+				t.Fatalf("invalid facts allocation=%#v err=%v calls=%d", allocation, err, provisionCalls)
+			}
+		})
+	}
+}
+
+func TestTencentProviderDestroyComputeRetriesOnlyRuntimeCleanupAfterCloudAbsence(t *testing.T) {
+	provider := NewTencentProvider()
+	provisionCalls := 0
+	kubectlCalls := 0
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		provisionCalls++
+		machinePresent := false
+		return provisionerResponse{
+			OK: true, NodePoolID: request.Pool.NodePoolID, InstanceID: "ins-alpha", NodeName: request.Allocation.NodeName,
+			MachinePresent: &machinePresent, CVMStatus: "NOT_FOUND", TKEStatus: "NOT_FOUND", Status: "external_deleted", ProviderRequestID: "req-delete-machine",
+			ProviderData: map[string]string{"machineType": "NativeCVM", "cvmApplicable": "true", "machinePresent": "false", "tkeStatus": "NOT_FOUND", "cvmStatus": "NOT_FOUND", "describeNodePoolRequestId": "req-node-pool", "verifyMachineDeletedReqId": "req-machine-absent", "describeCvmRequestId": "req-cvm-absent"},
+		}, nil
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		kubectlCalls++
+		if kubectlCalls == 1 {
+			return nil, errors.New("runtime cleanup failed")
+		}
+		return nil, nil
+	}
+	input := canonicalTencentComputeDestroyFixture()
+	first, firstErr := provider.DestroyComputeAllocation(context.Background(), input)
+	if firstErr == nil || first.ID != input.ID || first.Status != "external_deleted" || first.ProviderRequestID != "req-delete-machine" || first.ProviderData["describeCvmRequestId"] != "req-cvm-absent" ||
+		!sameComputeDestroyStableIdentity(input, first) {
+		t.Fatalf("first cleanup result=%#v err=%v", first, firstErr)
+	}
+	second, secondErr := provider.DestroyComputeAllocation(context.Background(), first)
+	if secondErr != nil || second.Status != "external_deleted" || provisionCalls != 1 || kubectlCalls != 2 || !sameComputeDestroyStableIdentity(input, second) {
+		t.Fatalf("second cleanup result=%#v err=%v provision=%d kubectl=%d", second, secondErr, provisionCalls, kubectlCalls)
+	}
+}
+
+func TestServiceRetriesTencentRuntimeCleanupFromPersistedCloudAbsence(t *testing.T) {
+	provider := NewTencentProvider()
+	var callsMu sync.Mutex
+	provisionCalls := 0
+	kubectlCalls := 0
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		callsMu.Lock()
+		provisionCalls++
+		callsMu.Unlock()
+		machinePresent := false
+		return provisionerResponse{
+			OK: true, NodePoolID: request.Pool.NodePoolID, InstanceID: "ins-alpha", NodeName: request.Allocation.NodeName,
+			MachinePresent: &machinePresent, CVMStatus: "NOT_FOUND", TKEStatus: "NOT_FOUND", Status: "external_deleted", ProviderRequestID: "req-delete-machine",
+			ProviderData: map[string]string{"machineType": "NativeCVM", "cvmApplicable": "true", "machinePresent": "false", "tkeStatus": "NOT_FOUND", "cvmStatus": "NOT_FOUND", "describeNodePoolRequestId": "req-node-pool", "verifyMachineDeletedReqId": "req-machine-absent", "describeCvmRequestId": "req-cvm-absent"},
+		}, nil
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		callsMu.Lock()
+		defer callsMu.Unlock()
+		kubectlCalls++
+		if kubectlCalls == 1 {
+			return nil, errors.New("runtime cleanup failed")
+		}
+		return nil, nil
+	}
+	store := NewMemoryOperationStore()
+	resource := canonicalTencentComputeDestroyFixture()
+	resource.ProviderRequestID = "req-create-machine"
+	seedTencentComputeCreateOperation(t, store, resource)
+	service := NewServiceWithOperationStore(provider, store)
+	if _, _, err := store.ClaimMachine(context.Background(), MachineOwnership{
+		ID: "owner-alpha", ResourceID: resource.ID, AccountID: resource.AccountID, WorkspaceID: resource.WorkspaceID, PackageID: resource.PackageID,
+		NodePoolID: resource.NodePoolID, MachineID: resource.MachineName, InstanceID: resource.InstanceID, NodeName: resource.NodeName, Status: "active",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.DestroyComputeAllocation(context.Background(), resource.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, service, "destroy_compute_allocation", "compute_allocation", resource.ID, "failed")
+	current, _ := service.GetComputeAllocation(context.Background(), resource.ID)
+	ownership, ownershipErr := store.MachineOwnership(context.Background(), resource.ID)
+	if current.Status != "external_deleted" || current.ProviderData["describeCvmRequestId"] != "req-cvm-absent" || ownershipErr != nil || ownership.Status == "released" || ownership.ReleasedAt != nil {
+		t.Fatalf("failed cleanup current=%#v ownership=%#v ownershipErr=%v", current, ownership, ownershipErr)
+	}
+	operations, err := service.ListOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedEvidence := ComputeAllocation{}
+	for _, operation := range operations {
+		if operation.Action == "destroy_compute_allocation" && operation.ResourceID == resource.ID && operation.Status == "failed" {
+			_ = decodeOperationResource(operation, &failedEvidence)
+		}
+	}
+	if failedEvidence.Status != "external_deleted" || failedEvidence.ProviderRequestID != "req-delete-machine" {
+		t.Fatalf("failed operation lost provider absence evidence: %#v", failedEvidence)
+	}
+
+	restarted := NewServiceWithOperationStore(provider, store)
+	restored, ok := restarted.GetComputeAllocation(context.Background(), resource.ID)
+	if !ok || restored.Status != "external_deleted" || restored.ProviderRequestID != "req-delete-machine" || restored.ProviderData["describeCvmRequestId"] != "req-cvm-absent" {
+		t.Fatalf("restart lost authoritative cloud absence: restored=%#v ok=%v", restored, ok)
+	}
+	ownership, ownershipErr = store.MachineOwnership(context.Background(), resource.ID)
+	if ownershipErr != nil || ownership.Status == "released" || ownership.ReleasedAt != nil {
+		t.Fatalf("restart released ownership before runtime cleanup: ownership=%#v err=%v", ownership, ownershipErr)
+	}
+	if _, err := restarted.DestroyComputeAllocation(context.Background(), resource.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, restarted, "destroy_compute_allocation", "compute_allocation", resource.ID, "succeeded")
+	final, _ := restarted.GetComputeAllocation(context.Background(), resource.ID)
+	ownership, ownershipErr = store.MachineOwnership(context.Background(), resource.ID)
+	callsMu.Lock()
+	gotProvisionCalls, gotKubectlCalls := provisionCalls, kubectlCalls
+	callsMu.Unlock()
+	if final.Status != "external_deleted" || ownershipErr != nil || ownership.Status != "released" || ownership.ReleasedAt == nil || gotProvisionCalls != 1 || gotKubectlCalls != 2 {
+		t.Fatalf("final=%#v ownership=%#v ownershipErr=%v provision=%d kubectl=%d", final, ownership, ownershipErr, gotProvisionCalls, gotKubectlCalls)
+	}
+}
+
+func TestTencentFailedDestroyReplayRequiresExactAuthoritativeAbsenceEvidence(t *testing.T) {
+	type replayMutation struct {
+		previous  func(*ComputeAllocation)
+		failed    func(*ComputeAllocation)
+		operation func(*FabricOperation)
+	}
+	tests := []struct {
+		name         string
+		mutation     replayMutation
+		noPrevious   bool
+		wantExternal bool
+	}{
+		{name: "valid NativeCVM", wantExternal: true},
+		{name: "no previous", noPrevious: true},
+		{name: "missing machine presence", mutation: replayMutation{failed: func(resource *ComputeAllocation) { delete(resource.ProviderData, "machinePresent") }}},
+		{name: "malformed applicability", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.ProviderData["cvmApplicable"] = "yes" }}},
+		{name: "operation account drift", mutation: replayMutation{operation: func(operation *FabricOperation) { operation.AccountID = "acct-other" }}},
+		{name: "resource workspace drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.WorkspaceID = "ws-other" }}},
+		{name: "package drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.PackageID = "pro" }}},
+		{name: "provider drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.Provider = "local-docker" }}},
+		{name: "provider resource drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.ProviderResourceID = "ins-other" }}},
+		{name: "pool drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.PoolID = "pool-other" }}},
+		{name: "node pool drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.NodePoolID = "np-other" }}},
+		{name: "machine drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.MachineName = "machine-other" }}},
+		{name: "instance drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.InstanceID = "ins-other" }}},
+		{name: "CVM instance drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.CVMInstanceID = "ins-other" }}},
+		{name: "node drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.NodeName = "node-other" }}},
+		{name: "private IP drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.PrivateIP = "10.0.0.99" }}},
+		{name: "public IP drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.PublicIP = "203.0.113.99" }}},
+		{name: "service name drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.ServiceName = "opl-compute-other" }}},
+		{name: "operation ID drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.OperationID = "op-create-other" }}},
+		{name: "cost tags drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) {
+			resource.CostTags = maps.Clone(resource.CostTags)
+			resource.CostTags["opl_workspace_id"] = "ws-other"
+		}}},
+		{name: "node selector drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) {
+			resource.NodeSelector = map[string]any{"kubernetes.io/hostname": "node-other"}
+		}}},
+		{name: "created at drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.CreatedAt = resource.CreatedAt.Add(time.Second) }}},
+		{name: "claim terminal evidence drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) {
+			resource.ClaimTerminalEvidence = &ComputeClaimTerminalEvidence{SchemaVersion: 2}
+		}}},
+		{name: "stable ProviderData drift", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.ProviderData["clusterId"] = "cls-other" }}},
+		{name: "stable ProviderData removed", mutation: replayMutation{failed: func(resource *ComputeAllocation) { delete(resource.ProviderData, "region") }}},
+		{name: "source and failed missing durable region", mutation: replayMutation{previous: func(resource *ComputeAllocation) { delete(resource.ProviderData, "region") }}},
+		{name: "source and failed missing durable CPU", mutation: replayMutation{previous: func(resource *ComputeAllocation) { delete(resource.ProviderData, "cpu") }}},
+		{name: "unknown ProviderData added", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.ProviderData["deleteReadbackMaybe"] = "absent" }}},
+		{name: "missing delete request", mutation: replayMutation{failed: func(resource *ComputeAllocation) { resource.ProviderRequestID = "" }}},
+		{name: "valid legacy Native", mutation: replayMutation{
+			previous: func(resource *ComputeAllocation) {
+				resource.CVMInstanceID, resource.CVMStatus = "", ""
+				resource.ProviderData["machineType"] = "Native"
+				resource.ProviderData["cvmApplicable"] = "false"
+			},
+			failed: func(resource *ComputeAllocation) {
+				resource.CVMStatus = ""
+				resource.ProviderData["machineType"] = "Native"
+				resource.ProviderData["cvmApplicable"] = "false"
+				resource.ProviderData["describeCvmRequestId"] = "req-create-cvm"
+				delete(resource.ProviderData, "cvmStatus")
+			},
+		}, wantExternal: true},
+		{name: "legacy forged CVM absence", mutation: replayMutation{
+			previous: func(resource *ComputeAllocation) { resource.CVMInstanceID, resource.CVMStatus = "", "" },
+			failed: func(resource *ComputeAllocation) {
+				resource.CVMStatus = "NOT_FOUND"
+				resource.ProviderData["machineType"] = "CXM"
+				resource.ProviderData["cvmApplicable"] = "false"
+				resource.ProviderData["describeCvmRequestId"] = "req-create-cvm"
+				resource.ProviderData["cvmStatus"] = "NOT_FOUND"
+			},
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewMemoryOperationStore()
+			created := ComputeAllocation{
+				ID: "compute-alpha", OperationID: "op-create-compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", Status: "running", Provider: "tencent-tke",
+				ProviderResourceID: "ins-alpha", ProviderRequestID: "req-create-machine", PoolID: "pool-basic", NodePoolID: "np-basic", InstanceID: "ins-alpha", CVMInstanceID: "ins-alpha",
+				MachineName: "machine-alpha", NodeName: "node-alpha", PrivateIP: "10.0.0.8", PublicIP: "203.0.113.8", InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3",
+				CVMStatus: "RUNNING", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-20T00:00:00Z", ServiceName: "opl-compute-alpha",
+				NodeSelector: map[string]any{"kubernetes.io/hostname": "node-alpha"},
+				ProviderData: map[string]string{
+					"clusterId": "cls-alpha", "region": "ap-guangzhou", "describeNodePoolRequestId": "req-create-node-pool", "describeCvmRequestId": "req-create-cvm",
+					"instanceType": "SA5.MEDIUM4", "cpu": "2", "memoryGb": "4", "machineName": "machine-alpha", "zone": "ap-guangzhou-3",
+					"machineType": "NativeCVM", "cvmApplicable": "true",
+				},
+				CostTags:              map[string]string{"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "compute-alpha", "opl_operation_id": "owner-compute-alpha"},
+				ClaimTerminalEvidence: &ComputeClaimTerminalEvidence{SchemaVersion: 1}, CreatedAt: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC),
+			}
+			if test.mutation.previous != nil {
+				test.mutation.previous(&created)
+			}
+			if !test.noPrevious {
+				seedTencentComputeCreateOperation(t, store, created)
+			}
+			deleted := created
+			deleted.Status = "external_deleted"
+			deleted.ProviderRequestID = "req-delete-machine"
+			deleted.CVMStatus = "NOT_FOUND"
+			deleted.ProviderData = maps.Clone(created.ProviderData)
+			for key, value := range map[string]string{
+				"machineType": "NativeCVM", "cvmApplicable": "true", "machinePresent": "false", "tkeStatus": "NOT_FOUND", "cvmStatus": "NOT_FOUND", "deleteMethod": "DeleteClusterMachines",
+				"scaleDown": "true", "deleteMode": "terminate", "describeNodePoolRequestId": "req-node-pool", "modifySelfProvisioningReqId": "req-disable-self-provisioning",
+				"verifyMachineDeletedReqId": "req-machine-absent", "describeCvmRequestId": "req-cvm-absent",
+			} {
+				deleted.ProviderData[key] = value
+			}
+			if test.mutation.failed != nil {
+				test.mutation.failed(&deleted)
+			}
+			now := time.Date(2026, 8, 20, 2, 0, 0, 0, time.UTC)
+			failed := newOperation("destroy_compute_allocation", "compute_allocation", created.ID, created.AccountID, created.WorkspaceID, "", hashInput(map[string]string{"id": created.ID}), now)
+			failed.ID, failed.Status, failed.CreatedAt, failed.FinishedAt = "fop-destroy-failed", "failed", now, now
+			fillOperationResource(&failed, deleted)
+			if test.mutation.operation != nil {
+				test.mutation.operation(&failed)
+			}
+			if err := store.Append(context.Background(), failed); err != nil {
+				t.Fatal(err)
+			}
+
+			replayed, ok := NewServiceWithOperationStore(NewTencentProvider(), store).GetComputeAllocation(context.Background(), created.ID)
+			if test.noPrevious {
+				if ok {
+					t.Fatalf("failed destroy without previous create gained replay authority: %#v", replayed)
+				}
+				return
+			}
+			if test.wantExternal {
+				if !ok || replayed.Status != "external_deleted" {
+					t.Fatalf("replayed=%#v ok=%v want external_deleted", replayed, ok)
+				}
+				return
+			}
+			if !ok || !reflect.DeepEqual(replayed, created) {
+				t.Fatalf("invalid failed destroy overrode previous create: replayed=%#v previous=%#v ok=%v", replayed, created, ok)
+			}
+		})
+	}
+}
+
+func seedTencentComputeCreateOperation(t *testing.T, store OperationStore, resource ComputeAllocation) {
+	t.Helper()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	operation := newOperation("create_compute_allocation", "compute_allocation", resource.ID, resource.AccountID, resource.WorkspaceID, "seed-create-"+resource.ID, hashInput(resource), now)
+	operation.ID, operation.Status, operation.CreatedAt, operation.FinishedAt = "fop-create-"+stableSuffix(resource.ID)[:12], "succeeded", now, now
+	fillOperationResource(&operation, resource)
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceKeepsOrdinaryTencentDestroyFailureInDestroyingState(t *testing.T) {
+	provider := NewTencentProvider()
+	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+		return provisionerResponse{}, errors.New("provider unavailable")
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		t.Fatal("ordinary provider failure must not reach runtime cleanup")
+		return nil, nil
+	}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	resource := ComputeAllocation{
+		ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", Status: "running", ProviderRequestID: "req-existing",
+		MachineName: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha",
+	}
+	service.computes[resource.ID] = resource
+	if _, err := service.DestroyComputeAllocation(context.Background(), resource.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, service, "destroy_compute_allocation", "compute_allocation", resource.ID, "failed")
+	current, _ := service.GetComputeAllocation(context.Background(), resource.ID)
+	if current.Status != "destroying" || current.ProviderData["machineType"] != "" {
+		t.Fatalf("ordinary provider failure current=%#v", current)
+	}
+}
+
+func TestDestroyExternallyDeletedComputeRequiresAuthoritativeReadbackBeforeCleanup(t *testing.T) {
+	provider := NewTencentProvider()
+	provisionCalls := 0
+	kubectlCalled := false
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		provisionCalls++
+		if request.Action != "read_compute_destroy_status" || request.Region != "na-siliconvalley" || request.Pool.ClusterID != "cls-alpha" || request.Allocation.MachineType != "NativeCVM" {
+			t.Fatalf("unexpected provider request: %#v", request)
+		}
+		machinePresent := false
+		return provisionerResponse{
+			OK: true, MutationCount: 0, InstanceID: request.Allocation.InstanceID, MachinePresent: &machinePresent,
+			TKEStatus: "NOT_FOUND", CVMStatus: "NOT_FOUND", Status: "absent", ProviderRequestID: "req-destroy-readback",
+			ProviderData: map[string]string{
+				"clusterId": "cls-alpha", "region": "na-siliconvalley", "nodePoolId": "np-basic", "machineName": "machine-alpha",
+				"nodeName": "node-alpha", "privateIp": "10.0.0.8", "machineType": "NativeCVM", "cvmApplicable": "true",
+				"syncResult": "missing", "machinePresent": "false", "tkeStatus": "NOT_FOUND", "cvmStatus": "NOT_FOUND",
+				"describeClusterMachinesReq": "req-tke-absence", "describeCvmRequestId": "req-cvm-absence",
+			},
+		}, nil
 	}
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		kubectlCalled = true
@@ -1419,12 +2027,35 @@ func TestDestroyExternallyDeletedComputeSkipsProviderMutation(t *testing.T) {
 		return nil, nil
 	}
 
-	allocation, err := provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{
-		ID: "compute-alpha", Status: "external_deleted", NodePoolID: "np-basic",
-		MachineName: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha", PrivateIP: "10.0.0.8",
-	})
-	if err != nil || allocation.Status != "destroyed" || !kubectlCalled {
+	input := canonicalTencentComputeDestroyFixture()
+	input.Status = "external_deleted"
+	allocation, err := provider.DestroyComputeAllocation(context.Background(), input)
+	if err != nil || allocation.Status != "external_deleted" || !validTencentComputeAbsenceEvidence(allocation) || provisionCalls != 1 || !kubectlCalled {
 		t.Fatalf("destroy externally deleted compute = %#v err=%v", allocation, err)
+	}
+}
+
+func TestDestroyExternallyDeletedComputeRefusesCleanupWhileMachineIsPresent(t *testing.T) {
+	provider := NewTencentProvider()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		machinePresent := true
+		return provisionerResponse{
+			OK: true, MutationCount: 0, InstanceID: request.Allocation.InstanceID, MachinePresent: &machinePresent, Status: "running",
+			ProviderData: map[string]string{
+				"clusterId": "cls-alpha", "region": "na-siliconvalley", "nodePoolId": "np-basic", "machineName": "machine-alpha",
+				"nodeName": "node-alpha", "privateIp": "10.0.0.8", "machineType": "NativeCVM", "cvmApplicable": "true",
+			},
+		}, nil
+	}
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		t.Fatalf("unconfirmed external deletion reached runtime cleanup: %#v", args)
+		return nil, nil
+	}
+	input := canonicalTencentComputeDestroyFixture()
+	input.Status = "external_deleted"
+	allocation, err := provider.DestroyComputeAllocation(context.Background(), input)
+	if err == nil || err.Error() != "compute_destroy_absence_evidence_invalid" || !reflect.DeepEqual(allocation, input) {
+		t.Fatalf("unconfirmed external deletion = %#v err=%v", allocation, err)
 	}
 }
 
@@ -2671,7 +3302,7 @@ func TestTencentProviderCreatesStaticRetainedCBSVolumeInComputeZone(t *testing.T
 		provisioned = request
 		return provisionerResponse{
 			OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-create-cbs",
-			ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16 00:00:00", "zone": "ap-guangzhou-3", "sizeGb": "10"},
+			ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16 00:00:00", "zone": "ap-guangzhou-3", "sizeGb": "10", "region": "ap-guangzhou"},
 		}, nil
 	}
 	var applied []byte
@@ -2688,7 +3319,7 @@ func TestTencentProviderCreatesStaticRetainedCBSVolumeInComputeZone(t *testing.T
 		IdempotencyKey: "storage-once", OperationID: "op-storage-alpha",
 	})
 
-	if err != nil || volume.ProviderResourceID != "disk-storage-alpha" || volume.Status != "pending" || volume.Zone != "ap-guangzhou-3" || volume.Deadline != "2026-08-16 00:00:00" {
+	if err != nil || volume.ProviderResourceID != "disk-storage-alpha" || volume.Status != "pending" || volume.Zone != "ap-guangzhou-3" || volume.Deadline != "2026-08-16 00:00:00" || volume.ProviderData["region"] != "ap-guangzhou" {
 		t.Fatalf("created volume=%#v err=%v", volume, err)
 	}
 	if provisioned.Action != "create_storage_volume" || provisioned.Storage.ID != "storage-alpha" || provisioned.Storage.Zone != "ap-guangzhou-3" || provisioned.Storage.SizeGB != 10 {
@@ -2725,14 +3356,14 @@ func TestTencentProviderStagedStorageSeparatesCBSCreateAndStaticBinding(t *testi
 		}
 		return provisionerResponse{
 			OK: true, StorageVolumeID: "disk-staged-alpha", CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-staged-cbs",
-			ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10", "diskChargeType": "PREPAID"},
+			ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10", "diskChargeType": "PREPAID", "region": "ap-guangzhou"},
 		}, nil
 	}
 	volume := StorageVolume{
 		ID: "storage-staged-alpha", OperationID: "launch-staged:storage", AccountID: "acct-staged", WorkspaceID: "workspace-staged", Status: "provider_ready",
 		Provider: "tencent-tke", ProviderResourceID: "disk-staged-alpha", SizeGB: 10, DiskType: "CLOUD_BSSD", Zone: "ap-guangzhou-3",
 		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", CostTags: oplCostTags("acct-staged", "workspace-staged", "storage-staged-alpha", "launch-staged:storage"),
-		ProviderData: map[string]string{"pvName": "opl-storage-staged-alpha-pv", "pvcName": "opl-storage-staged-alpha-data"},
+		ProviderData: map[string]string{"pvName": "opl-storage-staged-alpha-pv", "pvcName": "opl-storage-staged-alpha-data", "region": "ap-guangzhou"},
 	}
 	input := StorageVolumeInput{
 		ID: volume.ID, AccountID: volume.AccountID, WorkspaceID: volume.WorkspaceID, ComputeID: "compute-staged-alpha", Zone: volume.Zone, SizeGB: volume.SizeGB,
@@ -2782,45 +3413,461 @@ func TestTencentProviderStagedStorageSeparatesCBSCreateAndStaticBinding(t *testi
 	}
 }
 
-func TestTencentProviderCBSResponseLossDiscoversExactDiskWithoutPersistedProviderID(t *testing.T) {
-	provider := NewTencentProvider()
-	var actions []string
-	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
-		actions = append(actions, request.Action)
+func TestTencentProviderCBSResponseLossRecoversFromDurablePredispatchRegion(t *testing.T) {
+	input := StorageVolumeInput{
+		ID: "storage-response-loss", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "launch-alpha:storage", OperationID: "op_create_storage_volume_fixture",
+	}
+	plan := tencentWorkspacePlan{
+		PackageID: "basic", Compute: ComputePlan{ID: "pool-basic"}, NodePoolID: "np-basic", MaxReplicas: 20,
+		Region: "ap-guangzhou", Zone: input.Zone, Storage: tencentStoragePlan{SizeGB: input.SizeGB, DiskType: "CLOUD_BSSD"},
+	}
+	parent := testWorkspaceLaunchBinding("storage", "ensure_storage", input.OperationID)
+	operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, time.Now().UTC())
+	operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+	if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+		t.Fatal(err)
+	}
+	store := NewMemoryOperationStore()
+	childID := providerMutationOperationID(parent, "tencent_cbs_create", "storage_volume", input.ID, "")
+	createCalls := 0
+	firstProvider := NewTencentProvider()
+	firstService := NewServiceWithOperationStore(firstProvider, store)
+	firstProvider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "create_storage_volume" || request.Region != plan.Region {
+			t.Fatalf("first create request=%#v", request)
+		}
+		createCalls++
+		child, err := store.Get(context.Background(), childID)
+		var state tencentCBSCreateMutationState
+		if err != nil || child.Status != "started" || !decodeProviderMutationState(child, &state) || !state.matches(input) || state.Region != plan.Region {
+			t.Fatalf("pre-dispatch child=%#v state=%#v err=%v", child, state, err)
+		}
+		return provisionerResponse{}, errors.New("simulated CreateDisks response loss")
+	}
+	firstCtx := withTencentWorkspacePlan(firstService.providerMutationContext(context.Background(), operation), plan)
+	failed, err := firstProvider.CreateStorageVolume(firstCtx, input)
+	if err == nil || createCalls != 1 || failed.ProviderData["region"] != plan.Region || failed.ProviderResourceID != "" {
+		t.Fatalf("response-loss result=%#v err=%v createCalls=%d", failed, err, createCalls)
+	}
+
+	t.Setenv(tencentProviderRegionEnv, "ap-shanghai")
+	restartedProvider := NewTencentProvider()
+	if restartedProvider.region != "ap-shanghai" {
+		t.Fatalf("restart region proposal=%q", restartedProvider.region)
+	}
+	restartedService := NewServiceWithOperationStore(restartedProvider, store)
+	var replayActions []string
+	restartedProvider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		replayActions = append(replayActions, request.Action)
+		if request.Region != plan.Region {
+			t.Fatalf("replay used non-durable region: %#v", request)
+		}
+		providerData := map[string]string{
+			"diskType": "CLOUD_BSSD", "diskChargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+			"deadline": "2026-09-01T00:00:00Z", "zone": input.Zone, "sizeGb": "10", "region": plan.Region,
+		}
 		switch request.Action {
 		case "discover_storage_volume":
-			return provisionerResponse{
-				OK: true, StorageState: "storage_existing_exact", StorageVolumeID: "disk-response-loss", Status: "provider_ready",
-				ProviderRequestID: "req-discover", ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "diskChargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-01T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10"},
-			}, nil
+			return provisionerResponse{OK: true, StorageState: "storage_existing_exact", StorageVolumeID: "disk-response-loss", Status: "provider_ready", ProviderRequestID: "req-discover", ProviderData: providerData}, nil
 		case "sync_storage_volume":
 			if request.Storage.ID != "disk-response-loss" {
 				t.Fatalf("sync disk=%q", request.Storage.ID)
 			}
-			return provisionerResponse{
-				OK: true, StorageVolumeID: "disk-response-loss", Status: "provider_ready", CBSStatus: "UNATTACHED",
-				ProviderRequestID: "req-sync", ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "diskChargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-01T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10"},
-			}, nil
+			return provisionerResponse{OK: true, StorageVolumeID: "disk-response-loss", Status: "provider_ready", CBSStatus: "UNATTACHED", ProviderRequestID: "req-sync", ProviderData: providerData}, nil
+		case "create_storage_volume":
+			createCalls++
+			return provisionerResponse{}, errors.New("second CreateDisks dispatch")
 		default:
 			return provisionerResponse{}, fmt.Errorf("unexpected action %q", request.Action)
 		}
 	}
-	input := StorageVolumeInput{
-		ID: "storage-response-loss", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha",
-		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "workspace-launch:storage", OperationID: "op_create_storage_volume_fixture",
-	}
-	persisted := StorageVolume{
+	expected := StorageVolume{
 		ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
-		Provider: "tencent-tke", Status: "pending", SizeGB: input.SizeGB, Zone: input.Zone,
-		CostTags: oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID),
+		Provider: "tencent-tke", ProviderResourceID: "disk-response-loss", SizeGB: input.SizeGB, Zone: input.Zone, DiskType: "CLOUD_BSSD",
+		CostTags:     oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID),
+		ProviderData: map[string]string{"pvName": k8sName(input.ID) + "-pv", "pvcName": k8sName(input.ID) + "-data", "region": plan.Region},
+	}
+	manifest := mustJSON(canonicalTencentStorageBindingObjects(t, expected))
+	restartedProvider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if len(args) > 0 && args[0] == "apply" {
+			return nil, nil
+		}
+		if len(args) > 0 && args[0] == "get" {
+			return manifest, nil
+		}
+		return nil, fmt.Errorf("unexpected kubectl args=%#v", args)
+	}
+	restartedCtx := withTencentWorkspacePlan(restartedService.providerMutationContext(context.Background(), operation), plan)
+	recovered, err := restartedProvider.CreateStorageVolume(restartedCtx, input)
+	if err != nil || recovered.ProviderResourceID != "disk-response-loss" || recovered.Status != "ready" || recovered.ProviderData["region"] != plan.Region || createCalls != 1 {
+		t.Fatalf("recovered=%#v err=%v createCalls=%d", recovered, err, createCalls)
+	}
+	if !slices.Equal(replayActions, []string{"discover_storage_volume", "sync_storage_volume"}) {
+		t.Fatalf("replay actions=%v", replayActions)
+	}
+	child, err := store.Get(context.Background(), childID)
+	var persisted StorageVolume
+	if err != nil || child.Status != "succeeded" || !decodeOperationResource(child, &persisted) || persisted.ProviderData["region"] != plan.Region {
+		t.Fatalf("converged child=%#v resource=%#v err=%v", child, persisted, err)
+	}
+}
+
+func TestTencentServiceStorageCreatePersistsImmutableStateBeforeProviderDispatch(t *testing.T) {
+	input := StorageVolumeInput{
+		ID: "storage-provider-acceptance", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-provider-acceptance",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "provider-acceptance:storage",
+	}
+	store := NewMemoryOperationStore()
+	provider := NewTencentProvider()
+	service := NewServiceWithOperationStore(provider, store)
+	service.computes[input.ComputeID] = ComputeAllocation{
+		ID: input.ComputeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Zone: input.Zone,
+	}
+	providerData := map[string]string{
+		"diskType": "CLOUD_BSSD", "diskChargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+		"deadline": "2026-09-01T00:00:00Z", "zone": input.Zone, "sizeGb": "10", "region": "ap-guangzhou",
+	}
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "create_storage_volume":
+			operations, err := store.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state tencentCBSCreateMutationState
+			found := false
+			for _, operation := range operations {
+				if operation.Action == "tencent_cbs_create" {
+					found = decodeProviderMutationState(operation, &state)
+				}
+			}
+			if !found || state.Region != "ap-guangzhou" || state.DiskType != "CLOUD_BSSD" || state.Zone != input.Zone || state.SizeGB != input.SizeGB ||
+				state.AccountID != input.AccountID || state.WorkspaceID != input.WorkspaceID || state.StorageID != input.ID {
+				t.Fatalf("provider dispatch preceded durable child state: operations=%#v state=%#v", operations, state)
+			}
+			return provisionerResponse{OK: true, StorageState: "storage_existing_exact", StorageVolumeID: "disk-provider-acceptance", Status: "provider_ready", CBSStatus: "UNATTACHED", ProviderRequestID: "req-create", ProviderData: providerData}, nil
+		case "sync_storage_volume":
+			return provisionerResponse{OK: true, StorageVolumeID: "disk-provider-acceptance", Status: "provider_ready", CBSStatus: "UNATTACHED", ProviderRequestID: "req-sync", ProviderData: providerData}, nil
+		default:
+			return provisionerResponse{}, fmt.Errorf("unexpected action %q", request.Action)
+		}
+	}
+	expected := StorageVolume{
+		ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		Provider: "tencent-tke", ProviderResourceID: "disk-provider-acceptance", SizeGB: input.SizeGB, Zone: input.Zone, DiskType: "CLOUD_BSSD",
+		CostTags:     oplCostTags(input.AccountID, input.WorkspaceID, input.ID, newOperation("create_storage_volume", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), time.Now()).OperationID),
+		ProviderData: map[string]string{"pvName": k8sName(input.ID) + "-pv", "pvcName": k8sName(input.ID) + "-data", "region": "ap-guangzhou"},
+	}
+	manifest := mustJSON(canonicalTencentStorageBindingObjects(t, expected))
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if len(args) > 0 && args[0] == "apply" {
+			return nil, nil
+		}
+		if len(args) > 0 && args[0] == "get" {
+			return manifest, nil
+		}
+		return nil, fmt.Errorf("unexpected kubectl args=%#v", args)
 	}
 
-	readback, err := provider.ReadCBSVolume(context.Background(), input, persisted)
-	if err != nil || readback.ProviderResourceID != "disk-response-loss" || readback.Status != "ready" {
-		t.Fatalf("readback=%#v err=%v", readback, err)
+	created, err := service.CreateStorageVolume(context.Background(), input)
+	if err != nil || created.ProviderResourceID != "disk-provider-acceptance" || created.ProviderData["region"] != "ap-guangzhou" {
+		t.Fatalf("service storage create=%#v err=%v", created, err)
 	}
-	if !slices.Equal(actions, []string{"discover_storage_volume", "sync_storage_volume"}) {
-		t.Fatalf("actions=%v", actions)
+}
+
+func TestTencentServiceStorageResponseLossReopensFromPersistedCreateIdentity(t *testing.T) {
+	input := StorageVolumeInput{
+		ID: "storage-provider-reopen", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-provider-reopen",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "provider-acceptance:storage-reopen",
+	}
+	store := NewMemoryOperationStore()
+	seedCompute := func(service *Service) {
+		service.computes[input.ComputeID] = ComputeAllocation{
+			ID: input.ComputeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Zone: input.Zone,
+		}
+	}
+	createCalls := 0
+	firstProvider := NewTencentProvider()
+	firstService := NewServiceWithOperationStore(firstProvider, store)
+	seedCompute(firstService)
+	firstProvider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "create_storage_volume" || request.Region != "ap-guangzhou" || request.Storage.DiskType != "CLOUD_BSSD" ||
+			request.Storage.Zone != input.Zone || request.Storage.SizeGB != uint64(input.SizeGB) {
+			t.Fatalf("first create request=%#v", request)
+		}
+		createCalls++
+		return provisionerResponse{}, errors.New("simulated CreateDisks response loss")
+	}
+	failed, err := firstService.CreateStorageVolume(context.Background(), input)
+	if err == nil || createCalls != 1 || failed.ProviderResourceID != "" || failed.ProviderData["region"] != "ap-guangzhou" {
+		t.Fatalf("first response-loss result=%#v err=%v createCalls=%d", failed, err, createCalls)
+	}
+
+	parentOperation := newOperation("create_storage_volume", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), time.Now())
+	parentBinding, ok := directStorageProviderMutationBinding(parentOperation)
+	if !ok {
+		t.Fatal("direct storage parent binding unavailable")
+	}
+	childID := providerMutationOperationID(parentBinding, "tencent_cbs_create", "storage_volume", input.ID, "")
+	child, err := store.Get(context.Background(), childID)
+	var state tencentCBSCreateMutationState
+	if err != nil || child.Status != "failed" || !decodeProviderMutationState(child, &state) || state.Region != "ap-guangzhou" ||
+		state.DiskType != "CLOUD_BSSD" || state.Zone != input.Zone || state.SizeGB != input.SizeGB {
+		t.Fatalf("response-loss child=%#v state=%#v err=%v", child, state, err)
+	}
+
+	t.Setenv(tencentProviderRegionEnv, "ap-shanghai")
+	t.Setenv("TENCENT_CBS_DISK_TYPE", "CLOUD_PREMIUM")
+	restartedProvider := NewTencentProvider()
+	if restartedProvider.region != "ap-shanghai" {
+		t.Fatalf("restart region proposal=%q", restartedProvider.region)
+	}
+	restartedService := NewServiceWithOperationStore(restartedProvider, store)
+	seedCompute(restartedService)
+	var replayActions []string
+	providerData := map[string]string{
+		"diskType": "CLOUD_BSSD", "diskChargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+		"deadline": "2026-09-01T00:00:00Z", "zone": input.Zone, "sizeGb": "10", "region": "ap-guangzhou",
+	}
+	restartedProvider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		replayActions = append(replayActions, request.Action)
+		if request.Region != state.Region || request.Storage.DiskType != state.DiskType || request.Storage.Zone != state.Zone || request.Storage.SizeGB != uint64(state.SizeGB) {
+			t.Fatalf("replay request=%#v state=%#v", request, state)
+		}
+		switch request.Action {
+		case "discover_storage_volume":
+			return provisionerResponse{OK: true, StorageState: "storage_existing_exact", StorageVolumeID: "disk-provider-reopen", Status: "provider_ready", ProviderRequestID: "req-discover", ProviderData: providerData}, nil
+		case "sync_storage_volume":
+			return provisionerResponse{OK: true, StorageVolumeID: "disk-provider-reopen", Status: "provider_ready", CBSStatus: "UNATTACHED", ProviderRequestID: "req-sync", ProviderData: providerData}, nil
+		case "create_storage_volume":
+			createCalls++
+			return provisionerResponse{}, errors.New("second CreateDisks dispatch")
+		default:
+			return provisionerResponse{}, fmt.Errorf("unexpected replay action %q", request.Action)
+		}
+	}
+	expected := StorageVolume{
+		ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		Provider: "tencent-tke", ProviderResourceID: "disk-provider-reopen", SizeGB: input.SizeGB, Zone: input.Zone, DiskType: "CLOUD_BSSD",
+		CostTags:     oplCostTags(input.AccountID, input.WorkspaceID, input.ID, parentOperation.OperationID),
+		ProviderData: map[string]string{"pvName": k8sName(input.ID) + "-pv", "pvcName": k8sName(input.ID) + "-data", "region": state.Region},
+	}
+	manifest := mustJSON(canonicalTencentStorageBindingObjects(t, expected))
+	restartedProvider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if len(args) > 0 && args[0] == "apply" {
+			return nil, nil
+		}
+		if len(args) > 0 && args[0] == "get" {
+			return manifest, nil
+		}
+		return nil, fmt.Errorf("unexpected kubectl args=%#v", args)
+	}
+
+	recovered, err := restartedService.CreateStorageVolume(context.Background(), input)
+	if err != nil || recovered.ProviderResourceID != "disk-provider-reopen" || recovered.ProviderData["region"] != state.Region ||
+		recovered.DiskType != state.DiskType || recovered.Zone != state.Zone || recovered.SizeGB != state.SizeGB || createCalls != 1 {
+		t.Fatalf("reopened storage=%#v err=%v createCalls=%d", recovered, err, createCalls)
+	}
+	if !slices.Equal(replayActions, []string{"discover_storage_volume", "sync_storage_volume"}) {
+		t.Fatalf("replay actions=%v", replayActions)
+	}
+}
+
+func TestTencentServiceStorageReplayRejectsMissingOrDriftedChildCreateIdentityWithoutBackfill(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*tencentCBSCreateMutationState)
+	}{
+		{name: "region missing", mutate: func(state *tencentCBSCreateMutationState) { state.Region = "" }},
+		{name: "region resource drift", mutate: func(state *tencentCBSCreateMutationState) { state.Region = "ap-shanghai" }},
+		{name: "disk type drift", mutate: func(state *tencentCBSCreateMutationState) { state.DiskType = "CLOUD_PREMIUM" }},
+		{name: "zone drift", mutate: func(state *tencentCBSCreateMutationState) { state.Zone = "ap-guangzhou-4" }},
+		{name: "size drift", mutate: func(state *tencentCBSCreateMutationState) { state.SizeGB = 20 }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			input := StorageVolumeInput{
+				ID: "storage-direct-state-" + strings.ReplaceAll(testCase.name, " ", "-"), AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-direct-state",
+				Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "provider-acceptance:state-" + testCase.name,
+			}
+			store := NewMemoryOperationStore()
+			firstProvider := NewTencentProvider()
+			firstService := NewServiceWithOperationStore(firstProvider, store)
+			firstService.computes[input.ComputeID] = ComputeAllocation{ID: input.ComputeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Zone: input.Zone}
+			firstProvider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				return provisionerResponse{}, errors.New("simulated CreateDisks response loss")
+			}
+			if _, err := firstService.CreateStorageVolume(context.Background(), input); err == nil {
+				t.Fatal("response loss fixture unexpectedly succeeded")
+			}
+
+			store.mu.Lock()
+			found := false
+			for index := range store.operation {
+				if store.operation[index].Action != "tencent_cbs_create" {
+					continue
+				}
+				var state tencentCBSCreateMutationState
+				if !decodeProviderMutationState(store.operation[index], &state) {
+					store.mu.Unlock()
+					t.Fatal("missing direct CBS child state")
+				}
+				testCase.mutate(&state)
+				body, err := json.Marshal(state)
+				if err != nil {
+					store.mu.Unlock()
+					t.Fatal(err)
+				}
+				store.operation[index].RedactedProviderPayload[providerMutationStatePayloadKey] = persistedProviderMutationState{Value: body, Digest: hashInput(json.RawMessage(body))}
+				found = true
+			}
+			store.mu.Unlock()
+			if !found {
+				t.Fatal("direct CBS child not found")
+			}
+
+			t.Setenv(tencentProviderRegionEnv, "ap-shanghai")
+			t.Setenv("TENCENT_CBS_DISK_TYPE", "CLOUD_PREMIUM")
+			restartedProvider := NewTencentProvider()
+			restartedService := NewServiceWithOperationStore(restartedProvider, store)
+			restartedService.computes[input.ComputeID] = ComputeAllocation{ID: input.ComputeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Zone: input.Zone}
+			providerCalls := 0
+			restartedProvider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				providerCalls++
+				return provisionerResponse{}, errors.New("invalid child state reached provisioner")
+			}
+			if _, err := restartedService.CreateStorageVolume(context.Background(), input); !errors.Is(err, ErrLaunchStageBindingConflict) || providerCalls != 0 {
+				t.Fatalf("invalid direct child replay err=%v providerCalls=%d", err, providerCalls)
+			}
+		})
+	}
+}
+
+func TestTencentProviderCBSReplayRejectsDurableRegionOrIdentityDriftBeforeReadback(t *testing.T) {
+	input := StorageVolumeInput{
+		ID: "storage-state-drift", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "launch-alpha:storage", OperationID: "op_storage_state_drift",
+	}
+	plan := tencentWorkspacePlan{
+		PackageID: "basic", Compute: ComputePlan{ID: "pool-basic"}, NodePoolID: "np-basic", MaxReplicas: 20,
+		Region: "ap-guangzhou", Zone: input.Zone, Storage: tencentStoragePlan{SizeGB: input.SizeGB, DiskType: "CLOUD_BSSD"},
+	}
+	parent := testWorkspaceLaunchBinding("storage", "ensure_storage", input.OperationID)
+	operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, time.Now().UTC())
+	operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+	if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*tencentCBSCreateMutationState)
+	}{
+		{name: "region missing", mutate: func(state *tencentCBSCreateMutationState) { state.Region = "" }},
+		{name: "region drift", mutate: func(state *tencentCBSCreateMutationState) { state.Region = "ap-shanghai" }},
+		{name: "disk type drift", mutate: func(state *tencentCBSCreateMutationState) { state.DiskType = "CLOUD_PREMIUM" }},
+		{name: "zone drift", mutate: func(state *tencentCBSCreateMutationState) { state.Zone = "ap-guangzhou-4" }},
+		{name: "size drift", mutate: func(state *tencentCBSCreateMutationState) { state.SizeGB = 20 }},
+		{name: "operation drift", mutate: func(state *tencentCBSCreateMutationState) { state.OperationID = "op-other" }},
+		{name: "account drift", mutate: func(state *tencentCBSCreateMutationState) { state.AccountID = "acct-other" }},
+		{name: "workspace drift", mutate: func(state *tencentCBSCreateMutationState) { state.WorkspaceID = "ws-other" }},
+		{name: "storage drift", mutate: func(state *tencentCBSCreateMutationState) { state.StorageID = "storage-other" }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := NewMemoryOperationStore()
+			provider := NewTencentProvider()
+			service := NewServiceWithOperationStore(provider, store)
+			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				return provisionerResponse{}, errors.New("simulated CreateDisks response loss")
+			}
+			ctx := withTencentWorkspacePlan(service.providerMutationContext(context.Background(), operation), plan)
+			if _, err := provider.CreateStorageVolume(ctx, input); err == nil {
+				t.Fatal("response loss fixture unexpectedly succeeded")
+			}
+
+			childID := providerMutationOperationID(parent, "tencent_cbs_create", "storage_volume", input.ID, "")
+			store.mu.Lock()
+			for index := range store.operation {
+				if store.operation[index].ID != childID {
+					continue
+				}
+				var state tencentCBSCreateMutationState
+				if !decodeProviderMutationState(store.operation[index], &state) {
+					store.mu.Unlock()
+					t.Fatal("missing CBS mutation state")
+				}
+				testCase.mutate(&state)
+				body, marshalErr := json.Marshal(state)
+				if marshalErr != nil {
+					store.mu.Unlock()
+					t.Fatal(marshalErr)
+				}
+				store.operation[index].RedactedProviderPayload[providerMutationStatePayloadKey] = persistedProviderMutationState{Value: body, Digest: hashInput(json.RawMessage(body))}
+			}
+			store.mu.Unlock()
+
+			providerCalls := 0
+			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				providerCalls++
+				return provisionerResponse{}, errors.New("drift reached provider")
+			}
+			if _, err := provider.CreateStorageVolume(ctx, input); !errors.Is(err, ErrLaunchStageBindingConflict) || providerCalls != 0 {
+				t.Fatalf("drift replay err=%v providerCalls=%d", err, providerCalls)
+			}
+		})
+	}
+}
+
+func TestTencentProviderCBSFreshPlanDriftFailsBeforeProviderDispatch(t *testing.T) {
+	baseInput := StorageVolumeInput{
+		ID: "storage-fresh-plan-drift", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "launch-fresh-plan:storage", OperationID: "op_fresh_plan_storage",
+	}
+	basePlan := tencentWorkspacePlan{
+		PackageID: "basic", Compute: ComputePlan{ID: "pool-basic"}, NodePoolID: "np-basic", MaxReplicas: 20,
+		Region: "ap-guangzhou", Zone: baseInput.Zone, Storage: tencentStoragePlan{SizeGB: baseInput.SizeGB, DiskType: "CLOUD_BSSD"},
+	}
+	parent := testWorkspaceLaunchBinding("storage", "ensure_storage", baseInput.OperationID)
+	operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, time.Now().UTC())
+	operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+	if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*StorageVolumeInput, *tencentWorkspacePlan)
+	}{
+		{name: "region drift", mutate: func(_ *StorageVolumeInput, plan *tencentWorkspacePlan) { plan.Region = "ap-shanghai" }},
+		{name: "disk type missing", mutate: func(_ *StorageVolumeInput, plan *tencentWorkspacePlan) { plan.Storage.DiskType = "" }},
+		{name: "zone drift", mutate: func(input *StorageVolumeInput, _ *tencentWorkspacePlan) { input.Zone = "ap-guangzhou-4" }},
+		{name: "size drift", mutate: func(input *StorageVolumeInput, _ *tencentWorkspacePlan) { input.SizeGB = 20 }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			input, plan := baseInput, basePlan
+			testCase.mutate(&input, &plan)
+			store := NewMemoryOperationStore()
+			provider := NewTencentProvider()
+			service := NewServiceWithOperationStore(provider, store)
+			providerCalls := 0
+			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				providerCalls++
+				return provisionerResponse{}, errors.New("fresh plan drift reached provider")
+			}
+			ctx := withTencentWorkspacePlan(service.providerMutationContext(context.Background(), operation), plan)
+			if _, err := provider.CreateStorageVolume(ctx, input); !errors.Is(err, ErrLaunchStageBindingConflict) || providerCalls != 0 {
+				t.Fatalf("fresh plan drift err=%v providerCalls=%d", err, providerCalls)
+			}
+			operations, err := store.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, item := range operations {
+				if item.Action == "tencent_cbs_create" {
+					t.Fatalf("fresh plan drift appended child: %#v", item)
+				}
+			}
+		})
 	}
 }
 
@@ -2865,7 +3912,7 @@ func TestTencentProviderAuthoritativeAbsentReadbacksAreTypedAndMutationFree(t *t
 			ID: "storage-absent", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Zone: "ap-guangzhou-3", SizeGB: 10,
 			IdempotencyKey: "launch-alpha:storage", OperationID: "launch-alpha:storage",
 		}
-		persisted := StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Zone: input.Zone}
+		persisted := StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, DiskType: "CLOUD_BSSD", Zone: input.Zone, ProviderData: map[string]string{"region": "ap-guangzhou"}}
 		if _, err := provider.ReadCBSVolume(context.Background(), input, persisted); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) || calls != 1 {
 			t.Fatalf("CBS absent err=%v calls=%d", err, calls)
 		}
@@ -2951,11 +3998,11 @@ func TestTencentProviderStagedStorageRejectsCBSZoneDrift(t *testing.T) {
 		}
 		return provisionerResponse{
 			OK: true, StorageVolumeID: "disk-staged-drift", CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-readback",
-			ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-4", "sizeGb": "10", "diskChargeType": "PREPAID"},
+			ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-4", "sizeGb": "10", "diskChargeType": "PREPAID", "region": "ap-guangzhou"},
 		}, nil
 	}
 	input := StorageVolumeInput{ID: "storage-staged-drift", AccountID: "acct-staged", WorkspaceID: "workspace-staged", Zone: "ap-guangzhou-3", SizeGB: 10, OperationID: "launch-staged:storage"}
-	persisted := StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", ProviderResourceID: "disk-staged-drift", SizeGB: input.SizeGB, Zone: input.Zone, DiskType: "CLOUD_BSSD", CostTags: oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID)}
+	persisted := StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", ProviderResourceID: "disk-staged-drift", SizeGB: input.SizeGB, Zone: input.Zone, DiskType: "CLOUD_BSSD", CostTags: oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID), ProviderData: map[string]string{"region": "ap-guangzhou"}}
 	readback, err := provider.ReadCBSVolume(context.Background(), input, persisted)
 	if err == nil || readback.Zone != "ap-guangzhou-4" {
 		t.Fatalf("zone drift must fail closed: readback=%#v err=%v", readback, err)
@@ -2966,7 +4013,7 @@ func TestTencentProviderStagedStorageRejectsStaticBindingLabelDriftWithoutApply(
 	provider := NewTencentProvider()
 	volume := StorageVolume{
 		ID: "storage-label-drift", AccountID: "acct-staged", WorkspaceID: "workspace-staged", Provider: "tencent-tke", ProviderResourceID: "disk-label-drift", SizeGB: 10, Zone: "ap-guangzhou-3",
-		CostTags: oplCostTags("acct-staged", "workspace-staged", "storage-label-drift", "launch-staged:storage"), ProviderData: map[string]string{"pvName": "opl-storage-label-drift-pv", "pvcName": "opl-storage-label-drift-data"},
+		CostTags: oplCostTags("acct-staged", "workspace-staged", "storage-label-drift", "launch-staged:storage"), ProviderData: map[string]string{"pvName": "opl-storage-label-drift-pv", "pvcName": "opl-storage-label-drift-data", "region": "ap-guangzhou"},
 	}
 	manifest := map[string]any{}
 	if err := json.Unmarshal(staticCBSManifest(volume), &manifest); err != nil {
@@ -3002,7 +4049,7 @@ func TestTencentProviderReusesApprovedExactCBSWithOriginalStorageIdentity(t *tes
 			Status: "provider_ready", ProviderRequestID: "req-discover-cbs", MutationCount: 0,
 			ProviderData: map[string]string{
 				"diskChargeType": "PREPAID", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
-				"deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10", "periodMonths": "1",
+				"deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10", "periodMonths": "1", "region": "ap-guangzhou",
 			},
 		}, nil
 	}
@@ -3047,7 +4094,7 @@ func TestTencentProviderCreatesStaticBindingWhileCBSIsStillConverging(t *testing
 	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
 		return provisionerResponse{
 			OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "CREATING", Status: "pending", ProviderRequestID: "req-create-cbs",
-			ProviderData: map[string]string{"diskChargeType": "PREPAID", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10"},
+			ProviderData: map[string]string{"diskChargeType": "PREPAID", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10", "region": "ap-guangzhou"},
 		}, nil
 	}
 	applies := 0
@@ -3073,11 +4120,14 @@ func TestTencentProviderPreservesCBSFactsWhenStaticBindingFails(t *testing.T) {
 	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
 		return provisionerResponse{
 			OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-create-cbs",
-			ProviderData: map[string]string{"diskChargeType": "PREPAID", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16 00:00:00", "zone": "ap-guangzhou-3", "sizeGb": "10"},
+			ProviderData: map[string]string{"diskChargeType": "PREPAID", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16 00:00:00", "zone": "ap-guangzhou-3", "sizeGb": "10", "region": "ap-guangzhou"},
 		}, nil
 	}
 	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) { return nil, errors.New("cluster unavailable") }
-	volume, err := provider.CreateStorageVolume(context.Background(), StorageVolumeInput{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Zone: "ap-guangzhou-3", SizeGB: 10})
+	volume, err := provider.CreateStorageVolume(context.Background(), StorageVolumeInput{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Zone: "ap-guangzhou-3", SizeGB: 10,
+		IdempotencyKey: "storage-alpha:create", OperationID: "op-storage-alpha",
+	})
 	if err == nil || volume.ProviderResourceID != "disk-storage-alpha" || volume.ProviderData["diskChargeType"] != "PREPAID" || volume.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || volume.Deadline == "" || volume.Zone != "ap-guangzhou-3" {
 		t.Fatalf("partial CBS result lost provider facts: volume=%#v err=%v", volume, err)
 	}
@@ -3091,6 +4141,7 @@ func TestTencentProviderPreservesCBSIdentityFromFailedCreateReadback(t *testing.
 
 	volume, err := provider.CreateStorageVolume(context.Background(), StorageVolumeInput{
 		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Zone: "ap-guangzhou-3", SizeGB: 10,
+		IdempotencyKey: "storage-alpha:create", OperationID: "op-storage-alpha",
 	})
 	if err == nil || volume.ID != "storage-alpha" || volume.ProviderResourceID != "disk-storage-alpha" || volume.ProviderRequestID != "req-create-cbs" {
 		t.Fatalf("failed create readback lost CBS identity: volume=%#v err=%v", volume, err)
@@ -3116,7 +4167,7 @@ func TestTencentProviderStorageReadinessRequiresCBSAndBoundPVC(t *testing.T) {
 					!reflect.DeepEqual(request.Tags, oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha")) {
 					t.Fatalf("provisioner request = %#v", request)
 				}
-				return provisionerResponse{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: tc.cbsStatus, Status: "provider_ready", ProviderRequestID: "req-sync-cbs", ProviderData: map[string]string{"zone": "ap-guangzhou-3", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16 00:00:00", "sizeGb": "10"}}, nil
+				return provisionerResponse{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: tc.cbsStatus, Status: "provider_ready", ProviderRequestID: "req-sync-cbs", ProviderData: map[string]string{"zone": "ap-guangzhou-3", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16 00:00:00", "sizeGb": "10", "region": "ap-guangzhou"}}, nil
 			}
 			provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 				if args[0] == "apply" {
@@ -3127,7 +4178,7 @@ func TestTencentProviderStorageReadinessRequiresCBSAndBoundPVC(t *testing.T) {
 			volume, err := provider.SyncStorageVolume(context.Background(), StorageVolume{
 				ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ProviderResourceID: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD",
 				CostTags:     oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha"),
-				ProviderData: map[string]string{"pvName": "opl-storage-alpha-pv", "pvcName": "opl-storage-alpha-data"},
+				ProviderData: map[string]string{"pvName": "opl-storage-alpha-pv", "pvcName": "opl-storage-alpha-data", "region": "ap-guangzhou"},
 			})
 			if err != nil || volume.Status != tc.wantStatus || volume.CBSStatus != tc.cbsStatus {
 				t.Fatalf("synced volume=%#v err=%v", volume, err)
@@ -3141,7 +4192,7 @@ func TestTencentProviderSyncStorageVolumeStopsOnConfirmedCBSAbsence(t *testing.T
 	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
 		return provisionerResponse{
 			OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "NOT_FOUND", Status: "external_deleted", ProviderRequestID: "req-cbs-not-found",
-			ProviderData: map[string]string{"storageVolumeId": "disk-storage-alpha", "cbsStatus": "NOT_FOUND"},
+			ProviderData: map[string]string{"storageVolumeId": "disk-storage-alpha", "cbsStatus": "NOT_FOUND", "region": "ap-guangzhou"},
 		}, nil
 	}
 	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
@@ -3150,27 +4201,221 @@ func TestTencentProviderSyncStorageVolumeStopsOnConfirmedCBSAbsence(t *testing.T
 	}
 	volume, err := provider.SyncStorageVolume(context.Background(), StorageVolume{
 		ID: "storage-alpha", ProviderResourceID: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD",
+		ProviderData: map[string]string{"region": "ap-guangzhou"},
 	})
 	if err != nil || volume.Status != "external_deleted" || volume.CBSStatus != "NOT_FOUND" || volume.ProviderResourceID != "disk-storage-alpha" || volume.ProviderRequestID != "req-cbs-not-found" {
 		t.Fatalf("confirmed CBS absence = %#v, err=%v", volume, err)
 	}
 }
 
-func TestTencentProviderDestroyStorageReleasesKubernetesBindingButRetainsCBS(t *testing.T) {
+func canonicalTencentStorageDestroyFixture() StorageVolume {
+	return StorageVolume{
+		ID: "storage-alpha", OperationID: "op-storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", Provider: "tencent-tke",
+		ProviderResourceID: "disk-storage-alpha", ProviderRequestID: "req-create-cbs", SizeGB: 10, CBSStatus: "ATTACHED", Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD",
+		CostTags:     oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha"),
+		ProviderData: map[string]string{"pvName": "opl-storage-alpha-pv", "pvcName": "opl-storage-alpha-data", "region": "ap-guangzhou"},
+	}
+}
+
+func canonicalTencentStorageStatusResponse(request provisionerRequest) provisionerResponse {
+	return provisionerResponse{
+		OK: true, StorageVolumeID: request.Storage.ID, CBSStatus: "ATTACHED", Status: "provider_ready", ProviderRequestID: "req-storage-predelete",
+		ProviderData: map[string]string{"region": request.Region},
+	}
+}
+
+func canonicalTencentStorageBindingObjects(t *testing.T, volume StorageVolume) map[string]any {
+	t.Helper()
+	manifest := map[string]any{}
+	if err := json.Unmarshal(staticCBSManifest(volume), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	items := manifest["items"].([]any)
+	items[1].(map[string]any)["status"] = map[string]any{"phase": "Bound"}
+	return manifest
+}
+
+func exactTencentStorageBindingKubectl(t *testing.T, volume StorageVolume, deletedArgs *[]string) func(context.Context, []string, []byte) ([]byte, error) {
+	t.Helper()
+	readback := mustJSON(canonicalTencentStorageBindingObjects(t, volume))
+	return func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		switch {
+		case len(args) > 0 && args[0] == "get":
+			return readback, nil
+		case len(args) > 0 && args[0] == "delete":
+			if deletedArgs != nil {
+				*deletedArgs = append([]string(nil), args...)
+			}
+			return nil, nil
+		default:
+			t.Fatalf("unexpected kubectl request: %#v", args)
+			return nil, nil
+		}
+	}
+}
+
+func TestTencentProviderDestroyStorageRequiresCanonicalOwnerIdentityBeforeMutation(t *testing.T) {
+	base := canonicalTencentStorageDestroyFixture()
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*StorageVolume)
+	}{
+		{name: "provider missing", mutate: func(volume *StorageVolume) { volume.Provider = "" }},
+		{name: "provider drift", mutate: func(volume *StorageVolume) { volume.Provider = "local-docker" }},
+		{name: "workspace missing", mutate: func(volume *StorageVolume) { volume.WorkspaceID = "" }},
+		{name: "workspace drift", mutate: func(volume *StorageVolume) { volume.WorkspaceID = "ws-other" }},
+		{name: "operation missing", mutate: func(volume *StorageVolume) { volume.OperationID = "" }},
+		{name: "operation drift", mutate: func(volume *StorageVolume) { volume.OperationID = "op-other" }},
+		{name: "cost tags missing", mutate: func(volume *StorageVolume) { volume.CostTags = nil }},
+		{name: "cost tags drift", mutate: func(volume *StorageVolume) { volume.CostTags["opl_workspace_id"] = "ws-other" }},
+		{name: "cost tags contain extra fact", mutate: func(volume *StorageVolume) { volume.CostTags["extra"] = "untrusted" }},
+		{name: "PV name missing", mutate: func(volume *StorageVolume) { delete(volume.ProviderData, "pvName") }},
+		{name: "PV name drift", mutate: func(volume *StorageVolume) { volume.ProviderData["pvName"] = "foreign-pv" }},
+		{name: "PVC name missing", mutate: func(volume *StorageVolume) { delete(volume.ProviderData, "pvcName") }},
+		{name: "PVC name drift", mutate: func(volume *StorageVolume) { volume.ProviderData["pvcName"] = "foreign-pvc" }},
+		{name: "region missing", mutate: func(volume *StorageVolume) { delete(volume.ProviderData, "region") }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			volume := cloneStorageVolume(base)
+			testCase.mutate(&volume)
+			provider := NewTencentProvider()
+			kubectlCalls, provisionCalls := 0, 0
+			provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+				kubectlCalls++
+				return nil, nil
+			}
+			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				provisionCalls++
+				return provisionerResponse{}, nil
+			}
+			result, err := provider.DestroyStorageVolume(context.Background(), volume)
+			if err == nil || err.Error() != "storage_volume_destroy_identity_required" || kubectlCalls != 0 || provisionCalls != 0 || !reflect.DeepEqual(result, volume) {
+				t.Fatalf("identity drift mutated provider: result=%#v err=%v kubectl=%d provision=%d", result, err, kubectlCalls, provisionCalls)
+			}
+		})
+	}
+}
+
+func TestTencentProviderDestroyStorageRequiresExactLiveBindingBeforeMutation(t *testing.T) {
+	base := canonicalTencentStorageDestroyFixture()
+	for _, testCase := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "objects absent", mutate: func(manifest map[string]any) { manifest["items"] = []any{} }},
+		{name: "PV labels drift", mutate: func(manifest map[string]any) {
+			pv := manifest["items"].([]any)[0].(map[string]any)
+			pv["metadata"].(map[string]any)["labels"].(map[string]any)["oplcloud.cn/workspace-id"] = "ws-other"
+		}},
+		{name: "PV CBS handle drift", mutate: func(manifest map[string]any) {
+			pv := manifest["items"].([]any)[0].(map[string]any)
+			pv["spec"].(map[string]any)["csi"].(map[string]any)["volumeHandle"] = "disk-other"
+		}},
+		{name: "PV capacity drift", mutate: func(manifest map[string]any) {
+			pv := manifest["items"].([]any)[0].(map[string]any)
+			pv["spec"].(map[string]any)["capacity"].(map[string]any)["storage"] = "100Gi"
+		}},
+		{name: "PV zone drift", mutate: func(manifest map[string]any) {
+			pv := manifest["items"].([]any)[0].(map[string]any)
+			affinity := pv["spec"].(map[string]any)["nodeAffinity"].(map[string]any)
+			terms := affinity["required"].(map[string]any)["nodeSelectorTerms"].([]any)
+			expressions := terms[0].(map[string]any)["matchExpressions"].([]any)
+			expressions[0].(map[string]any)["values"] = []any{"ap-guangzhou-4"}
+		}},
+		{name: "PVC binding drift", mutate: func(manifest map[string]any) {
+			pvc := manifest["items"].([]any)[1].(map[string]any)
+			pvc["spec"].(map[string]any)["volumeName"] = "foreign-pv"
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			manifest := canonicalTencentStorageBindingObjects(t, base)
+			testCase.mutate(manifest)
+			provider := NewTencentProvider()
+			readCalls, mutationCalls := 0, 0
+			provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				if len(args) > 0 && args[0] == "get" {
+					readCalls++
+					return mustJSON(manifest), nil
+				}
+				mutationCalls++
+				return nil, nil
+			}
+			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				mutationCalls++
+				return provisionerResponse{}, nil
+			}
+			result, err := provider.DestroyStorageVolume(context.Background(), base)
+			if err == nil || readCalls != 1 || mutationCalls != 0 || !reflect.DeepEqual(result, base) {
+				t.Fatalf("live binding drift reached mutation: result=%#v err=%v reads=%d mutations=%d", result, err, readCalls, mutationCalls)
+			}
+		})
+	}
+}
+
+func TestTencentProviderStorageReadbackRejectsRegionDriftWithoutRewritingIdentity(t *testing.T) {
 	provider := NewTencentProvider()
+	input := canonicalTencentStorageDestroyFixture()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "sync_storage_volume" || request.Region != "ap-guangzhou" {
+			t.Fatalf("storage readback request=%#v", request)
+		}
+		return provisionerResponse{
+			OK: true, StorageVolumeID: input.ProviderResourceID, CBSStatus: "NOT_FOUND", Status: "external_deleted", ProviderRequestID: "req-wrong-region",
+			ProviderData: map[string]string{"region": "ap-shanghai", "storageVolumeId": input.ProviderResourceID, "cbsStatus": "NOT_FOUND", "describeCbsRequestId": "req-wrong-region"},
+		}, nil
+	}
+	result, err := provider.ReadStorageVolume(context.Background(), input)
+	if err == nil || err.Error() != "storage_cbs_region_readback_mismatch" || !reflect.DeepEqual(result, input) {
+		t.Fatalf("region drift rewrote storage identity: result=%#v err=%v", result, err)
+	}
+}
+
+func TestTencentProviderStorageConfigDriftDoesNotDeleteKubernetesBinding(t *testing.T) {
+	provider := NewTencentProvider()
+	input := canonicalTencentStorageDestroyFixture()
+	deleteCalls, provisionCalls := 0, 0
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if len(args) > 0 && args[0] == "delete" {
+			deleteCalls++
+			return nil, nil
+		}
+		return mustJSON(canonicalTencentStorageBindingObjects(t, input)), nil
+	}
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		provisionCalls++
+		if request.Action != "sync_storage_volume" || request.Region != input.ProviderData["region"] {
+			t.Fatalf("unexpected pre-delete request: %#v", request)
+		}
+		return provisionerResponse{OK: false, ErrorCode: "storage_provider_config_identity_mismatch", MutationCount: 0}, nil
+	}
+	result, err := provider.DestroyStorageVolume(context.Background(), input)
+	if err == nil || err.Error() != "storage_provider_config_identity_mismatch" || provisionCalls != 1 || deleteCalls != 0 || !reflect.DeepEqual(result, input) {
+		t.Fatalf("config drift released binding: result=%#v err=%v provision=%d delete=%d", result, err, provisionCalls, deleteCalls)
+	}
+}
+
+func TestTencentProviderDestroyStorageDeletesBindingAndRequiresConfirmedCBSAbsence(t *testing.T) {
+	provider := NewTencentProvider()
+	resource := canonicalTencentStorageDestroyFixture()
 	var args []string
-	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
-		t.Fatal("destroying static binding must not call a CBS destroy action")
-		return provisionerResponse{}, nil
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Region != "ap-guangzhou" || request.AccountID != "acct-alpha" || request.Storage.ID != "disk-storage-alpha" || request.Storage.SizeGB != 10 || request.Storage.Zone != "ap-guangzhou-3" || request.Storage.DiskType != "CLOUD_BSSD" || !reflect.DeepEqual(request.Tags, oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha")) {
+			t.Fatalf("storage destroy request=%#v", request)
+		}
+		if request.Action == "sync_storage_volume" {
+			return canonicalTencentStorageStatusResponse(request), nil
+		}
+		if request.Action != "destroy_storage_volume" {
+			t.Fatalf("storage destroy action=%#v", request)
+		}
+		return provisionerResponse{
+			OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "NOT_FOUND", Status: "external_deleted", ProviderRequestID: "req-terminate-cbs", MutationCount: 1,
+			ProviderData: map[string]string{"storageVolumeId": "disk-storage-alpha", "cbsStatus": "NOT_FOUND", "status": "external_deleted", "storageDestroyPhase": "absence_confirmed", "storageDestroyMutationCount": "1", "terminateCbsRequestId": "req-terminate-cbs", "describeCbsRequestId": "req-describe-cbs-absent", "region": "ap-guangzhou"},
+		}, nil
 	}
-	provider.kubectl = func(_ context.Context, current []string, _ []byte) ([]byte, error) {
-		args = append([]string(nil), current...)
-		return nil, nil
-	}
-	volume, err := provider.DestroyStorageVolume(context.Background(), StorageVolume{
-		ID: "storage-alpha", ProviderResourceID: "disk-storage-alpha", ProviderData: map[string]string{"pvName": "opl-storage-alpha-pv", "pvcName": "opl-storage-alpha-data"},
-	})
-	if err != nil || volume.Status != "retained" || volume.ProviderResourceID != "disk-storage-alpha" {
+	provider.kubectl = exactTencentStorageBindingKubectl(t, resource, &args)
+	volume, err := provider.DestroyStorageVolume(context.Background(), resource)
+	if err != nil || volume.Status != "external_deleted" || volume.CBSStatus != "NOT_FOUND" || volume.ProviderResourceID != "disk-storage-alpha" || volume.ProviderRequestID != "req-terminate-cbs" || volume.ProviderData["terminateCbsRequestId"] != "req-terminate-cbs" {
 		t.Fatalf("destroyed volume=%#v err=%v", volume, err)
 	}
 	if !slices.Contains(args, "pvc/opl-storage-alpha-data") || !slices.Contains(args, "pv/opl-storage-alpha-pv") {
@@ -3178,18 +4423,168 @@ func TestTencentProviderDestroyStorageReleasesKubernetesBindingButRetainsCBS(t *
 	}
 }
 
+func TestTencentProviderDestroyStorageRejectsNonAbsentProvisionerResult(t *testing.T) {
+	for _, response := range []provisionerResponse{
+		{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "UNATTACHED", Status: "retained"},
+		{OK: true, StorageVolumeID: "disk-other", CBSStatus: "NOT_FOUND", Status: "external_deleted"},
+		{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "NOT_FOUND", Status: "external_deleted", ProviderData: map[string]string{"storageVolumeId": "disk-storage-alpha", "cbsStatus": "NOT_FOUND", "status": "external_deleted"}},
+		{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "NOT_FOUND", Status: "external_deleted", ProviderData: map[string]string{"storageVolumeId": "disk-other", "cbsStatus": "NOT_FOUND", "status": "external_deleted", "describeCbsRequestId": "req-describe-cbs-absent"}},
+		{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "NOT_FOUND", Status: "external_deleted", ProviderData: map[string]string{"storageVolumeId": "disk-storage-alpha", "cbsStatus": "UNATTACHED", "status": "external_deleted", "describeCbsRequestId": "req-describe-cbs-absent"}},
+		{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "NOT_FOUND", Status: "external_deleted", ProviderData: map[string]string{"storageVolumeId": "disk-storage-alpha", "cbsStatus": "NOT_FOUND", "status": "retained", "describeCbsRequestId": "req-describe-cbs-absent"}},
+	} {
+		provider := NewTencentProvider()
+		resource := canonicalTencentStorageDestroyFixture()
+		provider.kubectl = exactTencentStorageBindingKubectl(t, resource, nil)
+		provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+			if request.Action == "sync_storage_volume" {
+				return canonicalTencentStorageStatusResponse(request), nil
+			}
+			return response, nil
+		}
+		_, err := provider.DestroyStorageVolume(context.Background(), resource)
+		if err == nil || err.Error() != "storage_volume_destroy_readback_mismatch" {
+			t.Fatalf("invalid destroy result=%#v error=%v", response, err)
+		}
+	}
+}
+
+func TestTencentProviderDestroyStorageRejectsMutationPhaseCountMismatch(t *testing.T) {
+	for _, response := range []provisionerResponse{
+		{OK: false, ErrorCode: "storage_volume_detach_unverified", MutationCount: 1, ProviderData: map[string]string{"storageDestroyPhase": "terminate_not_attempted", "storageDestroyMutationCount": "0"}},
+		{OK: false, ErrorCode: "storage_volume_delete_unverified", MutationCount: 0, ProviderData: map[string]string{"storageDestroyPhase": "terminate_attempted", "storageDestroyMutationCount": "1"}},
+		{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "NOT_FOUND", Status: "external_deleted", MutationCount: 1, ProviderData: map[string]string{
+			"storageVolumeId": "disk-storage-alpha", "cbsStatus": "NOT_FOUND", "status": "external_deleted", "describeCbsRequestId": "req-describe-cbs-absent",
+			"storageDestroyPhase": "absence_confirmed", "storageDestroyMutationCount": "0",
+		}},
+	} {
+		provider := NewTencentProvider()
+		resource := canonicalTencentStorageDestroyFixture()
+		provider.kubectl = exactTencentStorageBindingKubectl(t, resource, nil)
+		provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+			if request.Action == "sync_storage_volume" {
+				return canonicalTencentStorageStatusResponse(request), nil
+			}
+			return response, nil
+		}
+		volume, err := provider.DestroyStorageVolume(context.Background(), resource)
+		if err == nil || volume.ProviderData["storageDestroyPhase"] != "" || volume.ProviderData["storageDestroyMutationCount"] != "" {
+			t.Fatalf("mismatched mutation evidence persisted: response=%#v volume=%#v err=%v", response, volume, err)
+		}
+	}
+}
+
+func TestTencentStorageDestroyFailureDoesNotPolluteRestartReplay(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	resource := canonicalTencentStorageDestroyFixture()
+	appendSucceededStorageCreate(t, store, resource)
+	provider := NewTencentProvider()
+	destroyCalls := 0
+	provider.kubectl = exactTencentStorageBindingKubectl(t, resource, nil)
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "destroy_storage_volume":
+			destroyCalls++
+			return provisionerResponse{
+				OK: false, ErrorCode: "storage_volume_delete_unconfirmed", StorageVolumeID: resource.ProviderResourceID,
+				ProviderRequestID: "req-terminate-cbs", CBSStatus: "UNATTACHED", MutationCount: 1,
+				ProviderData: map[string]string{
+					"storageDestroyPhase": "terminate_attempted", "storageDestroyMutationCount": "1", "terminateCbsRequestId": "req-terminate-cbs",
+					"pvName": "foreign-pv", "pvcName": "foreign-pvc", "zone": "ap-shanghai-1", "diskType": "CLOUD_SSD", "untrusted": "pollution",
+				},
+			}, nil
+		case "sync_storage_volume":
+			return provisionerResponse{
+				OK: true, StorageVolumeID: resource.ProviderResourceID, ProviderRequestID: "req-read-cbs-absence", CBSStatus: "NOT_FOUND", Status: "external_deleted",
+				ProviderData: map[string]string{
+					"storageVolumeId": resource.ProviderResourceID, "cbsStatus": "NOT_FOUND", "status": "external_deleted",
+					"storageDestroyPhase": "absence_confirmed", "storageDestroyMutationCount": "1", "describeCbsRequestId": "req-read-cbs-absence", "region": "ap-guangzhou",
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected provisioner request: %#v", request)
+			return provisionerResponse{}, nil
+		}
+	}
+
+	first := NewServiceWithOperationStore(provider, store)
+	failed, err := first.DestroyStorageVolume(ctx, resource.ID)
+	if err == nil || !sameStorageDestroyStableIdentity(resource, failed) || failed.ProviderData["storageDestroyPhase"] != "terminate_attempted" || failed.ProviderData["untrusted"] != "" {
+		t.Fatalf("failed destroy polluted canonical result: failed=%#v err=%v", failed, err)
+	}
+
+	restarted := NewServiceWithOperationStore(provider, store)
+	converged, err := restarted.DestroyStorageVolume(ctx, resource.ID)
+	if err != nil || !storageDestroyReadbackConfirmsAbsence(converged) || destroyCalls != 1 || converged.ProviderData["untrusted"] != "" {
+		t.Fatalf("restart replay=%#v err=%v destroyCalls=%d", converged, err, destroyCalls)
+	}
+}
+
+func TestTencentStorageDestroyOKResponsePollutionDoesNotSurviveRestart(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	resource := canonicalTencentStorageDestroyFixture()
+	appendSucceededStorageCreate(t, store, resource)
+	provider := NewTencentProvider()
+	destroyCalls := 0
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if len(args) > 0 && args[0] == "get" {
+			return mustJSON(canonicalTencentStorageBindingObjects(t, resource)), nil
+		}
+		return nil, nil
+	}
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "destroy_storage_volume":
+			destroyCalls++
+			return provisionerResponse{
+				OK: true, StorageVolumeID: resource.ProviderResourceID, ProviderRequestID: "req-terminate-cbs", CBSStatus: "NOT_FOUND", Status: "external_deleted", MutationCount: 1,
+				ProviderData: map[string]string{
+					"storageVolumeId": resource.ProviderResourceID, "cbsStatus": "NOT_FOUND", "status": "external_deleted", "storageDestroyPhase": "absence_confirmed",
+					"storageDestroyMutationCount": "1", "terminateCbsRequestId": "req-terminate-cbs", "describeCbsRequestId": "req-describe-cbs-absence",
+					"pvName": "foreign-pv", "zone": "ap-shanghai-1", "diskType": "CLOUD_SSD", "unknown": "pollution",
+				},
+			}, nil
+		case "sync_storage_volume":
+			return provisionerResponse{
+				OK: true, StorageVolumeID: resource.ProviderResourceID, ProviderRequestID: "req-read-cbs-absence", CBSStatus: "NOT_FOUND", Status: "external_deleted",
+				ProviderData: map[string]string{
+					"storageVolumeId": resource.ProviderResourceID, "cbsStatus": "NOT_FOUND", "status": "external_deleted",
+					"storageDestroyPhase": "absence_confirmed", "storageDestroyMutationCount": "1", "describeCbsRequestId": "req-read-cbs-absence", "region": "ap-guangzhou",
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected provisioner request: %#v", request)
+			return provisionerResponse{}, nil
+		}
+	}
+
+	first := NewServiceWithOperationStore(provider, store)
+	failed, err := first.DestroyStorageVolume(ctx, resource.ID)
+	if err == nil || err.Error() != "storage_volume_destroy_readback_mismatch" || !sameStorageDestroyStableIdentity(resource, failed) ||
+		failed.Zone != resource.Zone || failed.DiskType != resource.DiskType || failed.ProviderData["pvName"] != resource.ProviderData["pvName"] || failed.ProviderData["unknown"] != "" {
+		t.Fatalf("OK response pollution entered canonical result: failed=%#v err=%v", failed, err)
+	}
+
+	restarted := NewServiceWithOperationStore(provider, store)
+	converged, err := restarted.DestroyStorageVolume(ctx, resource.ID)
+	if err != nil || !storageDestroyReadbackConfirmsAbsence(converged) || destroyCalls != 1 || converged.Zone != resource.Zone || converged.DiskType != resource.DiskType || converged.ProviderData["unknown"] != "" {
+		t.Fatalf("restart replay=%#v err=%v destroyCalls=%d", converged, err, destroyCalls)
+	}
+}
+
 func TestTencentProviderRenewsCBSAndPersistsDeadlineReadback(t *testing.T) {
 	provider := NewTencentProvider()
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
-		if request.Action != "renew_storage_volume" || request.AccountID != "acct-alpha" || request.Storage.Deadline != "2026-08-16T00:00:00Z" ||
+		if request.Action != "renew_storage_volume" || request.AccountID != "acct-alpha" || request.Region != "ap-guangzhou" || request.Storage.Deadline != "2026-08-16T00:00:00Z" ||
 			!reflect.DeepEqual(request.Tags, oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha")) {
 			t.Fatalf("renew request = %#v", request)
 		}
-		return provisionerResponse{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-renew-cbs", ProviderData: map[string]string{"deadline": "2026-09-16T00:00:00Z", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "diskChargeType": "PREPAID", "zone": "ap-guangzhou-3", "diskType": "CLOUD_BSSD", "sizeGb": "10"}}, nil
+		return provisionerResponse{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-renew-cbs", ProviderData: map[string]string{"deadline": "2026-09-16T00:00:00Z", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "diskChargeType": "PREPAID", "zone": "ap-guangzhou-3", "diskType": "CLOUD_BSSD", "sizeGb": "10", "region": "ap-guangzhou"}}, nil
 	}
 	volume, err := provider.RenewStorageVolume(context.Background(), StorageVolume{
 		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ProviderResourceID: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD", Deadline: "2026-08-16T00:00:00Z",
-		CostTags: oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha"),
+		CostTags: oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha"), ProviderData: map[string]string{"region": "ap-guangzhou"},
 	})
 	if err != nil || volume.Deadline != "2026-09-16T00:00:00Z" || volume.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || volume.ProviderRequestID != "req-renew-cbs" {
 		t.Fatalf("renewed volume=%#v err=%v", volume, err)
@@ -3234,7 +4629,7 @@ func TestTencentProviderRenewFailuresPreserveProviderIdentityAndReadback(t *test
 		provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
 			return provisionerResponse{OK: false, StorageVolumeID: "disk-storage-alpha", ProviderRequestID: "req-renew-cbs", ErrorCode: "tencent_cbs_renewal_unconfirmed", CBSStatus: "UNATTACHED", ProviderData: map[string]string{"deadline": "2026-08-16 00:00:00", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "diskChargeType": "PREPAID", "describeCbsRequestId": "req-read-cbs"}}, nil
 		}
-		volume, err := provider.RenewStorageVolume(context.Background(), StorageVolume{ID: "storage-alpha", ProviderResourceID: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD", Deadline: "2026-08-16 00:00:00"})
+		volume, err := provider.RenewStorageVolume(context.Background(), StorageVolume{ID: "storage-alpha", ProviderResourceID: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD", Deadline: "2026-08-16 00:00:00", ProviderData: map[string]string{"region": "ap-guangzhou"}})
 		if err == nil || volume.ID != "storage-alpha" || volume.ProviderResourceID != "disk-storage-alpha" || volume.ProviderRequestID != "req-renew-cbs" || volume.ProviderData["describeCbsRequestId"] != "req-read-cbs" {
 			t.Fatalf("failed CBS renewal lost evidence: volume=%#v err=%v", volume, err)
 		}

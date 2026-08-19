@@ -2,10 +2,16 @@ package fabric
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 )
+
+var errStorageDestroyRecoveryUnconfirmed = errors.New("storage_destroy_recovery_unconfirmed")
+
+const storageDestroyPhaseDispatchAuthorized = "dispatch_authorized_uncertain"
 
 func attachmentReadbackMatches(result StorageAttachment, input StorageAttachmentInput, compute ComputeAllocation, volume StorageVolume) bool {
 	return strings.HasPrefix(result.ID, "att_") && result.OperationID == input.IdempotencyKey &&
@@ -156,32 +162,169 @@ func (s *Service) ReadStorageVolume(ctx context.Context, volumeID string) (Stora
 }
 
 func (s *Service) DestroyStorageVolume(ctx context.Context, volumeID string) (StorageVolume, error) {
-	s.mu.Lock()
-	existing := s.volumes[volumeID]
-	s.mu.Unlock()
-	if existing.ID == "" {
-		operation := newOperation("destroy_storage_volume", "storage_volume", volumeID, "", "", "", hashInput(map[string]string{"id": volumeID}), time.Now().UTC())
-		operation.ProviderRequestID = providerRequestID("destroy-storage", volumeID)
-		err := fmt.Errorf("storage_volume_not_found")
-		_ = s.recordOperation(ctx, operation, "rejected", StorageVolume{ID: volumeID}, err)
-		return StorageVolume{}, err
+	var result StorageVolume
+	err := s.operations.WithPoolLock(ctx, "storage-destroy:"+volumeID, func(lockCtx context.Context) error {
+		s.mu.Lock()
+		existing := cloneStorageVolume(s.volumes[volumeID])
+		s.mu.Unlock()
+		result = existing
+		if existing.ID == "" {
+			operation := newOperation("destroy_storage_volume", "storage_volume", volumeID, "", "", "", hashInput(map[string]string{"id": volumeID}), s.now())
+			operation.ProviderRequestID = providerRequestID("destroy-storage", volumeID)
+			err := fmt.Errorf("storage_volume_not_found")
+			_ = s.recordOperation(lockCtx, operation, "rejected", StorageVolume{ID: volumeID}, err)
+			return err
+		}
+
+		latest, found, err := s.operations.LatestResourceOperation(lockCtx, "storage_volume", volumeID)
+		if err != nil {
+			return err
+		}
+		if found && latest.Action == "destroy_storage_volume" {
+			persisted, valid := validStorageDestroyOperation(latest, volumeID)
+			if !valid || !sameStorageDestroyStableIdentity(existing, persisted) {
+				return fmt.Errorf("storage_destroy_replay_identity_mismatch")
+			}
+			result = persisted
+			switch latest.Status {
+			case "succeeded":
+				s.mu.Lock()
+				s.volumes[volumeID] = cloneStorageVolume(persisted)
+				s.mu.Unlock()
+				return nil
+			case "started":
+				return s.recoverStorageDestroyByReadback(lockCtx, latest, existing, persisted, &result)
+			case "failed":
+				return s.recoverStorageDestroyByReadback(lockCtx, latest, existing, persisted, &result)
+			default:
+				return fmt.Errorf("storage_destroy_replay_status_invalid")
+			}
+		}
+
+		operation := newOperation("destroy_storage_volume", "storage_volume", volumeID, existing.AccountID, existing.WorkspaceID, "", hashInput(map[string]string{"id": volumeID}), s.now())
+		request := cloneStorageVolume(existing)
+		if request.Provider == "tencent-tke" {
+			request.Status = "destroying"
+			if request.ProviderData == nil {
+				request.ProviderData = map[string]string{}
+			}
+			request.ProviderData["storageDestroyPhase"] = storageDestroyPhaseDispatchAuthorized
+			request.ProviderData["storageDestroyMutationCount"] = "0"
+		}
+		if err := s.recordOperation(lockCtx, operation, "started", request, nil); err != nil {
+			return err
+		}
+		return s.dispatchStorageDestroy(lockCtx, operation, existing, request, &result)
+	})
+	return result, err
+}
+
+func (s *Service) dispatchStorageDestroy(ctx context.Context, operation FabricOperation, existing, request StorageVolume, result *StorageVolume) error {
+	volume, providerErr := s.provider.DestroyStorageVolume(ctx, cloneStorageVolume(request))
+	if providerErr != nil && volume.ID == "" {
+		volume = cloneStorageVolume(request)
 	}
-	operation := newOperation("destroy_storage_volume", "storage_volume", volumeID, existing.AccountID, existing.WorkspaceID, "", hashInput(map[string]string{"id": volumeID}), time.Now().UTC())
-	if err := s.recordOperation(ctx, operation, "started", existing, nil); err != nil {
-		return StorageVolume{}, err
-	}
-	volume, err := s.provider.DestroyStorageVolume(ctx, existing)
-	if err != nil {
+	*result = volume
+	if !sameStorageDestroyStableIdentity(existing, volume) {
+		err := fmt.Errorf("storage_destroy_provider_identity_mismatch")
 		_ = s.recordOperation(ctx, operation, "failed", volume, err)
-		return volume, err
+		return err
+	}
+	if providerErr != nil {
+		_ = s.recordOperation(ctx, operation, "failed", volume, providerErr)
+		return providerErr
 	}
 	if err := s.recordOperation(ctx, operation, "succeeded", volume, nil); err != nil {
-		return volume, err
+		return err
 	}
 	s.mu.Lock()
-	s.volumes[volumeID] = volume
+	s.volumes[existing.ID] = cloneStorageVolume(volume)
 	s.mu.Unlock()
-	return volume, nil
+	return nil
+}
+
+func validStorageDestroyOperation(operation FabricOperation, volumeID string) (StorageVolume, bool) {
+	var volume StorageVolume
+	if operation.Action != "destroy_storage_volume" || operation.ResourceKind != "storage_volume" || operation.ResourceID != volumeID || operation.IdempotencyKey != "" ||
+		operation.RequestHash != hashInput(map[string]string{"id": volumeID}) || !decodeOperationResource(operation, &volume) ||
+		volume.ID != volumeID || operation.AccountID != volume.AccountID || operation.WorkspaceID != volume.WorkspaceID ||
+		operation.Provider != volume.Provider || operation.ProviderRequestID != volume.ProviderRequestID {
+		return StorageVolume{}, false
+	}
+	return volume, true
+}
+
+func sameStorageDestroyStableIdentity(previous, current StorageVolume) bool {
+	return previous.ID == current.ID && previous.OperationID == current.OperationID && previous.AccountID == current.AccountID && previous.WorkspaceID == current.WorkspaceID &&
+		previous.Provider == current.Provider && previous.ProviderResourceID == current.ProviderResourceID && previous.SizeGB == current.SizeGB &&
+		previous.StorageClass == current.StorageClass && previous.DiskType == current.DiskType && previous.RenewFlag == current.RenewFlag &&
+		previous.Deadline == current.Deadline && previous.Zone == current.Zone && previous.CreatedAt.Equal(current.CreatedAt) &&
+		reflect.DeepEqual(previous.CostTags, current.CostTags) && sameStorageDestroyProviderData(previous.ProviderData, current.ProviderData)
+}
+
+func sameStorageDestroyProviderData(previous, current map[string]string) bool {
+	for key, previousValue := range previous {
+		currentValue, exists := current[key]
+		if !exists || previousValue != currentValue && !isStorageDestroyEvidenceKey(key) {
+			return false
+		}
+	}
+	for key := range current {
+		if _, exists := previous[key]; !exists && !isStorageDestroyEvidenceKey(key) {
+			return false
+		}
+	}
+	return true
+}
+
+func isStorageDestroyEvidenceKey(key string) bool {
+	switch key {
+	case "storageVolumeId", "cbsStatus", "status", "terminateCbsRequestId", "describeCbsRequestId", "storageDestroyPhase", "storageDestroyMutationCount":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) recoverStorageDestroyByReadback(ctx context.Context, operation FabricOperation, existing, persisted StorageVolume, result *StorageVolume) error {
+	reader, ok := s.provider.(storageVolumeStatusReader)
+	if !ok {
+		return errStorageDestroyRecoveryUnconfirmed
+	}
+	readback, readErr := reader.ReadStorageVolumeStatus(ctx, cloneStorageVolume(persisted))
+	*result = readback
+	if !sameStorageDestroyStableIdentity(existing, readback) {
+		return fmt.Errorf("storage_destroy_replay_identity_mismatch")
+	}
+	if readErr != nil {
+		return fmt.Errorf("%w: %v", errStorageDestroyRecoveryUnconfirmed, readErr)
+	}
+	if !storageDestroyReadbackConfirmsAbsence(readback) {
+		return errStorageDestroyRecoveryUnconfirmed
+	}
+	if err := s.recordOperation(ctx, operation, "succeeded", readback, nil); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.volumes[existing.ID] = cloneStorageVolume(readback)
+	s.mu.Unlock()
+	return nil
+}
+
+func storageDestroyReadbackConfirmsAbsence(volume StorageVolume) bool {
+	switch volume.Provider {
+	case "tencent-tke":
+		return volume.Status == "external_deleted" && volume.CBSStatus == "NOT_FOUND" && strings.HasPrefix(volume.ProviderResourceID, "disk-") &&
+			volume.ProviderData["storageVolumeId"] == volume.ProviderResourceID && volume.ProviderData["cbsStatus"] == "NOT_FOUND" &&
+			volume.ProviderData["status"] == "external_deleted" && volume.ProviderData["storageDestroyPhase"] == "absence_confirmed" &&
+			(volume.ProviderData["storageDestroyMutationCount"] == "0" || volume.ProviderData["storageDestroyMutationCount"] == "1") &&
+			strings.TrimSpace(volume.ProviderData["describeCbsRequestId"]) != ""
+	case "local-docker":
+		return volume.Status == "external_deleted" && strings.HasPrefix(volume.ProviderResourceID, "directory/") &&
+			strings.TrimSpace(strings.TrimPrefix(volume.ProviderResourceID, "directory/")) != ""
+	default:
+		return false
+	}
 }
 
 func (s *Service) SyncStorageVolume(ctx context.Context, volumeID string) (StorageVolume, error) {

@@ -1776,6 +1776,313 @@ type blockingStorageRenewProvider struct {
 	release chan struct{}
 }
 
+type countingStorageDestroyProvider struct {
+	testProvider
+	calls   atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+type recoveringStorageDestroyProvider struct {
+	testProvider
+	destroyCalls  atomic.Int32
+	readbackCalls atomic.Int32
+	destroyErr    error
+	destroyEmpty  bool
+	readback      StorageVolume
+	readbackErr   error
+}
+
+func (p *countingStorageDestroyProvider) DestroyStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
+	if p.calls.Add(1) == 1 && p.entered != nil {
+		close(p.entered)
+	}
+	if p.release != nil {
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return volume, ctx.Err()
+		}
+	}
+	volume = cloneStorageVolume(volume)
+	volume.Status = "external_deleted"
+	volume.CBSStatus = "NOT_FOUND"
+	volume.ProviderRequestID = "req-destroy-storage"
+	if volume.ProviderData == nil {
+		volume.ProviderData = map[string]string{}
+	}
+	volume.ProviderData["cbsStatus"] = "NOT_FOUND"
+	volume.ProviderData["describeCbsRequestId"] = "req-describe-storage-absent"
+	volume.ProviderData["terminateCbsRequestId"] = "req-destroy-storage"
+	return volume, nil
+}
+
+func (p *recoveringStorageDestroyProvider) DestroyStorageVolume(_ context.Context, volume StorageVolume) (StorageVolume, error) {
+	p.destroyCalls.Add(1)
+	if p.destroyEmpty {
+		return StorageVolume{}, p.destroyErr
+	}
+	return storageDestroyAbsentReadback(volume), p.destroyErr
+}
+
+func (p *recoveringStorageDestroyProvider) ReadStorageVolumeStatus(_ context.Context, volume StorageVolume) (StorageVolume, error) {
+	p.readbackCalls.Add(1)
+	if p.readback.ID != "" {
+		return cloneStorageVolume(p.readback), p.readbackErr
+	}
+	return storageDestroyAbsentReadback(volume), p.readbackErr
+}
+
+func storageDestroyAbsentReadback(volume StorageVolume) StorageVolume {
+	volume = cloneStorageVolume(volume)
+	volume.Status = "external_deleted"
+	volume.CBSStatus = "NOT_FOUND"
+	volume.ProviderRequestID = "req-destroy-storage"
+	if volume.ProviderData == nil {
+		volume.ProviderData = map[string]string{}
+	}
+	volume.ProviderData["storageVolumeId"] = volume.ProviderResourceID
+	volume.ProviderData["cbsStatus"] = "NOT_FOUND"
+	volume.ProviderData["status"] = "external_deleted"
+	volume.ProviderData["storageDestroyPhase"] = "absence_confirmed"
+	volume.ProviderData["storageDestroyMutationCount"] = "0"
+	volume.ProviderData["describeCbsRequestId"] = "req-describe-storage-absent"
+	volume.ProviderData["terminateCbsRequestId"] = "req-destroy-storage"
+	return volume
+}
+
+func storageDestroyTestVolume(id string) StorageVolume {
+	createdAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	return StorageVolume{
+		ID: id, OperationID: "create-" + id, AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", Provider: "tencent-tke",
+		ProviderResourceID: "disk-" + id, ProviderRequestID: "req-create-storage", SizeGB: 10, StorageClass: "cbs-static", CBSStatus: "UNATTACHED",
+		DiskType: "CLOUD_BSSD", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-01T00:00:00Z", Zone: "ap-guangzhou-3",
+		ProviderData: map[string]string{"pvName": id + "-pv", "pvcName": id + "-data", "diskType": "CLOUD_BSSD", "zone": "ap-guangzhou-3"},
+		CostTags:     oplCostTags("acct-alpha", "ws-alpha", id, "create-"+id), CreatedAt: createdAt,
+	}
+}
+
+func TestDestroyStorageVolumeSerializesOverlappingRequests(t *testing.T) {
+	provider := &countingStorageDestroyProvider{entered: make(chan struct{}), release: make(chan struct{})}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	resource := storageDestroyTestVolume("storage-destroy-overlap")
+	service.volumes[resource.ID] = resource
+
+	results := make(chan StorageVolume, 2)
+	errs := make(chan error, 2)
+	go func() {
+		result, err := service.DestroyStorageVolume(context.Background(), resource.ID)
+		results <- result
+		errs <- err
+	}()
+	<-provider.entered
+	go func() {
+		result, err := service.DestroyStorageVolume(context.Background(), resource.ID)
+		results <- result
+		errs <- err
+	}()
+	close(provider.release)
+
+	for range 2 {
+		result, err := <-results, <-errs
+		if err != nil || result.Status != "external_deleted" || result.ProviderResourceID != resource.ProviderResourceID {
+			t.Fatalf("destroyed volume=%#v err=%v", result, err)
+		}
+	}
+	if calls := provider.calls.Load(); calls != 1 {
+		t.Fatalf("overlapping storage destroy called provider %d times, want 1", calls)
+	}
+	operations, err := service.ListOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	destroyOperations := 0
+	for _, operation := range operations {
+		if operation.Action == "destroy_storage_volume" && operation.ResourceID == resource.ID {
+			destroyOperations++
+		}
+	}
+	if destroyOperations != 2 {
+		t.Fatalf("destroy operation records=%d, want one started and one succeeded: %#v", destroyOperations, operations)
+	}
+}
+
+func TestDestroyStorageVolumeRejectsDurableStableIdentityDrift(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*StorageVolume)
+	}{
+		{name: "provider resource", mutate: func(volume *StorageVolume) { volume.ProviderResourceID = "disk-other" }},
+		{name: "workspace", mutate: func(volume *StorageVolume) { volume.WorkspaceID = "ws-other" }},
+		{name: "provider data", mutate: func(volume *StorageVolume) { volume.ProviderData["zone"] = "ap-guangzhou-6" }},
+		{name: "cost tags", mutate: func(volume *StorageVolume) { volume.CostTags["opl_workspace_id"] = "ws-other" }},
+		{name: "created at", mutate: func(volume *StorageVolume) { volume.CreatedAt = volume.CreatedAt.Add(time.Second) }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := NewMemoryOperationStore()
+			provider := &countingStorageDestroyProvider{}
+			service := NewServiceWithOperationStore(provider, store)
+			resource := storageDestroyTestVolume("storage-destroy-drift")
+			service.volumes[resource.ID] = resource
+			drifted := cloneStorageVolume(resource)
+			testCase.mutate(&drifted)
+			drifted.Status = "external_deleted"
+			drifted.CBSStatus = "NOT_FOUND"
+			drifted.ProviderRequestID = "req-prior-destroy"
+			now := time.Date(2026, 8, 20, 4, 0, 0, 0, time.UTC)
+			operation := newOperation("destroy_storage_volume", "storage_volume", resource.ID, resource.AccountID, resource.WorkspaceID, "", hashInput(map[string]string{"id": resource.ID}), now)
+			operation.ID, operation.Status, operation.CreatedAt, operation.FinishedAt = "fop_destroy_drift_"+stableSuffix(testCase.name)[:12], "succeeded", now, now
+			fillOperationResource(&operation, drifted)
+			if err := store.Append(ctx, operation); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := service.DestroyStorageVolume(ctx, resource.ID)
+			if err == nil || err.Error() != "storage_destroy_replay_identity_mismatch" || result.ID != resource.ID || provider.calls.Load() != 0 {
+				t.Fatalf("drift replay result=%#v err=%v providerCalls=%d", result, err, provider.calls.Load())
+			}
+		})
+	}
+}
+
+func TestDestroyStorageVolumeRecoversFailedMutationByReadbackOnly(t *testing.T) {
+	ctx := context.Background()
+	provider := &recoveringStorageDestroyProvider{destroyErr: errors.New("destroy response completion failed")}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	resource := storageDestroyTestVolume("storage-destroy-failed-recovery")
+	service.volumes[resource.ID] = resource
+
+	failed, err := service.DestroyStorageVolume(ctx, resource.ID)
+	if err == nil || failed.Status != "external_deleted" || provider.destroyCalls.Load() != 1 || provider.readbackCalls.Load() != 0 {
+		t.Fatalf("failed destroy=%#v err=%v destroyCalls=%d readbackCalls=%d", failed, err, provider.destroyCalls.Load(), provider.readbackCalls.Load())
+	}
+	provider.destroyErr = nil
+	recovered, err := service.DestroyStorageVolume(ctx, resource.ID)
+	if err != nil || recovered.Status != "external_deleted" || recovered.CBSStatus != "NOT_FOUND" || provider.destroyCalls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+		t.Fatalf("readback recovery=%#v err=%v destroyCalls=%d readbackCalls=%d", recovered, err, provider.destroyCalls.Load(), provider.readbackCalls.Load())
+	}
+	replayed, err := service.DestroyStorageVolume(ctx, resource.ID)
+	if err != nil || !reflect.DeepEqual(replayed, recovered) || provider.destroyCalls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+		t.Fatalf("terminal replay=%#v recovered=%#v err=%v destroyCalls=%d readbackCalls=%d", replayed, recovered, err, provider.destroyCalls.Load(), provider.readbackCalls.Load())
+	}
+}
+
+func TestDestroyStorageVolumePreservesStableIdentityFromEmptyProviderError(t *testing.T) {
+	ctx := context.Background()
+	provider := &recoveringStorageDestroyProvider{destroyErr: errors.New("provider result unavailable"), destroyEmpty: true}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	resource := storageDestroyTestVolume("storage-destroy-empty-error")
+	service.volumes[resource.ID] = resource
+
+	failed, err := service.DestroyStorageVolume(ctx, resource.ID)
+	if err == nil || !sameStorageDestroyStableIdentity(resource, failed) || failed.Status != "destroying" ||
+		failed.ProviderData["storageDestroyPhase"] != storageDestroyPhaseDispatchAuthorized || failed.ProviderData["storageDestroyMutationCount"] != "0" ||
+		provider.destroyCalls.Load() != 1 || provider.readbackCalls.Load() != 0 {
+		t.Fatalf("failed destroy=%#v resource=%#v err=%v destroyCalls=%d readbackCalls=%d", failed, resource, err, provider.destroyCalls.Load(), provider.readbackCalls.Load())
+	}
+	provider.destroyErr = nil
+	provider.destroyEmpty = false
+	recovered, err := service.DestroyStorageVolume(ctx, resource.ID)
+	if err != nil || recovered.Status != "external_deleted" || provider.destroyCalls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+		t.Fatalf("recovery=%#v err=%v destroyCalls=%d readbackCalls=%d", recovered, err, provider.destroyCalls.Load(), provider.readbackCalls.Load())
+	}
+}
+
+func TestDestroyStorageVolumeRecoversStartedOperationByReadbackOnly(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	provider := &recoveringStorageDestroyProvider{}
+	service := NewServiceWithOperationStore(provider, store)
+	resource := storageDestroyTestVolume("storage-destroy-started-recovery")
+	service.volumes[resource.ID] = resource
+	now := time.Date(2026, 1, 3, 5, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now.Add(time.Second) }
+	operation := newOperation("destroy_storage_volume", "storage_volume", resource.ID, resource.AccountID, resource.WorkspaceID, "", hashInput(map[string]string{"id": resource.ID}), now)
+	operation.ID, operation.Status, operation.CreatedAt = "fop_destroy_storage_started_recovery", "started", now
+	fillOperationResource(&operation, resource)
+	if err := store.Append(ctx, operation); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := service.DestroyStorageVolume(ctx, resource.ID)
+	if err != nil || recovered.Status != "external_deleted" || provider.destroyCalls.Load() != 0 || provider.readbackCalls.Load() != 1 {
+		t.Fatalf("started recovery=%#v err=%v destroyCalls=%d readbackCalls=%d", recovered, err, provider.destroyCalls.Load(), provider.readbackCalls.Load())
+	}
+	latest, found, latestErr := store.LatestResourceOperation(ctx, "storage_volume", resource.ID)
+	if latestErr != nil || !found || latest.Status != "succeeded" || latest.OperationID != operation.OperationID {
+		t.Fatalf("terminal operation=%#v found=%v err=%v", latest, found, latestErr)
+	}
+}
+
+func TestDestroyStorageVolumeRecoversLocalDockerStartedOperationByReadbackOnly(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	resource := storageDestroyTestVolume("storage-destroy-local-started-recovery")
+	resource.Provider = "local-docker"
+	resource.ProviderResourceID = "directory/opl-workspace-local-recovery"
+	resource.StorageClass = "host-directory"
+	resource.DiskType = "local-directory"
+	resource.Zone = "local"
+	resource.CBSStatus = ""
+	resource.ProviderData = nil
+	readback := cloneStorageVolume(resource)
+	readback.Status = "external_deleted"
+	provider := &recoveringStorageDestroyProvider{readback: readback}
+	service := NewServiceWithOperationStore(provider, store)
+	service.volumes[resource.ID] = resource
+	now := time.Date(2026, 8, 20, 5, 30, 0, 0, time.UTC)
+	service.now = func() time.Time { return now.Add(time.Second) }
+	operation := newOperation("destroy_storage_volume", "storage_volume", resource.ID, resource.AccountID, resource.WorkspaceID, "", hashInput(map[string]string{"id": resource.ID}), now)
+	operation.ID, operation.Status, operation.CreatedAt = "fop_destroy_storage_local_started_recovery", "started", now
+	fillOperationResource(&operation, resource)
+	if err := store.Append(ctx, operation); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := service.DestroyStorageVolume(ctx, resource.ID)
+	if err != nil || recovered.Status != "external_deleted" || provider.destroyCalls.Load() != 0 || provider.readbackCalls.Load() != 1 {
+		t.Fatalf("local recovery=%#v err=%v destroyCalls=%d readbackCalls=%d", recovered, err, provider.destroyCalls.Load(), provider.readbackCalls.Load())
+	}
+	latest, found, latestErr := store.LatestResourceOperation(ctx, "storage_volume", resource.ID)
+	if latestErr != nil || !found || latest.Status != "succeeded" || latest.OperationID != operation.OperationID {
+		t.Fatalf("terminal operation=%#v found=%v err=%v", latest, found, latestErr)
+	}
+}
+
+func TestDestroyStorageVolumeDoesNotRedispatchWhenRecoveryReadbackIsUnconfirmed(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		readback    func(StorageVolume) StorageVolume
+		readbackErr error
+	}{
+		{name: "still present", readback: func(volume StorageVolume) StorageVolume { return volume }},
+		{name: "unknown", readback: func(volume StorageVolume) StorageVolume { return volume }, readbackErr: errors.New("provider readback unavailable")},
+		{name: "error with absent body", readback: storageDestroyAbsentReadback, readbackErr: errors.New("provider readback unavailable")},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := NewMemoryOperationStore()
+			resource := storageDestroyTestVolume("storage-destroy-unconfirmed-" + strings.ReplaceAll(testCase.name, " ", "-"))
+			provider := &recoveringStorageDestroyProvider{readback: testCase.readback(resource), readbackErr: testCase.readbackErr}
+			service := NewServiceWithOperationStore(provider, store)
+			service.volumes[resource.ID] = resource
+			now := time.Date(2026, 8, 20, 6, 0, 0, 0, time.UTC)
+			operation := newOperation("destroy_storage_volume", "storage_volume", resource.ID, resource.AccountID, resource.WorkspaceID, "", hashInput(map[string]string{"id": resource.ID}), now)
+			operation.ID, operation.Status, operation.CreatedAt = "fop_destroy_storage_unconfirmed_"+stableSuffix(testCase.name)[:12], "started", now
+			fillOperationResource(&operation, resource)
+			if err := store.Append(ctx, operation); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := service.DestroyStorageVolume(ctx, resource.ID)
+			if err == nil || !strings.Contains(err.Error(), "storage_destroy_recovery_unconfirmed") || result.ID != resource.ID || provider.destroyCalls.Load() != 0 || provider.readbackCalls.Load() != 1 {
+				t.Fatalf("unconfirmed result=%#v err=%v destroyCalls=%d readbackCalls=%d", result, err, provider.destroyCalls.Load(), provider.readbackCalls.Load())
+			}
+		})
+	}
+}
+
 func (p *blockingStorageRenewProvider) RenewStorageVolume(_ context.Context, volume StorageVolume) (StorageVolume, error) {
 	if p.calls.Add(1) == 1 {
 		close(p.entered)
@@ -3324,12 +3631,16 @@ func (testProvider) PrepareComputeAllocation(_ context.Context, input ComputeAll
 
 func (testProvider) CreateComputeAllocation(_ context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
 	machine := firstNonEmpty(input.Allocation.ID, "machine-test")
+	plan := packagePlan(input.Allocation.PackageID)
 	return ComputeAllocation{
 		ID: input.Allocation.ID, AccountID: input.Allocation.AccountID, WorkspaceID: input.Allocation.WorkspaceID, PackageID: input.Allocation.PackageID,
 		Status: "running", Provider: "tencent-tke", ProviderResourceID: "machine/" + machine, ProviderRequestID: "compute-test",
 		PoolID: input.Plan.PoolID, NodePoolID: input.Plan.NodePoolID, MachineName: machine, InstanceID: "ins-" + machine, CVMInstanceID: "ins-" + machine,
 		NodeName: "10.0.0.11", PrivateIP: "10.0.0.11", InstanceType: input.Plan.InstanceType, Zone: "ap-guangzhou-3", ChargeType: "PREPAID",
-		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", ProviderData: map[string]string{"instanceType": input.Plan.InstanceType, "zone": "ap-guangzhou-3", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z"},
+		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", ProviderData: map[string]string{
+			"clusterId": "cls-test", "region": "ap-guangzhou", "instanceType": input.Plan.InstanceType, "cpu": fmt.Sprintf("%d", plan.CPU), "memoryGb": fmt.Sprintf("%d", plan.MemoryGB),
+			"machineName": machine, "machineType": "NativeCVM", "cvmApplicable": "true", "zone": "ap-guangzhou-3", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z",
+		},
 	}, nil
 }
 

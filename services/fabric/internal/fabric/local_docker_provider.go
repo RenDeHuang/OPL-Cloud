@@ -662,7 +662,7 @@ func (p *LocalDockerProvider) ReadStorageVolume(ctx context.Context, volume Stor
 	paths, err := p.readStorageDirectories(volume)
 	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
 		volume.Status = "external_deleted"
-		return volume, fmt.Errorf("local_docker_storage_not_found")
+		return volume, fmt.Errorf("local_docker_storage_not_found: %w", err)
 	}
 	if err != nil {
 		return volume, fmt.Errorf("local_docker_storage_ownership_mismatch: %w", err)
@@ -688,7 +688,11 @@ func (p *LocalDockerProvider) ReadStorageProviderFacts(ctx context.Context, volu
 }
 
 func (p *LocalDockerProvider) ReadStorageVolumeStatus(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
-	return p.ReadStorageVolume(ctx, volume)
+	readback, err := p.ReadStorageVolume(ctx, volume)
+	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		return readback, nil
+	}
+	return readback, err
 }
 
 func (p *LocalDockerProvider) SyncStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {

@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"strings"
@@ -26,7 +27,7 @@ func newTencentWorkspaceLaunchService(t *testing.T) (*Service, *MemoryOperationS
 		},
 		ProviderProfileRef: "tencent-tke",
 	}
-	admission.CanonicalProviderPlan = json.RawMessage(`{"packageId":"basic","providerProfileRef":"tencent-tke","schemaVersion":1,"spec":{"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"},"compute":{"cpu":2,"diskGb":10,"id":"pool-basic-2c4g","instanceType":"SA5.MEDIUM4","memoryGb":4,"server":"2c4g"},"maxReplicas":20,"nodePoolId":"np-basic","packageId":"basic","storage":{"diskType":"CLOUD_BSSD","sizeGb":10},"zone":"ap-guangzhou-3"}}`)
+	admission.CanonicalProviderPlan = json.RawMessage(`{"packageId":"basic","providerProfileRef":"tencent-tke","schemaVersion":1,"spec":{"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"},"compute":{"cpu":2,"diskGb":10,"id":"pool-basic-2c4g","instanceType":"SA5.MEDIUM4","memoryGb":4,"server":"2c4g"},"maxReplicas":20,"nodePoolId":"np-basic","packageId":"basic","region":"ap-guangzhou","storage":{"diskType":"CLOUD_BSSD","sizeGb":10},"zone":"ap-guangzhou-3"}}`)
 	admission.SpecDigest = providerPlanDigest(admission.CanonicalProviderPlan)
 	admission.ProviderBindingRef = workspaceLaunchPreflightBindingRef(admission)
 	if err := service.persistWorkspaceLaunchPreflight(context.Background(), admission); err != nil {
@@ -101,12 +102,12 @@ func TestTencentWorkspaceLaunchStorageReplayRequiresExactCBSAndStaticBindingRead
 		case "create_storage_volume":
 			return provisionerResponse{
 				OK: true, Status: "created", StorageVolumeID: "disk-alpha", CBSStatus: "UNATTACHED", ProviderRequestID: "req-cbs-create",
-				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": compute.Zone, "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z"},
+				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": compute.Zone, "sizeGb": "10", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z", "region": "ap-guangzhou"},
 			}, nil
 		case "sync_storage_volume":
 			return provisionerResponse{
 				OK: true, Status: "ready", StorageVolumeID: "disk-alpha", CBSStatus: "UNATTACHED", ProviderRequestID: "req-cbs-read",
-				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": compute.Zone, "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z"},
+				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": compute.Zone, "sizeGb": "10", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z", "region": "ap-guangzhou"},
 			}, nil
 		default:
 			t.Fatalf("unexpected provisioner action %q", request.Action)
@@ -145,6 +146,227 @@ func TestTencentWorkspaceLaunchStorageReplayRequiresExactCBSAndStaticBindingRead
 	result, err = service.ReadWorkspaceLaunchStage(context.Background(), input)
 	if err == nil || result.State != "" || providerCalls != 5 || applyCalls != 1 || bindingGETs != 4 {
 		t.Fatalf("drift readback result=%#v err=%v providerCalls=%d applyCalls=%d bindingGETs=%d", result, err, providerCalls, applyCalls, bindingGETs)
+	}
+}
+
+type tencentWorkspaceLaunchStorageResponseLossFixture struct {
+	input       WorkspaceLaunchStageInput
+	operations  []FabricOperation
+	createCalls int
+}
+
+func newTencentWorkspaceLaunchStorageResponseLossFixture(t *testing.T) tencentWorkspaceLaunchStorageResponseLossFixture {
+	t.Helper()
+	service, store, provider, preflight, image, launchHash := newTencentWorkspaceLaunchService(t)
+	compute := ComputeAllocation{
+		ID: "ca-compute-response-loss", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic",
+		MachineName: "machine-response-loss", NodeName: "node-response-loss", InstanceID: "ins-response-loss", Zone: "ap-guangzhou-3", Provider: "tencent-tke",
+	}
+	computeResources := WorkspaceLaunchResources{ComputeAllocationID: compute.ID, ComputeBindingRef: "launch-alpha:ensure_compute_allocation"}
+	seedTencentWorkspaceLaunchStage(t, store, preflight, image, launchHash,
+		"ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{}, computeResources,
+		tencentWorkspaceLaunchState{Compute: &compute}, 0)
+
+	input := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "storage", "ensure_storage", computeResources)
+	createCalls := 0
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "create_storage_volume" {
+			t.Fatalf("response-loss setup action=%q", request.Action)
+		}
+		createCalls++
+		return provisionerResponse{}, errors.New("injected CBS response loss")
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		t.Fatal("response-loss setup reached Kubernetes before CBS recovery")
+		return nil, nil
+	}
+	if result, err := service.EnsureWorkspaceLaunchStage(context.Background(), input); err == nil || err.Error() != "injected CBS response loss" || result.State != "" {
+		t.Fatalf("response-loss result=%#v err=%v", result, err)
+	}
+	if createCalls != 1 {
+		t.Fatalf("response-loss create calls=%d", createCalls)
+	}
+	operations, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	childID := providerMutationOperationID(input.Binding, "tencent_cbs_create", "storage_volume", workspaceLaunchStorageID(input.Binding), "")
+	child, err := store.Get(context.Background(), childID)
+	if err != nil || child.Status != "failed" {
+		t.Fatalf("response-loss child=%#v err=%v", child, err)
+	}
+	var state tencentCBSCreateMutationState
+	if !decodeProviderMutationState(child, &state) || !state.matches(StorageVolumeInput{
+		ID: workspaceLaunchStorageID(input.Binding), AccountID: input.Binding.AccountID, WorkspaceID: input.Binding.WorkspaceID,
+		Zone: compute.Zone, SizeGB: 10, IdempotencyKey: input.Binding.IdempotencyKey, OperationID: input.Binding.FabricOperationID,
+	}) || state.Region != "ap-guangzhou" || state.DiskType != "CLOUD_BSSD" {
+		t.Fatalf("response-loss child state=%#v", state)
+	}
+	return tencentWorkspaceLaunchStorageResponseLossFixture{input: input, operations: operations, createCalls: createCalls}
+}
+
+func reopenTencentWorkspaceLaunchOperations(t *testing.T, operations []FabricOperation, mutate func(*FabricOperation)) *MemoryOperationStore {
+	t.Helper()
+	store := NewMemoryOperationStore()
+	for _, operation := range operations {
+		if mutate != nil {
+			mutate(&operation)
+		}
+		if err := store.Append(context.Background(), operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return store
+}
+
+func assertPersistedTencentWorkspaceStorageRequest(t *testing.T, request provisionerRequest, input WorkspaceLaunchStageInput) {
+	t.Helper()
+	logicalStorageID := workspaceLaunchStorageID(input.Binding)
+	expectedRequestStorageID := logicalStorageID
+	if request.Action == "sync_storage_volume" {
+		expectedRequestStorageID = "disk-response-loss"
+	}
+	if request.AccountID != input.Binding.AccountID || request.Region != "ap-guangzhou" ||
+		request.Storage.ID != expectedRequestStorageID || request.Storage.Zone != "ap-guangzhou-3" ||
+		request.Storage.SizeGB != 10 || request.Storage.DiskType != "CLOUD_BSSD" ||
+		request.Tags["opl_resource_id"] != logicalStorageID {
+		t.Fatalf("storage request used drifted identity: %#v", request)
+	}
+}
+
+func TestTencentWorkspaceLaunchStorageResponseLossRecoversAfterStoreAndProviderReopen(t *testing.T) {
+	fixture := newTencentWorkspaceLaunchStorageResponseLossFixture(t)
+	reopened := reopenTencentWorkspaceLaunchOperations(t, fixture.operations, nil)
+
+	t.Setenv(tencentProviderRegionEnv, "ap-shanghai")
+	t.Setenv("TENCENT_CBS_DISK_TYPE", "CLOUD_PREMIUM")
+	provider := NewTencentProvider()
+	if provider.region != "ap-shanghai" || provider.storageDiskType != "CLOUD_PREMIUM" {
+		t.Fatalf("active provider did not capture drift: region=%q diskType=%q", provider.region, provider.storageDiskType)
+	}
+	providerCalls := 0
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		providerCalls++
+		assertPersistedTencentWorkspaceStorageRequest(t, request, fixture.input)
+		providerData := map[string]string{
+			"region": "ap-guangzhou", "diskType": "CLOUD_BSSD", "zone": "ap-guangzhou-3", "sizeGb": "10",
+			"renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z",
+		}
+		switch request.Action {
+		case "discover_storage_volume":
+			return provisionerResponse{
+				OK: true, Status: "existing", StorageState: "storage_existing_exact", StorageVolumeID: "disk-response-loss",
+				CBSStatus: "UNATTACHED", ProviderRequestID: "req-cbs-discover", ProviderData: providerData,
+			}, nil
+		case "sync_storage_volume":
+			return provisionerResponse{
+				OK: true, Status: "ready", StorageVolumeID: "disk-response-loss", CBSStatus: "UNATTACHED",
+				ProviderRequestID: "req-cbs-sync", ProviderData: providerData,
+			}, nil
+		case "create_storage_volume":
+			t.Fatal("recovery repeated create_storage_volume")
+		default:
+			t.Fatalf("unexpected recovery action=%q", request.Action)
+		}
+		return provisionerResponse{}, nil
+	}
+
+	var staticManifest []byte
+	applyCalls, bindingGETs := 0, 0
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		switch {
+		case slices.Equal(args, []string{"apply", "-f", "-"}):
+			applyCalls++
+			staticManifest = append([]byte(nil), stdin...)
+			return nil, nil
+		case len(args) == 6 && args[0] == "get" && strings.HasPrefix(args[1], "pv/") && strings.HasPrefix(args[2], "pvc/"):
+			bindingGETs++
+			if len(staticManifest) == 0 {
+				return []byte(`{"kind":"List","items":[]}`), nil
+			}
+			return tencentStorageBindingReadback(t, staticManifest, false), nil
+		default:
+			t.Fatalf("unexpected recovery kubectl args=%#v", args)
+			return nil, nil
+		}
+	}
+
+	service := NewServiceWithOperationStore(provider, reopened)
+	result, err := service.EnsureWorkspaceLaunchStage(context.Background(), fixture.input)
+	if err != nil || result.State != "ready" || result.Resources.StorageID != workspaceLaunchStorageID(fixture.input.Binding) {
+		t.Fatalf("reopened recovery result=%#v err=%v", result, err)
+	}
+	if fixture.createCalls != 1 || applyCalls != 1 || bindingGETs < 2 || providerCalls == 0 {
+		t.Fatalf("reopened recovery create=%d provider=%d apply=%d bindingGET=%d", fixture.createCalls, providerCalls, applyCalls, bindingGETs)
+	}
+}
+
+func TestTencentWorkspaceLaunchStorageReadRejectsCorruptChildCreateStateBeforeProviderIO(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "missing region", mutate: func(state map[string]any) { delete(state, "region") }},
+		{name: "region drift", mutate: func(state map[string]any) { state["region"] = "ap-shanghai" }},
+		{name: "disk type drift", mutate: func(state map[string]any) { state["diskType"] = "CLOUD_PREMIUM" }},
+		{name: "zone drift", mutate: func(state map[string]any) { state["zone"] = "ap-guangzhou-6" }},
+		{name: "size drift", mutate: func(state map[string]any) { state["sizeGb"] = 20 }},
+		{name: "parent operation drift", mutate: func(state map[string]any) { state["operationId"] = "launch-drift:storage" }},
+		{name: "account drift", mutate: func(state map[string]any) { state["accountId"] = "acct-drift" }},
+		{name: "workspace drift", mutate: func(state map[string]any) { state["workspaceId"] = "ws-drift" }},
+		{name: "storage drift", mutate: func(state map[string]any) { state["storageId"] = "vol-drift" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newTencentWorkspaceLaunchStorageResponseLossFixture(t)
+			childID := providerMutationOperationID(fixture.input.Binding, "tencent_cbs_create", "storage_volume", workspaceLaunchStorageID(fixture.input.Binding), "")
+			store := reopenTencentWorkspaceLaunchOperations(t, fixture.operations, func(operation *FabricOperation) {
+				if operation.ID != childID {
+					return
+				}
+				var persisted persistedProviderMutationState
+				body, err := json.Marshal(operation.RedactedProviderPayload[providerMutationStatePayloadKey])
+				if err != nil || json.Unmarshal(body, &persisted) != nil {
+					t.Fatalf("decode child state envelope: %v", err)
+				}
+				var state map[string]any
+				if err := json.Unmarshal(persisted.Value, &state); err != nil {
+					t.Fatal(err)
+				}
+				test.mutate(state)
+				persisted.Value, err = json.Marshal(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				persisted.Digest = hashInput(persisted.Value)
+				operation.RedactedProviderPayload = maps.Clone(operation.RedactedProviderPayload)
+				operation.RedactedProviderPayload[providerMutationStatePayloadKey] = persisted
+			})
+			before, err := store.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := NewTencentProvider()
+			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				t.Fatal("corrupt child state reached Tencent Provider I/O")
+				return provisionerResponse{}, nil
+			}
+			provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+				t.Fatal("corrupt child state reached Kubernetes I/O")
+				return nil, nil
+			}
+			result, ensureErr := NewServiceWithOperationStore(provider, store).EnsureWorkspaceLaunchStage(context.Background(), fixture.input)
+			if !errors.Is(ensureErr, ErrLaunchStageBindingConflict) || result.State != "" {
+				t.Fatalf("corrupt child result=%#v err=%v", result, ensureErr)
+			}
+			after, err := store.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fixture.createCalls != 1 || len(after) != len(before) {
+				t.Fatalf("corrupt child mutated provider/store: create=%d before=%d after=%d", fixture.createCalls, len(before), len(after))
+			}
+		})
 	}
 }
 
@@ -246,7 +468,7 @@ func TestTencentWorkspaceLaunchRuntimeReplayRequiresExactRuntimeAndGatewayBindin
 	storage := StorageVolume{
 		ID: "vol-storage-alpha", OperationID: "launch-alpha:storage", AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID,
 		Status: "ready", Provider: "tencent-tke", ProviderResourceID: "disk-alpha", SizeGB: 10, DiskType: "CLOUD_BSSD", Zone: compute.Zone,
-		ProviderData: map[string]string{"pvName": "vol-storage-alpha-pv", "pvcName": "vol-storage-alpha-data"},
+		ProviderData: map[string]string{"pvName": "vol-storage-alpha-pv", "pvcName": "vol-storage-alpha-data", "region": "ap-guangzhou"},
 		CostTags:     oplCostTags(compute.AccountID, compute.WorkspaceID, "vol-storage-alpha", "launch-alpha:storage"),
 	}
 	attachment := StorageAttachment{
@@ -400,12 +622,12 @@ func TestTencentWorkspaceLaunchCompletesTypedFiveStageChainWithGETOnlyReplay(t *
 			providerMutations["cbs"]++
 			return provisionerResponse{
 				OK: true, Status: "created", StorageVolumeID: "disk-launch-alpha", CBSStatus: "UNATTACHED", ProviderRequestID: "req-cbs-create",
-				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": allocation.Zone, "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z"},
+				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": allocation.Zone, "sizeGb": "10", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z", "region": "ap-guangzhou"},
 			}, nil
 		case "sync_storage_volume":
 			return provisionerResponse{
 				OK: true, Status: "ready", StorageVolumeID: "disk-launch-alpha", CBSStatus: "UNATTACHED", ProviderRequestID: "req-cbs-read",
-				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": allocation.Zone, "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z"},
+				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": allocation.Zone, "sizeGb": "10", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-12T00:00:00Z", "region": "ap-guangzhou"},
 			}, nil
 		default:
 			t.Fatalf("unexpected provisioner action %q", request.Action)

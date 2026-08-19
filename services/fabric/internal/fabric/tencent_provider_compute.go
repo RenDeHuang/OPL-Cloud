@@ -15,6 +15,13 @@ import (
 	"opl-cloud/services/fabric/internal/protectedresource"
 )
 
+const (
+	tencentComputeDestroyPhaseKey                = "computeDestroyPhase"
+	tencentComputeDestroyPhaseDispatchAuthorized = "dispatch_authorized_uncertain"
+	tencentComputeDestroyPhaseAttempted          = "delete_attempted_uncertain"
+	tencentComputeDestroyPhaseAbsent             = "cloud_absence_confirmed"
+)
+
 func (p *TencentProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
 	workspacePlan, err := p.workspacePlanForContext(ctx, input.PackageID)
 	if err != nil {
@@ -649,6 +656,24 @@ func (p *TencentProvider) SyncComputeAllocation(ctx context.Context, allocation 
 	if err != nil {
 		return allocation, err
 	}
+	if response.OK && response.Status == "external_deleted" {
+		if !validTencentComputeSyncAbsenceResponse(response, allocation) {
+			return allocation, fmt.Errorf("compute_sync_absence_readback_mismatch")
+		}
+		allocation.Status = response.Status
+		allocation.Provider = firstNonEmpty(allocation.Provider, "tencent-tke")
+		allocation.ProviderRequestID = response.ProviderRequestID
+		allocation.CVMStatus = response.CVMStatus
+		if allocation.ProviderData == nil {
+			allocation.ProviderData = map[string]string{}
+		}
+		for key, value := range response.ProviderData {
+			if isTencentComputeDeleteEvidenceKey(key) {
+				allocation.ProviderData[key] = value
+			}
+		}
+		return allocation, nil
+	}
 	allocation.Status = firstNonEmpty(response.Status, allocation.Status)
 	allocation.Provider = firstNonEmpty(allocation.Provider, "tencent-tke")
 	allocation.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, allocation.ProviderRequestID)
@@ -767,11 +792,17 @@ func (p *TencentProvider) DestroyComputeAllocation(ctx context.Context, allocati
 	if allocation.ID == "" {
 		return ComputeAllocation{}, fmt.Errorf("compute_allocation_id_required")
 	}
+	admitted, err := p.admitTencentComputeDestroy(ctx, allocation)
+	if err != nil {
+		return allocation, err
+	}
+	allocation = admitted
 	externallyDeleted := isExternallyDeletedComputeStatus(allocation.Status)
-	if !externallyDeleted && firstNonEmpty(allocation.MachineName, allocation.ProviderData["machineName"]) == "" && allocation.NodeName == "" && firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) == "" {
-		allocation.Status = "destroyed"
-		allocation.Provider = "tencent-tke"
-		return allocation, nil
+	if externallyDeleted && !validTencentComputeAbsenceEvidence(allocation) {
+		allocation, err = p.ReadComputeDestroyStatus(ctx, allocation)
+		if err != nil {
+			return allocation, err
+		}
 	}
 	response := provisionerResponse{}
 	if !externallyDeleted {
@@ -780,36 +811,297 @@ func (p *TencentProvider) DestroyComputeAllocation(ctx context.Context, allocati
 			Action:    "destroy_compute_allocation",
 			AccountID: allocation.AccountID,
 			PackageID: allocation.PackageID,
-			Pool:      provisionerPool{ID: allocation.PoolID, NodePoolID: allocation.NodePoolID},
+			Region:    allocation.ProviderData["region"],
+			Pool:      provisionerPool{ID: allocation.PoolID, ClusterID: allocation.ProviderData["clusterId"], NodePoolID: allocation.NodePoolID},
 			Allocation: provisionerAllocation{
 				ID:          allocation.ID,
 				InstanceID:  firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID),
-				MachineName: firstNonEmpty(allocation.MachineName, allocation.ProviderData["machineName"], allocation.NodeName),
+				MachineName: allocation.MachineName,
+				MachineType: allocation.ProviderData["machineType"],
 				NodeName:    allocation.NodeName,
 				PrivateIP:   allocation.PrivateIP,
 			},
 		})
 		if err != nil {
-			return ComputeAllocation{}, err
+			return allocation, err
 		}
+		expectedInstanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
 		if !response.OK {
-			return ComputeAllocation{}, provisionerError(response)
+			if !validTencentComputeDestroyAttemptResponse(response, allocation) {
+				return allocation, provisionerError(response)
+			}
+			attempted := cloneComputeAllocation(allocation)
+			for key, value := range response.ProviderData {
+				if isTencentComputeDeleteEvidenceKey(key) {
+					attempted.ProviderData[key] = value
+				}
+			}
+			attempted.ProviderData[tencentComputeDestroyPhaseKey] = tencentComputeDestroyPhaseAttempted
+			attempted.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, attempted.ProviderRequestID)
+			attempted.CVMStatus = response.CVMStatus
+			return attempted, provisionerError(response)
+		}
+		evidence := allocation
+		evidence.Status, evidence.Provider, evidence.ProviderRequestID, evidence.CVMStatus = response.Status, "tencent-tke", response.ProviderRequestID, response.CVMStatus
+		evidence.ProviderData = response.ProviderData
+		if response.MachinePresent == nil || *response.MachinePresent || response.TKEStatus != "NOT_FOUND" || response.InstanceID != expectedInstanceID ||
+			response.NodeName != allocation.NodeName || response.NodePoolID != allocation.NodePoolID ||
+			!validTencentComputeAbsenceEvidence(evidence) {
+			return allocation, fmt.Errorf("compute_allocation_destroy_readback_mismatch")
+		}
+		mergedProviderData, validProviderData := mergeTencentComputeDeleteProviderData(allocation.ProviderData, response.ProviderData)
+		if !validProviderData {
+			return allocation, fmt.Errorf("compute_allocation_destroy_readback_mismatch")
+		}
+		allocation.ProviderData = mergedProviderData
+		allocation.ProviderData[tencentComputeDestroyPhaseKey] = tencentComputeDestroyPhaseAbsent
+		allocation.ProviderRequestID = evidence.ProviderRequestID
+		allocation.CVMStatus = evidence.CVMStatus
+		allocation.Status = response.Status
+	}
+	return p.finalizeComputeDestroyAfterAbsence(ctx, allocation)
+}
+
+func (p *TencentProvider) admitTencentComputeDestroy(_ context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
+	if !validTencentComputeDestroyStableIdentity(allocation) {
+		return allocation, fmt.Errorf("compute_allocation_destroy_identity_required")
+	}
+	return allocation, nil
+}
+
+func validTencentComputeDestroyIdentityFacts(allocation ComputeAllocation) bool {
+	instanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
+	return strings.TrimSpace(allocation.ID) != "" && strings.TrimSpace(allocation.AccountID) != "" &&
+		strings.TrimSpace(allocation.WorkspaceID) != "" && strings.TrimSpace(allocation.PackageID) != "" && allocation.Provider == "tencent-tke" &&
+		strings.TrimSpace(allocation.PoolID) != "" && strings.TrimSpace(allocation.NodePoolID) != "" && strings.TrimSpace(allocation.MachineName) != "" &&
+		strings.TrimSpace(allocation.NodeName) != "" && strings.TrimSpace(allocation.PrivateIP) != "" && strings.TrimSpace(instanceID) != "" &&
+		(allocation.InstanceID == "" || allocation.CVMInstanceID == "" || allocation.InstanceID == allocation.CVMInstanceID) &&
+		strings.TrimSpace(allocation.InstanceType) != "" && allocation.ProviderData["instanceType"] == allocation.InstanceType &&
+		strings.TrimSpace(allocation.Zone) != "" && allocation.ProviderData["zone"] == allocation.Zone &&
+		strings.TrimSpace(allocation.ProviderData["clusterId"]) != "" && strings.TrimSpace(allocation.ProviderData["region"]) != "" &&
+		allocation.CostTags["opl_account_id"] == allocation.AccountID && allocation.CostTags["opl_workspace_id"] == allocation.WorkspaceID &&
+		allocation.CostTags["opl_resource_id"] == allocation.ID && strings.TrimSpace(allocation.CostTags["opl_operation_id"]) != "" &&
+		validTencentComputeMachineApplicabilityIdentity(allocation)
+}
+
+func validTencentComputeMachineApplicabilityIdentity(allocation ComputeAllocation) bool {
+	instanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
+	switch allocation.ProviderData["machineType"] {
+	case "NativeCVM":
+		return allocation.ProviderData["cvmApplicable"] == "true" && strings.HasPrefix(instanceID, "ins-") && len(instanceID) > len("ins-") &&
+			allocation.InstanceID == instanceID && allocation.CVMInstanceID == instanceID
+	case "Native", "CXM":
+		return allocation.ProviderData["cvmApplicable"] == "false" && allocation.InstanceID == instanceID && allocation.CVMInstanceID == ""
+	default:
+		return false
+	}
+}
+
+func validTencentComputeDestroyStableIdentity(allocation ComputeAllocation) bool {
+	cpu, cpuErr := strconv.Atoi(strings.TrimSpace(allocation.ProviderData["cpu"]))
+	memoryGB, memoryErr := strconv.Atoi(strings.TrimSpace(allocation.ProviderData["memoryGb"]))
+	return validTencentComputeDestroyIdentityFacts(allocation) && cpuErr == nil && memoryErr == nil && cpu > 0 && memoryGB > 0
+}
+
+func validTencentComputeSyncAbsenceResponse(response provisionerResponse, expected ComputeAllocation) bool {
+	expectedInstanceID := firstNonEmpty(expected.InstanceID, expected.CVMInstanceID)
+	return response.OK && response.Status == "external_deleted" && response.InstanceID == expectedInstanceID && response.NodePoolID == expected.NodePoolID &&
+		response.NodeName == expected.NodeName && response.PrivateIP == expected.PrivateIP && response.TKEStatus == "NOT_FOUND" && response.CVMStatus == "NOT_FOUND" &&
+		strings.TrimSpace(response.ProviderRequestID) != "" && response.ProviderData["syncResult"] == "missing" && response.ProviderData["tkeStatus"] == "NOT_FOUND" &&
+		response.ProviderData["cvmStatus"] == "NOT_FOUND" && strings.TrimSpace(response.ProviderData["describeClusterMachinesReq"]) != "" &&
+		strings.TrimSpace(response.ProviderData["describeCvmRequestId"]) != "" && response.ProviderData["clusterId"] == expected.ProviderData["clusterId"] &&
+		response.ProviderData["region"] == expected.ProviderData["region"] && response.ProviderData["nodePoolId"] == expected.NodePoolID &&
+		response.ProviderData["machineName"] == expected.MachineName && response.ProviderData["nodeName"] == expected.NodeName && response.ProviderData["privateIp"] == expected.PrivateIP
+}
+
+func validTencentComputeDestroyAttemptResponse(response provisionerResponse, expected ComputeAllocation) bool {
+	return response.MutationCount == 1 && response.InstanceID == firstNonEmpty(expected.InstanceID, expected.CVMInstanceID) &&
+		response.NodeName == expected.NodeName && response.NodePoolID == expected.NodePoolID && response.ProviderData["deleteMethod"] == "DeleteClusterMachines" &&
+		response.ProviderData["scaleDown"] == "true" && response.ProviderData["deleteMode"] == "terminate" &&
+		strings.TrimSpace(response.ProviderData["describeNodePoolRequestId"]) != "" &&
+		response.ProviderData["machineType"] == expected.ProviderData["machineType"] && response.ProviderData["cvmApplicable"] == expected.ProviderData["cvmApplicable"] &&
+		validTencentComputeDeleteResponseProviderData(response.ProviderData, expected.ProviderData)
+}
+
+func validTencentComputeDeleteResponseProviderData(response, expected map[string]string) bool {
+	for key, value := range response {
+		if isTencentComputeDeleteEvidenceKey(key) {
+			continue
+		}
+		if expectedValue, exists := expected[key]; exists && expectedValue != value {
+			return false
 		}
 	}
+	return true
+}
+
+func (p *TencentProvider) ReadComputeDestroyStatus(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
+	if !validTencentComputeDestroyStableIdentity(allocation) {
+		return allocation, fmt.Errorf("compute_allocation_destroy_identity_required")
+	}
+	cpu, _ := strconv.ParseUint(allocation.ProviderData["cpu"], 10, 64)
+	memoryGB, _ := strconv.ParseUint(allocation.ProviderData["memoryGb"], 10, 64)
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "read_compute_destroy_status", AccountID: allocation.AccountID, PackageID: allocation.PackageID, Region: allocation.ProviderData["region"], Zone: allocation.Zone,
+		Pool: provisionerPool{
+			ID: allocation.PoolID, ClusterID: allocation.ProviderData["clusterId"], NodePoolID: allocation.NodePoolID,
+			InstanceType: allocation.InstanceType, CPU: cpu, MemoryGB: memoryGB,
+		},
+		Allocation: provisionerAllocation{
+			ID: allocation.ID, InstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), MachineName: allocation.MachineName,
+			MachineType: allocation.ProviderData["machineType"], NodeName: allocation.NodeName, PrivateIP: allocation.PrivateIP,
+		},
+	})
+	if err != nil {
+		return allocation, err
+	}
+	if !validTencentComputeDestroyStatusIdentityResponse(response, allocation) {
+		return allocation, fmt.Errorf("compute_destroy_status_readback_mismatch")
+	}
+	if !response.OK {
+		return allocation, provisionerError(response)
+	}
+	if response.MachinePresent == nil || *response.MachinePresent {
+		return allocation, nil
+	}
+	if !validTencentComputeDestroyStatusAbsenceResponse(response, allocation) {
+		return allocation, fmt.Errorf("compute_destroy_status_readback_mismatch")
+	}
+	confirmed := cloneComputeAllocation(allocation)
+	confirmed.Status = "external_deleted"
+	confirmed.ProviderRequestID = response.ProviderRequestID
+	confirmed.CVMStatus = response.CVMStatus
+	for key, value := range response.ProviderData {
+		if isTencentComputeDeleteEvidenceKey(key) {
+			confirmed.ProviderData[key] = value
+		}
+	}
+	confirmed.ProviderData[tencentComputeDestroyPhaseKey] = tencentComputeDestroyPhaseAbsent
+	confirmed.ProviderData["machinePresent"] = "false"
+	confirmed.ProviderData["tkeStatus"] = "NOT_FOUND"
+	confirmed.ProviderData["verifyMachineDeletedReqId"] = response.ProviderData["describeClusterMachinesReq"]
+	if !validTencentComputeAbsenceEvidence(confirmed) {
+		return allocation, fmt.Errorf("compute_destroy_status_readback_mismatch")
+	}
+	return confirmed, nil
+}
+
+func validTencentComputeDestroyStatusIdentityResponse(response provisionerResponse, expected ComputeAllocation) bool {
+	return response.MutationCount == 0 && response.InstanceID == firstNonEmpty(expected.InstanceID, expected.CVMInstanceID) &&
+		response.ProviderData["clusterId"] == expected.ProviderData["clusterId"] &&
+		response.ProviderData["region"] == expected.ProviderData["region"] && response.ProviderData["nodePoolId"] == expected.NodePoolID &&
+		response.ProviderData["machineName"] == expected.MachineName && response.ProviderData["nodeName"] == expected.NodeName &&
+		response.ProviderData["privateIp"] == expected.PrivateIP && response.ProviderData["machineType"] == expected.ProviderData["machineType"] &&
+		response.ProviderData["cvmApplicable"] == expected.ProviderData["cvmApplicable"]
+}
+
+func validTencentComputeDestroyStatusAbsenceResponse(response provisionerResponse, expected ComputeAllocation) bool {
+	if !response.OK || response.MachinePresent == nil || *response.MachinePresent || response.TKEStatus != "NOT_FOUND" ||
+		(response.Status != "absent" && response.Status != "external_deleted") || strings.TrimSpace(response.ProviderRequestID) == "" ||
+		response.ProviderData["syncResult"] != "missing" || response.ProviderData["machinePresent"] != "false" || response.ProviderData["tkeStatus"] != "NOT_FOUND" ||
+		strings.TrimSpace(response.ProviderData["describeClusterMachinesReq"]) == "" {
+		return false
+	}
+	switch expected.ProviderData["machineType"] {
+	case "NativeCVM":
+		return response.CVMStatus == "NOT_FOUND" && response.ProviderData["cvmStatus"] == "NOT_FOUND" && strings.TrimSpace(response.ProviderData["describeCvmRequestId"]) != ""
+	case "Native", "CXM":
+		_, hasCVMStatus := response.ProviderData["cvmStatus"]
+		_, hasCVMRequest := response.ProviderData["describeCvmRequestId"]
+		return response.CVMStatus == "" && !hasCVMStatus && !hasCVMRequest
+	default:
+		return false
+	}
+}
+
+func (p *TencentProvider) finalizeComputeDestroyAfterAbsence(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
+	if !validTencentComputeAbsenceEvidence(allocation) || !validTencentComputeDestroyStableIdentity(allocation) {
+		return allocation, fmt.Errorf("compute_destroy_absence_evidence_invalid")
+	}
+	return p.cleanupComputeRuntimeAfterDestroy(ctx, allocation)
+}
+
+func (p *TencentProvider) cleanupComputeRuntimeAfterDestroy(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
 	serviceName := allocation.ServiceName
-	if serviceName == "" && (externallyDeleted || allocation.Status == "running" || allocation.Status == "ready" || allocation.Status == "active" || allocation.Status == "destroying") {
+	if serviceName == "" {
 		serviceName = k8sName(allocation.ID)
 	}
 	if serviceName != "" {
 		if _, err := p.callKubectl(ctx, []string{"delete", "deployment/" + serviceName, "service/" + serviceName, "secret/" + serviceName + "-env", "--ignore-not-found=true", "--wait=true"}, nil, protectedresource.Target{PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, MachineID: allocation.MachineName, NodeName: allocation.NodeName, CVMID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)}); err != nil {
-			return ComputeAllocation{}, err
+			return allocation, err
 		}
-		allocation.ServiceName = serviceName
-	}
-	allocation.Status = "destroyed"
-	allocation.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, allocation.ProviderRequestID)
-	if allocation.Provider == "" {
-		allocation.Provider = "tencent-tke"
 	}
 	return allocation, nil
+}
+
+func validTencentComputeAbsenceEvidence(allocation ComputeAllocation) bool {
+	if allocation.Status != "external_deleted" || allocation.Provider != "tencent-tke" || strings.TrimSpace(allocation.ProviderRequestID) == "" || allocation.ProviderData == nil ||
+		allocation.ProviderData["machinePresent"] != "false" || allocation.ProviderData["tkeStatus"] != "NOT_FOUND" ||
+		(strings.TrimSpace(allocation.ProviderData["describeNodePoolRequestId"]) == "" && strings.TrimSpace(allocation.ProviderData["describeClusterMachinesReq"]) == "") ||
+		strings.TrimSpace(allocation.ProviderData["verifyMachineDeletedReqId"]) == "" {
+		return false
+	}
+	switch allocation.ProviderData["machineType"] {
+	case "NativeCVM":
+		instanceID := firstNonEmpty(allocation.CVMInstanceID, allocation.InstanceID)
+		return allocation.ProviderData["cvmApplicable"] == "true" && allocation.CVMStatus == "NOT_FOUND" && allocation.ProviderData["cvmStatus"] == "NOT_FOUND" &&
+			strings.TrimSpace(allocation.ProviderData["describeCvmRequestId"]) != "" && strings.HasPrefix(instanceID, "ins-") && len(instanceID) > len("ins-") &&
+			(allocation.InstanceID == "" || allocation.CVMInstanceID == "" || allocation.InstanceID == allocation.CVMInstanceID)
+	case "Native", "CXM":
+		_, hasCVMStatus := allocation.ProviderData["cvmStatus"]
+		return allocation.ProviderData["cvmApplicable"] == "false" && allocation.CVMStatus == "" && allocation.CVMInstanceID == "" && !hasCVMStatus
+	default:
+		return false
+	}
+}
+
+func validTencentComputeDestroyAttemptEvidence(allocation ComputeAllocation) bool {
+	if !validTencentComputeDestroyStableIdentity(allocation) || allocation.Status != "destroying" || allocation.ProviderData == nil ||
+		allocation.ProviderData[tencentComputeDestroyPhaseKey] != tencentComputeDestroyPhaseAttempted ||
+		allocation.ProviderData["deleteMethod"] != "DeleteClusterMachines" || allocation.ProviderData["scaleDown"] != "true" || allocation.ProviderData["deleteMode"] != "terminate" ||
+		strings.TrimSpace(allocation.ProviderData["describeNodePoolRequestId"]) == "" || strings.TrimSpace(allocation.NodePoolID) == "" ||
+		strings.TrimSpace(allocation.MachineName) == "" || strings.TrimSpace(allocation.NodeName) == "" {
+		return false
+	}
+	switch allocation.ProviderData["machineType"] {
+	case "NativeCVM":
+		instanceID := firstNonEmpty(allocation.CVMInstanceID, allocation.InstanceID)
+		return allocation.ProviderData["cvmApplicable"] == "true" && strings.HasPrefix(instanceID, "ins-") && len(instanceID) > len("ins-") &&
+			(allocation.InstanceID == "" || allocation.CVMInstanceID == "" || allocation.InstanceID == allocation.CVMInstanceID)
+	case "Native", "CXM":
+		return allocation.ProviderData["cvmApplicable"] == "false" && allocation.CVMInstanceID == ""
+	default:
+		return false
+	}
+}
+
+func validTencentComputeDestroyDispatchEvidence(allocation ComputeAllocation) bool {
+	return validTencentComputeDestroyStableIdentity(allocation) && allocation.Status == "destroying" &&
+		allocation.ProviderData[tencentComputeDestroyPhaseKey] == tencentComputeDestroyPhaseDispatchAuthorized
+}
+
+func mergeTencentComputeDeleteProviderData(previous, response map[string]string) (map[string]string, bool) {
+	merged := maps.Clone(previous)
+	if merged == nil {
+		merged = map[string]string{}
+	}
+	for key, value := range response {
+		previousValue, exists := previous[key]
+		if (!exists || previousValue != value) && !isTencentComputeDeleteEvidenceKey(key) {
+			return nil, false
+		}
+		merged[key] = value
+	}
+	return merged, true
+}
+
+func isTencentComputeDeleteEvidenceKey(key string) bool {
+	switch key {
+	case "machinePresent", "tkeStatus", "cvmStatus", "deleteMethod", "scaleDown", "deleteMode",
+		"describeNodePoolRequestId", "modifySelfProvisioningReqId", "verifyMachineDeletedReqId", "describeCvmRequestId",
+		tencentComputeDestroyPhaseKey, "syncResult", "describeClusterMachinesReq":
+		return true
+	default:
+		return false
+	}
 }

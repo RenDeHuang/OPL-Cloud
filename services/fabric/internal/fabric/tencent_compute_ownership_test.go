@@ -646,7 +646,7 @@ func TestTencentWorkspaceLaunchComputeReplayReusesOwnershipCoreWithoutRepeatedMu
 		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: image, RequestHash: launchHash,
 	}
 	admission := workspaceLaunchPreflightAdmission{SchemaVersion: 1, Input: preflightInput, ProviderProfileRef: "tencent-tke",
-		CanonicalProviderPlan: json.RawMessage(`{"packageId":"basic","providerProfileRef":"tencent-tke","schemaVersion":1,"spec":{"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"},"compute":{"cpu":2,"diskGb":10,"id":"pool-basic-2c4g","instanceType":"SA5.MEDIUM4","memoryGb":4,"server":"2c4g"},"maxReplicas":20,"nodePoolId":"np-basic","packageId":"basic","storage":{"diskType":"CLOUD_BSSD","sizeGb":10},"zone":"ap-guangzhou-3"}}`)}
+		CanonicalProviderPlan: json.RawMessage(`{"packageId":"basic","providerProfileRef":"tencent-tke","schemaVersion":1,"spec":{"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"},"compute":{"cpu":2,"diskGb":10,"id":"pool-basic-2c4g","instanceType":"SA5.MEDIUM4","memoryGb":4,"server":"2c4g"},"maxReplicas":20,"nodePoolId":"np-basic","packageId":"basic","region":"ap-guangzhou","storage":{"diskType":"CLOUD_BSSD","sizeGb":10},"zone":"ap-guangzhou-3"}}`)}
 	admission.SpecDigest = providerPlanDigest(admission.CanonicalProviderPlan)
 	admission.ProviderBindingRef = workspaceLaunchPreflightBindingRef(admission)
 	if err := service.persistWorkspaceLaunchPreflight(context.Background(), admission); err != nil {

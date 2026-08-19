@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 )
 
 type tencentWorkspaceLaunchState struct {
@@ -228,22 +229,20 @@ func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request 
 		state.Compute = &readback
 		resources.ComputeAllocationID, resources.ComputeBindingRef = readback.ID, binding.FabricOperationID
 	case "storage":
-		if stateErr != nil || state.Storage == nil {
-			computeState, computeErr := decodeTencentWorkspaceLaunchState(request.Prior["ensure_compute_allocation"])
-			if computeErr != nil || computeState.Compute == nil {
-				return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
-			}
-			state.Storage = &StorageVolume{
-				ID: workspaceLaunchStorageID(binding), OperationID: binding.IdempotencyKey, AccountID: binding.AccountID,
-				WorkspaceID: binding.WorkspaceID, Provider: p.Descriptor().Name, SizeGB: plan.Storage.SizeGB, Zone: computeState.Compute.Zone, DiskType: plan.Storage.DiskType,
-			}
-		}
-		if state.Storage.Zone != plan.Zone {
+		computeState, computeErr := decodeTencentWorkspaceLaunchState(request.Prior["ensure_compute_allocation"])
+		if computeErr != nil || computeState.Compute == nil || computeState.Compute.Zone != plan.Zone {
 			return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
 		}
 		storageInput := StorageVolumeInput{
-			ID: state.Storage.ID, AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, SizeGB: plan.Storage.SizeGB,
-			Zone: state.Storage.Zone, IdempotencyKey: binding.IdempotencyKey, OperationID: binding.FabricOperationID,
+			ID: workspaceLaunchStorageID(binding), AccountID: binding.AccountID, WorkspaceID: binding.WorkspaceID, ComputeID: computeState.Compute.ID,
+			SizeGB: plan.Storage.SizeGB, Zone: plan.Zone, IdempotencyKey: binding.IdempotencyKey, OperationID: binding.FabricOperationID,
+		}
+		if stateErr != nil || state.Storage == nil {
+			volume, err := p.tencentWorkspaceLaunchStorageFromMutation(ctx, binding, storageInput)
+			if err != nil {
+				return WorkspaceLaunchProviderResult{}, err
+			}
+			state.Storage = &volume
 		}
 		readback, err := p.ReadCBSVolume(ctx, storageInput, *state.Storage)
 		if err != nil {
@@ -419,20 +418,55 @@ func (p *TencentProvider) tencentWorkspaceLaunchComputeStateFromMutation(ctx con
 	return tencentWorkspaceLaunchState{Compute: &allocation, ComputePlan: &mutationState.Plan, Ownership: &ownership}, nil
 }
 
-func (p *TencentProvider) tencentWorkspaceLaunchStorageFromMutation(ctx context.Context, binding WorkspaceLaunchStageBinding) (StorageVolume, error) {
+func (p *TencentProvider) tencentWorkspaceLaunchStorageFromMutation(ctx context.Context, binding WorkspaceLaunchStageBinding, input StorageVolumeInput) (StorageVolume, error) {
 	journal := providerMutationJournalFromContext(ctx)
 	if journal == nil {
 		return StorageVolume{}, ErrLaunchStageBindingConflict
 	}
+	parent, parentOK := decodeLaunchStageBinding(journal.parentOperation)
+	provider := p.Descriptor().Name
+	if !parentOK || journal.parent != binding || parent != binding || journal.provider != provider || journal.parentOperation.Provider != provider ||
+		journal.parentOperation.ID != binding.FabricOperationID || journal.parentOperation.OperationID != binding.FabricOperationID ||
+		journal.parentOperation.Action != binding.Action || journal.parentOperation.ResourceKind != "workspace_launch_stage" ||
+		journal.parentOperation.ResourceID != binding.FabricOperationID || journal.parentOperation.AccountID != binding.AccountID ||
+		journal.parentOperation.WorkspaceID != binding.WorkspaceID || journal.parentOperation.IdempotencyKey != binding.IdempotencyKey ||
+		journal.parentOperation.RequestHash != binding.RequestHash {
+		return StorageVolume{}, ErrLaunchStageBindingConflict
+	}
+	plan, planOK := tencentWorkspacePlanFromContext(ctx)
 	storageID := workspaceLaunchStorageID(binding)
+	if !planOK || input.ID != storageID || input.AccountID != binding.AccountID || input.WorkspaceID != binding.WorkspaceID ||
+		input.OperationID != binding.FabricOperationID || input.IdempotencyKey != binding.IdempotencyKey ||
+		input.Zone != plan.Zone || input.SizeGB != plan.Storage.SizeGB {
+		return StorageVolume{}, ErrLaunchStageBindingConflict
+	}
 	operationID := providerMutationOperationID(binding, "tencent_cbs_create", "storage_volume", storageID, "")
 	operation, err := journal.operations.Get(ctx, operationID)
 	if err != nil {
 		return StorageVolume{}, err
 	}
-	var volume StorageVolume
-	if !decodeOperationResource(operation, &volume) || volume.ID != storageID {
-		return StorageVolume{}, ErrWorkspaceLaunchPending
+	child, childOK := decodeProviderMutationBinding(operation)
+	expectedChild := providerMutationBinding{
+		SchemaVersion: 1, Parent: binding, FabricOperationID: operationID, Action: "tencent_cbs_create",
+		ResourceKind: "storage_volume", ResourceID: storageID,
+	}
+	if !childOK || child != expectedChild || operation.Provider != provider {
+		return StorageVolume{}, ErrLaunchStageBindingConflict
+	}
+	var state tencentCBSCreateMutationState
+	if !decodeProviderMutationState(operation, &state) || !state.matches(input) || !state.matchesWorkspacePlan(plan) ||
+		state.OperationID != binding.FabricOperationID || state.AccountID != binding.AccountID || state.WorkspaceID != binding.WorkspaceID || state.StorageID != storageID {
+		return StorageVolume{}, ErrLaunchStageBindingConflict
+	}
+	volume := tencentCBSCreateVolume(input, state, time.Time{})
+	var persisted StorageVolume
+	if decodeOperationResource(operation, &persisted) {
+		if !state.matchesVolume(input, persisted) {
+			return StorageVolume{}, ErrLaunchStageBindingConflict
+		}
+		volume = persisted
+	} else if operation.Status != "started" {
+		return StorageVolume{}, ErrLaunchStageBindingConflict
 	}
 	return volume, nil
 }

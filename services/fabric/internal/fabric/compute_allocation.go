@@ -626,6 +626,7 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID str
 	operation := newOperation("destroy_compute_allocation", "compute_allocation", allocationID, existing.AccountID, existing.WorkspaceID, "", hashInput(map[string]string{"id": allocationID}), time.Now().UTC())
 	allocation := existing
 	startWorker := false
+	dispatchAuthorized := false
 	err := s.operations.WithPoolLock(ctx, "compute-destroy:"+allocationID, func(lockCtx context.Context) error {
 		latest, found, err := s.latestComputeDestroyOperation(lockCtx, allocationID)
 		if err != nil {
@@ -635,9 +636,13 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID str
 			operation = latest
 			_ = decodeOperationResource(latest, &allocation)
 			if latest.Status == "succeeded" {
+				s.mu.Lock()
+				s.computes[allocationID] = cloneComputeAllocation(allocation)
+				s.mu.Unlock()
 				return nil
 			}
 			s.mu.Lock()
+			s.computes[allocationID] = cloneComputeAllocation(allocation)
 			startWorker = !s.destroying[allocationID]
 			s.destroying[allocationID] = true
 			s.mu.Unlock()
@@ -645,6 +650,14 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID str
 		}
 		if !isExternallyDeletedComputeStatus(allocation.Status) {
 			allocation.Status = "destroying"
+		}
+		if allocation.Provider == "tencent-tke" && !found {
+			if !validTencentComputeDestroyStableIdentity(allocation) {
+				return fmt.Errorf("compute_allocation_destroy_identity_required")
+			}
+			allocation.ProviderData = maps.Clone(allocation.ProviderData)
+			allocation.ProviderData[tencentComputeDestroyPhaseKey] = tencentComputeDestroyPhaseDispatchAuthorized
+			dispatchAuthorized = true
 		}
 		if err := s.recordOperation(lockCtx, operation, "started", allocation, nil); err != nil {
 			return err
@@ -660,12 +673,12 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID str
 		return allocation, err
 	}
 	if startWorker {
-		go s.finishDestroyComputeAllocation(operation, allocation)
+		go s.finishDestroyComputeAllocation(operation, allocation, dispatchAuthorized)
 	}
 	return allocation, nil
 }
 
-func (s *Service) finishDestroyComputeAllocation(operation FabricOperation, existing ComputeAllocation) {
+func (s *Service) finishDestroyComputeAllocation(operation FabricOperation, existing ComputeAllocation, dispatchAuthorized bool) {
 	ctx := context.Background()
 	allocation := existing
 	poolKey := firstNonEmpty(existing.PoolID, existing.NodePoolID)
@@ -683,7 +696,37 @@ func (s *Service) finishDestroyComputeAllocation(operation FabricOperation, exis
 		current := s.computes[existing.ID]
 		s.mu.Unlock()
 		var providerErr error
-		allocation, providerErr = s.provider.DestroyComputeAllocation(lockCtx, current)
+		phase := current.ProviderData[tencentComputeDestroyPhaseKey]
+		if current.Provider != "tencent-tke" {
+			allocation, providerErr = s.provider.DestroyComputeAllocation(lockCtx, current)
+		} else {
+			switch phase {
+			case tencentComputeDestroyPhaseDispatchAuthorized:
+				if !validTencentComputeDestroyDispatchEvidence(current) {
+					allocation, providerErr = current, fmt.Errorf("compute_destroy_recovery_identity_mismatch")
+				} else if dispatchAuthorized {
+					allocation, providerErr = s.provider.DestroyComputeAllocation(lockCtx, current)
+				} else {
+					allocation, providerErr = s.reconcileTencentComputeDestroy(lockCtx, current)
+				}
+			case tencentComputeDestroyPhaseAttempted:
+				if !validTencentComputeDestroyAttemptEvidence(current) {
+					allocation, providerErr = current, fmt.Errorf("compute_destroy_recovery_identity_mismatch")
+				} else {
+					allocation, providerErr = s.reconcileTencentComputeDestroy(lockCtx, current)
+				}
+			case tencentComputeDestroyPhaseAbsent:
+				if !validTencentComputeAbsenceEvidence(current) {
+					allocation, providerErr = current, fmt.Errorf("compute_destroy_recovery_identity_mismatch")
+				} else {
+					allocation, providerErr = s.finalizeTencentComputeDestroy(lockCtx, current)
+				}
+			case "":
+				allocation, providerErr = s.reconcileTencentComputeDestroy(lockCtx, current)
+			default:
+				allocation, providerErr = current, fmt.Errorf("compute_destroy_recovery_phase_invalid")
+			}
+		}
 		if providerErr != nil {
 			return providerErr
 		}
@@ -696,7 +739,12 @@ func (s *Service) finishDestroyComputeAllocation(operation FabricOperation, exis
 		if allocation.ID == "" {
 			allocation = existing
 		}
-		allocation.Status = "destroying"
+		if !isExternallyDeletedComputeStatus(allocation.Status) {
+			allocation.Status = "destroying"
+		}
+		s.mu.Lock()
+		s.computes[existing.ID] = allocation
+		s.mu.Unlock()
 		_ = s.recordOperation(ctx, operation, "failed", allocation, err)
 	} else {
 		_ = s.recordOperation(ctx, operation, "succeeded", allocation, nil)
@@ -707,6 +755,49 @@ func (s *Service) finishDestroyComputeAllocation(operation FabricOperation, exis
 	s.mu.Lock()
 	delete(s.destroying, existing.ID)
 	s.mu.Unlock()
+}
+
+type computeDestroyAbsenceFinalizer interface {
+	finalizeComputeDestroyAfterAbsence(context.Context, ComputeAllocation) (ComputeAllocation, error)
+}
+
+func (s *Service) reconcileTencentComputeDestroy(ctx context.Context, persisted ComputeAllocation) (ComputeAllocation, error) {
+	if !validTencentComputeDestroyStableIdentity(persisted) {
+		return persisted, fmt.Errorf("compute_destroy_recovery_identity_mismatch")
+	}
+	reader, ok := s.provider.(computeDestroyStatusReader)
+	if !ok {
+		return persisted, fmt.Errorf("compute_destroy_recovery_unconfirmed")
+	}
+	readback, readErr := reader.ReadComputeDestroyStatus(ctx, cloneComputeAllocation(persisted))
+	if readErr != nil {
+		return persisted, fmt.Errorf("compute_destroy_recovery_unconfirmed: %w", readErr)
+	}
+	if !sameComputeDestroyStableIdentity(persisted, readback) {
+		return persisted, fmt.Errorf("compute_destroy_recovery_identity_mismatch")
+	}
+	if !isExternallyDeletedComputeStatus(readback.Status) {
+		return persisted, fmt.Errorf("compute_destroy_recovery_unconfirmed")
+	}
+	if !validTencentComputeAbsenceEvidence(readback) {
+		return persisted, fmt.Errorf("compute_destroy_recovery_unconfirmed")
+	}
+	return s.finalizeTencentComputeDestroy(ctx, readback)
+}
+
+func (s *Service) finalizeTencentComputeDestroy(ctx context.Context, confirmed ComputeAllocation) (ComputeAllocation, error) {
+	finalizer, ok := s.provider.(computeDestroyAbsenceFinalizer)
+	if !ok {
+		return confirmed, fmt.Errorf("compute_destroy_recovery_unconfirmed")
+	}
+	finalized, err := finalizer.finalizeComputeDestroyAfterAbsence(ctx, confirmed)
+	if err != nil {
+		return confirmed, err
+	}
+	if !sameComputeDestroyStableIdentity(confirmed, finalized) || !validTencentComputeAbsenceEvidence(finalized) {
+		return confirmed, fmt.Errorf("compute_destroy_recovery_identity_mismatch")
+	}
+	return finalized, nil
 }
 
 func (s *Service) releaseMachineOwnership(ctx context.Context, resourceID string) error {

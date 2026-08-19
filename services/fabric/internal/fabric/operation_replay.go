@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -58,7 +59,10 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 				continue
 			}
 			if operation.Status == "failed" && !strings.HasPrefix(operation.Action, "create_") {
-				continue
+				previous, exists := computes[resource.ID]
+				if !exists || !validTencentFailedComputeDestroyReplay(operation, resource) || !sameComputeDestroyStableIdentity(previous, resource) {
+					continue
+				}
 			}
 			computes[resource.ID] = resource
 		case "storage_volume":
@@ -97,6 +101,41 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 		attachments[attachmentID] = attachment
 	}
 	return computes, volumes, attachments, runtimes
+}
+
+func validTencentFailedComputeDestroyReplay(operation FabricOperation, resource ComputeAllocation) bool {
+	return operation.Action == "destroy_compute_allocation" && operation.ResourceKind == "compute_allocation" && operation.Status == "failed" &&
+		operation.ResourceID != "" && operation.AccountID != "" && operation.WorkspaceID != "" &&
+		operation.ResourceID == resource.ID && operation.AccountID == resource.AccountID && operation.WorkspaceID == resource.WorkspaceID &&
+		operation.Provider == resource.Provider && operation.ProviderRequestID == resource.ProviderRequestID &&
+		validTencentComputeDestroyStableIdentity(resource) &&
+		(validTencentComputeAbsenceEvidence(resource) || validTencentComputeDestroyAttemptEvidence(resource) || validTencentComputeDestroyDispatchEvidence(resource))
+}
+
+func sameComputeDestroyStableIdentity(previous, failed ComputeAllocation) bool {
+	return previous.ID == failed.ID && previous.OperationID == failed.OperationID && previous.AccountID == failed.AccountID && previous.WorkspaceID == failed.WorkspaceID &&
+		previous.PackageID == failed.PackageID && previous.Provider == failed.Provider && previous.ProviderResourceID == failed.ProviderResourceID &&
+		previous.PoolID == failed.PoolID && previous.NodePoolID == failed.NodePoolID && previous.InstanceID == failed.InstanceID && previous.CVMInstanceID == failed.CVMInstanceID &&
+		previous.NodeName == failed.NodeName && previous.MachineName == failed.MachineName && previous.PrivateIP == failed.PrivateIP && previous.PublicIP == failed.PublicIP &&
+		previous.InstanceType == failed.InstanceType && previous.Zone == failed.Zone && previous.ChargeType == failed.ChargeType && previous.RenewFlag == failed.RenewFlag &&
+		previous.Deadline == failed.Deadline && previous.ServiceName == failed.ServiceName && previous.CreatedAt == failed.CreatedAt &&
+		reflect.DeepEqual(previous.CostTags, failed.CostTags) && reflect.DeepEqual(previous.NodeSelector, failed.NodeSelector) &&
+		reflect.DeepEqual(previous.ClaimTerminalEvidence, failed.ClaimTerminalEvidence) && sameTencentComputeDeleteProviderData(previous.ProviderData, failed.ProviderData)
+}
+
+func sameTencentComputeDeleteProviderData(previous, failed map[string]string) bool {
+	for key, previousValue := range previous {
+		failedValue, exists := failed[key]
+		if !exists || previousValue != failedValue && !isTencentComputeDeleteEvidenceKey(key) {
+			return false
+		}
+	}
+	for key := range failed {
+		if _, exists := previous[key]; !exists && !isTencentComputeDeleteEvidenceKey(key) {
+			return false
+		}
+	}
+	return true
 }
 
 func canonicalWorkspaceLaunchAttachment(operation FabricOperation) (StorageAttachment, string, bool, bool) {

@@ -175,6 +175,10 @@ type storageAttachmentReadbackProvider interface {
 	ReadStorageAttachment(context.Context, StorageAttachment, ComputeAllocation, StorageVolume) (StorageAttachment, error)
 }
 
+type computeDestroyStatusReader interface {
+	ReadComputeDestroyStatus(context.Context, ComputeAllocation) (ComputeAllocation, error)
+}
+
 type storageVolumeStatusReader interface {
 	ReadStorageVolumeStatus(context.Context, StorageVolume) (StorageVolume, error)
 }

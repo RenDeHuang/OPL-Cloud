@@ -33,6 +33,7 @@ const (
 	webuiUsername             = "opl"
 	workspaceImageRepository  = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
 	tencentProviderProfileEnv = "OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON"
+	tencentProviderRegionEnv  = "OPL_TENCENT_REGION"
 )
 
 type tencentStoragePlan struct {
@@ -71,6 +72,7 @@ type tencentWorkspacePlan struct {
 	Compute     ComputePlan        `json:"compute"`
 	NodePoolID  string             `json:"nodePoolId"`
 	MaxReplicas int64              `json:"maxReplicas"`
+	Region      string             `json:"region"`
 	Zone        string             `json:"zone"`
 	Storage     tencentStoragePlan `json:"storage"`
 	Billing     tencentBillingPlan `json:"billing"`
@@ -82,6 +84,8 @@ type TencentProvider struct {
 	convergenceWait func(context.Context, int) error
 	profile         tencentProviderProfile
 	plans           map[string]tencentPackageProfile
+	region          string
+	storageDiskType string
 	profileErr      error
 }
 
@@ -112,7 +116,11 @@ type monthlyPreflightEvaluation struct {
 func NewTencentProvider() *TencentProvider {
 	raw := []byte(strings.TrimSpace(os.Getenv(tencentProviderProfileEnv)))
 	profile, plans, profileErr := decodeTencentProviderProfile(raw)
-	return &TencentProvider{provision: executeProvisioner, kubectl: executeKubectl, convergenceWait: boundedClaimReadbackWait, profile: profile, plans: plans, profileErr: profileErr}
+	return &TencentProvider{
+		provision: executeProvisioner, kubectl: executeKubectl, convergenceWait: boundedClaimReadbackWait,
+		profile: profile, plans: plans, region: strings.TrimSpace(os.Getenv(tencentProviderRegionEnv)),
+		storageDiskType: strings.TrimSpace(os.Getenv("TENCENT_CBS_DISK_TYPE")), profileErr: profileErr,
+	}
 }
 
 func (p *TencentProvider) Descriptor() ProviderDescriptor {
@@ -143,15 +151,19 @@ func (p *TencentProvider) Descriptor() ProviderDescriptor {
 }
 
 func (p *TencentProvider) ResolveWorkspacePlan(_ context.Context, input WorkspaceLaunchPlanInput) (json.RawMessage, error) {
-	if p == nil || p.profileErr != nil {
+	if p == nil || p.profileErr != nil || !validTencentProviderRegion(p.region) {
 		return nil, ErrProviderPlanUnavailable
 	}
 	item, ok := p.plans[input.PackageID]
 	if !ok || !item.Available || item.Storage.SizeGB != input.SizeGB {
 		return nil, ErrProviderPlanUnavailable
 	}
-	plan := tencentWorkspacePlan{PackageID: item.ID, Compute: item.Compute, NodePoolID: item.NodePoolID, MaxReplicas: item.MaxReplicas, Zone: item.Zone, Storage: item.Storage, Billing: item.Billing}
+	plan := tencentWorkspacePlan{PackageID: item.ID, Compute: item.Compute, NodePoolID: item.NodePoolID, MaxReplicas: item.MaxReplicas, Region: p.region, Zone: item.Zone, Storage: item.Storage, Billing: item.Billing}
 	return json.Marshal(plan)
+}
+
+func validTencentProviderRegion(region string) bool {
+	return region != "" && region == strings.TrimSpace(region)
 }
 
 func decodeTencentProviderProfile(raw []byte) (tencentProviderProfile, map[string]tencentPackageProfile, error) {
@@ -188,9 +200,14 @@ func withTencentWorkspacePlan(ctx context.Context, plan tencentWorkspacePlan) co
 	return context.WithValue(ctx, tencentWorkspacePlanContextKey{}, plan)
 }
 
-func tencentWorkspacePlanFromContext(ctx context.Context) (tencentWorkspacePlan, bool) {
+func tencentWorkspacePlanContextValue(ctx context.Context) (tencentWorkspacePlan, bool) {
 	plan, ok := ctx.Value(tencentWorkspacePlanContextKey{}).(tencentWorkspacePlan)
-	return plan, ok && plan.PackageID != "" && plan.Compute.ID != "" && plan.NodePoolID != "" && plan.Zone != ""
+	return plan, ok
+}
+
+func tencentWorkspacePlanFromContext(ctx context.Context) (tencentWorkspacePlan, bool) {
+	plan, ok := tencentWorkspacePlanContextValue(ctx)
+	return plan, ok && plan.PackageID != "" && plan.Compute.ID != "" && plan.NodePoolID != "" && validTencentProviderRegion(plan.Region) && plan.Zone != ""
 }
 
 func decodeTencentWorkspacePlanEnvelope(raw json.RawMessage, packageID string, sizeGB int) (tencentWorkspacePlan, error) {
@@ -202,7 +219,7 @@ func decodeTencentWorkspacePlanEnvelope(raw json.RawMessage, packageID string, s
 	}
 	if json.Unmarshal(raw, &envelope) != nil || envelope.SchemaVersion != 1 || envelope.ProviderProfileRef != "tencent-tke" || envelope.PackageID != packageID || envelope.Spec.PackageID != packageID ||
 		envelope.Spec.Storage.SizeGB != sizeGB || envelope.Spec.Compute.DiskGB != sizeGB || envelope.Spec.Compute.CPU <= 0 || envelope.Spec.Compute.MemoryGB <= 0 || envelope.Spec.Compute.InstanceType == "" ||
-		envelope.Spec.NodePoolID == "" || envelope.Spec.MaxReplicas <= 0 || envelope.Spec.Zone == "" || envelope.Spec.Storage.DiskType == "" || envelope.Spec.Billing.ChargeType != "PREPAID" || envelope.Spec.Billing.PeriodMonths != 1 || envelope.Spec.Billing.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" {
+		envelope.Spec.NodePoolID == "" || envelope.Spec.MaxReplicas <= 0 || !validTencentProviderRegion(envelope.Spec.Region) || envelope.Spec.Zone == "" || envelope.Spec.Storage.DiskType == "" || envelope.Spec.Billing.ChargeType != "PREPAID" || envelope.Spec.Billing.PeriodMonths != 1 || envelope.Spec.Billing.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" {
 		return tencentWorkspacePlan{}, ErrLaunchStageBindingConflict
 	}
 	return envelope.Spec, nil
@@ -215,7 +232,7 @@ func (p *TencentProvider) workspacePlanForContext(ctx context.Context, packageID
 		}
 		return bound, nil
 	}
-	if p == nil || p.profileErr != nil {
+	if p == nil || p.profileErr != nil || !validTencentProviderRegion(p.region) {
 		return tencentWorkspacePlan{}, ErrProviderPlanUnavailable
 	}
 	item, ok := p.plans[packageID]
@@ -224,19 +241,19 @@ func (p *TencentProvider) workspacePlanForContext(ctx context.Context, packageID
 	}
 	return tencentWorkspacePlan{
 		PackageID: item.ID, Compute: item.Compute, NodePoolID: item.NodePoolID,
-		MaxReplicas: item.MaxReplicas, Zone: item.Zone, Storage: item.Storage, Billing: item.Billing,
+		MaxReplicas: item.MaxReplicas, Region: p.region, Zone: item.Zone, Storage: item.Storage, Billing: item.Billing,
 	}, nil
 }
 
 func (p *TencentProvider) configuredWorkspacePlan(packageID string, sizeGB int, zone string) (tencentWorkspacePlan, error) {
-	if p == nil || p.profileErr != nil {
+	if p == nil || p.profileErr != nil || !validTencentProviderRegion(p.region) {
 		return tencentWorkspacePlan{}, ErrProviderPlanUnavailable
 	}
 	item, ok := p.plans[packageID]
 	if !ok || !item.Available || item.Storage.SizeGB != sizeGB || item.Zone != strings.TrimSpace(zone) {
 		return tencentWorkspacePlan{}, ErrProviderPlanUnavailable
 	}
-	return tencentWorkspacePlan{PackageID: item.ID, Compute: item.Compute, NodePoolID: item.NodePoolID, MaxReplicas: item.MaxReplicas, Zone: item.Zone, Storage: item.Storage, Billing: item.Billing}, nil
+	return tencentWorkspacePlan{PackageID: item.ID, Compute: item.Compute, NodePoolID: item.NodePoolID, MaxReplicas: item.MaxReplicas, Region: p.region, Zone: item.Zone, Storage: item.Storage, Billing: item.Billing}, nil
 }
 
 func (p *TencentProvider) configuredWorkspaceStoragePlan(packageID string, sizeGB int, zone string) (tencentWorkspacePlan, error) {
@@ -785,6 +802,7 @@ type provisionerRequest struct {
 	AccountID       string                `json:"accountId,omitempty"`
 	UserID          string                `json:"userId,omitempty"`
 	PackageID       string                `json:"packageId,omitempty"`
+	Region          string                `json:"region,omitempty"`
 	Zone            string                `json:"zone,omitempty"`
 	StorageVolumeID string                `json:"storageVolumeId,omitempty"`
 	Tags            map[string]string     `json:"tags,omitempty"`
@@ -819,6 +837,7 @@ type provisionerAllocation struct {
 	ID          string `json:"id,omitempty"`
 	InstanceID  string `json:"instanceId,omitempty"`
 	MachineName string `json:"machineName,omitempty"`
+	MachineType string `json:"machineType,omitempty"`
 	NodeName    string `json:"nodeName,omitempty"`
 	PrivateIP   string `json:"privateIp,omitempty"`
 	PublicIP    string `json:"publicIp,omitempty"`
