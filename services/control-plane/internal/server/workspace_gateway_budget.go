@@ -380,7 +380,7 @@ func (app *controlPlaneServer) completeWorkspaceGatewayBudgetOperation(r *http.R
 	event := cloneMap(operation.AuditEvent)
 	event["after"] = workspaceGatewayBudgetProjection(workspaceID, readback)
 	event["result"] = "succeeded"
-	exists, err := app.workspaceGatewayBudgetAuditExists(r.Context(), accountID, event)
+	exists, err := app.auditIdentityExists(r.Context(), accountID, event)
 	if err != nil || !exists && app.tables.SaveAuditEvent(r.Context(), event) != nil {
 		return false
 	}
@@ -421,7 +421,7 @@ func validWorkspaceGatewayBudgetAudit(event map[string]any, operationID, account
 		stringValue(event["targetAccountId"]) == accountID && stringValue(event["actorUserId"]) != "" && stringValue(event["createdAt"]) != ""
 }
 
-func (app *controlPlaneServer) workspaceGatewayBudgetAuditExists(ctx context.Context, accountID string, expected map[string]any) (bool, error) {
+func (app *controlPlaneServer) auditIdentityExists(ctx context.Context, accountID string, expected map[string]any) (bool, error) {
 	events, err := app.tables.ListAuditEvents(ctx, accountID)
 	if err != nil {
 		return false, err

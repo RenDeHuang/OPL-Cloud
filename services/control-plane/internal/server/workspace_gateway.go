@@ -16,6 +16,7 @@ import (
 )
 
 var errWorkspaceKeyRotationInProgress = errors.New("workspace_key_rotation_in_progress")
+var errWorkspaceKeyRotationDraining = errors.New("workspace_key_rotation_draining")
 var errWorkspaceKeyRotationConflict = errors.New("workspace_key_rotation_conflict")
 var errWorkspaceKeyRotationState = errors.New("workspace_key_rotation_state_failed")
 
@@ -264,18 +265,31 @@ func (app *controlPlaneServer) getWorkspace(id string) (map[string]any, bool) {
 }
 
 type workspaceKeyRotationOperation struct {
-	RequestHash              string `json:"requestHash"`
-	Phase                    string `json:"phase"`
-	OldKeyID                 int64  `json:"oldKeyId"`
-	NewKeyID                 int64  `json:"newKeyId,omitempty"`
-	ReplacementName          string `json:"replacementName"`
-	RetiredName              string `json:"retiredName"`
-	ReplacementCreateStarted bool   `json:"replacementCreateStarted,omitempty"`
-	SecretRef                string `json:"secretRef,omitempty"`
-	Fingerprint              string `json:"fingerprint,omitempty"`
-	RuntimeID                string `json:"runtimeId,omitempty"`
-	ReceiptID                string `json:"receiptId,omitempty"`
-	CompletedAt              string `json:"completedAt,omitempty"`
+	RequestHash               string         `json:"requestHash"`
+	Phase                     string         `json:"phase"`
+	OldKeyID                  int64          `json:"oldKeyId"`
+	NewKeyID                  int64          `json:"newKeyId,omitempty"`
+	ReplacementName           string         `json:"replacementName"`
+	RetiredName               string         `json:"retiredName"`
+	ReplacementCreateStarted  bool           `json:"replacementCreateStarted,omitempty"`
+	ReplacementGroupID        int64          `json:"replacementGroupId,omitempty"`
+	BudgetSnapshotCaptured    bool           `json:"budgetSnapshotCaptured,omitempty"`
+	OldQuotaUSDMicros         int64          `json:"oldQuotaUsdMicros,omitempty"`
+	OldQuotaUsedUSDMicros     int64          `json:"oldQuotaUsedUsdMicros,omitempty"`
+	ReplacementQuotaUSDMicros int64          `json:"replacementQuotaUsdMicros,omitempty"`
+	RateLimit5hUSDMicros      int64          `json:"rateLimit5hUsdMicros,omitempty"`
+	RateLimit1dUSDMicros      int64          `json:"rateLimit1dUsdMicros,omitempty"`
+	RateLimit7dUSDMicros      int64          `json:"rateLimit7dUsdMicros,omitempty"`
+	Usage5hUSDMicros          int64          `json:"usage5hUsdMicros,omitempty"`
+	Usage1dUSDMicros          int64          `json:"usage1dUsdMicros,omitempty"`
+	Usage7dUSDMicros          int64          `json:"usage7dUsdMicros,omitempty"`
+	BudgetCapturedAt          string         `json:"budgetCapturedAt,omitempty"`
+	SecretRef                 string         `json:"secretRef,omitempty"`
+	Fingerprint               string         `json:"fingerprint,omitempty"`
+	RuntimeID                 string         `json:"runtimeId,omitempty"`
+	ReceiptID                 string         `json:"receiptId,omitempty"`
+	CompletedAt               string         `json:"completedAt,omitempty"`
+	AuditEvent                map[string]any `json:"auditEvent"`
 }
 
 func encodeWorkspaceKeyRotation(operation workspaceKeyRotationOperation) string {
@@ -285,7 +299,8 @@ func encodeWorkspaceKeyRotation(operation workspaceKeyRotationOperation) string 
 
 func decodeWorkspaceKeyRotation(row map[string]any) (workspaceKeyRotationOperation, error) {
 	var operation workspaceKeyRotationOperation
-	if err := json.Unmarshal([]byte(stringValue(row["result"])), &operation); err != nil || operation.RequestHash == "" || operation.Phase == "" || operation.OldKeyID <= 0 || operation.ReplacementName == "" || operation.RetiredName == "" {
+	if err := json.Unmarshal([]byte(stringValue(row["result"])), &operation); err != nil || operation.RequestHash == "" || operation.Phase == "" || operation.OldKeyID <= 0 || operation.ReplacementName == "" || operation.RetiredName == "" ||
+		!validWorkspaceKeyRotationAudit(operation.AuditEvent, stringValue(row["id"]), stringValue(row["accountId"]), stringValue(row["workspaceId"])) {
 		return workspaceKeyRotationOperation{}, errWorkspaceKeyRotationState
 	}
 	return operation, nil
@@ -321,10 +336,20 @@ func (app *controlPlaneServer) workspaceKeyRotation(ctx context.Context, operati
 	if operation.RequestHash != requestHash {
 		return workspaceKeyRotationOperation{}, false, errIdempotencyConflict
 	}
-	return operation, stringValue(row["status"]) == "succeeded", nil
+	status := stringValue(row["status"])
+	if status == "succeeded" {
+		if !workspaceKeyRotationSucceededEvidenceValid(operation) {
+			return workspaceKeyRotationOperation{}, false, errWorkspaceKeyRotationState
+		}
+		return operation, true, nil
+	}
+	if status != "started" && status != "manual_review" || operation.Phase == "succeeded" {
+		return workspaceKeyRotationOperation{}, false, errWorkspaceKeyRotationState
+	}
+	return operation, false, nil
 }
 
-func (app *controlPlaneServer) claimWorkspaceKeyRotation(ctx context.Context, operationID, accountID, workspaceID, requestHash string, oldKeyID int64) (workspaceKeyRotationOperation, bool, error) {
+func (app *controlPlaneServer) claimWorkspaceKeyRotation(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, operationID, accountID, workspaceID, requestHash string, oldKeyID int64, auditEvent map[string]any) (workspaceKeyRotationOperation, bool, error) {
 	if existing, complete, err := app.workspaceKeyRotation(ctx, operationID, accountID, workspaceID, requestHash); err != nil || existing.Phase != "" {
 		return existing, complete, err
 	}
@@ -348,10 +373,25 @@ func (app *controlPlaneServer) claimWorkspaceKeyRotation(ctx context.Context, op
 			return workspaceKeyRotationOperation{}, false, errWorkspaceKeyRotationInProgress
 		}
 	}
+	keys, err := workspaceRotationKeys(ctx, service, credential, userID, "opl-workspace", workspaceReservedKeyName(workspaceID))
+	if err != nil {
+		return workspaceKeyRotationOperation{}, false, err
+	}
+	if !workspaceRotationInitialKeysValid(keys, oldKeyID, workspaceReservedKeyName(workspaceID)) {
+		return workspaceKeyRotationOperation{}, false, errWorkspaceKeyRotationConflict
+	}
+	oldKey, err := service.GatewayUserKey(ctx, credential, userID, oldKeyID)
+	if err != nil {
+		return workspaceKeyRotationOperation{}, false, err
+	}
+	if !workspaceRotationOldKeyAdmissible(oldKey, userID, oldKeyID, workspaceID) {
+		return workspaceKeyRotationOperation{}, false, errWorkspaceKeyRotationConflict
+	}
 	operation := workspaceKeyRotationOperation{
 		RequestHash: requestHash, Phase: "replacement_check", OldKeyID: oldKeyID,
 		ReplacementName: workspaceRotationReplacementName(operationID),
 		RetiredName:     "opl-workspace-retired-" + stableID(operationID)[:12],
+		AuditEvent:      auditEvent,
 	}
 	if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
 		return workspaceKeyRotationOperation{}, false, err
@@ -391,18 +431,27 @@ func (app *controlPlaneServer) rotateWorkspaceGatewayKey(w http.ResponseWriter, 
 	}
 	operationID := "workspace-key-rotate-" + stableID(workspaceID, idempotencyKey)[:18]
 	requestHash := stableID("workspace-key-rotation-v1", workspaceID, string(mustJSON(input)))
+	auditEvent := app.newWorkspaceKeyRotationAudit(r, operationID, accountID, workspaceID, oldKeyID)
 	claimUnlock := app.lockWorkspaceGatewayMutation(workspaceID)
-	_, _, err := app.claimWorkspaceKeyRotation(r.Context(), operationID, accountID, workspaceID, requestHash, oldKeyID)
+	claimed, complete, err := app.claimWorkspaceKeyRotation(r.Context(), service, credential, userID, operationID, accountID, workspaceID, requestHash, oldKeyID, auditEvent)
 	claimUnlock()
 	if err != nil {
 		writeWorkspaceKeyRotationError(w, err)
 		return
 	}
+	if complete {
+		app.writeWorkspaceKeyRotationResponse(w, operationID, workspaceID, claimed)
+		return
+	}
 	operationUnlock := app.lockResource("workspace-key-rotation", operationID)
 	defer operationUnlock()
-	operation, _, err := app.workspaceKeyRotation(r.Context(), operationID, accountID, workspaceID, requestHash)
+	operation, complete, err := app.workspaceKeyRotation(r.Context(), operationID, accountID, workspaceID, requestHash)
 	if err != nil {
 		writeWorkspaceKeyRotationError(w, err)
+		return
+	}
+	if complete {
+		app.writeWorkspaceKeyRotationResponse(w, operationID, workspaceID, operation)
 		return
 	}
 	operation, err = app.runWorkspaceKeyRotation(r, service, credential, userID, operationID, accountID, workspaceID, ownerID, operation)
@@ -425,7 +474,7 @@ func (app *controlPlaneServer) lockWorkspaceGatewayMutation(workspaceID string) 
 
 func writeWorkspaceKeyRotationError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, errWorkspaceKeyRotationInProgress), errors.Is(err, errWorkspaceGatewayBudgetInProgress), errors.Is(err, errWorkspaceKeyRotationConflict), errors.Is(err, errWorkspaceAPIKeyCASConflict), errors.Is(err, errIdempotencyConflict):
+	case errors.Is(err, errWorkspaceKeyRotationInProgress), errors.Is(err, errWorkspaceKeyRotationDraining), errors.Is(err, errWorkspaceGatewayBudgetInProgress), errors.Is(err, errWorkspaceKeyRotationConflict), errors.Is(err, errWorkspaceAPIKeyCASConflict), errors.Is(err, errIdempotencyConflict):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, errWorkspaceKeyRotationState):
 		writeError(w, http.StatusInternalServerError, "state_persist_failed")
@@ -445,7 +494,7 @@ func (app *controlPlaneServer) writeWorkspaceKeyRotationResponse(w http.Response
 
 func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, operationID, accountID, workspaceID, ownerID string, operation workspaceKeyRotationOperation) (workspaceKeyRotationOperation, error) {
 	ctx := r.Context()
-	for range 12 {
+	for range 18 {
 		switch operation.Phase {
 		case "replacement_check":
 			keys, err := workspaceRotationKeys(ctx, service, credential, userID, "opl-workspace", workspaceReservedKeyName(workspaceID))
@@ -455,15 +504,81 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 			if !workspaceRotationInitialKeysValid(keys, operation.OldKeyID, workspaceReservedKeyName(workspaceID)) {
 				return operation, errWorkspaceKeyRotationConflict
 			}
+			oldKey, err := service.GatewayUserKey(ctx, credential, userID, operation.OldKeyID)
+			if err != nil {
+				return operation, err
+			}
+			if !workspaceRotationOldKeyAdmissible(oldKey, userID, operation.OldKeyID, workspaceID) {
+				return operation, errWorkspaceKeyRotationConflict
+			}
+			operation.Phase = "old_key_disable"
+			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
+				return operation, err
+			}
+		case "old_key_disable":
+			oldKey, err := service.GatewayUserKey(ctx, credential, userID, operation.OldKeyID)
+			if err != nil {
+				return operation, err
+			}
+			if oldKey.ExpiresAt != nil || !workspaceRotationOldKeyMatches(oldKey, userID, operation.OldKeyID, workspaceID, oldKey.Status) || (oldKey.Status != "active" && oldKey.Status != "disabled") {
+				return operation, errWorkspaceKeyRotationConflict
+			}
+			if oldKey.Status == "active" {
+				disabled := false
+				if _, err := service.UpdateGatewayUserKey(ctx, credential, userID, operation.OldKeyID, clients.Sub2APIUpdateKeyInput{Enabled: &disabled}); err != nil {
+					return operation, err
+				}
+				oldKey, err = service.GatewayUserKey(ctx, credential, userID, operation.OldKeyID)
+				if err != nil {
+					return operation, err
+				}
+			}
+			if !workspaceRotationOldKeyMatches(oldKey, userID, operation.OldKeyID, workspaceID, "disabled") || oldKey.ExpiresAt != nil {
+				return operation, errWorkspaceKeyRotationConflict
+			}
+			operation.Phase = "old_key_drain"
+			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
+				return operation, err
+			}
+		case "old_key_drain":
+			oldKey, err := service.GatewayUserKey(ctx, credential, userID, operation.OldKeyID)
+			if err != nil {
+				return operation, err
+			}
+			if !workspaceRotationOldKeyMatches(oldKey, userID, operation.OldKeyID, workspaceID, "disabled") || oldKey.ExpiresAt != nil {
+				return operation, errWorkspaceKeyRotationConflict
+			}
+			if oldKey.CurrentConcurrency != 0 {
+				return operation, errWorkspaceKeyRotationDraining
+			}
+			if !workspaceRotationBudgetTransferable(oldKey) {
+				return operation, errWorkspaceKeyRotationConflict
+			}
+			operation.BudgetSnapshotCaptured = true
+			operation.OldQuotaUSDMicros, operation.OldQuotaUsedUSDMicros = oldKey.QuotaUSDMicros, oldKey.QuotaUsedUSDMicros
+			operation.ReplacementQuotaUSDMicros = oldKey.QuotaUSDMicros
+			if oldKey.QuotaUSDMicros > 0 {
+				operation.ReplacementQuotaUSDMicros -= oldKey.QuotaUsedUSDMicros
+			}
+			operation.RateLimit5hUSDMicros, operation.RateLimit1dUSDMicros, operation.RateLimit7dUSDMicros = oldKey.RateLimit5hUSDMicros, oldKey.RateLimit1dUSDMicros, oldKey.RateLimit7dUSDMicros
+			operation.Usage5hUSDMicros, operation.Usage1dUSDMicros, operation.Usage7dUSDMicros = oldKey.Usage5hUSDMicros, oldKey.Usage1dUSDMicros, oldKey.Usage7dUSDMicros
+			operation.BudgetCapturedAt = time.Now().UTC().Format(time.RFC3339Nano)
 			operation.Phase = "replacement_create"
 			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
 				return operation, err
 			}
 		case "replacement_create":
+			if !workspaceRotationBudgetSnapshotValid(operation) {
+				return operation, errWorkspaceKeyRotationState
+			}
 			codexGroupID, groupErr := workspaceCodexGroupID(ctx, service, credential, userID)
 			if groupErr != nil {
 				return operation, groupErr
 			}
+			if operation.ReplacementGroupID != 0 && operation.ReplacementGroupID != codexGroupID {
+				return operation, errWorkspaceKeyRotationConflict
+			}
+			operation.ReplacementGroupID = codexGroupID
 			keys, err := workspaceRotationKeys(ctx, service, credential, userID, operation.ReplacementName)
 			if err != nil {
 				return operation, err
@@ -473,7 +588,7 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 				return operation, errWorkspaceKeyRotationConflict
 			}
 			if len(matches) == 1 {
-				if matches[0].Status != "active" || matches[0].ID <= 0 || !workspaceKeyCodexGroupMatches(matches[0], codexGroupID) {
+				if !workspaceRotationReplacementPolicyMatches(matches[0], userID, operation, operation.ReplacementName) {
 					return operation, errWorkspaceKeyRotationConflict
 				}
 				operation.NewKeyID = matches[0].ID
@@ -484,21 +599,40 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 						return operation, err
 					}
 				}
-				created, err := service.CreateGatewayUserKey(ctx, credential, userID, clients.Sub2APICreateKeyInput{Name: operation.ReplacementName, GroupID: codexGroupID}, operationID+":replacement")
+				created, err := service.CreateGatewayUserKey(ctx, credential, userID, clients.Sub2APICreateKeyInput{
+					Name: operation.ReplacementName, GroupID: codexGroupID, QuotaUSDMicros: operation.ReplacementQuotaUSDMicros,
+					RateLimit5hUSDMicros: operation.RateLimit5hUSDMicros, RateLimit1dUSDMicros: operation.RateLimit1dUSDMicros,
+					RateLimit7dUSDMicros: operation.RateLimit7dUSDMicros,
+				}, operationID+":replacement")
 				if err != nil {
 					return operation, err
 				}
-				if created.ID <= 0 || created.UserID != userID || created.Name != operation.ReplacementName || created.Status != "active" || !workspaceKeyCodexGroupMatches(created, codexGroupID) {
+				if !workspaceRotationReplacementPolicyMatches(created, userID, operation, operation.ReplacementName) {
 					return operation, errWorkspaceKeyRotationConflict
 				}
-				readback, err := service.GatewayUserKey(ctx, credential, userID, created.ID)
-				if err != nil {
-					return operation, err
-				}
-				if readback.ID != created.ID || readback.UserID != userID || readback.Name != operation.ReplacementName || readback.Status != "active" || !workspaceKeyCodexGroupMatches(readback, codexGroupID) {
-					return operation, errWorkspaceKeyRotationConflict
-				}
-				operation.NewKeyID = readback.ID
+				operation.NewKeyID = created.ID
+			}
+			operation.Phase = "replacement_policy_readback"
+			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
+				return operation, err
+			}
+		case "replacement_policy_readback":
+			if !workspaceRotationBudgetSnapshotValid(operation) || operation.NewKeyID <= 0 {
+				return operation, errWorkspaceKeyRotationState
+			}
+			codexGroupID, err := workspaceCodexGroupID(ctx, service, credential, userID)
+			if err != nil {
+				return operation, err
+			}
+			if operation.ReplacementGroupID != codexGroupID {
+				return operation, errWorkspaceKeyRotationConflict
+			}
+			readback, err := service.GatewayUserKey(ctx, credential, userID, operation.NewKeyID)
+			if err != nil {
+				return operation, err
+			}
+			if !workspaceRotationReplacementPolicyMatches(readback, userID, operation, operation.ReplacementName) {
+				return operation, errWorkspaceKeyRotationConflict
 			}
 			operation.Phase = "secret_write"
 			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
@@ -554,7 +688,7 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 				return operation, err
 			}
 			if oldKey.Name != operation.RetiredName || oldKey.Status != "disabled" {
-				if oldKey.Name != "opl-workspace" && oldKey.Name != workspaceReservedKeyName(workspaceID) || oldKey.Status != "active" {
+				if oldKey.Name != "opl-workspace" && oldKey.Name != workspaceReservedKeyName(workspaceID) || oldKey.Status != "disabled" {
 					return operation, errWorkspaceKeyRotationConflict
 				}
 				disabled, retiredName := false, operation.RetiredName
@@ -579,19 +713,18 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 				return operation, err
 			}
 			canonicalName := workspaceReservedKeyName(workspaceID)
-			if newKey.Name != canonicalName || newKey.Status != "active" {
-				if newKey.Name != operation.ReplacementName || newKey.Status != "active" {
+			if newKey.Name != canonicalName || !workspaceRotationReplacementStaticPolicyMatches(newKey, userID, operation) {
+				if newKey.Name != operation.ReplacementName || !workspaceRotationReplacementStaticPolicyMatches(newKey, userID, operation) {
 					return operation, errWorkspaceKeyRotationConflict
 				}
-				enabled := true
-				if _, err := service.UpdateGatewayUserKey(ctx, credential, userID, operation.NewKeyID, clients.Sub2APIUpdateKeyInput{Name: &canonicalName, Enabled: &enabled}); err != nil {
+				if _, err := service.UpdateGatewayUserKey(ctx, credential, userID, operation.NewKeyID, clients.Sub2APIUpdateKeyInput{Name: &canonicalName}); err != nil {
 					return operation, err
 				}
 				readback, err := service.GatewayUserKey(ctx, credential, userID, operation.NewKeyID)
 				if err != nil {
 					return operation, err
 				}
-				if readback.Name != canonicalName || readback.Status != "active" {
+				if readback.Name != canonicalName || !workspaceRotationReplacementStaticPolicyMatches(readback, userID, operation) {
 					return operation, errWorkspaceKeyRotationConflict
 				}
 			}
@@ -624,21 +757,27 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 			}
 			operation.ReceiptID = receipt.ReceiptID
 			operation.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-			audit := app.auditEvent(r, "workspace.gateway_key.rotate", "workspace_gateway_key", workspaceID, accountID, nil, map[string]any{
-				"operationId": operationID, "oldKeyId": operation.OldKeyID, "newKeyId": operation.NewKeyID,
-				"fingerprint": operation.Fingerprint, "receiptId": operation.ReceiptID,
-			}, "succeeded")
-			audit["id"], audit["createdAt"] = "audit-"+stableID(operationID, "workspace.gateway_key.rotate")[:12], operation.CompletedAt
-			if err := app.tables.SaveAuditEvent(ctx, audit); err != nil {
-				return operation, errWorkspaceKeyRotationState
-			}
 			operation.Phase = "complete"
-			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "succeeded", operation); err != nil {
+			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
 				return operation, err
 			}
 		case "complete":
 			if !app.workspaceKeyRotationConverged(ctx, service, credential, userID, workspaceID, operation) {
 				return operation, errWorkspaceKeyRotationConflict
+			}
+			audit := cloneMap(operation.AuditEvent)
+			audit["after"] = map[string]any{
+				"operationId": operationID, "oldKeyId": operation.OldKeyID, "newKeyId": operation.NewKeyID,
+				"fingerprint": operation.Fingerprint, "receiptId": operation.ReceiptID,
+			}
+			audit["result"] = "succeeded"
+			exists, err := app.auditIdentityExists(ctx, accountID, audit)
+			if err != nil || !exists && app.tables.SaveAuditEvent(ctx, audit) != nil {
+				return operation, errWorkspaceKeyRotationState
+			}
+			operation.Phase = "succeeded"
+			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "succeeded", operation); err != nil {
+				return operation, err
 			}
 			return operation, nil
 		default:
@@ -675,6 +814,27 @@ func workspaceKeyCodexGroupMatches(key clients.Sub2APIWorkspaceKey, groupID int6
 
 func workspaceRotationReplacementName(operationID string) string {
 	return "opl-workspace-replacement-" + stableID(operationID)[:12]
+}
+
+func (app *controlPlaneServer) newWorkspaceKeyRotationAudit(r *http.Request, operationID, accountID, workspaceID string, oldKeyID int64) map[string]any {
+	event := app.auditEvent(r, "workspace.gateway_key.rotate", "workspace_gateway_key", workspaceID, accountID,
+		map[string]any{"workspaceApiKeyId": strconv.FormatInt(oldKeyID, 10)}, map[string]any{"operationId": operationID}, "started")
+	event["id"] = "audit-" + stableID(operationID, "workspace.gateway_key.rotate")[:12]
+	return event
+}
+
+func validWorkspaceKeyRotationAudit(event map[string]any, operationID, accountID, workspaceID string) bool {
+	return stringValue(event["id"]) == "audit-"+stableID(operationID, "workspace.gateway_key.rotate")[:12] &&
+		stringValue(event["action"]) == "workspace.gateway_key.rotate" && stringValue(event["resourceKind"]) == "workspace_gateway_key" &&
+		stringValue(event["resourceId"]) == workspaceID && stringValue(event["actorAccountId"]) == accountID &&
+		stringValue(event["targetAccountId"]) == accountID && stringValue(event["actorUserId"]) != "" && stringValue(event["createdAt"]) != ""
+}
+
+func workspaceKeyRotationSucceededEvidenceValid(operation workspaceKeyRotationOperation) bool {
+	completedAt, err := time.Parse(time.RFC3339Nano, operation.CompletedAt)
+	return operation.Phase == "succeeded" && operation.NewKeyID > 0 && operation.ReplacementGroupID > 0 &&
+		operation.SecretRef != "" && operation.Fingerprint != "" && operation.ReceiptID != "" &&
+		err == nil && !completedAt.IsZero() && workspaceRotationBudgetSnapshotValid(operation)
 }
 
 func workspaceRuntimeGatewaySecretMatches(binding clients.WorkspaceRuntimeGatewaySecretBinding, operation workspaceKeyRotationOperation, workspaceID string) bool {
@@ -717,6 +877,76 @@ func workspaceRotationInitialKeysValid(keys []clients.Sub2APIWorkspaceKey, oldKe
 	return found
 }
 
+func workspaceRotationOldKeyMatches(key clients.Sub2APIWorkspaceKey, userID, oldKeyID int64, workspaceID, status string) bool {
+	return key.ID == oldKeyID && key.UserID == userID && key.Status == status &&
+		(key.Name == "opl-workspace" || key.Name == workspaceReservedKeyName(workspaceID))
+}
+
+func workspaceRotationOldKeyAdmissible(key clients.Sub2APIWorkspaceKey, userID, oldKeyID int64, workspaceID string) bool {
+	return workspaceRotationOldKeyMatches(key, userID, oldKeyID, workspaceID, "active") && key.ExpiresAt == nil &&
+		workspaceRotationBudgetTransferable(key)
+}
+
+func workspaceRotationBudgetTransferable(key clients.Sub2APIWorkspaceKey) bool {
+	if key.QuotaUSDMicros < 0 || key.QuotaUsedUSDMicros < 0 ||
+		key.RateLimit5hUSDMicros < 0 || key.RateLimit1dUSDMicros < 0 || key.RateLimit7dUSDMicros < 0 ||
+		key.Usage5hUSDMicros < 0 || key.Usage1dUSDMicros < 0 || key.Usage7dUSDMicros < 0 || key.CurrentConcurrency < 0 {
+		return false
+	}
+	if key.QuotaUSDMicros > 0 && key.QuotaUsedUSDMicros >= key.QuotaUSDMicros {
+		return false
+	}
+	return (key.RateLimit5hUSDMicros == 0 || key.Usage5hUSDMicros == 0) &&
+		(key.RateLimit1dUSDMicros == 0 || key.Usage1dUSDMicros == 0) &&
+		(key.RateLimit7dUSDMicros == 0 || key.Usage7dUSDMicros == 0)
+}
+
+func workspaceRotationBudgetSnapshotValid(operation workspaceKeyRotationOperation) bool {
+	capturedAt, err := time.Parse(time.RFC3339Nano, operation.BudgetCapturedAt)
+	if !operation.BudgetSnapshotCaptured || err != nil || capturedAt.IsZero() ||
+		operation.OldQuotaUSDMicros < 0 || operation.OldQuotaUsedUSDMicros < 0 || operation.ReplacementQuotaUSDMicros < 0 ||
+		operation.RateLimit5hUSDMicros < 0 || operation.RateLimit1dUSDMicros < 0 || operation.RateLimit7dUSDMicros < 0 ||
+		operation.Usage5hUSDMicros < 0 || operation.Usage1dUSDMicros < 0 || operation.Usage7dUSDMicros < 0 {
+		return false
+	}
+	if operation.OldQuotaUSDMicros == 0 {
+		if operation.ReplacementQuotaUSDMicros != 0 {
+			return false
+		}
+	} else if operation.OldQuotaUsedUSDMicros >= operation.OldQuotaUSDMicros ||
+		operation.ReplacementQuotaUSDMicros != operation.OldQuotaUSDMicros-operation.OldQuotaUsedUSDMicros {
+		return false
+	}
+	return (operation.RateLimit5hUSDMicros == 0 || operation.Usage5hUSDMicros == 0) &&
+		(operation.RateLimit1dUSDMicros == 0 || operation.Usage1dUSDMicros == 0) &&
+		(operation.RateLimit7dUSDMicros == 0 || operation.Usage7dUSDMicros == 0)
+}
+
+func workspaceRotationReplacementPolicyMatches(key clients.Sub2APIWorkspaceKey, userID int64, operation workspaceKeyRotationOperation, name string) bool {
+	if key.ID <= 0 || key.UserID != userID || key.Name != name ||
+		len(key.IPWhitelist) != 0 || len(key.IPBlacklist) != 0 || key.QuotaUsedUSDMicros != 0 ||
+		key.Usage5hUSDMicros != 0 || key.Usage1dUSDMicros != 0 || key.Usage7dUSDMicros != 0 {
+		return false
+	}
+	if operation.NewKeyID == 0 {
+		operation.NewKeyID = key.ID
+	}
+	return key.Status == "active" && workspaceRotationReplacementStaticPolicyMatches(key, userID, operation)
+}
+
+func workspaceRotationReplacementStaticPolicyMatches(key clients.Sub2APIWorkspaceKey, userID int64, operation workspaceKeyRotationOperation) bool {
+	if !workspaceRotationBudgetSnapshotValid(operation) || operation.NewKeyID <= 0 || operation.ReplacementGroupID <= 0 ||
+		key.ID != operation.NewKeyID || key.UserID != userID || key.ExpiresAt != nil || !workspaceKeyCodexGroupMatches(key, operation.ReplacementGroupID) ||
+		len(key.IPWhitelist) != 0 || len(key.IPBlacklist) != 0 ||
+		key.QuotaUSDMicros != operation.ReplacementQuotaUSDMicros || key.QuotaUsedUSDMicros < 0 ||
+		key.RateLimit5hUSDMicros != operation.RateLimit5hUSDMicros || key.RateLimit1dUSDMicros != operation.RateLimit1dUSDMicros ||
+		key.RateLimit7dUSDMicros != operation.RateLimit7dUSDMicros ||
+		key.Usage5hUSDMicros < 0 || key.Usage1dUSDMicros < 0 || key.Usage7dUSDMicros < 0 {
+		return false
+	}
+	return key.Status == "active" || key.Status == "quota_exhausted"
+}
+
 func workspaceKeysNamed(keys []clients.Sub2APIWorkspaceKey, name string) []clients.Sub2APIWorkspaceKey {
 	matches := make([]clients.Sub2APIWorkspaceKey, 0, 1)
 	for _, key := range keys {
@@ -740,7 +970,7 @@ func (app *controlPlaneServer) workspaceKeyRotationConverged(ctx context.Context
 	}
 	workspace, ok := app.getWorkspace(workspaceID)
 	binding, bindErr := service.WorkspaceRuntimeGatewaySecret(ctx, workspaceID)
-	return ok && bindErr == nil && !oldKeyPresent && len(keys) == 1 && keys[0].ID == operation.NewKeyID && keys[0].Status == "active" &&
+	return ok && bindErr == nil && !oldKeyPresent && len(keys) == 1 && workspaceRotationReplacementStaticPolicyMatches(keys[0], userID, operation) &&
 		int64(numberField(workspace, "workspaceApiKeyId", 0)) == operation.NewKeyID &&
 		workspaceRuntimeGatewaySecretMatches(binding, operation, workspaceID)
 }
