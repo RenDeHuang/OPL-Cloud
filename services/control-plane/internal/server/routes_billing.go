@@ -129,7 +129,8 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 }
 
 func projectWorkspaceCreatedReceipt(receipt clients.Receipt) (map[string]any, bool) {
-	if strings.TrimSpace(receipt.ReceiptID) == "" || receipt.Type != "workspace.created" || receipt.Status != "completed" || receipt.Surface != "workspace" ||
+	if strings.TrimSpace(receipt.ReceiptID) == "" || receipt.Type != "workspace.created" || receipt.Status != "completed" ||
+		(receipt.Surface != "workspace" && receipt.Surface != "control_plane") ||
 		strings.TrimSpace(receipt.AccountID) == "" || strings.TrimSpace(receipt.WorkspaceID) == "" {
 		return nil, false
 	}
