@@ -617,6 +617,14 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID str
 	existing := s.computes[allocationID]
 	s.mu.Unlock()
 	if existing.ID == "" {
+		if err := s.hydrateMissingResourceState(ctx); err != nil {
+			return ComputeAllocation{}, err
+		}
+		s.mu.Lock()
+		existing = s.computes[allocationID]
+		s.mu.Unlock()
+	}
+	if existing.ID == "" {
 		operation := newOperation("destroy_compute_allocation", "compute_allocation", allocationID, "", "", "", hashInput(map[string]string{"id": allocationID}), time.Now().UTC())
 		operation.ProviderRequestID = providerRequestID("destroy-compute", allocationID)
 		err := fmt.Errorf("compute_allocation_not_found")

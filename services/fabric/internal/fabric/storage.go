@@ -162,6 +162,15 @@ func (s *Service) ReadStorageVolume(ctx context.Context, volumeID string) (Stora
 }
 
 func (s *Service) DestroyStorageVolume(ctx context.Context, volumeID string) (StorageVolume, error) {
+	s.mu.Lock()
+	missing := s.volumes[volumeID].ID == ""
+	s.mu.Unlock()
+	if missing {
+		if err := s.hydrateMissingResourceState(ctx); err != nil {
+			return StorageVolume{}, err
+		}
+	}
+
 	var result StorageVolume
 	err := s.operations.WithPoolLock(ctx, "storage-destroy:"+volumeID, func(lockCtx context.Context) error {
 		s.mu.Lock()
@@ -541,6 +550,14 @@ func (s *Service) DetachStorageAttachment(ctx context.Context, attachmentID stri
 	s.mu.Lock()
 	existing := s.attachments[attachmentID]
 	s.mu.Unlock()
+	if existing.ID == "" {
+		if err := s.hydrateMissingResourceState(ctx); err != nil {
+			return StorageAttachment{}, err
+		}
+		s.mu.Lock()
+		existing = s.attachments[attachmentID]
+		s.mu.Unlock()
+	}
 	if existing.ID == "" {
 		operation := newOperation("detach_storage_attachment", "storage_attachment", attachmentID, "", "", "", hashInput(map[string]string{"id": attachmentID}), time.Now().UTC())
 		operation.ProviderRequestID = providerRequestID("detach-attachment", attachmentID)

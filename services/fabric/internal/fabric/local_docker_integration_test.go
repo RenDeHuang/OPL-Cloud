@@ -23,8 +23,6 @@ const qualificationWorkspaceDockerfilePath = "../../../../deploy/portable/qualif
 
 const localDockerTestWebUISeed = "local-docker-workspace-secret-2026"
 
-const localDockerIntegrationProviderProfile = `{"schemaVersion":1,"packages":[{"id":"basic","name":"Integration Workspace","available":true,"compute":{"id":"integration-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"local-integration-2c4g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}}]}`
-
 var exactDockerfileImagePattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 
 func qualificationWorkspaceDockerfile(t *testing.T) string {
@@ -1040,19 +1038,30 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		loseGatewayConnectResponse: true, loseGatewayCleanupResponse: true, t: t,
 	}
 	storageRoot := localDockerStorageTestRoot(t)
+	hostCapacityReader := newLocalDockerProvider(LocalDockerProviderConfig{
+		HostStorageRoot: storageRoot, StorageQuotaBackend: localDockerStorageTestQuota(storageRoot),
+	}, runner)
+	hostCapacity, err := hostCapacityReader.readDockerHostCapacity(ctx)
+	if err != nil || hostCapacity.CPUs == 0 || hostCapacity.MemoryBytes < 1024*1024*1024 {
+		t.Fatalf("local Docker host capacity=%#v err=%v", hostCapacity, err)
+	}
+	memoryGB := hostCapacity.MemoryBytes / (1024 * 1024 * 1024)
+	providerProfileJSON := []byte(fmt.Sprintf(
+		`{"schemaVersion":1,"packages":[{"id":"basic","name":"Integration Workspace","available":true,"compute":{"id":"integration-%dc%dg","server":"%dc%dg","cpu":%d,"memoryGb":%d,"diskGb":10,"instanceType":"local-integration-%dc%dg"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}}]}`,
+		hostCapacity.CPUs, memoryGB, hostCapacity.CPUs, memoryGB, hostCapacity.CPUs, memoryGB, hostCapacity.CPUs, memoryGB,
+	))
 	provider := newLocalDockerProvider(LocalDockerProviderConfig{
 		GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
 		StorageQuotaBackend:          localDockerStorageTestQuota(storageRoot),
 		TrustedWorkspaceImageSources: []string{imageID},
-		ProviderProfileJSON:          []byte(localDockerIntegrationProviderProfile),
+		ProviderProfileJSON:          providerProfileJSON,
 	}, runner)
 	service := NewServiceWithOperationStore(provider, store)
-	t.Cleanup(func() {
-		_, _ = provider.DestroyWorkspaceRuntime(context.Background(), workspaceID)
-		_ = provider.RemoveGatewaySecret(context.Background(), workspaceID)
-		_, _ = provider.DestroyStorageVolume(context.Background(), StorageVolume{ID: storageID, AccountID: accountID, WorkspaceID: workspaceID})
-		_, _ = provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{ID: computeID})
-	})
+	cleanupA := &localDockerWorkspaceCleanup{
+		owner: service, workspaceID: workspaceID, runtimeDestroyKey: launchID + ":cleanup-runtime",
+		attachmentID: workspaceLaunchAttachmentID(bindings["attachment"]), storageID: storageID, computeID: computeID,
+	}
+	t.Cleanup(func() { cleanupA.run(t) })
 	launchRequestHash := stableSuffix("workspace-launch", launchID, accountID, workspaceID, imageID)
 	preflight, err := service.PreflightWorkspaceLaunch(ctx, WorkspaceLaunchPreflightInput{
 		SchemaVersion: 1, LaunchOperationID: launchID, AccountID: accountID, WorkspaceID: workspaceID,
@@ -1081,6 +1090,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if err != nil || compute.Resources.ComputeAllocationID != computeID || compute.Resources.ComputeBindingRef != computeInput.Binding.FabricOperationID {
 		t.Fatalf("compute=%#v err=%v", compute, err)
 	}
+	cleanupA.computeReady = true
 
 	storageInput := base
 	storageInput.Binding, storageInput.Resources = bindings["storage"], compute.Resources
@@ -1089,6 +1099,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if err != nil || storage.State != "ready" {
 		t.Fatalf("storage=%#v err=%v", storage, err)
 	}
+	cleanupA.storageReady = true
 
 	attachmentInput := base
 	attachmentInput.Binding, attachmentInput.Resources = bindings["attachment"], storage.Resources
@@ -1097,6 +1108,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if err != nil || attachment.State != "ready" {
 		t.Fatalf("attachment=%#v err=%v", attachment, err)
 	}
+	cleanupA.attachmentReady = true
 
 	secretInput := base
 	secretInput.Binding, secretInput.Resources = bindings["secret"], attachment.Resources
@@ -1108,6 +1120,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if err != nil || secret.State != "ready" {
 		t.Fatalf("secret=%#v err=%v", secret, err)
 	}
+	cleanupA.runtimeOrSecretReady = true
 	runtimeInput := base
 	runtimeInput.Binding, runtimeInput.Resources = bindings["runtime"], secret.Resources
 	bindInput(&runtimeInput)
@@ -1141,9 +1154,12 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		GatewaySecretRoot: provider.gatewaySecretRoot, HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
 		StorageQuotaBackend:          localDockerStorageTestQuota(storageRoot),
 		TrustedWorkspaceImageSources: []string{imageID},
-		ProviderProfileJSON:          []byte(localDockerIntegrationProviderProfile),
+		ProviderProfileJSON:          providerProfileJSON,
 	}, runner)
+	// The shared operation store represents Fabric's durable operation database. Runtime
+	// reservation recovery below is proved independently from the host storage root.
 	restartedService := NewServiceWithOperationStore(restartedProvider, store)
+	cleanupA.owner = restartedService
 	status, err := restartedService.WorkspaceRuntimeStatus(ctx, workspaceID)
 	if err != nil || status.ID != runtime.Resources.RuntimeID || status.OperationID != runtimeInput.Binding.FabricOperationID || !status.Ready || status.Access.Password != "" {
 		t.Fatalf("canonical runtime status=%#v err=%v", status, err)
@@ -1204,50 +1220,431 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 	if err != nil || len(attachmentFacts.Items) != 1 || !attachmentFacts.Items[0].Available {
 		t.Fatalf("canonical attachment facts after restart=%#v err=%v", attachmentFacts, err)
 	}
-	detached, err := restartedService.DetachStorageAttachment(ctx, attachment.Resources.AttachmentID)
-	if err != nil || detached.Status != "detached" {
-		t.Fatalf("canonical attachment detach after restart=%#v err=%v", detached, err)
-	}
-
 	for action, operationID := range mutationIDs {
 		operation, err := store.Get(ctx, operationID)
 		if err != nil || operation.Status != "succeeded" || operation.Action != action {
 			t.Fatalf("provider mutation %s=%#v err=%v", action, operation, err)
 		}
 	}
-	destroyed, err := provider.DestroyWorkspaceRuntime(ctx, workspaceID)
+	storedVolume, ok := restartedService.GetStorageVolume(ctx, storage.Resources.StorageID)
+	if !ok {
+		t.Fatal("restarted service did not restore Workspace A storage")
+	}
+	storedCompute, ok := restartedService.GetComputeAllocation(ctx, computeID)
+	if !ok {
+		t.Fatal("restarted service did not restore Workspace A compute")
+	}
+	storageRootHandle, err := restartedProvider.openStorageRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, reservationErr := readLocalDockerRuntimeReservation(storageRootHandle, localDockerRuntimeReservationName(runtime.Resources.RuntimeID))
+	storageMetadata, storageMetadataErr := readLocalDockerStorageMetadata(storageRootHandle, localDockerStoragePaths{WorkspaceName: localDockerName("opl-workspace", workspaceID)})
+	if closeErr := storageRootHandle.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	expectedNanoCPUs := hostCapacity.CPUs * uint64(localDockerNanoCPUsPerCPU)
+	expectedMemoryBytes := memoryGB * 1024 * 1024 * 1024
+	if hostCapacity.MemoryBytes-expectedMemoryBytes >= 1024*1024*1024 || expectedMemoryBytes <= hostCapacity.MemoryBytes/2 {
+		t.Fatalf("bounded memory reservation=%d host=%d", expectedMemoryBytes, hostCapacity.MemoryBytes)
+	}
+	if reservationErr != nil || reservation.WorkspaceID != workspaceID || reservation.ResourceID != runtime.Resources.RuntimeID ||
+		reservation.NanoCPUs != expectedNanoCPUs || reservation.MemoryBytes != expectedMemoryBytes {
+		t.Fatalf("Workspace A durable reservation=%#v err=%v", reservation, reservationErr)
+	}
+	if storageMetadataErr != nil || storageMetadata.ProjectID == 0 || storageMetadata.StorageID != storedVolume.ID {
+		t.Fatalf("Workspace A storage metadata=%#v err=%v", storageMetadata, storageMetadataErr)
+	}
+	workspaceStorageRoot := filepath.Join(storageRoot, localDockerName("opl-workspace", workspaceID))
+	quotaBackend := localDockerStorageTestQuota(storageRoot).(*fakeLocalDockerProjectQuota)
+	workspaceQuota, workspaceQuotaErr := quotaBackend.Read(workspaceStorageRoot)
+	if workspaceQuotaErr != nil || workspaceQuota.ProjectID != storageMetadata.ProjectID || workspaceQuota.HardLimitBytes != 10*1024*1024*1024 {
+		t.Fatalf("Workspace A quota owner=%#v err=%v", workspaceQuota, workspaceQuotaErr)
+	}
+	runtimeContainer, exists, err := restartedProvider.inspectContainer(ctx, localRuntimeName(workspaceID))
+	if err != nil || !exists || runtimeContainer.HostConfig.NanoCPUs <= 0 || runtimeContainer.HostConfig.Memory <= 0 ||
+		uint64(runtimeContainer.HostConfig.NanoCPUs) != expectedNanoCPUs || uint64(runtimeContainer.HostConfig.Memory) != expectedMemoryBytes ||
+		runtimeContainer.HostConfig.MemorySwap != runtimeContainer.HostConfig.Memory {
+		t.Fatalf("Workspace A Docker HostConfig=%#v exists=%t err=%v", runtimeContainer.HostConfig, exists, err)
+	}
+	network, exists, err := restartedProvider.inspectNetwork(ctx, networkName)
+	if err != nil || !exists || network.ID == "" {
+		t.Fatalf("Workspace A compute network after restart=%#v exists=%t err=%v", network, exists, err)
+	}
+
+	secondLaunchID := "local-launch-" + stableSuffix("capacity-reuse", time.Now().String())[:12]
+	secondWorkspaceID := "ws-" + stableSuffix(secondLaunchID)[:10]
+	secondRuntimeID := localRuntimeID(secondWorkspaceID)
+	secondReservation := localDockerRuntimeReservation{
+		SchemaVersion: localDockerRuntimeReservationSchemaVersion, WorkspaceID: secondWorkspaceID, ResourceID: secondRuntimeID,
+		PackageID: "basic", NanoCPUs: expectedNanoCPUs, MemoryBytes: expectedMemoryBytes,
+	}
+	var retainedCapacityErr error
+	if err := restartedProvider.withStorageQuotaLock(ctx, func() error {
+		root, openErr := restartedProvider.openStorageRoot()
+		if openErr != nil {
+			return openErr
+		}
+		defer root.Close()
+		retainedCapacityErr = restartedProvider.localDockerRuntimeCapacityAdmission(ctx, root, secondReservation)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if retainedCapacityErr == nil || retainedCapacityErr.Error() != "local_docker_runtime_capacity_insufficient" {
+		t.Fatalf("retained Workspace A must block same-size Workspace B: %v", retainedCapacityErr)
+	}
+
+	destroyed, err := restartedProvider.DestroyWorkspaceRuntime(ctx, workspaceID)
 	if err != nil || destroyed.Status != "destroyed" {
 		t.Fatalf("destroy runtime=%#v err=%v", destroyed, err)
 	}
-	if _, err := provider.WorkspaceRuntimeStatus(ctx, workspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+	cleanupA.runtimeOrSecretReady = false
+	if _, err := restartedProvider.WorkspaceRuntimeStatus(ctx, workspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
 		t.Fatalf("destroyed runtime readback err=%v", err)
 	}
-	if _, err := provider.WorkspaceRuntimeGatewaySecret(ctx, workspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+	if _, err := restartedProvider.WorkspaceRuntimeGatewaySecret(ctx, workspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
 		t.Fatalf("destroyed Secret readback err=%v", err)
 	}
-	if observation := service.ObserveWorkspaceRuntime(ctx, workspaceID); observation.State != WorkspaceOwnerObservationAbsent {
+	if observation := restartedService.ObserveWorkspaceRuntime(ctx, workspaceID); observation.State != WorkspaceOwnerObservationAbsent {
 		t.Fatalf("destroyed runtime observation=%#v", observation)
 	}
-	network, exists, err := provider.inspectNetwork(ctx, networkName)
+	storageRootHandle, err = restartedProvider.openStorageRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, reservationErr = readLocalDockerRuntimeReservation(storageRootHandle, localDockerRuntimeReservationName(runtime.Resources.RuntimeID))
+	if closeErr := storageRootHandle.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if !errors.Is(reservationErr, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("Workspace A reservation survived Runtime deletion: %v", reservationErr)
+	}
+
+	detached, err := restartedService.DetachStorageAttachment(ctx, attachment.Resources.AttachmentID)
+	if err != nil || detached.Status != "detached" {
+		t.Fatalf("canonical attachment detach after restart=%#v err=%v", detached, err)
+	}
+	cleanupA.attachmentReady = false
+	destroyedStorage, err := restartedService.DestroyStorageVolume(ctx, storedVolume.ID)
+	if err != nil || destroyedStorage.Status != "destroyed" {
+		t.Fatalf("destroy storage after restart=%#v err=%v", destroyedStorage, err)
+	}
+	cleanupA.storageReady = false
+	storageAbsence, err := restartedProvider.ReadStorageVolumeStatus(ctx, storedVolume)
+	if err != nil || storageAbsence.Status != "external_deleted" {
+		t.Fatalf("destroyed storage absence=%#v err=%v", storageAbsence, err)
+	}
+	if _, err := os.Stat(workspaceStorageRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Workspace A storage directory survived deletion: %v", err)
+	}
+	// fakeLocalDockerProjectQuota is a macOS test backend. These assertions prove
+	// exact quota owner/read/clear/reuse calls, not Linux kernel quota enforcement.
+	quotaBackend.mu.Lock()
+	_, quotaCleared := quotaBackend.cleared[storageMetadata.ProjectID]
+	quotaClearCalls := quotaBackend.clearCalls
+	quotaBackend.mu.Unlock()
+	if !quotaCleared || quotaClearCalls != 1 {
+		t.Fatalf("Workspace A project quota clear project=%d cleared=%t calls=%d", storageMetadata.ProjectID, quotaCleared, quotaClearCalls)
+	}
+
+	network, exists, err = restartedProvider.inspectNetwork(ctx, networkName)
 	if err != nil || !exists {
 		t.Fatalf("compute network before destroy=%#v exists=%t err=%v", network, exists, err)
 	}
-	if _, err := provider.DestroyComputeAllocation(ctx, ComputeAllocation{ID: computeID, AccountID: accountID, WorkspaceID: workspaceID}); err != nil {
+	if _, err := restartedProvider.DestroyComputeAllocation(ctx, storedCompute); err != nil {
 		t.Fatalf("destroy compute allocation: %v", err)
 	}
-	gateway, exists, err := provider.inspectContainer(ctx, gatewayName)
+	cleanupA.computeReady = false
+	gateway, exists, err := restartedProvider.inspectContainer(ctx, gatewayName)
 	if err != nil || !exists {
 		t.Fatalf("gateway after compute destroy=%#v exists=%t err=%v", gateway, exists, err)
 	}
 	if bound, bindingErr := exactContainerNetworkMembership(gateway, networkName, network.ID); bindingErr != nil || bound {
 		t.Fatalf("gateway membership after compute destroy bound=%t err=%v", bound, bindingErr)
 	}
-	if _, exists, err := provider.inspectNetwork(ctx, networkName); err != nil || exists {
+	if _, exists, err := restartedProvider.inspectNetwork(ctx, networkName); err != nil || exists {
 		t.Fatalf("compute network after destroy exists=%t err=%v", exists, err)
 	}
 	if runner.gatewayDisconnectCalls != 1 || runner.networkRemoveCalls != 1 {
 		t.Fatalf("gateway cleanup calls disconnect=%d networkRemove=%d", runner.gatewayDisconnectCalls, runner.networkRemoveCalls)
 	}
+
+	secondBindings := map[string]WorkspaceLaunchStageBinding{
+		"ensure_compute_allocation": localLaunchBinding(secondLaunchID, accountID, secondWorkspaceID, "ensure_compute_allocation", "ensure_compute_allocation", secondLaunchID+":ensure-compute-allocation"),
+		"storage":                   localLaunchBinding(secondLaunchID, accountID, secondWorkspaceID, "storage", "ensure_storage", secondLaunchID+":storage"),
+		"attachment":                localLaunchBinding(secondLaunchID, accountID, secondWorkspaceID, "attachment", "ensure_attachment", secondLaunchID+":attachment"),
+		"secret":                    localLaunchBinding(secondLaunchID, accountID, secondWorkspaceID, "secret", "ensure_gateway_secret", secondLaunchID+":secret"),
+		"runtime":                   localLaunchBinding(secondLaunchID, accountID, secondWorkspaceID, "runtime", "ensure_runtime", secondLaunchID+":runtime"),
+	}
+	secondMutationIDs := map[string]string{}
+	runner.parents, runner.mutationIDs = secondBindings, secondMutationIDs
+	secondComputeID := "ca_" + stableSuffix("create_compute_allocation", secondBindings["ensure_compute_allocation"].IdempotencyKey)[:18]
+	secondStorageID := "vol_" + stableSuffix("create_storage_volume", secondBindings["storage"].IdempotencyKey)[:16]
+	secondAttachmentID := workspaceLaunchAttachmentID(secondBindings["attachment"])
+	secondSecretRef := gatewaySecretName(secondWorkspaceID)
+	cleanupB := &localDockerWorkspaceCleanup{
+		owner: restartedService, workspaceID: secondWorkspaceID, runtimeDestroyKey: secondLaunchID + ":cleanup-runtime",
+		attachmentID: secondAttachmentID, storageID: secondStorageID, computeID: secondComputeID,
+	}
+	t.Cleanup(func() { cleanupB.run(t) })
+	secondKey := "local-key-" + stableSuffix(secondLaunchID)
+	secondDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(secondKey)))
+	secondLaunchRequestHash := stableSuffix("workspace-launch", secondLaunchID, accountID, secondWorkspaceID, imageID)
+	secondPreflight, err := restartedService.PreflightWorkspaceLaunch(ctx, WorkspaceLaunchPreflightInput{
+		SchemaVersion: 1, LaunchOperationID: secondLaunchID, AccountID: accountID, WorkspaceID: secondWorkspaceID,
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageID, RequestHash: secondLaunchRequestHash,
+	})
+	if err != nil || !secondPreflight.Available {
+		t.Fatalf("Workspace B preflight=%#v err=%v", secondPreflight, err)
+	}
+	secondBase := WorkspaceLaunchStageInput{
+		ProviderProfileRef: "local-docker", ProviderBindingRef: secondPreflight.ProviderBindingRef, SpecDigest: secondPreflight.SpecDigest, PackageID: "basic",
+		SizeGB: 10, WorkspaceImageDigest: imageID,
+	}
+	bindSecond := func(input *WorkspaceLaunchStageInput) {
+		input.Binding.RequestHash = workspaceLaunchStageRequestHash(*input, secondLaunchRequestHash)
+		secondBindings[input.Binding.Stage] = input.Binding
+	}
+
+	secondComputeInput := secondBase
+	secondComputeInput.Binding = secondBindings["ensure_compute_allocation"]
+	bindSecond(&secondComputeInput)
+	secondMutationIDs["local_docker_network_create"] = providerMutationOperationID(secondComputeInput.Binding, "local_docker_network_create", "compute_allocation", secondComputeID, localDockerName("opl-compute", secondComputeID))
+	if _, err := restartedService.EnsureWorkspaceLaunchStage(ctx, secondComputeInput); err != nil {
+		t.Fatal(err)
+	}
+	secondCompute, err := waitForWorkspaceStage(ctx, restartedService, secondComputeInput)
+	if err != nil || secondCompute.Resources.ComputeAllocationID != secondComputeID {
+		t.Fatalf("Workspace B compute=%#v err=%v", secondCompute, err)
+	}
+	cleanupB.computeReady = true
+
+	secondStorageInput := secondBase
+	secondStorageInput.Binding, secondStorageInput.Resources = secondBindings["storage"], secondCompute.Resources
+	bindSecond(&secondStorageInput)
+	secondStorage, err := restartedService.EnsureWorkspaceLaunchStage(ctx, secondStorageInput)
+	if err != nil || secondStorage.State != "ready" || secondStorage.Resources.StorageID != secondStorageID {
+		t.Fatalf("Workspace B storage=%#v err=%v", secondStorage, err)
+	}
+	cleanupB.storageReady = true
+
+	secondAttachmentInput := secondBase
+	secondAttachmentInput.Binding, secondAttachmentInput.Resources = secondBindings["attachment"], secondStorage.Resources
+	bindSecond(&secondAttachmentInput)
+	secondAttachment, err := restartedService.EnsureWorkspaceLaunchStage(ctx, secondAttachmentInput)
+	if err != nil || secondAttachment.State != "ready" {
+		t.Fatalf("Workspace B attachment=%#v err=%v", secondAttachment, err)
+	}
+	cleanupB.attachmentReady = true
+
+	secondSecretInput := secondBase
+	secondSecretInput.Binding, secondSecretInput.Resources = secondBindings["secret"], secondAttachment.Resources
+	secondSecretInput.Resources.GatewaySecretFingerprint = "sha256:" + secondDigest
+	secondSecretInput.GatewayCredential = &WorkspaceLaunchGatewayCredential{KeyID: 2, Value: secondKey}
+	bindSecond(&secondSecretInput)
+	secondMutationIDs["local_docker_secret_write"] = providerMutationOperationID(secondSecretInput.Binding, "local_docker_secret_write", "gateway_secret", secondSecretRef, secondDigest[:16])
+	secondSecret, err := restartedService.EnsureWorkspaceLaunchStage(ctx, secondSecretInput)
+	if err != nil || secondSecret.State != "ready" {
+		t.Fatalf("Workspace B Secret=%#v err=%v", secondSecret, err)
+	}
+	cleanupB.runtimeOrSecretReady = true
+
+	secondRuntimeInput := secondBase
+	secondRuntimeInput.Binding, secondRuntimeInput.Resources = secondBindings["runtime"], secondSecret.Resources
+	bindSecond(&secondRuntimeInput)
+	secondMutationIDs["local_docker_runtime_create"] = providerMutationOperationID(secondRuntimeInput.Binding, "local_docker_runtime_create", "workspace_runtime", secondRuntimeID, localRuntimeName(secondWorkspaceID))
+	if _, err := restartedService.EnsureWorkspaceLaunchStage(ctx, secondRuntimeInput); err != nil {
+		t.Fatal(err)
+	}
+	secondRuntime, err := waitForWorkspaceStage(ctx, restartedService, secondRuntimeInput)
+	if err != nil || secondRuntime.State != "ready" || secondRuntime.Resources.RuntimeID != secondRuntimeID || secondRuntime.Resources.RuntimeURL == "" {
+		t.Fatalf("Workspace B runtime=%#v err=%v", secondRuntime, err)
+	}
+	if err := waitForLocalRuntime(ctx, secondRuntime.Resources.RuntimeURL); err != nil {
+		t.Fatal(err)
+	}
+	if runner.runtimeCreateCalls != 2 || runner.gatewayConnectCalls != 2 {
+		t.Fatalf("Workspace B create calls runtime=%d gatewayConnect=%d", runner.runtimeCreateCalls, runner.gatewayConnectCalls)
+	}
+
+	storageRootHandle, err = restartedProvider.openStorageRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPersistedReservation, secondReservationErr := readLocalDockerRuntimeReservation(storageRootHandle, localDockerRuntimeReservationName(secondRuntimeID))
+	secondStorageMetadata, secondStorageMetadataErr := readLocalDockerStorageMetadata(storageRootHandle, localDockerStoragePaths{WorkspaceName: localDockerName("opl-workspace", secondWorkspaceID)})
+	if closeErr := storageRootHandle.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	secondWorkspaceStorageRoot := filepath.Join(storageRoot, localDockerName("opl-workspace", secondWorkspaceID))
+	secondQuota, secondQuotaErr := quotaBackend.Read(secondWorkspaceStorageRoot)
+	if secondReservationErr != nil || secondPersistedReservation != secondReservation {
+		t.Fatalf("Workspace B durable reservation=%#v expected=%#v err=%v", secondPersistedReservation, secondReservation, secondReservationErr)
+	}
+	if secondStorageMetadataErr != nil || secondStorageMetadata.StorageID != secondStorageID || secondStorageMetadata.ProjectID == 0 ||
+		secondQuotaErr != nil || secondQuota.ProjectID != secondStorageMetadata.ProjectID || secondQuota.HardLimitBytes != 10*1024*1024*1024 {
+		t.Fatalf("Workspace B storage metadata=%#v quota=%#v metadataErr=%v quotaErr=%v", secondStorageMetadata, secondQuota, secondStorageMetadataErr, secondQuotaErr)
+	}
+	if info, err := os.Stat(secondWorkspaceStorageRoot); err != nil || !info.IsDir() {
+		t.Fatalf("Workspace B storage directory info=%#v err=%v", info, err)
+	}
+	secondRuntimeContainer, exists, err := restartedProvider.inspectContainer(ctx, localRuntimeName(secondWorkspaceID))
+	if err != nil || !exists || secondRuntimeContainer.HostConfig.NanoCPUs <= 0 || secondRuntimeContainer.HostConfig.Memory <= 0 ||
+		uint64(secondRuntimeContainer.HostConfig.NanoCPUs) != expectedNanoCPUs || uint64(secondRuntimeContainer.HostConfig.Memory) != expectedMemoryBytes ||
+		secondRuntimeContainer.HostConfig.MemorySwap != secondRuntimeContainer.HostConfig.Memory {
+		t.Fatalf("Workspace B Docker HostConfig=%#v exists=%t err=%v", secondRuntimeContainer.HostConfig, exists, err)
+	}
+	secondNetworkName := localDockerName("opl-compute", secondComputeID)
+	if _, exists, err := restartedProvider.inspectNetwork(ctx, secondNetworkName); err != nil || !exists {
+		t.Fatalf("Workspace B compute network exists=%t err=%v", exists, err)
+	}
+
+	if destroyed, err := restartedProvider.DestroyWorkspaceRuntime(ctx, secondWorkspaceID); err != nil || destroyed.Status != "destroyed" {
+		t.Fatalf("cleanup Workspace B runtime=%#v err=%v", destroyed, err)
+	}
+	cleanupB.runtimeOrSecretReady = false
+	if _, err := restartedProvider.WorkspaceRuntimeStatus(ctx, secondWorkspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("Workspace B runtime survived cleanup: %v", err)
+	}
+	if _, err := restartedProvider.WorkspaceRuntimeGatewaySecret(ctx, secondWorkspaceID); !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("Workspace B Secret survived cleanup: %v", err)
+	}
+	storageRootHandle, err = restartedProvider.openStorageRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, secondReservationErr = readLocalDockerRuntimeReservation(storageRootHandle, localDockerRuntimeReservationName(secondRuntimeID))
+	if closeErr := storageRootHandle.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if !errors.Is(secondReservationErr, ErrWorkspaceLaunchResourceAbsent) {
+		t.Fatalf("Workspace B reservation survived cleanup: %v", secondReservationErr)
+	}
+	if detached, err := restartedService.DetachStorageAttachment(ctx, secondAttachment.Resources.AttachmentID); err != nil || detached.Status != "detached" {
+		t.Fatalf("cleanup Workspace B attachment=%#v err=%v", detached, err)
+	}
+	cleanupB.attachmentReady = false
+	if destroyed, err := restartedService.DestroyStorageVolume(ctx, secondStorageID); err != nil || destroyed.Status != "destroyed" {
+		t.Fatalf("cleanup Workspace B storage=%#v err=%v", destroyed, err)
+	}
+	cleanupB.storageReady = false
+	if _, err := os.Stat(secondWorkspaceStorageRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Workspace B storage directory survived cleanup: %v", err)
+	}
+	quotaBackend.mu.Lock()
+	_, secondQuotaCleared := quotaBackend.cleared[secondStorageMetadata.ProjectID]
+	quotaClearCalls = quotaBackend.clearCalls
+	quotaBackend.mu.Unlock()
+	if !secondQuotaCleared || quotaClearCalls != 2 {
+		t.Fatalf("Workspace B project quota clear project=%d cleared=%t calls=%d", secondStorageMetadata.ProjectID, secondQuotaCleared, quotaClearCalls)
+	}
+	if destroying, err := restartedService.DestroyComputeAllocation(ctx, secondComputeID); err != nil || destroying.Status != "destroying" {
+		t.Fatalf("start cleanup Workspace B compute=%#v err=%v", destroying, err)
+	}
+	if operation, err := waitForLocalDockerOperation(ctx, restartedService, "destroy_compute_allocation", "compute_allocation", secondComputeID, "succeeded"); err != nil {
+		t.Fatalf("wait for cleanup Workspace B compute operation=%#v err=%v", operation, err)
+	}
+	if destroyed, err := restartedService.DestroyComputeAllocation(ctx, secondComputeID); err != nil || destroyed.Status != "destroyed" {
+		t.Fatalf("cleanup Workspace B compute=%#v err=%v", destroyed, err)
+	}
+	cleanupB.computeReady = false
+	if _, exists, err := restartedProvider.inspectNetwork(ctx, secondNetworkName); err != nil || exists {
+		t.Fatalf("Workspace B compute network survived cleanup exists=%t err=%v", exists, err)
+	}
+}
+
+func waitForLocalDockerOperation(ctx context.Context, service *Service, action, resourceKind, resourceID, status string) (FabricOperation, error) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	var latest FabricOperation
+	for {
+		operations, err := service.ListOperations(ctx)
+		if err != nil {
+			return latest, err
+		}
+		for _, operation := range operations {
+			if operation.Action != action || operation.ResourceKind != resourceKind || operation.ResourceID != resourceID {
+				continue
+			}
+			latest = operation
+		}
+		if latest.Status == status {
+			return latest, nil
+		}
+		if latest.Status == "failed" {
+			return latest, fmt.Errorf("operation_failed: %s", latest.ErrorCode)
+		}
+		select {
+		case <-ctx.Done():
+			return latest, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+type localDockerWorkspaceCleanup struct {
+	owner                *Service
+	workspaceID          string
+	runtimeDestroyKey    string
+	attachmentID         string
+	storageID            string
+	computeID            string
+	runtimeOrSecretReady bool
+	attachmentReady      bool
+	storageReady         bool
+	computeReady         bool
+}
+
+func (c *localDockerWorkspaceCleanup) run(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if c.runtimeOrSecretReady {
+		destroyed, err := c.owner.DestroyWorkspaceRuntime(ctx, c.workspaceID, c.runtimeDestroyKey)
+		if err != nil || destroyed.Status != "destroyed" {
+			t.Errorf("cleanup runtime workspace=%s result=%#v err=%v", c.workspaceID, destroyed, err)
+			return
+		}
+		c.runtimeOrSecretReady = false
+	}
+	if c.attachmentReady {
+		detached, err := c.owner.DetachStorageAttachment(ctx, c.attachmentID)
+		if err != nil || detached.Status != "detached" {
+			t.Errorf("cleanup attachment id=%s result=%#v err=%v", c.attachmentID, detached, err)
+			return
+		}
+		c.attachmentReady = false
+	}
+	if c.storageReady {
+		destroyed, err := c.owner.DestroyStorageVolume(ctx, c.storageID)
+		if err != nil || destroyed.Status != "destroyed" {
+			t.Errorf("cleanup storage id=%s result=%#v err=%v", c.storageID, destroyed, err)
+			return
+		}
+		c.storageReady = false
+	}
+	if !c.computeReady {
+		return
+	}
+	destroying, err := c.owner.DestroyComputeAllocation(ctx, c.computeID)
+	if err != nil || (destroying.Status != "destroying" && destroying.Status != "destroyed") {
+		t.Errorf("start cleanup compute id=%s result=%#v err=%v", c.computeID, destroying, err)
+		return
+	}
+	if destroying.Status == "destroying" {
+		operation, waitErr := waitForLocalDockerOperation(ctx, c.owner, "destroy_compute_allocation", "compute_allocation", c.computeID, "succeeded")
+		if waitErr != nil {
+			t.Errorf("wait cleanup compute id=%s operation=%#v err=%v", c.computeID, operation, waitErr)
+			return
+		}
+	}
+	destroyed, err := c.owner.DestroyComputeAllocation(ctx, c.computeID)
+	if err != nil || destroyed.Status != "destroyed" {
+		t.Errorf("cleanup compute id=%s result=%#v err=%v", c.computeID, destroyed, err)
+		return
+	}
+	c.computeReady = false
 }
 
 func TestExactContainerNetworkMembershipRejectsIdentityDrift(t *testing.T) {

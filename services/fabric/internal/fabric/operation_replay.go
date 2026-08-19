@@ -103,6 +103,297 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 	return computes, volumes, attachments, runtimes
 }
 
+func (s *Service) hydrateMissingResourceState(ctx context.Context) error {
+	computes, volumes, attachments, err := projectWorkspaceLaunchDeleteResources(ctx, s.operations)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.computes == nil {
+		s.computes = map[string]ComputeAllocation{}
+	}
+	if s.volumes == nil {
+		s.volumes = map[string]StorageVolume{}
+	}
+	if s.attachments == nil {
+		s.attachments = map[string]StorageAttachment{}
+	}
+	for id, compute := range computes {
+		if s.computes[id].ID == "" {
+			s.computes[id] = cloneComputeAllocation(compute)
+		}
+	}
+	for id, volume := range volumes {
+		if s.volumes[id].ID == "" {
+			s.volumes[id] = cloneStorageVolume(volume)
+		}
+	}
+	for id, attachment := range attachments {
+		if s.attachments[id].ID == "" {
+			s.attachments[id] = attachment
+		}
+	}
+	return nil
+}
+
+type workspaceLaunchDeleteStageCandidate struct {
+	binding    WorkspaceLaunchStageBinding
+	record     workspaceLaunchStageRecord
+	resourceID string
+	compute    ComputeAllocation
+	volume     StorageVolume
+	attachment StorageAttachment
+}
+
+type workspaceLaunchDeleteStageSet struct {
+	byWorkspace       map[string]workspaceLaunchDeleteStageCandidate
+	workspaceByID     map[string]string
+	workspaceConflict map[string]bool
+	resourceConflict  map[string]bool
+}
+
+func newWorkspaceLaunchDeleteStageSet() *workspaceLaunchDeleteStageSet {
+	return &workspaceLaunchDeleteStageSet{
+		byWorkspace:       map[string]workspaceLaunchDeleteStageCandidate{},
+		workspaceByID:     map[string]string{},
+		workspaceConflict: map[string]bool{},
+		resourceConflict:  map[string]bool{},
+	}
+}
+
+func (s *workspaceLaunchDeleteStageSet) add(workspaceID, resourceID string, candidate workspaceLaunchDeleteStageCandidate, valid bool) {
+	if !valid || workspaceID == "" || resourceID == "" {
+		if workspaceID != "" {
+			s.workspaceConflict[workspaceID] = true
+		}
+		if resourceID != "" {
+			s.resourceConflict[resourceID] = true
+			if owner := s.workspaceByID[resourceID]; owner != "" {
+				s.workspaceConflict[owner] = true
+			}
+		}
+		return
+	}
+	if existing, exists := s.byWorkspace[workspaceID]; exists {
+		s.workspaceConflict[workspaceID] = true
+		s.resourceConflict[existing.resourceID] = true
+		s.resourceConflict[resourceID] = true
+		return
+	}
+	if owner, exists := s.workspaceByID[resourceID]; exists {
+		s.workspaceConflict[workspaceID] = true
+		s.workspaceConflict[owner] = true
+		s.resourceConflict[resourceID] = true
+		return
+	}
+	s.byWorkspace[workspaceID] = candidate
+	s.workspaceByID[resourceID] = workspaceID
+}
+
+func (s *workspaceLaunchDeleteStageSet) canonical(workspaceID string) (workspaceLaunchDeleteStageCandidate, bool) {
+	candidate, ok := s.byWorkspace[workspaceID]
+	return candidate, ok && !s.workspaceConflict[workspaceID] && !s.resourceConflict[candidate.resourceID]
+}
+
+func projectWorkspaceLaunchDeleteResources(ctx context.Context, operations OperationStore) (map[string]ComputeAllocation, map[string]StorageVolume, map[string]StorageAttachment, error) {
+	records, err := operations.List(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	computeStages := newWorkspaceLaunchDeleteStageSet()
+	storageStages := newWorkspaceLaunchDeleteStageSet()
+	attachmentStages := newWorkspaceLaunchDeleteStageSet()
+	for _, operation := range records {
+		for stage, stages := range map[string]*workspaceLaunchDeleteStageSet{
+			"ensure_compute_allocation": computeStages,
+			"storage":                   storageStages,
+			"attachment":                attachmentStages,
+		} {
+			candidate, workspaceID, resourceID, isCandidate, valid := canonicalWorkspaceLaunchDeleteStage(operation, stage)
+			if isCandidate {
+				stages.add(workspaceID, resourceID, candidate, valid)
+			}
+		}
+	}
+
+	computes := map[string]ComputeAllocation{}
+	volumes := map[string]StorageVolume{}
+	attachments := map[string]StorageAttachment{}
+	for workspaceID := range computeStages.byWorkspace {
+		if candidate, ok := computeStages.canonical(workspaceID); ok {
+			computes[candidate.compute.ID] = cloneComputeAllocation(candidate.compute)
+		}
+	}
+	for workspaceID := range storageStages.byWorkspace {
+		storage, storageOK := storageStages.canonical(workspaceID)
+		compute, computeOK := computeStages.canonical(workspaceID)
+		if !storageOK || !computeOK || !sameWorkspaceLaunchDeleteSequence(compute, storage) ||
+			storage.record.RequestResources.ComputeAllocationID != compute.compute.ID ||
+			storage.record.RequestResources.ComputeBindingRef != compute.binding.FabricOperationID {
+			continue
+		}
+		volumes[storage.volume.ID] = cloneStorageVolume(storage.volume)
+	}
+	for workspaceID := range attachmentStages.byWorkspace {
+		attachment, attachmentOK := attachmentStages.canonical(workspaceID)
+		compute, computeOK := computeStages.canonical(workspaceID)
+		storage, storageOK := storageStages.canonical(workspaceID)
+		if !attachmentOK || !computeOK || !storageOK || !sameWorkspaceLaunchDeleteSequence(compute, attachment) ||
+			!sameWorkspaceLaunchDeleteSequence(storage, attachment) ||
+			attachment.record.RequestResources.ComputeAllocationID != compute.compute.ID ||
+			attachment.record.RequestResources.ComputeBindingRef != compute.binding.FabricOperationID ||
+			attachment.record.RequestResources.StorageID != storage.volume.ID ||
+			attachment.record.RequestResources.StorageBindingRef != storage.binding.FabricOperationID {
+			continue
+		}
+		attachments[attachment.attachment.ID] = attachment.attachment
+	}
+	return computes, volumes, attachments, nil
+}
+
+func canonicalWorkspaceLaunchDeleteStage(operation FabricOperation, stage string) (workspaceLaunchDeleteStageCandidate, string, string, bool, bool) {
+	action, supported := workspaceLaunchStageAction(stage)
+	if !supported || (stage != "ensure_compute_allocation" && stage != "storage" && stage != "attachment") {
+		return workspaceLaunchDeleteStageCandidate{}, "", "", false, false
+	}
+	binding, bindingOK := decodeLaunchStageBinding(operation)
+	isCandidate := operation.Action == action || bindingOK && binding.Stage == stage
+	workspaceID := operation.WorkspaceID
+	if bindingOK {
+		workspaceID = binding.WorkspaceID
+	}
+	if !isCandidate {
+		return workspaceLaunchDeleteStageCandidate{}, workspaceID, "", false, false
+	}
+	record, recordOK := decodeWorkspaceLaunchStageRecord(operation)
+	resourceID := workspaceLaunchDeleteRecordResourceID(stage, record)
+	if resourceID == "" && bindingOK {
+		resourceID = workspaceLaunchDeleteBindingResourceID(stage, binding)
+	}
+	candidate := workspaceLaunchDeleteStageCandidate{binding: binding, record: record, resourceID: resourceID}
+	if !bindingOK || !recordOK || operation.Status != "succeeded" || operation.FinishedAt.IsZero() ||
+		operation.Action != action || operation.ResourceKind != "workspace_launch_stage" || binding.Stage != stage || binding.Action != action ||
+		operation.ID != binding.FabricOperationID || operation.OperationID != binding.FabricOperationID || operation.ResourceID != binding.FabricOperationID ||
+		operation.Provider == "" || operation.Provider != record.ProviderProfileRef || record.GatewayKeyID != 0 ||
+		binding.ExpectedResourceBinding != workspaceLaunchCurrentStageBinding(stage, record.RequestResources) ||
+		!workspaceLaunchResourcesContain(record.Resources, record.RequestResources) {
+		return candidate, workspaceID, resourceID, true, false
+	}
+	var state struct {
+		Compute    *ComputeAllocation `json:"compute,omitempty"`
+		Storage    *StorageVolume     `json:"storage,omitempty"`
+		Attachment *StorageAttachment `json:"attachment,omitempty"`
+	}
+	if len(record.ProviderState) == 0 || json.Unmarshal(record.ProviderState, &state) != nil {
+		return candidate, workspaceID, resourceID, true, false
+	}
+	switch stage {
+	case "ensure_compute_allocation":
+		candidate.compute = firstNonNilWorkspaceLaunchDeleteCompute(state.Compute)
+		return candidate, workspaceID, resourceID, true, validWorkspaceLaunchDeleteCompute(candidate, state)
+	case "storage":
+		candidate.volume = firstNonNilWorkspaceLaunchDeleteStorage(state.Storage)
+		return candidate, workspaceID, resourceID, true, validWorkspaceLaunchDeleteStorage(candidate, state)
+	case "attachment":
+		candidate.attachment = firstNonNilWorkspaceLaunchDeleteAttachment(state.Attachment)
+		return candidate, workspaceID, resourceID, true, validWorkspaceLaunchDeleteAttachment(candidate, state)
+	default:
+		return candidate, workspaceID, resourceID, true, false
+	}
+}
+
+func workspaceLaunchDeleteRecordResourceID(stage string, record workspaceLaunchStageRecord) string {
+	return map[string]string{
+		"ensure_compute_allocation": record.Resources.ComputeAllocationID,
+		"storage":                   record.Resources.StorageID,
+		"attachment":                record.Resources.AttachmentID,
+	}[stage]
+}
+
+func workspaceLaunchDeleteBindingResourceID(stage string, binding WorkspaceLaunchStageBinding) string {
+	return map[string]string{
+		"ensure_compute_allocation": workspaceLaunchComputeID(binding),
+		"storage":                   workspaceLaunchStorageID(binding),
+		"attachment":                workspaceLaunchAttachmentID(binding),
+	}[stage]
+}
+
+func firstNonNilWorkspaceLaunchDeleteCompute(value *ComputeAllocation) ComputeAllocation {
+	if value == nil {
+		return ComputeAllocation{}
+	}
+	return *value
+}
+
+func firstNonNilWorkspaceLaunchDeleteStorage(value *StorageVolume) StorageVolume {
+	if value == nil {
+		return StorageVolume{}
+	}
+	return *value
+}
+
+func firstNonNilWorkspaceLaunchDeleteAttachment(value *StorageAttachment) StorageAttachment {
+	if value == nil {
+		return StorageAttachment{}
+	}
+	return *value
+}
+
+func validWorkspaceLaunchDeleteCompute(candidate workspaceLaunchDeleteStageCandidate, state struct {
+	Compute    *ComputeAllocation `json:"compute,omitempty"`
+	Storage    *StorageVolume     `json:"storage,omitempty"`
+	Attachment *StorageAttachment `json:"attachment,omitempty"`
+}) bool {
+	binding, record, compute := candidate.binding, candidate.record, candidate.compute
+	expected := WorkspaceLaunchResources{ComputeAllocationID: workspaceLaunchComputeID(binding), ComputeBindingRef: binding.FabricOperationID}
+	return record.RequestResources == (WorkspaceLaunchResources{}) && record.Resources == expected && state.Compute != nil && state.Storage == nil && state.Attachment == nil &&
+		compute.ID == expected.ComputeAllocationID && compute.OperationID == binding.FabricOperationID && compute.AccountID == binding.AccountID && compute.WorkspaceID == binding.WorkspaceID &&
+		compute.PackageID != "" && compute.Provider == record.ProviderProfileRef && compute.ProviderResourceID != "" && compute.ProviderRequestID != "" &&
+		compute.NodePoolID != "" && compute.InstanceType != "" && compute.Zone != "" && compute.ChargeType != "" && isReadyResourceStatus(compute.Status)
+}
+
+func validWorkspaceLaunchDeleteStorage(candidate workspaceLaunchDeleteStageCandidate, state struct {
+	Compute    *ComputeAllocation `json:"compute,omitempty"`
+	Storage    *StorageVolume     `json:"storage,omitempty"`
+	Attachment *StorageAttachment `json:"attachment,omitempty"`
+}) bool {
+	binding, record, volume := candidate.binding, candidate.record, candidate.volume
+	request := WorkspaceLaunchResources{ComputeAllocationID: record.RequestResources.ComputeAllocationID, ComputeBindingRef: record.RequestResources.ComputeBindingRef}
+	expected := request
+	expected.StorageID, expected.StorageBindingRef = workspaceLaunchStorageID(binding), binding.FabricOperationID
+	return request.ComputeAllocationID != "" && request.ComputeBindingRef != "" && record.RequestResources == request && record.Resources == expected &&
+		state.Compute == nil && state.Storage != nil && state.Attachment == nil && volume.ID == expected.StorageID && volume.OperationID == binding.IdempotencyKey &&
+		volume.AccountID == binding.AccountID && volume.WorkspaceID == binding.WorkspaceID && volume.Provider == record.ProviderProfileRef &&
+		volume.ProviderResourceID != "" && volume.ProviderRequestID != "" && volume.SizeGB > 0 && volume.StorageClass != "" && volume.DiskType != "" && volume.Zone != "" && isReadyResourceStatus(volume.Status)
+}
+
+func validWorkspaceLaunchDeleteAttachment(candidate workspaceLaunchDeleteStageCandidate, state struct {
+	Compute    *ComputeAllocation `json:"compute,omitempty"`
+	Storage    *StorageVolume     `json:"storage,omitempty"`
+	Attachment *StorageAttachment `json:"attachment,omitempty"`
+}) bool {
+	binding, record, attachment := candidate.binding, candidate.record, candidate.attachment
+	request := WorkspaceLaunchResources{
+		ComputeAllocationID: record.RequestResources.ComputeAllocationID, ComputeBindingRef: record.RequestResources.ComputeBindingRef,
+		StorageID: record.RequestResources.StorageID, StorageBindingRef: record.RequestResources.StorageBindingRef,
+	}
+	expected := request
+	expected.AttachmentID, expected.AttachmentBindingRef = workspaceLaunchAttachmentID(binding), binding.FabricOperationID
+	return request.ComputeAllocationID != "" && request.ComputeBindingRef != "" && request.StorageID != "" && request.StorageBindingRef != "" &&
+		record.RequestResources == request && record.Resources == expected && state.Compute == nil && state.Storage == nil && state.Attachment != nil &&
+		attachment.ID == expected.AttachmentID && attachment.OperationID == binding.IdempotencyKey && attachment.WorkspaceID == binding.WorkspaceID &&
+		attachment.ComputeID == request.ComputeAllocationID && attachment.VolumeID == request.StorageID && attachment.Provider == record.ProviderProfileRef &&
+		attachment.ProviderAttachmentID != "" && attachment.ProviderRequestID != "" && attachment.Status == "attached"
+}
+
+func sameWorkspaceLaunchDeleteSequence(left, right workspaceLaunchDeleteStageCandidate) bool {
+	return left.binding.LaunchOperationID == right.binding.LaunchOperationID && left.binding.AccountID == right.binding.AccountID &&
+		left.binding.WorkspaceID == right.binding.WorkspaceID && left.record.ProviderProfileRef == right.record.ProviderProfileRef &&
+		left.record.ProviderBindingRef == right.record.ProviderBindingRef && left.record.SpecDigest == right.record.SpecDigest
+}
+
 func validTencentFailedComputeDestroyReplay(operation FabricOperation, resource ComputeAllocation) bool {
 	return operation.Action == "destroy_compute_allocation" && operation.ResourceKind == "compute_allocation" && operation.Status == "failed" &&
 		operation.ResourceID != "" && operation.AccountID != "" && operation.WorkspaceID != "" &&
