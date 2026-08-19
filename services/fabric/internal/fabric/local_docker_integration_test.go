@@ -22,6 +22,8 @@ const qualificationWorkspaceDockerfilePath = "../../../../deploy/portable/qualif
 
 const localDockerTestWebUISeed = "local-docker-workspace-secret-2026"
 
+const localDockerIntegrationProviderProfile = `{"schemaVersion":1,"packages":[{"id":"basic","name":"Integration Workspace","available":true,"compute":{"id":"integration-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"local-integration-2c4g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}}]}`
+
 var exactDockerfileImagePattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 
 func qualificationWorkspaceDockerfile(t *testing.T) string {
@@ -1000,6 +1002,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		GatewaySecretRoot: localDockerSecretTestRoot(t), HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
 		StorageQuotaBackend:          localDockerStorageTestQuota(storageRoot),
 		TrustedWorkspaceImageSources: []string{imageID},
+		ProviderProfileJSON:          []byte(localDockerIntegrationProviderProfile),
 	}, runner)
 	service := NewServiceWithOperationStore(provider, store)
 	t.Cleanup(func() {
@@ -1096,6 +1099,7 @@ func TestLocalDockerWorkspaceCorePath(t *testing.T) {
 		GatewaySecretRoot: provider.gatewaySecretRoot, HostStorageRoot: storageRoot, RuntimeHost: "127.0.0.1", RuntimeGatewayContainer: gatewayName,
 		StorageQuotaBackend:          localDockerStorageTestQuota(storageRoot),
 		TrustedWorkspaceImageSources: []string{imageID},
+		ProviderProfileJSON:          []byte(localDockerIntegrationProviderProfile),
 	}, runner)
 	restartedService := NewServiceWithOperationStore(restartedProvider, store)
 	status, err := restartedService.WorkspaceRuntimeStatus(ctx, workspaceID)
