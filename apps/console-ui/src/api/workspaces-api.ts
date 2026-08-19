@@ -8,15 +8,27 @@ import type {
   WorkspaceLaunchResponse,
   WorkspaceDeleteCommandResult,
   WorkspaceDeleteResponse,
+  WorkspaceGatewayBudgetDTO,
+  WorkspaceGatewayBudgetUpdateRequest,
   WorkspaceListData,
   WorkspaceDTO,
   WorkspaceRenewalRequest,
   WorkspaceRenewalResponse,
   WorkspaceRuntimeDTO
 } from "./dtos.ts";
-import { deleteJson, postJson, getJson, type ApiError } from "./console-api.ts";
+import { deleteJson, postJson, getJson, patchJson, type ApiError } from "./console-api.ts";
 
 const terminalLaunchStatuses = new Set(["succeeded", "failed", "refunded"]);
+const workspaceGatewayBudgetStatuses = new Set(["active", "disabled", "quota_exhausted", "expired"]);
+const workspaceGatewayBudgetFields = [
+  "workspaceId", "keyId", "status", "quotaUsdMicros", "quotaUsedUsdMicros",
+  "rateLimit5hUsdMicros", "rateLimit1dUsdMicros", "rateLimit7dUsdMicros",
+  "usage5hUsdMicros", "usage1dUsdMicros", "usage7dUsdMicros", "enabled", "updatedAt"
+] as const;
+const workspaceGatewayBudgetMicrosFields = [
+  "quotaUsdMicros", "quotaUsedUsdMicros", "rateLimit5hUsdMicros", "rateLimit1dUsdMicros",
+  "rateLimit7dUsdMicros", "usage5hUsdMicros", "usage1dUsdMicros", "usage7dUsdMicros"
+] as const;
 
 async function sourceRequest<T>(request: () => Promise<unknown>): Promise<SourceEnvelope<T>> {
   try {
@@ -32,6 +44,39 @@ async function sourceRequest<T>(request: () => Promise<unknown>): Promise<Source
     }
     throw error;
   }
+}
+
+function isInt64DecimalString(value: unknown, positive = false): value is string {
+  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value) || positive && value === "0") return false;
+  return value.length < 19 || value.length === 19 && value <= "9223372036854775807";
+}
+
+function hasExactFields(value: Record<string, unknown>, fields: readonly string[]) {
+  const actual = Object.keys(value).sort();
+  const expected = [...fields].sort();
+  return actual.length === expected.length && actual.every((field, index) => field === expected[index]);
+}
+
+async function workspaceGatewayBudgetSourceRequest(
+  request: () => Promise<unknown>,
+  workspaceId: string,
+  keyId: string
+): Promise<SourceEnvelope<WorkspaceGatewayBudgetDTO>> {
+  if (!workspaceId || !isInt64DecimalString(keyId, true)) throw new Error("invalid_workspace_gateway_budget_identity");
+  const source = await sourceRequest<Record<string, unknown>>(request);
+  if (source.source !== "sub2api") throw new Error("invalid_workspace_gateway_budget_source");
+  if (source.available === false) return source;
+  const data = source.data;
+  if (source.status !== "available" || !data || !hasExactFields(data, workspaceGatewayBudgetFields)
+    || data.workspaceId !== workspaceId || data.keyId !== keyId
+    || !isInt64DecimalString(data.keyId, true)
+    || typeof data.status !== "string" || !workspaceGatewayBudgetStatuses.has(data.status)
+    || typeof data.enabled !== "boolean"
+    || data.updatedAt !== null && (typeof data.updatedAt !== "string" || !data.updatedAt.trim())
+    || workspaceGatewayBudgetMicrosFields.some((field) => !isInt64DecimalString(data[field]))) {
+    throw new Error("invalid_workspace_gateway_budget_source");
+  }
+  return { ...source, data: data as unknown as WorkspaceGatewayBudgetDTO };
 }
 
 export function isTerminalWorkspaceLaunch(status: string): boolean {
@@ -172,6 +217,41 @@ export function getWorkspaceRuntimeStatus(workspaceId: string): Promise<SourceEn
   return sourceRequest<WorkspaceRuntimeDTO>(() => getJson<unknown>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/runtime-status`
   ));
+}
+
+export function getWorkspaceGatewayBudget(workspaceId: string, keyId: string): Promise<SourceEnvelope<WorkspaceGatewayBudgetDTO>> {
+  return workspaceGatewayBudgetSourceRequest(
+    () => getJson<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/gateway-budget`),
+    workspaceId,
+    keyId
+  );
+}
+
+export function updateWorkspaceGatewayBudget(
+  workspaceId: string,
+  keyId: string,
+  input: WorkspaceGatewayBudgetUpdateRequest,
+  csrfToken: string,
+  idempotencyKey: string
+): Promise<SourceEnvelope<WorkspaceGatewayBudgetDTO>> {
+  const payload: WorkspaceGatewayBudgetUpdateRequest = {};
+  if (input.quotaUsdMicros !== undefined) payload.quotaUsdMicros = input.quotaUsdMicros;
+  if (input.rateLimit5hUsdMicros !== undefined) payload.rateLimit5hUsdMicros = input.rateLimit5hUsdMicros;
+  if (input.rateLimit1dUsdMicros !== undefined) payload.rateLimit1dUsdMicros = input.rateLimit1dUsdMicros;
+  if (input.rateLimit7dUsdMicros !== undefined) payload.rateLimit7dUsdMicros = input.rateLimit7dUsdMicros;
+  if (input.enabled !== undefined) payload.enabled = input.enabled;
+  if (input.resetQuota !== undefined) payload.resetQuota = input.resetQuota;
+  if (input.resetRateLimitUsage !== undefined) payload.resetRateLimitUsage = input.resetRateLimitUsage;
+  return workspaceGatewayBudgetSourceRequest(
+    () => patchJson<unknown>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/gateway-budget`,
+      payload,
+      csrfToken,
+      idempotencyKey
+    ),
+    workspaceId,
+    keyId
+  );
 }
 
 export function revealWorkspaceCredentials(

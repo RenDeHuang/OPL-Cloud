@@ -48,6 +48,8 @@ import type {
   SourceEnvelope,
   WalletAdjustmentRecoveryRequest,
   WalletAdjustmentRequest,
+  WorkspaceGatewayBudgetDTO,
+  WorkspaceGatewayBudgetUpdateRequest,
   WorkspaceLaunchRequest,
   WorkspacePricePreview
 } from "../api/dtos.ts";
@@ -56,12 +58,14 @@ import {
   findWorkspaceInPages,
   getWorkspaceLaunch,
   getWorkspaceLaunches,
+  getWorkspaceGatewayBudget,
   getWorkspaces,
   getWorkspaceRuntimeStatus,
   isTerminalWorkspaceLaunch,
   launchWorkspace,
   revealWorkspaceCredentials,
   rotateWorkspaceCredentials,
+  updateWorkspaceGatewayBudget,
   workspaceDeleteIdempotencyKey,
   workspaceLaunchIdempotencyKey
 } from "../api/workspaces-api.ts";
@@ -74,6 +78,13 @@ const workspaceLaunchPollIntervalMs = 10_000;
 const workspaceLaunchPollAttempts = 30;
 const operatorPageSize = 20;
 
+type WorkspaceBudgetIntent = {
+  keyId: string;
+  signature: string;
+  input: WorkspaceGatewayBudgetUpdateRequest;
+  idempotencyKey: string;
+};
+
 const emptyRemote = <T,>(): RemoteState<T> => ({ value: null, loading: false, error: "" });
 
 function initialSources(): ConsoleSources {
@@ -81,6 +92,7 @@ function initialSources(): ConsoleSources {
     workspaces: emptyRemote(),
     workspaceDetail: emptyRemote(),
     runtime: emptyRemote(),
+    workspaceBudget: emptyRemote(),
     wallet: emptyRemote(),
     accountUsage: emptyRemote(),
     balanceHistory: emptyRemote(),
@@ -148,6 +160,29 @@ function sameLaunchRequest(left: WorkspaceLaunchRequest, right: WorkspaceLaunchR
   return left.name === right.name && left.packageId === right.packageId && left.autoRenew === right.autoRenew;
 }
 
+function workspaceBudgetRequestSignature(input: WorkspaceGatewayBudgetUpdateRequest) {
+  return JSON.stringify([
+    input.quotaUsdMicros ?? null,
+    input.rateLimit5hUsdMicros ?? null,
+    input.rateLimit1dUsdMicros ?? null,
+    input.rateLimit7dUsdMicros ?? null,
+    input.enabled ?? null,
+    input.resetQuota ?? null,
+    input.resetRateLimitUsage ?? null
+  ]);
+}
+
+function workspaceBudgetResultMatchesInput(
+  result: WorkspaceGatewayBudgetDTO,
+  input: WorkspaceGatewayBudgetUpdateRequest
+) {
+  return (input.quotaUsdMicros === undefined || result.quotaUsdMicros === String(input.quotaUsdMicros))
+    && (input.rateLimit5hUsdMicros === undefined || result.rateLimit5hUsdMicros === String(input.rateLimit5hUsdMicros))
+    && (input.rateLimit1dUsdMicros === undefined || result.rateLimit1dUsdMicros === String(input.rateLimit1dUsdMicros))
+    && (input.rateLimit7dUsdMicros === undefined || result.rateLimit7dUsdMicros === String(input.rateLimit7dUsdMicros))
+    && (input.enabled === undefined || result.enabled === input.enabled);
+}
+
 function walletRecoveryIdempotencyKey(operationId: string) {
   const suffix = /^wallet-adjustment-([0-9a-f]{18})$/.exec(operationId)?.[1] || "";
   return suffix ? `wallet-recovery-${suffix.slice(0, 16)}` : "";
@@ -185,6 +220,7 @@ export function useConsoleController() {
   const [secrets, setSecrets] = useState<ConsoleSecrets>({ apiKey: null, workspace: null });
   const [workspaceSecretBusy, setWorkspaceSecretBusy] = useState(false);
   const [gatewaySecretBusy, setGatewaySecretBusy] = useState(false);
+  const [workspaceBudgetBusy, setWorkspaceBudgetBusy] = useState(false);
   const [commandBusy, setCommandBusy] = useState(false);
   const [announcementBusy, setAnnouncementBusy] = useState("");
   const [walletAdjustmentOperation, setWalletAdjustmentOperation] = useState<Awaited<ReturnType<typeof getWalletAdjustment>> | null>(null);
@@ -208,12 +244,15 @@ export function useConsoleController() {
   const receiptDetailRequestGeneration = useRef(0);
   const selectedUsageKeyIdRef = useRef("");
   const usageRequestGeneration = useRef(0);
+  const workspaceDetailRequestGeneration = useRef(0);
   const selectedOperatorWorkspaceIdRef = useRef("");
   const secretTimer = useRef<number | undefined>(undefined);
   const toastTimer = useRef<number | undefined>(undefined);
   const workspaceLaunchIntent = useRef<{ input: WorkspaceLaunchRequest; idempotencyKey: string } | null>(null);
   const workspaceDeleteIntent = useRef<{ workspaceId: string; idempotencyKey: string } | null>(null);
   const runtimeRotationIntent = useRef<{ workspaceId: string; idempotencyKey: string } | null>(null);
+  const workspaceBudgetIntents = useRef(new Map<string, WorkspaceBudgetIntent>());
+  const workspaceBudgetBusyClaim = useRef<symbol | null>(null);
   const walletAdjustmentIntent = useRef<{ accountId: string; input: WalletAdjustmentRequest; idempotencyKey: string } | null>(null);
   const walletAdjustmentRecoveryIntent = useRef<{ operationId: string; input: WalletAdjustmentRecoveryRequest; idempotencyKey: string } | null>(null);
   const operatorProvisionIntent = useRef<{ input: ProvisionAccountRequest; idempotencyKey: string } | null>(null);
@@ -293,10 +332,14 @@ export function useConsoleController() {
     setSupportLoading(false);
     setSupportError("");
     setCommandBusy(false);
+    setWorkspaceBudgetBusy(false);
     setAnnouncementBusy("");
     workspaceLaunchIntent.current = null;
     workspaceDeleteIntent.current = null;
     runtimeRotationIntent.current = null;
+    workspaceBudgetBusyClaim.current = null;
+    workspaceBudgetIntents.current.clear();
+    workspaceDetailRequestGeneration.current += 1;
     walletAdjustmentIntent.current = null;
     walletAdjustmentRecoveryIntent.current = null;
     operatorProvisionIntent.current = null;
@@ -432,30 +475,44 @@ export function useConsoleController() {
   };
 
   const loadWorkspaceDetail = async (generation: number, activeSession: AuthSession, workspaceId: string) => {
+    const workspaceDetailGeneration = ++workspaceDetailRequestGeneration.current;
+    const readStillCurrent = () => isRequestCurrent(generation, activeSession.user.id)
+      && workspaceDetailGeneration === workspaceDetailRequestGeneration.current
+      && workspaceIdFromPath(window.location.pathname) === workspaceId;
     beginSource("workspaceDetail");
-    beginSource("runtime");
+    updateSource("runtime", { value: null, loading: false, error: "" });
+    updateSource("workspaceBudget", { value: null, loading: false, error: "" });
+    let workspaceKeyId = "";
     try {
       const detail = await findWorkspaceInPages(workspaceId);
-      if (!isRequestCurrent(generation, activeSession.user.id) || workspaceIdFromPath(window.location.pathname) !== workspaceId) return;
+      if (!readStillCurrent()) return;
       updateSource("workspaceDetail", { value: detail, loading: false, error: "" });
       if (!detail.available || detail.data === null) {
         updateSource("runtime", { value: unavailableSource("fabric"), loading: false, error: "" });
+        updateSource("workspaceBudget", { value: unavailableSource("sub2api"), loading: false, error: "" });
         return;
       }
+      workspaceKeyId = detail.data.workspaceApiKeyId || "";
     } catch (error) {
-      if (!isRequestCurrent(generation, activeSession.user.id) || workspaceIdFromPath(window.location.pathname) !== workspaceId) return;
+      if (!readStillCurrent()) return;
       failSource("workspaceDetail", error, unavailableSource("control-plane"));
       updateSource("runtime", { value: unavailableSource("fabric"), loading: false, error: "" });
+      updateSource("workspaceBudget", { value: unavailableSource("sub2api"), loading: false, error: "" });
       return;
     }
-    try {
-      const runtime = await getWorkspaceRuntimeStatus(workspaceId);
-      if (!isRequestCurrent(generation, activeSession.user.id) || workspaceIdFromPath(window.location.pathname) !== workspaceId) return;
-      updateSource("runtime", { value: runtime, loading: false, error: "" });
-    } catch (error) {
-      if (!isRequestCurrent(generation, activeSession.user.id) || workspaceIdFromPath(window.location.pathname) !== workspaceId) return;
-      failSource("runtime", error, unavailableSource("fabric"));
-    }
+    beginSource("runtime");
+    beginSource("workspaceBudget");
+    const [runtimeResult, budgetResult] = await Promise.allSettled([
+      getWorkspaceRuntimeStatus(workspaceId),
+      getWorkspaceGatewayBudget(workspaceId, workspaceKeyId)
+    ]);
+    if (!readStillCurrent()) return;
+    if (runtimeResult.status === "fulfilled") {
+      updateSource("runtime", { value: runtimeResult.value, loading: false, error: "" });
+    } else failSource("runtime", runtimeResult.reason, unavailableSource("fabric"));
+    if (budgetResult.status === "fulfilled") {
+      updateSource("workspaceBudget", { value: budgetResult.value, loading: false, error: "" });
+    } else failSource("workspaceBudget", budgetResult.reason, unavailableSource("sub2api"));
   };
 
   const loadUsage = async (generation: number, activeSession: AuthSession, keyId: string, page = 1, period: GatewayUsagePeriod = usagePeriod) => {
@@ -972,6 +1029,83 @@ export function useConsoleController() {
       flash(friendlyError(error), "danger");
     } finally {
       if (mutationStillCurrent()) setCommandBusy(false);
+    }
+  };
+
+  const updateWorkspaceBudget = async (input: WorkspaceGatewayBudgetUpdateRequest) => {
+    const workspace = sources.workspaceDetail.value?.available ? sources.workspaceDetail.value.data : null;
+    const budget = sources.workspaceBudget.value?.available ? sources.workspaceBudget.value.data : null;
+    if (!session || !workspace || !budget || budget.workspaceId !== workspace.id) return false;
+    if (workspaceBudgetBusyClaim.current !== null) return false;
+    const requestStillCurrent = currentMutationRequest();
+    const workspaceDetailGeneration = workspaceDetailRequestGeneration.current;
+    const workspaceStillCurrent = () => workspaceDetailGeneration === workspaceDetailRequestGeneration.current
+      && workspaceIdFromPath(window.location.pathname) === workspace.id;
+    const signature = workspaceBudgetRequestSignature(input);
+    let intent = workspaceBudgetIntents.current.get(workspace.id);
+    if (intent && intent.keyId !== budget.keyId) {
+      workspaceBudgetIntents.current.delete(workspace.id);
+      intent = undefined;
+    }
+    if (intent && intent.signature !== signature) {
+      flash("上次模型预算更新结果待确认，请使用相同设置重试", "danger");
+      return false;
+    }
+    if (!intent) {
+      intent = {
+        keyId: budget.keyId,
+        signature,
+        input: { ...input },
+        idempotencyKey: `workspace-gateway-budget:${workspace.id}:${crypto.randomUUID()}`
+      };
+      workspaceBudgetIntents.current.set(workspace.id, intent);
+    }
+    const busyClaim = Symbol("workspace-budget");
+    workspaceBudgetBusyClaim.current = busyClaim;
+    setWorkspaceBudgetBusy(true);
+    try {
+      const result = await updateWorkspaceGatewayBudget(
+        workspace.id,
+        budget.keyId,
+        intent.input,
+        session.csrfToken,
+        intent.idempotencyKey
+      );
+      if (!requestStillCurrent()) return false;
+      if (!workspaceStillCurrent()) return false;
+      if (!result.available || result.data.workspaceId !== workspace.id || result.data.keyId !== budget.keyId) {
+        throw new Error("workspace_gateway_budget_identity_mismatch");
+      }
+      if (!workspaceBudgetResultMatchesInput(result.data, intent.input)) {
+        if (workspaceBudgetIntents.current.get(workspace.id) === intent) {
+          workspaceBudgetIntents.current.delete(workspace.id);
+        }
+        updateSource("workspaceBudget", { value: result, loading: false, error: "" });
+        flash("模型预算已变化，请按最新状态重新提交", "danger");
+        return false;
+      }
+      if (workspaceBudgetIntents.current.get(workspace.id) === intent) {
+        workspaceBudgetIntents.current.delete(workspace.id);
+      }
+      updateSource("workspaceBudget", { value: result, loading: false, error: "" });
+      flash("模型预算已更新");
+      return true;
+    } catch (error) {
+      if (!requestStillCurrent()) return false;
+      if (!workspaceStillCurrent()) return false;
+      const status = error && typeof error === "object" && "status" in error
+        ? Number((error as { status?: number }).status)
+        : 0;
+      if (status > 0 && status < 500 && workspaceBudgetIntents.current.get(workspace.id) === intent) {
+        workspaceBudgetIntents.current.delete(workspace.id);
+      }
+      flash(mutationError(error), "danger");
+      return false;
+    } finally {
+      if (workspaceBudgetBusyClaim.current === busyClaim && requestStillCurrent()) {
+        workspaceBudgetBusyClaim.current = null;
+        setWorkspaceBudgetBusy(false);
+      }
     }
   };
 
@@ -1498,6 +1632,8 @@ export function useConsoleController() {
     clearSecrets,
     workspaceSecretBusy,
     gatewaySecretBusy,
+    workspaceBudgetBusy,
+    updateWorkspaceBudget,
     revealWorkspacePassword,
     revealWorkspaceKey,
     rotateWorkspacePassword,

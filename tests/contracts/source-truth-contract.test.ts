@@ -25,7 +25,9 @@ test("Console source truth exposes Sub2API Keys parity without a second authorit
 test("Console source truth contract fixes strict envelopes and live Gateway projections", async () => {
   const contract = JSON.parse(await readFile(contractUrl, "utf8"));
 
+  assert.equal(contract.schemaVersion, 17);
   assert.equal(contract.state, "current");
+  assert.equal(contract.machineBoundary, "Source, availability, timestamps, strict DTO fields, tenant identity, idempotency, and unavailable behavior for Console source and scoped mutation APIs.");
   assert.deepEqual(contract.envelope.requiredFields, ["source", "status", "available", "fetchedAt"]);
   assert.deepEqual(contract.envelope.statuses, ["available", "empty", "unavailable"]);
   assert.equal(contract.envelope.reasonCode, "required_stable_source_code_when_unavailable");
@@ -242,6 +244,56 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
       writeBack: false,
       fetchedAt: "control_plane_response_fetch_completion_time",
       sourceUpdatedAt: "omit_unless_fabric_returns_source_timestamp"
+    },
+    gatewayBudget: {
+      routes: ["GET /api/workspaces/{workspaceId}/gateway-budget", "PATCH /api/workspaces/{workspaceId}/gateway-budget"],
+      source: "sub2api",
+      authority: "live_sub2api_exact_key_readback",
+      identity: "session_owned_workspace_and_persisted_workspace_api_key_id",
+      keyBinding: {
+        controlPlaneField: "workspace.workspaceApiKeyId",
+        sub2apiMatchFields: ["userId", "keyId"],
+        nameOrListInference: false,
+        mismatch: "conflict"
+      },
+      dataFields: [
+        "workspaceId", "keyId", "status", "quotaUsdMicros", "quotaUsedUsdMicros", "rateLimit5hUsdMicros",
+        "rateLimit1dUsdMicros", "rateLimit7dUsdMicros", "usage5hUsdMicros", "usage1dUsdMicros", "usage7dUsdMicros",
+        "enabled", "updatedAt"
+      ],
+      keyIdFormat: "positive_decimal_string",
+      microsFields: [
+        "quotaUsdMicros", "quotaUsedUsdMicros", "rateLimit5hUsdMicros", "rateLimit1dUsdMicros",
+        "rateLimit7dUsdMicros", "usage5hUsdMicros", "usage1dUsdMicros", "usage7dUsdMicros"
+      ],
+      microsEncoding: "non_negative_int64_decimal_string",
+      statusValues: ["active", "disabled", "quota_exhausted", "expired"],
+      mutation: {
+        fields: [
+          "quotaUsdMicros", "rateLimit5hUsdMicros", "rateLimit1dUsdMicros", "rateLimit7dUsdMicros",
+          "enabled", "resetQuota", "resetRateLimitUsage"
+        ],
+        amountEncoding: "non_negative_int64_json_integer",
+        atLeastOneField: true,
+        nullValues: "forbidden",
+        unknownFields: "forbidden",
+        duplicateFields: "forbidden",
+        forbiddenKeyFields: ["keyId", "name", "groupId", "ipWhitelist", "ipBlacklist", "expiresAt", "expiresInDays"],
+        forbiddenGeneralKeyOperations: ["create", "reveal", "rename", "change_group", "change_ip_policy", "change_expiry", "delete"],
+        csrf: "required",
+        write: "one_sub2api_update_followed_by_exact_live_readback"
+      },
+      idempotency: {
+        header: "Idempotency-Key",
+        durableOperation: true,
+        scope: "account_workspace_persisted_key_and_request_hash",
+        sameRequestReplay: "live_exact_key_readback_without_repeat_write",
+        differentRequestReplay: "conflict"
+      },
+      controlPlaneBudgetReplica: false,
+      browserDirectSub2API: false,
+      fetchedAt: "control_plane_response_fetch_completion_time",
+      sourceUpdatedAt: "omit_unless_sub2api_returns_source_timestamp"
     }
   });
   assert.deepEqual(contract.sources.ledger, {

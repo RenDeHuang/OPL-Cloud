@@ -23,6 +23,7 @@ import type {
   WalletAdjustmentOperationDTO,
   WorkspaceCredentialAccess,
   WorkspaceDTO,
+  WorkspaceGatewayBudgetDTO,
   WorkspaceLaunchResponse,
   WorkspaceListData,
   WorkspaceRuntimeDTO
@@ -38,6 +39,7 @@ export interface ConsoleSources {
   workspaces: RemoteState<SourceEnvelope<WorkspaceListData>>;
   workspaceDetail: RemoteState<SourceEnvelope<WorkspaceDTO | null>>;
   runtime: RemoteState<SourceEnvelope<WorkspaceRuntimeDTO>>;
+  workspaceBudget: RemoteState<SourceEnvelope<WorkspaceGatewayBudgetDTO>>;
   wallet: RemoteState<SourceEnvelope<GatewayWallet>>;
   accountUsage: RemoteState<SourceEnvelope<GatewayAccountUsageSummaryDTO>>;
   balanceHistory: RemoteState<SourceEnvelope<GatewayBalanceHistoryPageDTO>>;
