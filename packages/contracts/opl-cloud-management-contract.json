@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 21,
+  "schemaVersion": 22,
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
@@ -126,18 +126,46 @@
   "workspaceDeletion": {
     "owner": "services/control-plane",
     "route": "DELETE /api/workspaces/{workspaceId}",
-    "identityFields": ["accountId", "operationId", "workspaceId", "runtimeId", "keyId", "debitCode", "purchaseReceiptId", "refundReceiptId"],
-    "orderedCompletion": [
-      "purchase_and_debit_authority_read",
-      "runtime_and_gateway_secret_authoritative_absence",
-      "attachment_detached",
+    "action": "workspace.delete.v2",
+    "schemaVersion": 2,
+    "semantics": "permanently_delete_all_workspace_resources_without_automatic_refund",
+    "identityFields": [
+      "accountId",
+      "operationId",
+      "workspaceId",
+      "launchOperationId",
+      "launchReceiptId",
+      "runtimeId",
+      "computeId",
+      "storageId",
+      "attachmentId",
+      "keyId",
+      "secretRef",
+      "fingerprint"
+    ],
+    "providerNeutralResourceIdentity": {
+      "authority": "succeeded_immutable_launch_operation_and_matching_launch_receipt",
+      "providerSpecificFields": false,
+      "resources": ["runtime", "compute", "storage", "attachment", "workspace_key", "gateway_secret"]
+    },
+    "orderedStages": [
+      "claimed",
+      "runtime_secret_absent",
+      "attachment_absent",
       "storage_absent",
       "compute_absent",
-      "sub2api_key_authoritative_absence",
-      "exact_business_refund",
-      "ledger_refund_receipt",
-      "control_plane_workspace_authoritative_absence"
+      "key_absent",
+      "workspace_absent",
+      "deletion_receipt_recorded",
+      "complete"
     ],
+    "legacyV1HardCut": {
+      "action": "workspace.delete.v1",
+      "completedAndWorkspaceAbsent": "stable_historical_terminal_replay",
+      "nonTerminalBeforeV2Mutation": "manual_review_conflict_without_mutation",
+      "rewriteV1": false,
+      "compatibilityEngine": false
+    },
     "fabricObservation": {
       "schemaVersion": 1,
       "routes": [
@@ -151,7 +179,7 @@
     "keyAuthority": "sub2api_exact_user_and_workspace_key_id_readback",
     "keyDeleteResponseLoss": "same_operation_exact_key_GET_only_until_absent_or_manual_review",
     "forbiddenKeyCleanupOwners": ["local_docker", "fabric", "ledger", "acceptance_runner"],
-    "terminalRequirement": "all_ordered_stages_share_the_exact_identity_fields_and_no_second_workspace_key_resource_refund_or_receipt_is_created"
+    "terminalRequirement": "all_ordered_stages_share_the_exact_identity_fields_and_no_resource_key_workspace_or_deletion_receipt_mutation_is_repeated"
   },
   "identityProvisioning": {
     "onlyMutation": "POST /api/operator/accounts",

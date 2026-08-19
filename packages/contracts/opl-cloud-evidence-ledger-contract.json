@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 15,
+  "schemaVersion": 16,
   "owner": "OPL Ledger",
   "purpose": "General execution, monthly billing, reconciliation, and current control-plane lifecycle evidence receipts.",
   "state": "current",
@@ -21,6 +21,7 @@
     "billing.workspace_renewed.v1",
     "billing.workspace_expired.v1",
     "billing.workspace_refunded.v1",
+    "workspace.deleted.v1",
     "gateway.wallet_adjustment.v1",
     "workspace.gateway_key_rotated.v1",
     "execution.receipt.v1"
@@ -307,14 +308,15 @@
       "cardinality": "exactly_one_terminal_purchase_receipt_for_the_launch_operation"
     },
     "refundedTerminalIdentity": {
-      "requestId": "workspaceDeleteOperationId",
-      "recordIdempotencyKey": "<workspaceDeleteOperationId>:refund-receipt",
-      "workspaceId": "exact_deleted_workspace_id",
+      "requestId": "independentRefundOperationId",
+      "recordIdempotencyKey": "<independentRefundOperationId>:refund-receipt",
+      "workspaceId": "exact_refunded_workspace_id",
       "supersedesReceiptId": "exact_purchaseReceiptId",
       "cost": "exact_sub2api_user_debit_code_refund_code_total_and_refund_amount",
-      "execution": "exact_runtime_key_purchase_receipt_and_refund_confirmation_from_the_same_delete_operation",
-      "retry": "receipt_only_without_repeating_key_delete_fabric_cleanup_or_sub2api_refund",
-      "cardinality": "exactly_one_terminal_refund_receipt_for_the_workspace_delete_operation"
+      "execution": "exact_purchase_receipt_and_refund_confirmation_from_the_same_independent_financial_operation",
+      "retry": "receipt_only_without_repeating_sub2api_refund",
+      "cardinality": "exactly_one_terminal_refund_receipt_for_the_independent_refund_operation",
+      "workspaceDeleteCoupling": false
     },
     "customerProjectionForbiddenFields": [
       "computeReadback",
@@ -335,8 +337,46 @@
       "refunded receipts require the original debit identity, a stable refund identity, and refundUsdMicros equal to totalUsdMicros"
     ],
     "writeProtocol": "append_first_with_idempotency",
-    "launchTerminalCardinality": "exactly_one_purchased_or_refunded_workspace_receipt",
+    "launchTerminalCardinality": "exactly_one_purchased_workspace_receipt_for_the_launch_operation",
     "forbiddenContentRule": "same recursive case-insensitive exact-key rejection as general receipts"
+  },
+  "workspaceDeletionReceiptV1": {
+    "type": "workspace.deleted.v1",
+    "status": "completed",
+    "surface": "control_plane",
+    "requestId": "workspaceDeleteOperationId",
+    "recordIdempotencyKey": "<workspaceDeleteOperationId>:deletion-receipt",
+    "ownerRequiredFields": ["accountId", "userId"],
+    "inputRefs": {
+      "requiredFields": ["launchReceiptId"],
+      "allowedFields": ["launchReceiptId"]
+    },
+    "executionRequiredFields": [
+      "runtimeId",
+      "computeId",
+      "storageId",
+      "attachmentId",
+      "keyId",
+      "secretRef",
+      "fingerprint"
+    ],
+    "executionIdentity": "exact_provider_neutral_resource_identity_from_the_same_delete_operation",
+    "outputRefs": {
+      "requiredFields": [
+        "runtimeStatus",
+        "gatewaySecretStatus",
+        "attachmentStatus",
+        "storageStatus",
+        "computeStatus",
+        "workspaceKeyStatus",
+        "workspaceStatus"
+      ],
+      "requiredValue": "absent"
+    },
+    "cost": "must_be_empty",
+    "supersedesReceiptId": "must_be_empty",
+    "failureRetry": "receipt_only_without_repeating_resource_key_or_workspace_deletion",
+    "cardinality": "exactly_one_terminal_deletion_receipt_for_the_workspace_delete_operation"
   },
   "reconciliationReportV1": {
     "recordApi": "POST /ledger/reconciliation",

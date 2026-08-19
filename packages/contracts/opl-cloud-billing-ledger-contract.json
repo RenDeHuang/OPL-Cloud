@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 14,
+  "schemaVersion": 15,
   "owner": "OPL Control Plane",
-  "purpose": "One-charge Workspace purchase and renewal, fulfillment, entitlement, receipt, wallet-adjustment reference, and reconciliation ownership contract.",
+  "purpose": "One-charge Workspace purchase and renewal, no-refund deletion, fulfillment, entitlement, receipt, wallet-adjustment reference, and reconciliation ownership contract.",
   "state": "current",
   "machineBoundary": "Sub2API owns one spendable USD wallet per Account; Control Plane owns independent Workspace charge operations and monthly entitlements; Fabric owns provider fulfillment and live resource facts; Ledger owns append-only evidence receipts and reconciliation reports.",
   "lifecycle": {
@@ -89,28 +89,21 @@
     },
     "manualReviewRecoveryContract": "opl-cloud-control-plane-launch-contract.json#recovery"
   },
-  "workspaceDeleteRefund": {
+  "workspaceDeleteNoRefund": {
     "orchestrationOwner": "services/control-plane",
-    "walletAuthority": "sub2api",
     "receiptAuthority": "services/ledger",
-    "preMutationAuthority": [
-      "exact_purchase_receipt",
-      "exact_negative_sub2api_debit_history_entry"
-    ],
-    "refundIdentity": ["accountId", "workspaceId", "sub2apiUserId", "sub2apiRedeemCode", "sub2apiRefundCode", "totalUsdMicros"],
-    "refundAmount": "refundUsdMicros_equals_original_purchase_totalUsdMicros",
-    "refundReservation": "persist_same_delete_operation_attempt_before_money_write_then_repeat_exact_refund_code_GET",
-    "responseLoss": "exact_refund_code_GET_only_without_second_refund",
-    "receipt": {
-      "type": "billing.workspace_refunded.v1",
-      "requestId": "workspaceDeleteOperationId",
-      "idempotencyKey": "<workspaceDeleteOperationId>:refund-receipt",
-      "supersedesReceiptId": "exact_purchaseReceiptId",
-      "identityFields": ["accountId", "operationId", "workspaceId", "runtimeId", "keyId", "debitCode", "purchaseReceiptId", "refundReceiptId"],
-      "failureRetry": "receipt_only_without_key_resource_or_refund_mutation"
-    },
-    "operatorWalletAdjustmentSubstitute": false,
-    "unknownConflictOrError": "manual_review_with_zero_later_mutation"
+    "deletionAction": "workspace.delete.v2",
+    "semantics": "permanent_resource_deletion_without_automatic_refund",
+    "launchReceiptTypes": ["billing.workspace_purchased.v1", "workspace.created"],
+    "launchReceiptPurpose": "resource_identity_only_never_refund_authority",
+    "moneyWriteApis": [],
+    "forbiddenWalletMutations": ["debit", "refund", "wallet_adjustment"],
+    "walletMutationCount": 0,
+    "deletionReceiptType": "workspace.deleted.v1",
+    "deletionReceiptFailure": "retry_receipt_only_without_repeating_resource_key_or_workspace_deletion",
+    "cancelRenewal": "independent_operation_preserves_resources_until_paidThrough",
+    "refund": "independent_financial_operation",
+    "refundReceiptType": "billing.workspace_refunded.v1"
   },
   "walletAdjustmentEvidence": {
     "kinds": ["recharge", "debit", "business_refund"],
@@ -205,6 +198,7 @@
       "billing.workspace_renewed.v1",
       "billing.workspace_expired.v1",
       "billing.workspace_refunded.v1",
+      "workspace.deleted.v1",
       "gateway.wallet_adjustment.v1",
       "workspace.gateway_key_rotated.v1"
     ],
