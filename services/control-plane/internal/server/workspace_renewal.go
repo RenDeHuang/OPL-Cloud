@@ -429,9 +429,19 @@ func (app *controlPlaneServer) processWorkspaceRenewal(ctx context.Context, serv
 		if err != nil {
 			return errInvalidWorkspaceBillingState
 		}
-		operations, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{WorkspaceID: workspaceID, Action: "workspace.renewal"})
+		operations, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{WorkspaceID: workspaceID})
 		if err != nil {
 			return err
+		}
+		deleteActive := false
+		for _, row := range operations {
+			if workspaceDeleteBlocksRenewal(row) {
+				deleteActive = true
+				break
+			}
+		}
+		if deleteActive {
+			return nil
 		}
 		expected, err := newWorkspaceRenewalOperation(workspace, now)
 		if err != nil {

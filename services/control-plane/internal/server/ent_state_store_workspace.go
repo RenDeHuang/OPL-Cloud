@@ -765,6 +765,9 @@ func (s *postgresEntStateStore) ClaimWorkspaceRenewal(ctx context.Context, claim
 	for _, operation := range operationEntities {
 		row := recordFromEnt(operation, runtimeOpEntFields)
 		operations = append(operations, row)
+		if workspaceDeleteBlocksRenewal(row) {
+			return errWorkspaceRenewalCASConflict
+		}
 		if stringValue(row["id"]) == desiredID {
 			existing = row
 		}
@@ -1052,6 +1055,17 @@ func (s *postgresEntStateStore) ApplyWorkspaceDelete(ctx context.Context, mutati
 			return errWorkspaceDeleteCASConflict
 		}
 	}
+	if mutation.Create {
+		operationEntities, err := client.RuntimeOperation.Query().Where(runtimeoperation.WorkspaceIDEQ(desired.WorkspaceID), lockRowForUpdate).All(ctx)
+		if err != nil {
+			return err
+		}
+		for _, entity := range operationEntities {
+			if workspaceRenewalBlocksDelete(recordFromEnt(entity, runtimeOpEntFields)) {
+				return errWorkspaceDeleteCASConflict
+			}
+		}
+	}
 
 	operationEntity, operationErr := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(desired.OperationID), lockRowForUpdate).Only(ctx)
 	if mutation.Create {
@@ -1075,7 +1089,9 @@ func (s *postgresEntStateStore) ApplyWorkspaceDelete(ctx context.Context, mutati
 			return operationErr
 		}
 		current := recordFromEnt(operationEntity, runtimeOpEntFields)
-		if stringValue(current["result"]) != mutation.ExpectedResult || !workspaceDeleteOperationIdentityMatches(current, desired) {
+		currentOperation, decodeErr := decodeWorkspaceDeleteOperation(current)
+		if decodeErr != nil || stringValue(current["result"]) != mutation.ExpectedResult || !workspaceDeleteOperationIdentityMatches(current, desired) ||
+			!validWorkspaceDeleteTransition(currentOperation, desired, mutation) {
 			return errWorkspaceDeleteCASConflict
 		}
 		builder := client.RuntimeOperation.UpdateOneID(desired.OperationID)

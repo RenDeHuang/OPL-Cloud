@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -255,9 +257,6 @@ type workspaceDeleteSub2API struct {
 	keyResponseLost bool
 	keyName         string
 	keyUserID       int64
-	historyReadErr  error
-	refundErr       error
-	responseLost    bool
 	events          *workspaceDeleteEvents
 }
 
@@ -323,9 +322,6 @@ func (s *workspaceDeleteSub2API) FinancialBalanceHistoryByCodes(_ context.Contex
 	} else {
 		s.events.add("sub2api:refund-get")
 	}
-	if s.historyReadErr != nil {
-		return nil, s.historyReadErr
-	}
 	result := make(map[string]clients.Sub2APIBalanceHistoryEntry, len(codes))
 	for _, code := range codes {
 		if entry, ok := s.history[code]; ok {
@@ -340,37 +336,12 @@ func (s *workspaceDeleteSub2API) Refund(_ context.Context, input clients.Sub2API
 	defer s.mu.Unlock()
 	s.refunds = append(s.refunds, input)
 	s.events.add("sub2api:refund-post")
-	if s.refundErr != nil {
-		return clients.Sub2APIRefund{}, s.refundErr
-	}
 	usedBy := input.UserID
 	now := time.Now().UTC()
 	s.history[input.Code] = clients.Sub2APIBalanceHistoryEntry{
 		Code: input.Code, Type: "balance", ValueUSDMicros: input.RefundUSDMicros, Status: "used", UsedBy: &usedBy, UsedAt: &now,
 	}
-	if s.responseLost {
-		return clients.Sub2APIRefund{}, errors.New("refund response lost")
-	}
 	return clients.Sub2APIRefund{Code: input.Code, UserID: input.UserID, RefundUSDMicros: input.RefundUSDMicros, Status: "used"}, nil
-}
-
-func assertWorkspaceDeleteExactHistoryReads(t *testing.T, sub2API *workspaceDeleteSub2API) {
-	t.Helper()
-	sub2API.mu.Lock()
-	reads := make([][]string, len(sub2API.historyReads))
-	for index := range sub2API.historyReads {
-		reads[index] = append([]string(nil), sub2API.historyReads[index]...)
-	}
-	sub2API.mu.Unlock()
-	refundCode := monthlyRefundCode(monthlyEnvironment(), workspaceDeleteOperationID("ws-alpha"))
-	if len(reads) < 2 || len(reads[0]) != 1 || reads[0][0] != "opl:workspace-purchase-alpha" {
-		t.Fatalf("debit history reads=%#v", reads)
-	}
-	for _, codes := range reads[1:] {
-		if len(codes) != 1 || codes[0] != refundCode {
-			t.Fatalf("non-exact refund history reads=%#v", reads)
-		}
-	}
 }
 
 type workspaceDeleteLedger struct {
@@ -408,12 +379,12 @@ func (l *workspaceDeleteLedger) RecordReceipt(_ context.Context, input clients.R
 	defer l.mu.Unlock()
 	l.receipts = append(l.receipts, input)
 	l.keys = append(l.keys, key)
-	l.events.add("ledger:refund-receipt")
+	l.events.add("ledger:deletion-receipt")
 	if l.failures > 0 {
 		l.failures--
 		return clients.Receipt{}, errors.New("ledger receipt unavailable")
 	}
-	return clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-refund-alpha"}, nil
+	return clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-delete-alpha"}, nil
 }
 
 type workspaceDeleteNoopDeleteStore struct {
@@ -422,13 +393,17 @@ type workspaceDeleteNoopDeleteStore struct {
 
 type workspaceDeletePersistThenFailStore struct {
 	controlPlaneTableStore
-	failKeyReservation    bool
-	failRefundReservation bool
+	failKeyReservation bool
 }
 
 type workspaceDeleteEventStore struct {
 	controlPlaneTableStore
 	events *workspaceDeleteEvents
+}
+
+type workspaceDeleteAuditFailStore struct {
+	controlPlaneTableStore
+	failAudit bool
 }
 
 func (s workspaceDeleteEventStore) ApplyWorkspaceDelete(ctx context.Context, mutation workspaceDeleteStoreMutation) error {
@@ -444,6 +419,13 @@ func (s workspaceDeleteNoopDeleteStore) ApplyWorkspaceDelete(ctx context.Context
 	return s.controlPlaneTableStore.ApplyWorkspaceDelete(ctx, mutation)
 }
 
+func (s *workspaceDeleteAuditFailStore) SaveAuditEvent(ctx context.Context, event map[string]any) error {
+	if s.failAudit {
+		return errors.New("injected audit failure")
+	}
+	return s.controlPlaneTableStore.SaveAuditEvent(ctx, event)
+}
+
 func (s *workspaceDeletePersistThenFailStore) ApplyWorkspaceDelete(ctx context.Context, mutation workspaceDeleteStoreMutation) error {
 	current, _, _ := s.controlPlaneTableStore.GetRuntimeOperation(ctx, stringValue(mutation.DesiredOperation["id"]))
 	var before, after workspaceDeleteOperation
@@ -455,10 +437,6 @@ func (s *workspaceDeletePersistThenFailStore) ApplyWorkspaceDelete(ctx context.C
 	if s.failKeyReservation && !before.KeyDeleteAttempted && after.KeyDeleteAttempted {
 		s.failKeyReservation = false
 		return errors.New("injected crash after key reservation")
-	}
-	if s.failRefundReservation && !before.RefundAttempted && after.RefundAttempted {
-		s.failRefundReservation = false
-		return errors.New("injected crash after refund reservation")
 	}
 	return nil
 }
@@ -595,34 +573,30 @@ func TestWorkspaceDeleteCompletesExactOwnerChain(t *testing.T) {
 	var terminal map[string]any
 	if json.Unmarshal(response.Body.Bytes(), &terminal) != nil || terminal["status"] != "deleted" || terminal["accountId"] != "acct-alpha" ||
 		terminal["launchOperationId"] != "workspace-launch-alpha" || terminal["operationId"] != workspaceDeleteOperationID("ws-alpha") ||
-		terminal["refundOperationId"] != workspaceDeleteOperationID("ws-alpha") || terminal["workspaceId"] != "ws-alpha" || terminal["runtimeId"] != "runtime-alpha" ||
+		terminal["workspaceId"] != "ws-alpha" || terminal["runtimeId"] != "runtime-alpha" ||
 		int64(numberField(terminal, "sub2apiUserId", 0)) != 41 || int64(numberField(terminal, "workspaceApiKeyId", 0)) != 19 ||
-		terminal["debitCode"] != "opl:workspace-purchase-alpha" || terminal["purchaseReceiptId"] != "receipt-purchase-alpha" ||
-		!strings.HasPrefix(stringValue(terminal["refundCode"]), "opl:") || terminal["refundReceiptId"] != "receipt-refund-alpha" ||
-		int64(numberField(terminal, "totalUsdMicros", 0)) != 52_580_000 || terminal["runtimeStatus"] != "absent" || terminal["secretStatus"] != "absent" ||
-		terminal["keyStatus"] != "absent" || terminal["refundStatus"] != "used" {
+		terminal["launchReceiptId"] != "receipt-purchase-alpha" || terminal["deletionReceiptId"] != "receipt-delete-alpha" ||
+		terminal["runtimeStatus"] != "absent" || terminal["secretStatus"] != "absent" || terminal["keyStatus"] != "absent" {
 		t.Fatalf("delete terminal response=%#v", terminal)
 	}
-	if sub2API.keyExists || sub2API.keyDeletes != 1 || len(sub2API.refunds) != 1 {
+	if sub2API.keyExists || sub2API.keyDeletes != 1 || len(sub2API.historyReads) != 0 || len(sub2API.refunds) != 0 {
 		t.Fatalf("Sub2API completion keyExists=%v keyReads=%d keyDeletes=%d refunds=%#v", sub2API.keyExists, sub2API.keyReads, sub2API.keyDeletes, sub2API.refunds)
-	}
-	refund := sub2API.refunds[0]
-	if refund.UserID != 41 || refund.RefundUSDMicros != 52_580_000 || refund.Code == "" || refund.Code == "opl:workspace-purchase-alpha" {
-		t.Fatalf("refund identity=%#v", refund)
 	}
 	if len(ledger.receipts) != 1 || len(ledger.keys) != 1 {
 		t.Fatalf("Ledger writes receipts=%#v keys=%#v", ledger.receipts, ledger.keys)
 	}
 	receipt := ledger.receipts[0]
-	if receipt.Type != "billing.workspace_refunded.v1" || receipt.AccountID != "acct-alpha" || receipt.WorkspaceID != "ws-alpha" ||
-		receipt.RequestID != workspaceDeleteOperationID("ws-alpha") || stringValue(receipt.Cost["sub2apiRedeemCode"]) != "opl:workspace-purchase-alpha" ||
-		stringValue(receipt.Cost["sub2apiRefundCode"]) != refund.Code || int64(numberField(receipt.Cost, "refundUsdMicros", 0)) != 52_580_000 ||
-		receipt.SupersedesReceiptID != "receipt-purchase-alpha" || stringValue(receipt.Execution["runtimeId"]) != "runtime-alpha" ||
+	if receipt.Type != "workspace.deleted.v1" || receipt.Status != "completed" || receipt.Surface != "control_plane" || receipt.AccountID != "acct-alpha" || receipt.WorkspaceID != "ws-alpha" ||
+		receipt.RequestID != workspaceDeleteOperationID("ws-alpha") || len(receipt.Cost) != 0 || receipt.SupersedesReceiptID != "" ||
+		stringValue(receipt.Execution["runtimeId"]) != "runtime-alpha" ||
 		stringValue(receipt.Execution["computeAllocationId"]) != "compute-alpha" || stringValue(receipt.Execution["storageId"]) != "storage-alpha" ||
 		stringValue(receipt.Execution["attachmentId"]) != "attachment-alpha" || int64(numberField(receipt.Execution, "workspaceApiKeyId", 0)) != 19 ||
-		stringValue(receipt.Execution["debitCode"]) != "opl:workspace-purchase-alpha" || stringValue(receipt.Execution["purchaseReceiptId"]) != "receipt-purchase-alpha" ||
+		stringValue(receipt.InputRefs["launchReceiptId"]) != "receipt-purchase-alpha" || len(receipt.InputRefs) != 1 ||
 		stringValue(receipt.Owner["accountId"]) != "acct-alpha" || stringValue(receipt.Owner["workspaceId"]) != "ws-alpha" {
-		t.Fatalf("refund receipt=%#v", receipt)
+		t.Fatalf("deletion receipt=%#v", receipt)
+	}
+	if ledger.keys[0] != workspaceDeleteOperationID("ws-alpha")+":deletion-receipt" {
+		t.Fatalf("deletion receipt key=%#v", ledger.keys)
 	}
 	row, found, err := fixture.store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
 	if err != nil || !found {
@@ -631,21 +605,187 @@ func TestWorkspaceDeleteCompletesExactOwnerChain(t *testing.T) {
 	var result map[string]any
 	if json.Unmarshal([]byte(stringValue(row["result"])), &result) != nil || result["accountId"] != "acct-alpha" ||
 		result["operationId"] != workspaceDeleteOperationID("ws-alpha") || result["workspaceId"] != "ws-alpha" || result["runtimeId"] != "runtime-alpha" ||
-		int64(numberField(result, "workspaceApiKeyId", 0)) != 19 || result["debitCode"] != "opl:workspace-purchase-alpha" ||
-		result["purchaseReceiptId"] != "receipt-purchase-alpha" || result["refundReceiptId"] != "receipt-refund-alpha" {
+		int64(numberField(result, "workspaceApiKeyId", 0)) != 19 || result["launchReceiptId"] != "receipt-purchase-alpha" ||
+		result["deletionReceiptId"] != "receipt-delete-alpha" {
 		t.Fatalf("durable identity result=%#v", result)
 	}
 	wantEvents := []string{
-		"ledger:purchase-get", "sub2api:debit-get",
+		"ledger:purchase-get",
 		"fabric:runtime-read", "fabric:secret-read", "fabric:runtime", "fabric:runtime-read", "fabric:secret-read",
 		"fabric:attachment", "fabric:storage", "fabric:compute", "fabric:compute-read",
 		"sub2api:key-get", "sub2api:key-get", "sub2api:key-delete", "sub2api:key-get",
-		"fabric:runtime-read", "fabric:secret-read", "sub2api:key-get",
-		"sub2api:refund-get", "sub2api:refund-get", "sub2api:refund-post", "sub2api:refund-get",
-		"ledger:refund-receipt", "control-plane:workspace-absent",
+		"control-plane:workspace-absent", "ledger:deletion-receipt",
 	}
 	if got := events.snapshot(); strings.Join(got, "\n") != strings.Join(wantEvents, "\n") {
 		t.Fatalf("owner completion events=%#v want=%#v", got, wantEvents)
+	}
+}
+
+func TestWorkspaceDeleteAcceptsExactCurrentAndHistoricalLaunchReceiptsWithoutMoneyCalls(t *testing.T) {
+	t.Run("historical charged", func(t *testing.T) {
+		fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
+		ledger.purchase.ReceiptInput = workspaceLaunchHistoricalChargedReceiptInput(ledger.purchase.ReceiptInput)
+		response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-historical-charged")
+		if response.Code != http.StatusOK || len(sub2API.historyReads) != 0 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 {
+			t.Fatalf("historical charged status=%d history=%#v refunds=%d receipts=%d body=%s", response.Code, sub2API.historyReads, len(sub2API.refunds), len(ledger.receipts), response.Body.String())
+		}
+	})
+
+	for _, legacy := range []bool{false, true} {
+		name := "current zero-cost"
+		if legacy {
+			name = "legacy zero-cost"
+		}
+		t.Run(name, func(t *testing.T) {
+			fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
+			configureWorkspaceDeleteZeroCostLaunch(t, fixture, ledger, legacy)
+			response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-zero-cost")
+			if response.Code != http.StatusOK || len(sub2API.historyReads) != 0 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "workspace.deleted.v1" {
+				t.Fatalf("zero-cost legacy=%v status=%d history=%#v refunds=%d receipts=%#v body=%s", legacy, response.Code, sub2API.historyReads, len(sub2API.refunds), ledger.receipts, response.Body.String())
+			}
+		})
+	}
+}
+
+func configureWorkspaceDeleteZeroCostLaunch(t *testing.T, fixture workspaceDeleteFixture, ledger *workspaceDeleteLedger, legacy bool) {
+	t.Helper()
+	row, found, err := fixture.store.GetRuntimeOperation(context.Background(), "workspace-launch-alpha")
+	if err != nil || !found {
+		t.Fatalf("launch found=%v err=%v", found, err)
+	}
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]any{
+		"resourceBillingEnabled": false, "chargeAttempted": false, "chargeConfirmation": map[string]any{"status": "not_charged"},
+		"preChargeBalanceUsdMicros": int64(0), "postChargeBalanceUsdMicros": int64(0), "postChargeBalanceKnown": true, "billingPeriodState": "not_billed",
+		"totalChargeUsdMicros": int64(0),
+	} {
+		operation.raw[key], _ = json.Marshal(value)
+	}
+	launchRow, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.SaveRuntimeOperation(context.Background(), launchRow); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := workspaceLaunchActivationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace["purchaseReceiptId"] = "receipt-purchase-alpha"
+	if err := fixture.store.DeleteWorkspace(context.Background(), "ws-alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.SaveWorkspace(context.Background(), workspace); err != nil {
+		t.Fatal(err)
+	}
+	input, err := workspaceLaunchPurchaseReceiptInput(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy {
+		input = workspaceLaunchLegacyCreatedReceiptInput(operation)
+	}
+	ledger.purchase = clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-purchase-alpha"}
+}
+
+func TestWorkspaceDeleteHistoricalV1IsReadOnly(t *testing.T) {
+	if workspaceDeleteOperationID("ws-alpha") == workspaceDeleteLegacyOperationID("ws-alpha") {
+		t.Fatal("v2 and historical v1 operation IDs must differ")
+	}
+
+	t.Run("completed replay with Workspace absent", func(t *testing.T) {
+		fixture, sub2API, ledger, events := newWorkspaceDeleteEventFixture(t)
+		legacy := workspaceDeleteLegacyFixtureRow(fixture, ledger.purchase.ReceiptInput, "complete", "succeeded")
+		if err := fixture.store.SaveRuntimeOperation(context.Background(), legacy); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.store.DeleteWorkspace(context.Background(), "ws-alpha"); err != nil {
+			t.Fatal(err)
+		}
+		response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-v1-complete-replay")
+		var payload map[string]any
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload["operationId"] != workspaceDeleteLegacyOperationID("ws-alpha") || payload["historical"] != true ||
+			len(events.snapshot()) != 0 || len(fixture.fabric.recordedCalls()) != 0 || sub2API.keyDeletes != 0 || len(sub2API.historyReads) != 0 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
+			t.Fatalf("historical terminal status=%d payload=%#v events=%#v calls=%#v keyDeletes=%d history=%#v refunds=%d receipts=%d", response.Code, payload, events.snapshot(), fixture.fabric.recordedCalls(), sub2API.keyDeletes, sub2API.historyReads, len(sub2API.refunds), len(ledger.receipts))
+		}
+	})
+
+	t.Run("active operation conflicts before mutation", func(t *testing.T) {
+		fixture, sub2API, ledger, events := newWorkspaceDeleteEventFixture(t)
+		legacy := workspaceDeleteLegacyFixtureRow(fixture, ledger.purchase.ReceiptInput, "storage_destroyed", "running")
+		if err := fixture.store.SaveRuntimeOperation(context.Background(), legacy); err != nil {
+			t.Fatal(err)
+		}
+		response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-v1-active-conflict")
+		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errWorkspaceDeleteHistoricalConflict.Error()) ||
+			len(events.snapshot()) != 0 || len(fixture.fabric.recordedCalls()) != 0 || sub2API.keyDeletes != 0 || len(sub2API.historyReads) != 0 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
+			t.Fatalf("historical active status=%d body=%s events=%#v calls=%#v keyDeletes=%d history=%#v refunds=%d receipts=%d", response.Code, response.Body.String(), events.snapshot(), fixture.fabric.recordedCalls(), sub2API.keyDeletes, sub2API.historyReads, len(sub2API.refunds), len(ledger.receipts))
+		}
+	})
+
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*workspaceDeleteLegacyOperation)
+	}{
+		{name: "request hash drift", mutate: func(operation *workspaceDeleteLegacyOperation) { operation.RequestHash = "drift" }},
+		{name: "resource identity drift", mutate: func(operation *workspaceDeleteLegacyOperation) {
+			operation.RuntimeID = "runtime-other"
+			operation.RequestHash = workspaceDeleteLegacyRequestHash(*operation)
+		}},
+		{name: "terminal evidence missing", mutate: func(operation *workspaceDeleteLegacyOperation) { operation.RefundReceiptID = "" }},
+		{name: "v2-only compute terminal", mutate: func(operation *workspaceDeleteLegacyOperation) { operation.ComputeStatus = "absent" }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture, sub2API, ledger, events := newWorkspaceDeleteEventFixture(t)
+			legacy := workspaceDeleteLegacyFixtureRow(fixture, ledger.purchase.ReceiptInput, "complete", "succeeded")
+			var operation workspaceDeleteLegacyOperation
+			if json.Unmarshal([]byte(stringValue(legacy["result"])), &operation) != nil {
+				t.Fatal("legacy fixture decode failed")
+			}
+			testCase.mutate(&operation)
+			legacy["result"] = string(mustJSON(operation))
+			if err := fixture.store.SaveRuntimeOperation(context.Background(), legacy); err != nil {
+				t.Fatal(err)
+			}
+			if err := fixture.store.DeleteWorkspace(context.Background(), "ws-alpha"); err != nil {
+				t.Fatal(err)
+			}
+			response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-v1-corrupt-"+testCase.name)
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errWorkspaceDeleteHistoricalConflict.Error()) ||
+				len(events.snapshot()) != 0 || len(fixture.fabric.recordedCalls()) != 0 || sub2API.keyDeletes != 0 || len(sub2API.historyReads) != 0 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
+				t.Fatalf("corrupt historical status=%d body=%s events=%#v calls=%#v", response.Code, response.Body.String(), events.snapshot(), fixture.fabric.recordedCalls())
+			}
+		})
+	}
+}
+
+func workspaceDeleteLegacyFixtureRow(fixture workspaceDeleteFixture, purchaseReceipt clients.ReceiptInput, phase, status string) map[string]any {
+	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+	operationID := workspaceDeleteLegacyOperationID("ws-alpha")
+	operation := workspaceDeleteLegacyOperation{
+		OperationID: operationID, AccountID: "acct-alpha", OwnerUserID: stringValue(fixture.workspace["ownerUserId"]), Sub2APIUserID: 41, WorkspaceID: "ws-alpha",
+		LaunchOperationID: "workspace-launch-alpha", RuntimeID: "runtime-alpha", ComputeID: "compute-alpha", StorageID: "storage-alpha", AttachmentID: "attachment-alpha",
+		WorkspaceAPIKeyID: 19, GatewaySecretRef: "opl-gateway-ws-alpha", GatewayFingerprint: "sha256:" + strings.Repeat("a", 64),
+		DebitCode: "opl:workspace-purchase-alpha", PurchaseReceiptID: "receipt-purchase-alpha", PurchaseReceipt: purchaseReceipt,
+		RefundCode: monthlyRefundCode(monthlyEnvironment(), operationID), TotalUSDMicros: 52_580_000, Phase: phase, Status: status, CreatedAt: createdAt,
+	}
+	if phase == "complete" && status == "succeeded" {
+		operation.RuntimeStatus, operation.SecretStatus, operation.AttachmentStatus = "absent", "absent", "detached"
+		operation.StorageStatus, operation.ComputeStatus, operation.KeyStatus = "destroyed", "destroyed", "absent"
+		operation.RefundReceiptID = "receipt-refund-alpha"
+		operation.RefundConfirmation = map[string]any{"code": operation.RefundCode, "userId": int64(41), "refundUsdMicros": int64(52_580_000), "status": "used"}
+	}
+	operation.RequestHash = workspaceDeleteLegacyRequestHash(operation)
+	result, _ := json.Marshal(operation)
+	return map[string]any{
+		"id": operation.OperationID, "operationId": operation.OperationID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
+		"resourceId": operation.WorkspaceID, "resourceKind": "workspace", "action": workspaceDeleteLegacyAction, "status": status, "result": string(result),
+		"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "attachmentId": operation.AttachmentID, "runtimeId": operation.RuntimeID,
+		"createdAt": createdAt,
 	}
 }
 
@@ -659,14 +799,14 @@ func TestWorkspaceDeleteComputePendingKeepsSameOperationAndOneMutation(t *testin
 		t.Fatalf("pending delete status=%d body=%s", first.Code, first.Body.String())
 	}
 	var pending map[string]any
-	if json.Unmarshal(first.Body.Bytes(), &pending) != nil || pending["status"] != "pending" || pending["phase"] != "storage_destroyed" ||
+	if json.Unmarshal(first.Body.Bytes(), &pending) != nil || pending["status"] != "pending" || pending["phase"] != "storage_absent" ||
 		pending["ownerStage"] != "compute" || int64(numberField(pending, "computeReadbacks", 0)) != 1 ||
 		int64(numberField(pending, "maxComputeReadbacks", 0)) != workspaceDeleteComputeReadbackBudget {
 		t.Fatalf("pending delete response=%#v", pending)
 	}
 	row, found, err := fixture.store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
 	operation, decodeErr := decodeWorkspaceDeleteOperation(row)
-	if err != nil || !found || decodeErr != nil || operation.Status != "running" || operation.Phase != "storage_destroyed" ||
+	if err != nil || !found || decodeErr != nil || operation.Status != "running" || operation.Phase != "storage_absent" ||
 		operation.ComputeStatus != "destroying" || operation.ComputeReadbacks != 1 || operation.MaxComputeReadbacks != workspaceDeleteComputeReadbackBudget || operation.LastErrorCode != "" {
 		t.Fatalf("pending delete operation=%#v found=%v err=%v decode=%v", operation, found, err, decodeErr)
 	}
@@ -688,7 +828,7 @@ func TestWorkspaceDeleteComputePendingKeepsSameOperationAndOneMutation(t *testin
 			computeReads++
 		}
 	}
-	if computeMutations != 1 || computeReads != 2 || sub2API.keyDeletes != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
+	if computeMutations != 1 || computeReads != 2 || sub2API.keyDeletes != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 {
 		t.Fatalf("continued delete mutations=%d reads=%d keyDeletes=%d refunds=%d receipts=%d calls=%#v", computeMutations, computeReads, sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts), fabric.recordedCalls())
 	}
 }
@@ -766,7 +906,7 @@ func TestWorkspaceDeleteComputePendingBudgetAndFailureMatrix(t *testing.T) {
 		}
 		row, found, err := fixture.store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
 		operation, decodeErr := decodeWorkspaceDeleteOperation(row)
-		if err != nil || !found || decodeErr != nil || operation.Status != "manual_review" || operation.Phase != "storage_destroyed" ||
+		if err != nil || !found || decodeErr != nil || operation.Status != "manual_review" || operation.Phase != "storage_absent" ||
 			operation.LastErrorCode != "fabric_compute_absence_unconfirmed" || operation.ComputeReadbacks != workspaceDeleteComputeReadbackBudget {
 			t.Fatalf("exhausted operation=%#v found=%v err=%v decode=%v", operation, found, err, decodeErr)
 		}
@@ -835,16 +975,15 @@ func TestWorkspaceDeleteClaimAuthoritiesFailClosedBeforeFabric(t *testing.T) {
 		}
 	})
 
-	t.Run("debit conflict", func(t *testing.T) {
+	t.Run("financial history is not consulted", func(t *testing.T) {
 		fixture, sub2API, ledger, events := newWorkspaceDeleteEventFixture(t)
 		entry := sub2API.history["opl:workspace-purchase-alpha"]
 		entry.ValueUSDMicros++
 		sub2API.history[entry.Code] = entry
 		response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-debit-conflict")
-		want := []string{"ledger:purchase-get", "sub2api:debit-get"}
-		if response.Code != http.StatusBadGateway || strings.Join(events.snapshot(), "\n") != strings.Join(want, "\n") ||
-			sub2API.keyDeletes != 0 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 || len(fixture.fabric.recordedCalls()) != 0 {
-			t.Fatalf("debit conflict status=%d events=%#v calls=%#v keyDeletes=%d refunds=%d receipts=%d", response.Code, events.snapshot(), fixture.fabric.recordedCalls(), sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts))
+		if response.Code != http.StatusOK || len(sub2API.historyReads) != 0 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 ||
+			!slices.Contains(events.snapshot(), "ledger:deletion-receipt") {
+			t.Fatalf("delete status=%d events=%#v history=%#v refunds=%d receipts=%d", response.Code, events.snapshot(), sub2API.historyReads, len(sub2API.refunds), len(ledger.receipts))
 		}
 	})
 }
@@ -884,7 +1023,7 @@ func TestWorkspaceDeleteFabricObservationStatesFailClosed(t *testing.T) {
 	}
 }
 
-func TestWorkspaceDeleteKeyAndRefundOwnerConflictsStopSubsequentMutation(t *testing.T) {
+func TestWorkspaceDeleteKeyOwnerConflictsStopSubsequentMutation(t *testing.T) {
 	t.Run("key identity conflict", func(t *testing.T) {
 		fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
 		sub2API.keyName = "customer-key"
@@ -903,17 +1042,6 @@ func TestWorkspaceDeleteKeyAndRefundOwnerConflictsStopSubsequentMutation(t *test
 		}
 	})
 
-	t.Run("refund history conflict", func(t *testing.T) {
-		fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
-		code := monthlyRefundCode(monthlyEnvironment(), workspaceDeleteOperationID("ws-alpha"))
-		usedBy := int64(42)
-		usedAt := time.Now().UTC()
-		sub2API.history[code] = clients.Sub2APIBalanceHistoryEntry{Code: code, Type: "balance", ValueUSDMicros: 52_580_000, Status: "used", UsedBy: &usedBy, UsedAt: &usedAt}
-		response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-refund-conflict")
-		if response.Code != http.StatusBadGateway || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
-			t.Fatalf("status=%d refunds=%d receipts=%d", response.Code, len(sub2API.refunds), len(ledger.receipts))
-		}
-	})
 }
 
 func TestWorkspaceDeleteResponseLossAndReceiptOnlyRecovery(t *testing.T) {
@@ -921,7 +1049,7 @@ func TestWorkspaceDeleteResponseLossAndReceiptOnlyRecovery(t *testing.T) {
 		fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
 		fixture.fabric.runtimeResponseLost = true
 		response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-runtime-response-loss")
-		if response.Code != http.StatusOK || sub2API.keyDeletes != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
+		if response.Code != http.StatusOK || sub2API.keyDeletes != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 {
 			t.Fatalf("status=%d body=%s keyDeletes=%d refunds=%d receipts=%d", response.Code, response.Body.String(), sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts))
 		}
 	})
@@ -930,27 +1058,12 @@ func TestWorkspaceDeleteResponseLossAndReceiptOnlyRecovery(t *testing.T) {
 		fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
 		sub2API.keyResponseLost = true
 		first := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-key-response-loss")
-		if first.Code != http.StatusOK || sub2API.keyDeletes != 1 || sub2API.keyExists == true || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
+		if first.Code != http.StatusOK || sub2API.keyDeletes != 1 || sub2API.keyExists == true || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 {
 			t.Fatalf("first status=%d keyExists=%v deletes=%d refunds=%d", first.Code, sub2API.keyExists, sub2API.keyDeletes, len(sub2API.refunds))
 		}
-		assertWorkspaceDeleteExactHistoryReads(t, sub2API)
 		second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-key-response-loss-replay")
-		if second.Code != http.StatusOK || sub2API.keyDeletes != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
+		if second.Code != http.StatusOK || sub2API.keyDeletes != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 {
 			t.Fatalf("replay status=%d body=%s deletes=%d refunds=%d receipts=%d", second.Code, second.Body.String(), sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts))
-		}
-	})
-
-	t.Run("refund response loss", func(t *testing.T) {
-		fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
-		sub2API.responseLost = true
-		response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-refund-response-loss")
-		if response.Code != http.StatusOK || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
-			t.Fatalf("status=%d body=%s refunds=%d receipts=%d historyReads=%#v", response.Code, response.Body.String(), len(sub2API.refunds), len(ledger.receipts), sub2API.historyReads)
-		}
-		assertWorkspaceDeleteExactHistoryReads(t, sub2API)
-		replayed := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-refund-response-loss-replay")
-		if replayed.Code != http.StatusOK || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
-			t.Fatalf("replay status=%d refunds=%d receipts=%d", replayed.Code, len(sub2API.refunds), len(ledger.receipts))
 		}
 	})
 
@@ -959,12 +1072,24 @@ func TestWorkspaceDeleteResponseLossAndReceiptOnlyRecovery(t *testing.T) {
 		ledger.failures = 1
 		first := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-receipt-failure")
 		fabricCalls := len(fixture.fabric.recordedCalls())
-		if first.Code != http.StatusBadGateway || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
+		if first.Code != http.StatusBadGateway || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 {
 			t.Fatalf("first status=%d refunds=%d receipts=%d", first.Code, len(sub2API.refunds), len(ledger.receipts))
 		}
+		row, found, err := fixture.store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
+		operation, decodeErr := decodeWorkspaceDeleteOperation(row)
+		if err != nil || !found || decodeErr != nil || operation.Phase != "workspace_absent" || operation.Status != "running" ||
+			ledger.keys[0] != operation.OperationID+":deletion-receipt" {
+			t.Fatalf("receipt-only recovery point operation=%#v found=%v err=%v decode=%v keys=%#v", operation, found, err, decodeErr, ledger.keys)
+		}
+		if _, found, err := fixture.store.GetWorkspace(context.Background(), "ws-alpha"); err != nil || found {
+			t.Fatalf("Workspace must already be absent before receipt retry found=%v err=%v", found, err)
+		}
 		second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-receipt-failure-replay")
-		if second.Code != http.StatusOK || len(sub2API.refunds) != 1 || sub2API.keyDeletes != 1 || len(ledger.receipts) != 2 || len(fixture.fabric.recordedCalls()) != fabricCalls {
+		if second.Code != http.StatusOK || len(sub2API.refunds) != 0 || sub2API.keyDeletes != 1 || len(ledger.receipts) != 2 || len(fixture.fabric.recordedCalls()) != fabricCalls {
 			t.Fatalf("replay status=%d refunds=%d keyDeletes=%d receipts=%d Fabric calls=%d/%d", second.Code, len(sub2API.refunds), sub2API.keyDeletes, len(ledger.receipts), len(fixture.fabric.recordedCalls()), fabricCalls)
+		}
+		if ledger.keys[0] != ledger.keys[1] || ledger.keys[1] != workspaceDeleteOperationID("ws-alpha")+":deletion-receipt" {
+			t.Fatalf("receipt retry changed idempotency key: %#v", ledger.keys)
 		}
 	})
 }
@@ -980,38 +1105,10 @@ func TestWorkspaceDeleteCrashBeforeOwnerSendUsesOneAuthorizedExactReplay(t *test
 		}
 		second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "authorize-key-crash-replay")
 		if second.Code != http.StatusOK || sub2API.keyDeletes != 1 || len(sub2API.keyDeleteKeys) != 1 ||
-			sub2API.keyDeleteKeys[0] != workspaceDeleteOperationID("ws-alpha")+":key" || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
+			sub2API.keyDeleteKeys[0] != workspaceDeleteOperationID("ws-alpha")+":key" || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 {
 			t.Fatalf("replay status=%d body=%s deletes=%d keys=%#v refunds=%d receipts=%d", second.Code, second.Body.String(), sub2API.keyDeletes, sub2API.keyDeleteKeys, len(sub2API.refunds), len(ledger.receipts))
 		}
 	})
-
-	t.Run("Refund reservation", func(t *testing.T) {
-		base := newMemoryTableStore()
-		store := &workspaceDeletePersistThenFailStore{controlPlaneTableStore: base, failRefundReservation: true}
-		fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixtureWith(t, store, &workspaceDeleteFabric{})
-		first := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-refund-crash")
-		if first.Code != http.StatusInternalServerError || sub2API.keyDeletes != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
-			t.Fatalf("first status=%d keyDeletes=%d refunds=%d receipts=%d", first.Code, sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts))
-		}
-		second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "authorize-refund-crash-replay")
-		if second.Code != http.StatusOK || sub2API.keyDeletes != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
-			t.Fatalf("replay status=%d body=%s deletes=%d refunds=%d receipts=%d", second.Code, second.Body.String(), sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts))
-		}
-		if sub2API.refunds[0].Code != monthlyRefundCode(monthlyEnvironment(), workspaceDeleteOperationID("ws-alpha")) {
-			t.Fatalf("refund changed exact code: %#v", sub2API.refunds[0])
-		}
-	})
-}
-
-func TestWorkspaceDeleteRefundErrorIsGETOnlyOnReplay(t *testing.T) {
-	fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
-	sub2API.refundErr = errors.New("refund transport unavailable")
-	first := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-refund-error")
-	second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-refund-error-replay")
-	if first.Code != http.StatusBadGateway || second.Code != http.StatusBadGateway || len(sub2API.refunds) != 1 || len(ledger.receipts) != 0 {
-		t.Fatalf("statuses=%d/%d refunds=%d receipts=%d", first.Code, second.Code, len(sub2API.refunds), len(ledger.receipts))
-	}
-	assertWorkspaceDeleteExactHistoryReads(t, sub2API)
 }
 
 func TestWorkspaceDeleteConcurrentReplayUsesOneMutationChain(t *testing.T) {
@@ -1043,8 +1140,126 @@ func TestWorkspaceDeleteConcurrentReplayUsesOneMutationChain(t *testing.T) {
 			t.Fatalf("concurrent status=%d body=%s", response.Code, response.Body.String())
 		}
 	}
-	if sub2API.keyDeletes != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 {
+	if sub2API.keyDeletes != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 {
 		t.Fatalf("concurrent keyDeletes=%d refunds=%d receipts=%d", sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts))
+	}
+}
+
+func TestWorkspaceDeleteCompletedOperationRejectsRecreatedWorkspaceWithoutMutation(t *testing.T) {
+	fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
+	first := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-before-recreate")
+	if first.Code != http.StatusOK {
+		t.Fatalf("initial delete status=%d body=%s", first.Code, first.Body.String())
+	}
+	operationID := workspaceDeleteOperationID("ws-alpha")
+	terminalRow, found, err := fixture.store.GetRuntimeOperation(context.Background(), operationID)
+	if err != nil || !found {
+		t.Fatalf("terminal operation found=%v err=%v", found, err)
+	}
+	terminalResult := stringValue(terminalRow["result"])
+	if err := fixture.store.SaveWorkspace(context.Background(), cloneMap(fixture.workspace)); err != nil {
+		t.Fatal(err)
+	}
+	fabricCalls, keyDeletes, refunds, receipts := len(fixture.fabric.recordedCalls()), sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts)
+	for attempt := 0; attempt < 2; attempt++ {
+		response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-recreated-"+strconv.Itoa(attempt))
+		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errWorkspaceDeleteTerminalConflict.Error()) {
+			t.Fatalf("recreated Workspace attempt=%d status=%d body=%s", attempt, response.Code, response.Body.String())
+		}
+	}
+	if len(fixture.fabric.recordedCalls()) != fabricCalls || sub2API.keyDeletes != keyDeletes || len(sub2API.refunds) != refunds || len(ledger.receipts) != receipts {
+		t.Fatalf("terminal conflict repeated mutation Fabric=%d/%d key=%d/%d refunds=%d/%d receipts=%d/%d", len(fixture.fabric.recordedCalls()), fabricCalls, sub2API.keyDeletes, keyDeletes, len(sub2API.refunds), refunds, len(ledger.receipts), receipts)
+	}
+	afterRow, found, err := fixture.store.GetRuntimeOperation(context.Background(), operationID)
+	operation, decodeErr := decodeWorkspaceDeleteOperation(afterRow)
+	if err != nil || !found || decodeErr != nil || operation.Phase != "complete" || operation.Status != "succeeded" || stringValue(afterRow["result"]) != terminalResult {
+		t.Fatalf("terminal operation changed operation=%#v found=%v err=%v decode=%v", operation, found, err, decodeErr)
+	}
+	audits, err := fixture.store.ListAuditEvents(context.Background(), "acct-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditID := "audit-" + stableID("workspace.delete.terminal_conflict", operationID, errWorkspaceDeleteTerminalConflict.Error())[:12]
+	matching := make([]map[string]any, 0, 1)
+	for _, audit := range audits {
+		if stringValue(audit["id"]) == auditID {
+			matching = append(matching, audit)
+		}
+	}
+	if len(matching) != 1 || stringValue(matching[0]["action"]) != "workspace.delete.terminal_conflict" || stringValue(matching[0]["targetAccountId"]) != "acct-alpha" ||
+		stringValue(matching[0]["resourceKind"]) != "workspace" || stringValue(matching[0]["resourceId"]) != "ws-alpha" || stringValue(matching[0]["result"]) != "conflict" ||
+		stringValue(mapField(matching[0], "after")["operationId"]) != operationID || stringValue(mapField(matching[0], "after")["error"]) != errWorkspaceDeleteTerminalConflict.Error() {
+		t.Fatalf("terminal conflict audits=%#v", audits)
+	}
+}
+
+func TestWorkspaceDeleteCompletedOperationRejectsInvalidTerminalEvidenceWithoutMutation(t *testing.T) {
+	fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
+	first := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-before-terminal-evidence-drift")
+	if first.Code != http.StatusOK {
+		t.Fatalf("initial delete status=%d body=%s", first.Code, first.Body.String())
+	}
+	operationID := workspaceDeleteOperationID("ws-alpha")
+	row, found, err := fixture.store.GetRuntimeOperation(context.Background(), operationID)
+	if err != nil || !found {
+		t.Fatalf("terminal operation found=%v err=%v", found, err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stringValue(row["result"])), &result); err != nil {
+		t.Fatal(err)
+	}
+	delete(result, "deletionReceiptId")
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row["result"] = string(encoded)
+	if err := fixture.store.SaveRuntimeOperation(context.Background(), row); err != nil {
+		t.Fatal(err)
+	}
+	terminalResult := string(encoded)
+	fabricCalls, keyDeletes, refunds, receipts := len(fixture.fabric.recordedCalls()), sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts)
+	response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-terminal-evidence-drift")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errWorkspaceDeleteTerminalConflict.Error()) ||
+		len(fixture.fabric.recordedCalls()) != fabricCalls || sub2API.keyDeletes != keyDeletes || len(sub2API.refunds) != refunds || len(ledger.receipts) != receipts {
+		t.Fatalf("terminal evidence conflict status=%d body=%s Fabric=%d/%d key=%d/%d refunds=%d/%d receipts=%d/%d", response.Code, response.Body.String(), len(fixture.fabric.recordedCalls()), fabricCalls, sub2API.keyDeletes, keyDeletes, len(sub2API.refunds), refunds, len(ledger.receipts), receipts)
+	}
+	afterRow, found, err := fixture.store.GetRuntimeOperation(context.Background(), operationID)
+	if err != nil || !found || stringValue(afterRow["result"]) != terminalResult || stringValue(afterRow["status"]) != "succeeded" {
+		t.Fatalf("terminal evidence conflict changed operation=%#v found=%v err=%v", afterRow, found, err)
+	}
+	audits, err := fixture.store.ListAuditEvents(context.Background(), "acct-alpha")
+	auditID := "audit-" + stableID("workspace.delete.terminal_conflict", operationID, errWorkspaceDeleteTerminalConflict.Error())[:12]
+	if err != nil || !slices.ContainsFunc(audits, func(audit map[string]any) bool { return stringValue(audit["id"]) == auditID }) {
+		t.Fatalf("terminal evidence conflict audit=%#v err=%v", audits, err)
+	}
+}
+
+func TestWorkspaceDeleteTerminalConflictAuditFailureFailsClosed(t *testing.T) {
+	store := &workspaceDeleteAuditFailStore{controlPlaneTableStore: newMemoryTableStore()}
+	fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixtureWith(t, store, &workspaceDeleteFabric{})
+	first := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-before-audit-failure")
+	if first.Code != http.StatusOK {
+		t.Fatalf("initial delete status=%d body=%s", first.Code, first.Body.String())
+	}
+	operationID := workspaceDeleteOperationID("ws-alpha")
+	terminalRow, found, err := fixture.store.GetRuntimeOperation(context.Background(), operationID)
+	if err != nil || !found {
+		t.Fatalf("terminal operation found=%v err=%v", found, err)
+	}
+	if err := fixture.store.SaveWorkspace(context.Background(), cloneMap(fixture.workspace)); err != nil {
+		t.Fatal(err)
+	}
+	store.failAudit = true
+	fabricCalls, keyDeletes, refunds, receipts := len(fixture.fabric.recordedCalls()), sub2API.keyDeletes, len(sub2API.refunds), len(ledger.receipts)
+	response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-audit-failure")
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "state_persist_failed") ||
+		len(fixture.fabric.recordedCalls()) != fabricCalls || sub2API.keyDeletes != keyDeletes || len(sub2API.refunds) != refunds || len(ledger.receipts) != receipts {
+		t.Fatalf("audit failure status=%d body=%s Fabric=%d/%d key=%d/%d refunds=%d/%d receipts=%d/%d", response.Code, response.Body.String(), len(fixture.fabric.recordedCalls()), fabricCalls, sub2API.keyDeletes, keyDeletes, len(sub2API.refunds), refunds, len(ledger.receipts), receipts)
+	}
+	afterRow, found, err := fixture.store.GetRuntimeOperation(context.Background(), operationID)
+	if err != nil || !found || stringValue(afterRow["result"]) != stringValue(terminalRow["result"]) || stringValue(afterRow["status"]) != "succeeded" {
+		t.Fatalf("audit failure changed terminal operation=%#v found=%v err=%v", afterRow, found, err)
 	}
 }
 
@@ -1104,8 +1319,6 @@ func TestWorkspaceDeleteOwnerCommandIsOrderedDurableAndIdempotent(t *testing.T) 
 		"storage:storage-alpha:" + operationID + ":storage",
 		"compute:compute-alpha:" + operationID + ":compute",
 		"compute-read:compute-alpha:",
-		"runtime-read:ws-alpha:",
-		"secret-read:ws-alpha:",
 	}
 	if strings.Join(fabric.recordedCalls(), "\n") != strings.Join(wantCalls, "\n") {
 		t.Fatalf("Fabric calls=%#v want=%#v", fabric.recordedCalls(), wantCalls)
@@ -1130,8 +1343,7 @@ func TestWorkspaceDeleteOwnerCommandIsOrderedDurableAndIdempotent(t *testing.T) 
 	}
 	decoded, err := decodeWorkspaceDeleteOperation(operation)
 	if err != nil || decoded.Phase != "complete" || decoded.RuntimeStatus != "absent" || decoded.SecretStatus != "absent" || decoded.KeyStatus != "absent" ||
-		decoded.AttachmentStatus != "detached" || decoded.StorageStatus != "destroyed" || decoded.ComputeStatus != "destroyed" ||
-		decoded.RefundReceiptID == "" || !workspaceDeleteRefundConfirmationMatches(decoded) {
+		decoded.AttachmentStatus != "absent" || decoded.StorageStatus != "absent" || decoded.ComputeStatus != "absent" || decoded.DeletionReceiptID != "receipt-delete-alpha" {
 		t.Fatalf("decoded operation=%#v err=%v", decoded, err)
 	}
 
@@ -1155,7 +1367,7 @@ func TestWorkspaceDeletePartialFabricResultResumesWithNewTransportKey(t *testing
 	}
 	row, found, err := fixture.store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
 	operation, decodeErr := decodeWorkspaceDeleteOperation(row)
-	if err != nil || !found || decodeErr != nil || operation.Status != "manual_review" || operation.Phase != "attachment_detached" {
+	if err != nil || !found || decodeErr != nil || operation.Status != "manual_review" || operation.Phase != "attachment_absent" {
 		t.Fatalf("partial operation=%#v found=%v err=%v decode=%v", operation, found, err, decodeErr)
 	}
 	second := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, key+":new-session")
@@ -1167,9 +1379,8 @@ func TestWorkspaceDeletePartialFabricResultResumesWithNewTransportKey(t *testing
 		t.Fatalf("resumed operation payload=%#v err=%v", payload, err)
 	}
 	calls := fabric.recordedCalls()
-	if len(calls) != 12 || calls[6] != calls[7] || !strings.HasPrefix(calls[6], "storage:") ||
-		!strings.HasPrefix(calls[8], "compute:") || !strings.HasPrefix(calls[9], "compute-read:") ||
-		!strings.HasPrefix(calls[10], "runtime-read:") || !strings.HasPrefix(calls[11], "secret-read:") {
+	if len(calls) != 10 || calls[6] != calls[7] || !strings.HasPrefix(calls[6], "storage:") ||
+		!strings.HasPrefix(calls[8], "compute:") || !strings.HasPrefix(calls[9], "compute-read:") {
 		t.Fatalf("resume calls=%#v", calls)
 	}
 }
@@ -1277,6 +1488,22 @@ func TestWorkspaceDeleteDoesNotReturnSuccessBeforeAuthoritativeAbsence(t *testin
 	}
 }
 
+func TestWorkspaceDeleteDoesNotRecordReceiptWhileWorkspaceStillExists(t *testing.T) {
+	fixture, _, ledger := newWorkspaceDeleteCompletionFixture(t)
+	operation := workspaceDeleteStoreOperationForWorkspace(fixture.workspace, time.Now().UTC().Format(time.RFC3339Nano))
+	operation.Phase = "workspace_absent"
+	operation.RuntimeStatus, operation.SecretStatus, operation.AttachmentStatus = "absent", "absent", "absent"
+	operation.StorageStatus, operation.ComputeStatus, operation.KeyStatus = "absent", "absent", "absent"
+	operation.ComputeReadbacks, operation.MaxComputeReadbacks = 1, workspaceDeleteComputeReadbackBudget
+	if err := fixture.store.SaveRuntimeOperation(context.Background(), workspaceDeleteOperationRow(operation)); err != nil {
+		t.Fatal(err)
+	}
+	response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-workspace-presence-drift")
+	if response.Code != http.StatusBadGateway || len(ledger.receipts) != 0 {
+		t.Fatalf("presence drift status=%d body=%s receipts=%#v", response.Code, response.Body.String(), ledger.receipts)
+	}
+}
+
 func TestWorkspaceDeleteStoreLifecycleMemoryAndSQLite(t *testing.T) {
 	for _, storeCase := range []struct {
 		name string
@@ -1293,8 +1520,280 @@ func TestWorkspaceDeleteStoreLifecycleMemoryAndSQLite(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDeleteRenewalMutualExclusionMemoryAndSQLite(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "sqlite", new: func(t *testing.T) controlPlaneTableStore {
+			return NewTestEntStateStore(t, t.TempDir()+"/workspace-delete-renewal.sqlite")
+		}},
+	} {
+		t.Run(storeCase.name, func(t *testing.T) {
+			exerciseWorkspaceDeleteRenewalMutualExclusion(t, storeCase.new(t))
+		})
+	}
+}
+
 func TestPostgresWorkspaceDeleteStoreLifecycle(t *testing.T) {
 	exerciseWorkspaceDeleteStoreLifecycle(t, newPostgresWorkspaceRenewalStore(t))
+}
+
+func TestPostgresWorkspaceDeleteRenewalMutualExclusion(t *testing.T) {
+	exerciseWorkspaceDeleteRenewalMutualExclusion(t, newPostgresWorkspaceRenewalStore(t))
+}
+
+func TestPostgresWorkspaceDeleteRenewalConcurrentClaim(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	var blocker *sql.Tx
+	var wg sync.WaitGroup
+	defer func() {
+		cancel()
+		if blocker != nil {
+			_ = blocker.Rollback()
+		}
+		wg.Wait()
+	}()
+	store, db := newPostgresWorkspaceRenewalStoreWithDB(t)
+	workspace := currentWorkspaceRenewalAPIRow()
+	workspaceID := "workspace-delete-renewal-concurrent-claim"
+	workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
+	workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = true, "usr-delete", time.Now().UTC().Format(time.RFC3339Nano)
+	if err := store.SaveWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	operations, err := store.ListRuntimeOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewal, err := newWorkspaceRenewalOperation(workspace, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewalClaim := workspaceRenewalClaimCAS{
+		WorkspaceID: workspaceID, AccountID: "acct-delete", ExpectedPaidThrough: stringValue(workspace["paidThrough"]), ExpectedAutoRenew: true,
+		ExpectedOperationsVersion: runtimeOperationsVersion(operations, workspaceID), DesiredOperation: workspaceRenewalOperationRow(renewal),
+	}
+	deleteOperation := workspaceDeleteStoreOperationForWorkspace(workspace, time.Now().UTC().Format(time.RFC3339Nano))
+	blocker, err = db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blockerPID int
+	if err := blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+		t.Fatal(err)
+	}
+	var lockedID string
+	if err := blocker.QueryRowContext(ctx, `SELECT id FROM control_plane_workspaces WHERE id = $1 FOR UPDATE`, workspaceID).Scan(&lockedID); err != nil {
+		t.Fatal(err)
+	}
+	if lockedID != workspaceID {
+		t.Fatalf("blocker locked Workspace=%q", lockedID)
+	}
+	type claimResult struct {
+		kind string
+		err  error
+	}
+	start := make(chan struct{})
+	results := make(chan claimResult, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		results <- claimResult{kind: "delete", err: store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(deleteOperation)})}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		results <- claimResult{kind: "renewal", err: store.ClaimWorkspaceRenewal(ctx, renewalClaim)}
+	}()
+	close(start)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiters, lockWaiters int
+		if err := db.QueryRowContext(ctx, `
+			WITH RECURSIVE blocker_waiters(pid, wait_event_type) AS (
+				SELECT activity.pid, activity.wait_event_type
+				FROM pg_stat_activity AS activity
+				WHERE $1 = ANY(pg_blocking_pids(activity.pid))
+				UNION
+				SELECT activity.pid, activity.wait_event_type
+				FROM pg_stat_activity AS activity
+				JOIN blocker_waiters AS parent
+				  ON parent.pid = ANY(pg_blocking_pids(activity.pid))
+			)
+			SELECT count(*), count(*) FILTER (WHERE wait_event_type = 'Lock')
+			FROM blocker_waiters
+		`, blockerPID).Scan(&waiters, &lockWaiters); err != nil {
+			t.Fatal(err)
+		}
+		if waiters == 2 && lockWaiters == 2 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("claims did not both enter blocker PID %d lock wait chain: waiters=%d lockWaiters=%d err=%v", blockerPID, waiters, lockWaiters, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	if err := blocker.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	claimErrors := make(map[string]error, 2)
+	for range 2 {
+		select {
+		case result := <-results:
+			claimErrors[result.kind] = result.err
+		case <-ctx.Done():
+			t.Fatalf("concurrent claims did not converge: %v", ctx.Err())
+		}
+	}
+	deleteErr, renewalErr := claimErrors["delete"], claimErrors["renewal"]
+	if (deleteErr == nil) == (renewalErr == nil) {
+		t.Fatalf("concurrent claims delete=%v renewal=%v", deleteErr, renewalErr)
+	}
+	if deleteErr == nil {
+		if !errors.Is(renewalErr, errWorkspaceRenewalCASConflict) {
+			t.Fatalf("Delete winner returned Renewal error=%v", renewalErr)
+		}
+	} else if !errors.Is(deleteErr, errWorkspaceDeleteCASConflict) || renewalErr != nil {
+		t.Fatalf("Renewal winner returned Delete error=%v renewal=%v", deleteErr, renewalErr)
+	}
+	operations, err = store.ListRuntimeOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycleOperations := 0
+	for _, operation := range operations {
+		if stringValue(operation["workspaceId"]) == workspaceID && (stringValue(operation["action"]) == workspaceDeleteAction || stringValue(operation["action"]) == "workspace.renewal") {
+			lifecycleOperations++
+		}
+	}
+	if lifecycleOperations != 1 {
+		t.Fatalf("concurrent lifecycle operations=%d rows=%#v", lifecycleOperations, operations)
+	}
+}
+
+func exerciseWorkspaceDeleteRenewalMutualExclusion(t *testing.T, store controlPlaneTableStore) {
+	t.Helper()
+	ctx := context.Background()
+	for _, renewalStatus := range []string{"claimed", "insufficient", "debit_pending", "debited", "provider_renewing", "verifying", "refund_pending", "manual_review"} {
+		workspace := currentWorkspaceRenewalAPIRow()
+		workspaceID := "workspace-delete-blocked-by-renewal-" + renewalStatus
+		workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
+		workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = true, "usr-delete", time.Now().UTC().Format(time.RFC3339Nano)
+		if err := store.SaveWorkspace(ctx, workspace); err != nil {
+			t.Fatal(err)
+		}
+		renewal, err := newWorkspaceRenewalOperation(workspace, time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		renewal.Status = renewalStatus
+		if err := store.SaveRuntimeOperation(ctx, workspaceRenewalOperationRow(renewal)); err != nil {
+			t.Fatal(err)
+		}
+		operation := workspaceDeleteStoreOperationForWorkspace(workspace, time.Now().UTC().Format(time.RFC3339Nano))
+		if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(operation)}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
+			t.Fatalf("renewal %s did not block Delete claim: %v", renewalStatus, err)
+		}
+	}
+	for _, renewalStatus := range []string{"active", "cancelled", "refunded", "expired_unpaid"} {
+		workspace := currentWorkspaceRenewalAPIRow()
+		workspaceID := "workspace-delete-after-terminal-renewal-" + renewalStatus
+		workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
+		workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = true, "usr-delete", time.Now().UTC().Format(time.RFC3339Nano)
+		if err := store.SaveWorkspace(ctx, workspace); err != nil {
+			t.Fatal(err)
+		}
+		renewal, err := newWorkspaceRenewalOperation(workspace, time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		renewal.Status = renewalStatus
+		if renewalStatus == "refunded" || renewalStatus == "expired_unpaid" {
+			renewal.Phase = "complete"
+		}
+		if err := store.SaveRuntimeOperation(ctx, workspaceRenewalOperationRow(renewal)); err != nil {
+			t.Fatal(err)
+		}
+		operation := workspaceDeleteStoreOperationForWorkspace(workspace, time.Now().UTC().Format(time.RFC3339Nano))
+		if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(operation)}); err != nil {
+			t.Fatalf("terminal renewal %s blocked Delete claim: %v", renewalStatus, err)
+		}
+	}
+	invalidWorkspace := currentWorkspaceRenewalAPIRow()
+	invalidWorkspaceID := "workspace-delete-blocked-by-invalid-renewal"
+	invalidWorkspace["id"], invalidWorkspace["accountId"], invalidWorkspace["ownerAccountId"], invalidWorkspace["ownerUserId"] = invalidWorkspaceID, "acct-delete", "acct-delete", "usr-delete"
+	invalidWorkspace["autoRenew"], invalidWorkspace["authorizedBy"], invalidWorkspace["authorizedAt"] = true, "usr-delete", time.Now().UTC().Format(time.RFC3339Nano)
+	if err := store.SaveWorkspace(ctx, invalidWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveRuntimeOperation(ctx, map[string]any{
+		"id": "invalid-renewal-blocking-delete", "operationId": "invalid-renewal-blocking-delete", "accountId": "acct-delete", "workspaceId": invalidWorkspaceID,
+		"resourceId": invalidWorkspaceID, "resourceKind": "workspace_renewal", "action": "workspace.renewal", "status": "active", "result": `{}`,
+		"createdAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	invalidDelete := workspaceDeleteStoreOperationForWorkspace(invalidWorkspace, time.Now().UTC().Format(time.RFC3339Nano))
+	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(invalidDelete)}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
+		t.Fatalf("invalid Renewal did not fail closed before Delete claim: %v", err)
+	}
+
+	workspace := currentWorkspaceRenewalAPIRow()
+	workspaceID := "workspace-renewal-blocked-by-delete"
+	workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
+	workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = true, "usr-delete", time.Now().UTC().Format(time.RFC3339Nano)
+	if err := store.SaveWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	operation := workspaceDeleteStoreOperationForWorkspace(workspace, time.Now().UTC().Format(time.RFC3339Nano))
+	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(operation)}); err != nil {
+		t.Fatal(err)
+	}
+	operations, err := store.ListRuntimeOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewalID := "renewal-blocked-by-delete"
+	claim := workspaceRenewalClaimCAS{
+		WorkspaceID: workspaceID, AccountID: "acct-delete", ExpectedPaidThrough: stringValue(workspace["paidThrough"]), ExpectedAutoRenew: true,
+		ExpectedOperationsVersion: runtimeOperationsVersion(operations, workspaceID),
+		DesiredOperation: map[string]any{
+			"id": renewalID, "operationId": renewalID, "accountId": "acct-delete", "workspaceId": workspaceID, "resourceId": workspaceID,
+			"resourceKind": "workspace_renewal", "action": "workspace.renewal", "status": "claimed", "result": `{}`, "createdAt": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}
+	if err := store.ClaimWorkspaceRenewal(ctx, claim); !errors.Is(err, errWorkspaceRenewalCASConflict) {
+		t.Fatalf("active Delete did not block Renewal claim: %v", err)
+	}
+}
+
+func TestWorkspaceRenewalWorkerSkipsActiveDeleteV2(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+	operation := workspaceDeleteStoreOperationForWorkspace(fixture.workspace, time.Now().UTC().Format(time.RFC3339Nano))
+	if err := fixture.app.tables.ApplyWorkspaceDelete(context.Background(), workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(operation)}); err != nil {
+		t.Fatal(err)
+	}
+	beforeEvents := len(*fixture.events)
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead)); err != nil {
+		t.Fatal(err)
+	}
+	operations, err := fixture.app.tables.ListRuntimeOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range operations {
+		if stringValue(row["workspaceId"]) == stringValue(fixture.workspace["id"]) && stringValue(row["action"]) == "workspace.renewal" {
+			t.Fatalf("worker claimed Renewal during active Delete: %#v", row)
+		}
+	}
+	if len(*fixture.events) != beforeEvents || len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeRenewKeys) != 0 || len(fixture.fabric.storageRenewKeys) != 0 {
+		t.Fatalf("worker mutated during active Delete events=%#v charges=%#v compute=%#v storage=%#v", *fixture.events, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys)
+	}
 }
 
 func TestPostgresWorkspaceDeleteComputePendingSurvivesRestart(t *testing.T) {
@@ -1332,7 +1831,7 @@ func TestPostgresWorkspaceDeleteComputePendingSurvivesRestart(t *testing.T) {
 	t.Cleanup(func() { _ = restarted.client.Close() })
 	row, found, err := restarted.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
 	operation, decodeErr := decodeWorkspaceDeleteOperation(row)
-	if err != nil || !found || decodeErr != nil || operation.Phase != "storage_destroyed" || operation.Status != "running" ||
+	if err != nil || !found || decodeErr != nil || operation.Phase != "storage_absent" || operation.Status != "running" ||
 		operation.ComputeStatus != "destroying" || operation.ComputeReadbacks != 1 || operation.MaxComputeReadbacks != workspaceDeleteComputeReadbackBudget {
 		t.Fatalf("restarted pending operation=%#v found=%v err=%v decode=%v", operation, found, err, decodeErr)
 	}
@@ -1401,27 +1900,57 @@ func exerciseWorkspaceDeleteStoreLifecycle(t *testing.T, store controlPlaneTable
 	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(claimed)}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
 		t.Fatalf("duplicate claim err=%v", err)
 	}
-	complete := claimed
-	complete.Phase, complete.Status = "complete", "succeeded"
+	invalid := claimed
+	invalid.Phase = "workspace_absent"
 	expected := stringValue(workspaceDeleteOperationRow(claimed)["result"])
-	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{RequireWorkspaceAbsent: true, ExpectedResult: expected, DesiredOperation: workspaceDeleteOperationRow(complete)}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
-		t.Fatalf("terminal update with Workspace present err=%v", err)
+	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{DeleteWorkspace: true, ExpectedResult: expected, DesiredOperation: workspaceDeleteOperationRow(invalid)}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
+		t.Fatalf("phase jump without cumulative evidence err=%v", err)
 	}
-	deleted := claimed
-	deleted.Phase = "workspace_deleted"
-	expected = stringValue(workspaceDeleteOperationRow(claimed)["result"])
-	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{DeleteWorkspace: true, ExpectedResult: expected, DesiredOperation: workspaceDeleteOperationRow(deleted)}); err != nil {
-		t.Fatal(err)
+	advance := func(current, next workspaceDeleteOperation, deleteWorkspace, requireAbsent bool) workspaceDeleteOperation {
+		t.Helper()
+		if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{
+			DeleteWorkspace: deleteWorkspace, RequireWorkspaceAbsent: requireAbsent,
+			ExpectedResult: stringValue(workspaceDeleteOperationRow(current)["result"]), DesiredOperation: workspaceDeleteOperationRow(next),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return next
 	}
+	runtimeAbsent := claimed
+	runtimeAbsent.Phase, runtimeAbsent.RuntimeStatus, runtimeAbsent.SecretStatus = "runtime_secret_absent", "absent", "absent"
+	current := advance(claimed, runtimeAbsent, false, false)
+	attachmentAbsent := current
+	attachmentAbsent.Phase, attachmentAbsent.AttachmentStatus = "attachment_absent", "absent"
+	current = advance(current, attachmentAbsent, false, false)
+	storageAbsent := current
+	storageAbsent.Phase, storageAbsent.StorageStatus = "storage_absent", "absent"
+	current = advance(current, storageAbsent, false, false)
+	impossibleComputeSchedule := current
+	impossibleComputeSchedule.ComputeStatus = "destroying"
+	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{
+		ExpectedResult: stringValue(workspaceDeleteOperationRow(current)["result"]), DesiredOperation: workspaceDeleteOperationRow(impossibleComputeSchedule),
+	}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
+		t.Fatalf("destroying compute without readback schedule err=%v", err)
+	}
+	computeAbsent := current
+	computeAbsent.Phase, computeAbsent.ComputeStatus = "compute_absent", "absent"
+	computeAbsent.ComputeReadbacks, computeAbsent.MaxComputeReadbacks = 1, workspaceDeleteComputeReadbackBudget
+	current = advance(current, computeAbsent, false, false)
+	keyAbsent := current
+	keyAbsent.Phase, keyAbsent.KeyStatus = "key_absent", "absent"
+	current = advance(current, keyAbsent, false, false)
+	deleted := current
+	deleted.Phase = "workspace_absent"
+	current = advance(current, deleted, true, false)
 	if _, found, err := store.GetWorkspace(ctx, claimed.WorkspaceID); err != nil || found {
 		t.Fatalf("Workspace after atomic delete found=%v err=%v", found, err)
 	}
-	complete = deleted
+	receiptRecorded := current
+	receiptRecorded.Phase, receiptRecorded.DeletionReceiptID = "deletion_receipt_recorded", "receipt-delete-store"
+	current = advance(current, receiptRecorded, false, true)
+	complete := current
 	complete.Phase, complete.Status = "complete", "succeeded"
-	expected = stringValue(workspaceDeleteOperationRow(deleted)["result"])
-	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{RequireWorkspaceAbsent: true, ExpectedResult: expected, DesiredOperation: workspaceDeleteOperationRow(complete)}); err != nil {
-		t.Fatal(err)
-	}
+	advance(current, complete, false, true)
 	row, found, err := store.GetRuntimeOperation(ctx, complete.OperationID)
 	if err != nil || !found || stringValue(row["status"]) != "succeeded" {
 		t.Fatalf("terminal operation=%#v found=%v err=%v", row, found, err)
@@ -1429,23 +1958,26 @@ func exerciseWorkspaceDeleteStoreLifecycle(t *testing.T, store controlPlaneTable
 	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{RequireWorkspaceAbsent: true, ExpectedResult: "stale", DesiredOperation: workspaceDeleteOperationRow(complete)}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
 		t.Fatalf("stale terminal update err=%v", err)
 	}
+	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{
+		RequireWorkspaceAbsent: true, ExpectedResult: stringValue(workspaceDeleteOperationRow(complete)["result"]), DesiredOperation: workspaceDeleteOperationRow(complete),
+	}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
+		t.Fatalf("terminal operation accepted a write: %v", err)
+	}
 }
 
 func workspaceDeleteStoreOperation(now string) workspaceDeleteOperation {
+	return workspaceDeleteStoreOperationForWorkspace(map[string]any{"id": "ws-delete-store", "accountId": "acct-delete", "ownerUserId": "usr-delete"}, now)
+}
+
+func workspaceDeleteStoreOperationForWorkspace(workspace map[string]any, now string) workspaceDeleteOperation {
+	workspaceID := stringValue(workspace["id"])
 	operation := workspaceDeleteOperation{
-		OperationID: workspaceDeleteOperationID("ws-delete-store"), AccountID: "acct-delete", OwnerUserID: "usr-delete", Sub2APIUserID: 41,
-		WorkspaceID: "ws-delete-store", LaunchOperationID: "workspace-launch-delete-store", RuntimeID: "runtime-delete",
+		SchemaVersion: 2, OperationID: workspaceDeleteOperationID(workspaceID), AccountID: stringValue(workspace["accountId"]), OwnerUserID: stringValue(workspace["ownerUserId"]), Sub2APIUserID: 41,
+		WorkspaceID: workspaceID, ResourceType: "workspace", ResourceID: workspaceID, LaunchOperationID: "workspace-launch-" + workspaceID, LaunchReceiptID: "receipt-launch-" + workspaceID,
+		RuntimeID: "runtime-delete", RuntimeServiceName: "runtime-delete",
 		ComputeID: "compute-delete", StorageID: "storage-delete", AttachmentID: "attachment-delete", WorkspaceAPIKeyID: 19,
-		GatewaySecretRef: "opl-gateway-ws-delete-store", GatewayFingerprint: "sha256:" + strings.Repeat("a", 64), DebitCode: "opl:debit-delete-store",
-		PurchaseReceiptID: "receipt-purchase-delete-store", RefundCode: "opl:refund-delete-store", TotalUSDMicros: 52_580_000,
+		GatewaySecretRef: "opl-gateway-ws-delete-store", GatewayFingerprint: "sha256:" + strings.Repeat("a", 64),
 		Phase: "claimed", Status: "running", CreatedAt: now,
-	}
-	operation.PurchaseReceipt = clients.ReceiptInput{
-		Type: "billing.workspace_purchased.v1", Status: "completed", AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, RequestID: operation.LaunchOperationID,
-		Execution: map[string]any{"runtimeId": operation.RuntimeID, "computeAllocationId": operation.ComputeID, "storageId": operation.StorageID,
-			"attachmentId": operation.AttachmentID, "workspaceApiKeyId": operation.WorkspaceAPIKeyID},
-		Cost: map[string]any{"sub2apiUserId": operation.Sub2APIUserID, "sub2apiRedeemCode": operation.DebitCode, "totalUsdMicros": operation.TotalUSDMicros,
-			"resourceId": operation.WorkspaceID},
 	}
 	operation.RequestHash = workspaceDeleteRequestHash(operation)
 	return operation
