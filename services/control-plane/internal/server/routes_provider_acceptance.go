@@ -630,7 +630,7 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 		return "", "", err
 	}
 	if projection.ReceiptID == "" {
-		withReceipt, receiptErr := service.RecordWorkspaceCreatedReceipt(ctx, projection, slot.Key+":workspace")
+		withReceipt, receiptErr := service.RecordProviderAcceptanceReceipt(ctx, projection, slot.Key+":workspace")
 		if receiptErr != nil {
 			return "", "provider_acceptance_receipt_failed", nil
 		}

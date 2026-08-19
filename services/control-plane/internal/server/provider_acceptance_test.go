@@ -70,6 +70,25 @@ type providerAcceptanceFabric struct {
 	failStorageCreation bool
 }
 
+type providerAcceptanceLedger struct {
+	fakeLedgerClient
+	mu     sync.Mutex
+	inputs []clients.ReceiptInput
+}
+
+func (l *providerAcceptanceLedger) RecordReceipt(ctx context.Context, input clients.ReceiptInput, idempotencyKey string) (clients.Receipt, error) {
+	l.mu.Lock()
+	l.inputs = append(l.inputs, input)
+	l.mu.Unlock()
+	return l.fakeLedgerClient.RecordReceipt(ctx, input, idempotencyKey)
+}
+
+func (l *providerAcceptanceLedger) receiptInputs() []clients.ReceiptInput {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]clients.ReceiptInput(nil), l.inputs...)
+}
+
 func (f *providerAcceptanceFabric) MonthlyPreflight(_ context.Context, input clients.MonthlyPreflightInput) (clients.MonthlyPreflight, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -206,12 +225,16 @@ func (f *providerAcceptanceFabric) WorkspaceRuntimeStatus(_ context.Context, wor
 }
 
 func newProviderAcceptanceTestServer(t *testing.T, fabric *providerAcceptanceFabric) (http.Handler, *memoryTableStore) {
+	return newProviderAcceptanceTestServerWithLedger(t, fabric, fakeLedgerClient{})
+}
+
+func newProviderAcceptanceTestServerWithLedger(t *testing.T, fabric *providerAcceptanceFabric, ledger clients.LedgerClient) (http.Handler, *memoryTableStore) {
 	t.Helper()
 	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	t.Setenv("OPL_PROVIDER_ACCEPTANCE_TOKEN", testProviderAcceptanceToken)
 	store := newMemoryTableStore()
 	seedProviderAcceptanceIdentity(t, store, providerAcceptanceSlots["verification-slot-basic-01"])
-	service := controlplane.NewService(fakeLedgerClient{}, fabric, &testSub2APIClient{balance: 1_000_000, charges: map[string]int64{}})
+	service := controlplane.NewService(ledger, fabric, &testSub2APIClient{balance: 1_000_000, charges: map[string]int64{}})
 	server, err := NewPersistentServer(service, store)
 	if err != nil {
 		t.Fatalf("create Provider Acceptance server: %v", err)
@@ -735,6 +758,38 @@ func TestProviderAcceptanceRequiresApprovalBudgetAndQuoteCapBeforeMutation(t *te
 				t.Fatalf("guard reached provider: preflight=%d compute=%d storage=%d", fabric.preflightCalls, fabric.computeCreates, fabric.storageCreates)
 			}
 		})
+	}
+}
+
+func TestProviderAcceptanceRecordsExecutionReceipt(t *testing.T) {
+	fabric := &providerAcceptanceFabric{}
+	ledger := &providerAcceptanceLedger{}
+	server, _ := newProviderAcceptanceTestServerWithLedger(t, fabric, ledger)
+	operator := operatorSessionForTest(t, server)
+	body := providerAcceptanceBody(testProviderAcceptanceAccount, testProviderConfirmation)
+
+	terminal := false
+	for attempt := 0; attempt < 6; attempt++ {
+		rec := providerAcceptanceRequest(server, operator, body, testProviderAcceptanceKey)
+		payload := providerAcceptancePayload(t, rec)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Provider Acceptance attempt %d = %d %#v", attempt+1, rec.Code, payload)
+		}
+		if payload["status"] == "ready" || payload["status"] == "reused" {
+			terminal = true
+			break
+		}
+	}
+	if !terminal {
+		t.Fatal("Provider Acceptance did not reach a terminal state")
+	}
+
+	receipts := ledger.receiptInputs()
+	if len(receipts) != 1 {
+		t.Fatalf("Provider Acceptance receipts = %#v, want one", receipts)
+	}
+	if receipts[0].Type != "execution.receipt.v1" {
+		t.Fatalf("Provider Acceptance receipt type = %q, want execution.receipt.v1", receipts[0].Type)
 	}
 }
 

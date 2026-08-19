@@ -419,8 +419,8 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 	return s.fabric.CreateStorageAttachment(ctx, clients.StorageAttachmentInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID}, idempotencyKey)
 }
 
-func (s *Service) RecordWorkspaceCreatedReceipt(ctx context.Context, workspace domain.WorkspaceProjection, idempotencyKey string) (domain.WorkspaceProjection, error) {
-	input := clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", AccountID: workspace.AccountID, WorkspaceID: workspace.ID, JobID: workspace.RuntimeID, Execution: map[string]any{"providerRequestId": workspace.RuntimeID}, OutputRefs: map[string]any{"redactedUrl": workspace.URL}}
+func (s *Service) RecordProviderAcceptanceReceipt(ctx context.Context, workspace domain.WorkspaceProjection, idempotencyKey string) (domain.WorkspaceProjection, error) {
+	input := clients.ReceiptInput{Type: "execution.receipt.v1", Status: "completed", Surface: "workspace", AccountID: workspace.AccountID, WorkspaceID: workspace.ID, JobID: workspace.RuntimeID, Execution: map[string]any{"providerRequestId": workspace.RuntimeID}, OutputRefs: map[string]any{"redactedUrl": workspace.URL}}
 	return s.recordWorkspaceReceipt(ctx, workspace, input, idempotencyKey)
 }
 
