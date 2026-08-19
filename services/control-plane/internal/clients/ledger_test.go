@@ -365,6 +365,72 @@ func TestLedgerHTTPClientValidatesWorkspaceBillingReceiptResponse(t *testing.T) 
 	}
 }
 
+func TestLedgerHTTPClientValidatesWorkspaceLifecycleReceiptResponse(t *testing.T) {
+	baseExecution := map[string]any{
+		"operationId": "workspace-operation-alpha", "resourceType": "workspace", "resourceId": "workspace-alpha",
+		"computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "attachmentId": "attachment-alpha", "runtimeId": "runtime-alpha",
+		"workspaceApiKeyId": int64(9), "workspaceKeyFingerprint": "sha256:alpha", "runtimeServiceName": "runtime-alpha", "gatewaySecretRef": "secret-alpha",
+	}
+	inputs := []ReceiptInput{
+		{
+			Type: "workspace.created", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
+			RequestID: "workspace-operation-alpha", Execution: baseExecution,
+			Owner: map[string]any{"accountId": "acct-alpha", "workspaceId": "workspace-alpha", "ownerUserId": "usr-alpha"},
+		},
+		{
+			Type: "workspace.deleted.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
+			RequestID: "workspace-operation-alpha", InputRefs: map[string]any{"launchReceiptId": "receipt-launch-alpha"}, Execution: baseExecution,
+			OutputRefs: map[string]any{
+				"runtimeStatus": "absent", "gatewaySecretStatus": "absent", "attachmentStatus": "absent", "storageStatus": "absent",
+				"computeStatus": "absent", "workspaceKeyStatus": "absent", "workspaceStatus": "absent",
+			},
+			Owner: map[string]any{"accountId": "acct-alpha", "workspaceId": "workspace-alpha", "ownerUserId": "usr-alpha"},
+		},
+	}
+	for _, input := range inputs {
+		for _, test := range []struct {
+			name    string
+			mutate  func(*Receipt)
+			wantErr bool
+		}{
+			{name: "valid"},
+			{name: "type", mutate: func(receipt *Receipt) { receipt.Type = "execution.receipt.v1" }, wantErr: true},
+			{name: "request", mutate: func(receipt *Receipt) { receipt.RequestID = "workspace-operation-other" }, wantErr: true},
+			{name: "input refs", mutate: func(receipt *Receipt) { receipt.InputRefs = map[string]any{"launchReceiptId": "receipt-other"} }, wantErr: true},
+			{name: "execution", mutate: func(receipt *Receipt) { receipt.Execution["runtimeId"] = "runtime-other" }, wantErr: true},
+			{name: "owner", mutate: func(receipt *Receipt) { receipt.Owner["ownerUserId"] = "usr-other" }, wantErr: true},
+			{name: "output", mutate: func(receipt *Receipt) { receipt.OutputRefs = map[string]any{"workspaceStatus": "present"} }, wantErr: true},
+			{name: "cost", mutate: func(receipt *Receipt) { receipt.Cost = map[string]any{"totalUsdMicros": int64(1)} }, wantErr: true},
+			{name: "supersedes", mutate: func(receipt *Receipt) { receipt.SupersedesReceiptID = "receipt-other" }, wantErr: true},
+		} {
+			t.Run(input.Type+"/"+test.name, func(t *testing.T) {
+				payload, err := json.Marshal(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				response := Receipt{ReceiptID: "receipt-workspace-lifecycle", CreatedAt: "2026-08-19T00:00:00Z"}
+				decoder := json.NewDecoder(bytes.NewReader(payload))
+				decoder.UseNumber()
+				if err := decoder.Decode(&response.ReceiptInput); err != nil {
+					t.Fatal(err)
+				}
+				if test.mutate != nil {
+					test.mutate(&response)
+				}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					_ = json.NewEncoder(w).Encode(response)
+				}))
+				defer server.Close()
+				client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client())
+				result, err := client.RecordReceipt(context.Background(), input, "workspace-operation-alpha:receipt")
+				if (err != nil) != test.wantErr {
+					t.Fatalf("result=%#v err=%v", result, err)
+				}
+			})
+		}
+	}
+}
+
 func TestWalletAdjustmentReceipt(t *testing.T) {
 	input := ReceiptInput{
 		Type: "gateway.wallet_adjustment.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha",

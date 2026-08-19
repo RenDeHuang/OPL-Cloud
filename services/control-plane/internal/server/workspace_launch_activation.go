@@ -107,7 +107,11 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) readWorkspaceLaunchReceipt(ctx
 	if err != nil {
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, err
 	}
-	receipt, found, err := workspaceLaunchPurchaseReceiptFromLedger(ctx, a, input)
+	expected := []clients.ReceiptInput{input}
+	if operation.raw["resourceBillingEnabled"] != nil && !operation.boolFact("resourceBillingEnabled") {
+		expected = append(expected, workspaceLaunchLegacyCreatedReceiptInput(operation))
+	}
+	receipt, found, err := workspaceLaunchPurchaseReceiptFromLedger(ctx, a, expected)
 	if err != nil {
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, err
 	}
@@ -132,8 +136,10 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchReceipt(c
 }
 
 func workspaceLaunchPurchaseReceiptInput(operation workspaceLaunchReconcileOperation) (clients.ReceiptInput, error) {
+	execution := workspaceLaunchCanonicalReceiptExecution(operation)
+	owner := map[string]any{"accountId": operation.stringFact("accountId"), "workspaceId": operation.stringFact("workspaceId"), "ownerUserId": operation.stringFact("ownerUserId")}
 	if operation.raw["resourceBillingEnabled"] != nil && !operation.boolFact("resourceBillingEnabled") {
-		return clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", AccountID: operation.stringFact("accountId"), WorkspaceID: operation.stringFact("workspaceId"), RequestID: operation.ID + ":purchase-receipt", Execution: map[string]any{"operationId": operation.ID + ":purchase-receipt", "runtimeId": operation.stringFact("runtimeId")}, OutputRefs: map[string]any{"url": operation.stringFact("url")}, Owner: map[string]any{"accountId": operation.stringFact("accountId"), "userId": operation.stringFact("ownerUserId")}}, nil
+		return clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "control_plane", AccountID: operation.stringFact("accountId"), WorkspaceID: operation.stringFact("workspaceId"), RequestID: operation.ID, Execution: execution, Owner: owner}, nil
 	}
 	quote, err := workspacePricingPreview(defaultPricingCatalog(), map[string]any{"packageId": operation.stringFact("packageId"), "sizeGb": operation.intFact("sizeGb")})
 	if err != nil {
@@ -147,15 +153,32 @@ func workspaceLaunchPurchaseReceiptInput(operation workspaceLaunchReconcileOpera
 	return clients.ReceiptInput{
 		Type: "billing.workspace_purchased.v1", Status: "completed", Surface: "control_plane", AccountID: operation.stringFact("accountId"),
 		WorkspaceID: operation.stringFact("workspaceId"), RequestID: operation.ID,
-		Execution: map[string]any{"resourceType": "workspace", "resourceId": operation.stringFact("workspaceId"), "computeAllocationId": operation.stringFact("computeAllocationId"),
-			"storageId": operation.stringFact("storageId"), "attachmentId": operation.stringFact("attachmentId"), "workspaceApiKeyId": operation.int64Fact("workspaceApiKeyId"),
-			"workspaceKeyFingerprint": operation.stringFact("workspaceKeyFingerprint"), "runtimeId": operation.stringFact("runtimeId"), "runtimeServiceName": operation.stringFact("runtimeServiceName")},
+		Execution: execution,
 		Cost: map[string]any{"priceVersion": operation.stringFact("priceVersion"), "currency": pricingCurrency, "billingUnit": pricingBillingUnit,
 			"totalUsdMicros": operation.int64Fact("totalChargeUsdMicros"), "sub2apiUserId": operation.int64Fact("sub2apiUserId"),
 			"sub2apiRedeemCode": operation.stringFact("sub2apiRedeemCode"), "postChargeBalanceUsdMicros": operation.int64Fact("postChargeBalanceUsdMicros"),
 			"periodStart": operation.stringFact("periodStart"), "paidThrough": operation.stringFact("paidThrough"), "resourceType": "workspace", "resourceId": operation.stringFact("workspaceId"),
 			"components": map[string]any{"compute": map[string]any{"resourceType": "compute", "resourceId": operation.stringFact("computeAllocationId"), "chargeUsdMicros": computePrice},
 				"storage": map[string]any{"resourceType": "storage", "resourceId": operation.stringFact("storageId"), "sizeGb": int64(operation.intFact("sizeGb")), "chargeUsdMicros": storagePrice}}},
-		Owner: map[string]any{"accountId": operation.stringFact("accountId"), "workspaceId": operation.stringFact("workspaceId"), "ownerUserId": operation.stringFact("ownerUserId")},
+		Owner: owner,
 	}, nil
+}
+
+func workspaceLaunchCanonicalReceiptExecution(operation workspaceLaunchReconcileOperation) map[string]any {
+	return map[string]any{
+		"operationId": operation.ID, "resourceType": "workspace", "resourceId": operation.stringFact("workspaceId"),
+		"computeAllocationId": operation.stringFact("computeAllocationId"), "storageId": operation.stringFact("storageId"), "attachmentId": operation.stringFact("attachmentId"),
+		"runtimeId": operation.stringFact("runtimeId"), "workspaceApiKeyId": operation.int64Fact("workspaceApiKeyId"),
+		"workspaceKeyFingerprint": operation.stringFact("workspaceKeyFingerprint"), "runtimeServiceName": operation.stringFact("runtimeServiceName"),
+		"gatewaySecretRef": operation.stringFact("gatewaySecretRef"),
+	}
+}
+
+func workspaceLaunchLegacyCreatedReceiptInput(operation workspaceLaunchReconcileOperation) clients.ReceiptInput {
+	requestID := operation.ID + ":purchase-receipt"
+	return clients.ReceiptInput{
+		Type: "workspace.created", Status: "completed", Surface: "workspace", AccountID: operation.stringFact("accountId"), WorkspaceID: operation.stringFact("workspaceId"),
+		RequestID: requestID, Execution: map[string]any{"operationId": requestID, "runtimeId": operation.stringFact("runtimeId")},
+		OutputRefs: map[string]any{"url": operation.stringFact("url")}, Owner: map[string]any{"accountId": operation.stringFact("accountId"), "userId": operation.stringFact("ownerUserId")},
+	}
 }

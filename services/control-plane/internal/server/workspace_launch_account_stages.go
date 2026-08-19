@@ -239,18 +239,28 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchDebit(ctx
 	return err
 }
 
-func workspaceLaunchPurchaseReceiptFromLedger(ctx context.Context, adapter *controlPlaneWorkspaceLaunchStageAdapter, input clients.ReceiptInput) (clients.Receipt, bool, error) {
-	receipts, err := reconciliationLedgerReceipts(ctx, adapter.service, input.AccountID)
+func workspaceLaunchPurchaseReceiptFromLedger(ctx context.Context, adapter *controlPlaneWorkspaceLaunchStageAdapter, expected []clients.ReceiptInput) (clients.Receipt, bool, error) {
+	if len(expected) == 0 {
+		return clients.Receipt{}, false, errors.New("workspace_launch_receipt_identity_mismatch")
+	}
+	receipts, err := reconciliationLedgerReceipts(ctx, adapter.service, expected[0].AccountID)
 	if err != nil {
 		return clients.Receipt{}, false, err
 	}
 	var match *clients.Receipt
 	for index := range receipts {
 		receipt := receipts[index]
-		if receipt.RequestID != input.RequestID {
+		var candidate *clients.ReceiptInput
+		for expectedIndex := range expected {
+			if receipt.RequestID == expected[expectedIndex].RequestID {
+				candidate = &expected[expectedIndex]
+				break
+			}
+		}
+		if candidate == nil {
 			continue
 		}
-		if !workspaceLaunchReceiptInputMatches(receipt.ReceiptInput, input) || receipt.ReceiptID == "" || match != nil {
+		if !workspaceLaunchReceiptInputMatches(receipt.ReceiptInput, *candidate) || receipt.ReceiptID == "" || match != nil {
 			return clients.Receipt{}, false, errors.New("workspace_launch_receipt_identity_mismatch")
 		}
 		match = &receipt

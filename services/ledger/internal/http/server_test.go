@@ -56,7 +56,7 @@ func TestLedgerCapabilityRejectsUnscopedBearerAndAcceptsBoundRequest(t *testing.
 	const key = "ledger-capability-key-for-http-tests-32-chars"
 	store := ledger.NewMemoryStore()
 	server := NewServerWithAuth(store, "internal-secret", key)
-	body := `{"type":"workspace.created","status":"completed","surface":"workspace","accountId":"acct-alpha","workspaceId":"ws-alpha"}`
+	body := `{"type":"execution.receipt.v1","status":"completed","surface":"workspace","accountId":"acct-alpha","workspaceId":"ws-alpha"}`
 	req := testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer internal-secret")
 	req.Header.Set("Idempotency-Key", "ledger-capability-once")
@@ -151,10 +151,20 @@ func capabilityWorkspaceReceiptInput(receiptType string) ledger.ReceiptInput {
 		delete(cost, "postChargeBalanceUsdMicros")
 		cost["sub2apiRefundCode"], cost["refundUsdMicros"] = "opl:workspace:refund:v1", int64(52_580_000)
 	}
-	return ledger.ReceiptInput{
+	input := ledger.ReceiptInput{
 		Type: receiptType, Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
 		Cost: cost, IdempotencyKey: "capability-" + receiptType,
 	}
+	if receiptType == "billing.workspace_purchased.v1" {
+		input.RequestID = "workspace-launch-capability"
+		input.Execution = map[string]any{
+			"operationId": "workspace-launch-capability", "resourceType": "workspace", "resourceId": "workspace-alpha",
+			"computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "attachmentId": "attachment-alpha", "runtimeId": "runtime-alpha",
+			"workspaceApiKeyId": int64(9), "workspaceKeyFingerprint": "sha256:alpha", "runtimeServiceName": "runtime-alpha", "gatewaySecretRef": "secret-alpha",
+		}
+		input.Owner = map[string]any{"accountId": "acct-alpha", "workspaceId": "workspace-alpha", "ownerUserId": "usr-alpha"}
+	}
+	return input
 }
 
 func testLedgerCapability(t *testing.T, key string, claims ledgerCapabilityClaims, body []byte) string {
@@ -245,7 +255,7 @@ func TestReconciliationHTTP(t *testing.T) {
 }
 
 func TestJSONBodiesRejectTrailingDataWithoutPersistence(t *testing.T) {
-	validReceipt := `{"type":"workspace.created","status":"completed","surface":"workspace","workspaceId":"workspace-trailing"}`
+	validReceipt := `{"type":"execution.receipt.v1","status":"completed","surface":"workspace","workspaceId":"workspace-trailing"}`
 	validReconciliation := `{"report":{"id":"recon-trailing","status":"ok","counts":{"billingOperations":0,"matched":0,"exceptions":0},"exceptions":[]}}`
 	for _, suffix := range []string{` {}`, ` trailing-garbage`} {
 		t.Run(strings.TrimSpace(suffix), func(t *testing.T) {
@@ -484,7 +494,7 @@ func TestWorkspaceBillingReceiptSchemaHTTP(t *testing.T) {
 
 func TestWorkspacePurchasedReceipt(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
-	body := `{"type":"billing.workspace_purchased.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","workspaceId":"workspace-alpha","cost":{"priceVersion":"pilot-usd-2026-07-v1","currency":"USD","billingUnit":"calendar_month","totalUsdMicros":52580000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:workspace-launch:charge:v1","postChargeBalanceUsdMicros":947420000,"periodStart":"2026-07-20T00:00:00Z","paidThrough":"2026-08-20T00:00:00Z","resourceType":"workspace","resourceId":"workspace-alpha","components":{"compute":{"resourceType":"compute","resourceId":"compute-alpha","chargeUsdMicros":50000000},"storage":{"resourceType":"storage","resourceId":"storage-alpha","sizeGb":10,"chargeUsdMicros":2580000}}}}`
+	body := `{"type":"billing.workspace_purchased.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","workspaceId":"workspace-alpha","requestId":"workspace-launch-alpha","execution":{"operationId":"workspace-launch-alpha","resourceType":"workspace","resourceId":"workspace-alpha","computeAllocationId":"compute-alpha","storageId":"storage-alpha","attachmentId":"attachment-alpha","runtimeId":"runtime-alpha","workspaceApiKeyId":9,"workspaceKeyFingerprint":"sha256:alpha","runtimeServiceName":"runtime-alpha","gatewaySecretRef":"secret-alpha"},"owner":{"accountId":"acct-alpha","workspaceId":"workspace-alpha","ownerUserId":"usr-alpha"},"cost":{"priceVersion":"pilot-usd-2026-07-v1","currency":"USD","billingUnit":"calendar_month","totalUsdMicros":52580000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:workspace-launch:charge:v1","postChargeBalanceUsdMicros":947420000,"periodStart":"2026-07-20T00:00:00Z","paidThrough":"2026-08-20T00:00:00Z","resourceType":"workspace","resourceId":"workspace-alpha","components":{"compute":{"resourceType":"compute","resourceId":"compute-alpha","chargeUsdMicros":50000000},"storage":{"resourceType":"storage","resourceId":"storage-alpha","sizeGb":10,"chargeUsdMicros":2580000}}}}`
 	post := func(key, payload string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(payload))
