@@ -121,7 +121,7 @@
   "workspaceOwnership": {
     "personalWorkspace": "ownerAccountId identifies the Console owner and its Sub2API mapping.",
     "cardinality": "many_workspaces_per_account",
-    "independentFacts": ["quote", "launchOperation", "compute", "storage", "attachment", "runtime", "workspaceApiKeyId", "gatewaySecretRef", "paidThrough", "renewalStatus", "purchaseReceiptId"]
+    "independentFacts": ["quote", "launchOperation", "compute", "storage", "attachment", "runtime", "workspaceApiKeyId", "gatewaySecretRef", "paidThrough", "renewalStatus", "launchReceiptId"]
   },
   "workspaceDeletion": {
     "owner": "services/control-plane",
@@ -149,6 +149,7 @@
     ],
     "providerNeutralResourceIdentity": {
       "authority": "succeeded_immutable_launch_operation_and_matching_launch_receipt",
+      "launchReceiptContract": "opl-cloud-evidence-ledger-contract.json#workspaceLaunchReceiptV1",
       "providerSpecificFields": false,
       "resources": ["runtime", "compute", "storage", "attachment", "workspace_key", "gateway_secret"]
     },

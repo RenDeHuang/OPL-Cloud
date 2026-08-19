@@ -58,7 +58,7 @@
     "customerChargeOperations": ["workspace_debit", "workspace_refund"],
     "resourcePurchasePath": "fabric_create_and_sync_without_customer_debit",
     "providerMutationOwner": "fabric",
-    "successReceiptType": "billing.workspace_purchased.v1",
+    "launchReceiptContract": "opl-cloud-evidence-ledger-contract.json#workspaceLaunchReceiptV1",
     "refundReceiptType": "billing.workspace_refunded.v1",
     "confirmedNoResource": "one_idempotent_workspace_refund",
     "partialOrUnknownResource": "manual_review_without_refund",
@@ -80,13 +80,6 @@
       "mutationCounts": {"controlPlaneExternal": 0, "sub2api": 0, "tencent": 0, "kubernetes": 0},
       "mismatch": "manual_review_without_activation"
     },
-    "purchaseReceiptIdentity": {
-      "requestId": "launchOperationId",
-      "idempotencyKey": "<launchOperationId>:purchase-receipt",
-      "workspaceId": "exact_launch_workspace_id",
-      "debit": "exact_sub2api_user_redeem_code_and_total_usd_micros",
-      "retry": "receipt_only_after_activation"
-    },
     "manualReviewRecoveryContract": "opl-cloud-control-plane-launch-contract.json#recovery"
   },
   "workspaceDeleteNoRefund": {
@@ -94,7 +87,7 @@
     "receiptAuthority": "services/ledger",
     "deletionAction": "workspace.delete.v2",
     "semantics": "permanent_resource_deletion_without_automatic_refund",
-    "launchReceiptTypes": ["billing.workspace_purchased.v1", "workspace.created"],
+    "launchReceiptContract": "opl-cloud-evidence-ledger-contract.json#workspaceLaunchReceiptV1",
     "launchReceiptPurpose": "resource_identity_only_never_refund_authority",
     "moneyWriteApis": [],
     "forbiddenWalletMutations": ["debit", "refund", "wallet_adjustment"],

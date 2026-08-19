@@ -181,6 +181,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	]);
 
 	for (const type of [
+		"workspace.created",
 		"billing.workspace_purchased.v1",
 		"billing.reconciliation.v1",
 		"billing.workspace_renewed.v1",
@@ -229,6 +230,63 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		compute: ["resourceType", "resourceId", "chargeUsdMicros"],
 		storage: ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]
 	});
+	const launchReceiptContract = "opl-cloud-evidence-ledger-contract.json#workspaceLaunchReceiptV1";
+	const launchFulfillmentFields = [
+		"operationId",
+		"resourceType",
+		"resourceId",
+		"computeAllocationId",
+		"storageId",
+		"attachmentId",
+		"runtimeId",
+		"workspaceApiKeyId",
+		"workspaceKeyFingerprint",
+		"runtimeServiceName",
+		"gatewaySecretRef"
+	];
+	assert.deepEqual(evidence.workspaceLaunchReceiptV1, {
+		state: "current",
+		authority: "unique_current_workspace_launch_receipt_union",
+		status: "completed",
+		surface: "control_plane",
+		requestId: "launchOperationId",
+		recordIdempotencyKey: "<launchOperationId>:purchase-receipt",
+		cardinality: {
+			perLaunchOperation: "exactly_one",
+			allowedTypes: ["billing.workspace_purchased.v1", "workspace.created"],
+			mixedOrDuplicate: "reject"
+		},
+		owner: {
+			requiredFields: ["accountId", "workspaceId", "ownerUserId"],
+			allowedFields: ["accountId", "workspaceId", "ownerUserId"],
+			extraFields: "reject"
+		},
+		canonicalFulfillmentIdentity: {
+			requiredFields: launchFulfillmentFields,
+			allowedFields: launchFulfillmentFields,
+			extraFields: "reject",
+			constraints: {
+				operationId: "equals_requestId",
+				resourceType: "workspace",
+				resourceId: "equals_workspaceId"
+			},
+			providerSpecificFields: false
+		},
+		variants: {
+			charged: {
+				type: "billing.workspace_purchased.v1",
+				cost: "required_exact_workspace_monthly_billing_cost",
+				costSchemaContract: "opl-cloud-evidence-ledger-contract.json#workspaceMonthlyBillingReceiptV1",
+				debit: "exact_sub2api_user_redeem_code_and_total_usd_micros"
+			},
+			zeroCost: {
+				type: "workspace.created",
+				cost: "must_be_empty",
+				financialFields: "forbidden"
+			}
+		},
+		retry: "receipt_only_after_activation_without_repeating_key_debit_fabric_or_activation"
+	});
 	assert.deepEqual(billing.entitlementPolicy.unpaidExpiry, {
 		workspaceAccess: "deny_immediately",
 		autoRenew: false,
@@ -243,13 +301,11 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.equal(billing.workspaceLaunchFulfillment.activationReadback.api, "Control Plane GetWorkspace(workspaceId) point read");
 	assert.match(billing.workspaceLaunchFulfillment.activationReadback.deletedFabricRoute, /returns 404/);
 	assert.equal(billing.workspaceLaunchFulfillment.ledgerFailureAfterActivation, "retry_receipt_only");
-	assert.deepEqual(billing.workspaceLaunchFulfillment.purchaseReceiptIdentity, {
-		requestId: "launchOperationId",
-		idempotencyKey: "<launchOperationId>:purchase-receipt",
-		workspaceId: "exact_launch_workspace_id",
-		debit: "exact_sub2api_user_redeem_code_and_total_usd_micros",
-		retry: "receipt_only_after_activation"
-	});
+	assert.equal(billing.workspaceLaunchFulfillment.launchReceiptContract, launchReceiptContract);
+	assert.equal(billing.workspaceLaunchFulfillment.purchaseReceiptIdentity, undefined);
+	assert.equal(billing.workspaceLaunchFulfillment.successReceiptType, undefined);
+	assert.equal(management.workspaceOwnership.independentFacts.includes("launchReceiptId"), true);
+	assert.equal(management.workspaceOwnership.independentFacts.includes("purchaseReceiptId"), false);
 	assert.equal(management.workspaceDeletion.action, "workspace.delete.v2");
 	assert.equal(management.workspaceDeletion.schemaVersion, 2);
 	assert.equal(management.workspaceDeletion.semantics, "permanently_delete_all_workspace_resources_without_automatic_refund");
@@ -273,6 +329,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	]);
 	assert.deepEqual(management.workspaceDeletion.providerNeutralResourceIdentity, {
 		authority: "succeeded_immutable_launch_operation_and_matching_launch_receipt",
+		launchReceiptContract,
 		providerSpecificFields: false,
 		resources: ["runtime", "compute", "storage", "attachment", "workspace_key", "gateway_secret"]
 	});
@@ -306,7 +363,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		receiptAuthority: "services/ledger",
 		deletionAction: "workspace.delete.v2",
 		semantics: "permanent_resource_deletion_without_automatic_refund",
-		launchReceiptTypes: ["billing.workspace_purchased.v1", "workspace.created"],
+		launchReceiptContract,
 		launchReceiptPurpose: "resource_identity_only_never_refund_authority",
 		moneyWriteApis: [],
 		forbiddenWalletMutations: ["debit", "refund", "wallet_adjustment"],
@@ -316,9 +373,14 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		cancelRenewal: "independent_operation_preserves_resources_until_paidThrough",
 		refund: "independent_financial_operation"
 	});
-	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.requestId, "launchOperationId");
-	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.recordIdempotencyKey, "<launchOperationId>:purchase-receipt");
-	assert.match(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.retry, /receipt_only/);
+	for (const duplicateLaunchOwner of [
+		"purchasedRequiredExecutionFields",
+		"purchasedOptionalExecutionFields",
+		"purchasedTerminalIdentity",
+		"launchTerminalCardinality"
+	]) {
+		assert.equal(evidence.workspaceMonthlyBillingReceiptV1[duplicateLaunchOwner], undefined, `${duplicateLaunchOwner} must not duplicate workspaceLaunchReceiptV1`);
+	}
 	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.requestId, "independentRefundOperationId");
 	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.recordIdempotencyKey, "<independentRefundOperationId>:refund-receipt");
 	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.supersedesReceiptId, "exact_purchaseReceiptId");
@@ -329,30 +391,27 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		surface: "control_plane",
 		requestId: "workspaceDeleteOperationId",
 		recordIdempotencyKey: "<workspaceDeleteOperationId>:deletion-receipt",
-		ownerRequiredFields: ["accountId", "workspaceId", "ownerUserId"],
+		owner: {
+			requiredFields: ["accountId", "workspaceId", "ownerUserId"],
+			allowedFields: ["accountId", "workspaceId", "ownerUserId"],
+			extraFields: "reject"
+		},
 		inputRefs: {
 			requiredFields: ["launchReceiptId"],
-			allowedFields: ["launchReceiptId"]
+			allowedFields: ["launchReceiptId"],
+			extraFields: "reject"
 		},
-		executionRequiredFields: [
-			"operationId",
-			"resourceType",
-			"resourceId",
-			"computeAllocationId",
-			"storageId",
-			"attachmentId",
-			"runtimeId",
-			"workspaceApiKeyId",
-			"workspaceKeyFingerprint",
-			"runtimeServiceName",
-			"gatewaySecretRef"
-		],
-		executionConstraints: {
-			operationId: "equals_requestId",
-			resourceType: "workspace",
-			resourceId: "equals_workspaceId"
+		execution: {
+			requiredFields: launchFulfillmentFields,
+			allowedFields: launchFulfillmentFields,
+			extraFields: "reject",
+			constraints: {
+				operationId: "equals_requestId",
+				resourceType: "workspace",
+				resourceId: "equals_workspaceId"
+			},
+			identity: "exact_provider_neutral_resource_identity_from_the_same_delete_operation"
 		},
-		executionIdentity: "exact_provider_neutral_resource_identity_from_the_same_delete_operation",
 		outputRefs: {
 			requiredFields: [
 				"runtimeStatus",
@@ -363,17 +422,43 @@ test("receipt contract exposes monthly product behavior only", async () => {
 				"workspaceKeyStatus",
 				"workspaceStatus"
 			],
+			allowedFields: [
+				"runtimeStatus",
+				"gatewaySecretStatus",
+				"attachmentStatus",
+				"storageStatus",
+				"computeStatus",
+				"workspaceKeyStatus",
+				"workspaceStatus"
+			],
+			extraFields: "reject",
 			requiredValue: "absent"
 		},
-		cost: "must_be_empty",
-		supersedesReceiptId: "must_be_empty",
+		forbiddenFieldPrefixesCaseInsensitive: ["cost", "refund", "debit", "wallet", "supersedes"],
+		forbiddenFieldRule: "reject_recursively_when_field_name_equals_or_starts_with_a_forbidden_prefix",
 		failureRetry: "receipt_only_without_repeating_resource_key_or_workspace_deletion",
 		cardinality: "exactly_one_terminal_deletion_receipt_for_the_workspace_delete_operation"
 	});
 	const forbiddenReceiptFields = new Set(evidence.generalReceiptV1.forbiddenContent.map((field) => field.toLowerCase()));
-	for (const field of evidence.workspaceDeletionReceiptV1.executionRequiredFields) {
+	for (const field of evidence.workspaceDeletionReceiptV1.execution.requiredFields) {
 		assert.equal(forbiddenReceiptFields.has(field.toLowerCase()), false, `${field} must be allowed by Ledger forbidden-content rules`);
 	}
+	for (const section of [evidence.workspaceDeletionReceiptV1.owner, evidence.workspaceDeletionReceiptV1.execution, evidence.workspaceDeletionReceiptV1.outputRefs]) {
+		assert.deepEqual(section.allowedFields, section.requiredFields);
+		assert.equal(section.extraFields, "reject");
+	}
+	assert.deepEqual(evidence.workspaceCreateReceipt, {
+		state: "current_zero_cost_projection",
+		type: "workspace.created",
+		launchReceiptContract,
+		variant: "zeroCost",
+		newWrites: "must_match_workspaceLaunchReceiptV1",
+		historicalReadOnlyMatcher: {
+			resourceRefs: ["serverId", "dockerId", "storageId", "storageMountPath", "runtimeStatus", "credentialStatus"],
+			existingReceiptsReadable: true,
+			newWritesAllowed: false
+		}
+	});
 	assert.ok(billing.ledgerEvidencePolicy.receiptTypes.includes("workspace.deleted.v1"));
 	assert.deepEqual(billing.reconciliationPolicy, {
 		reportSchemaContract: "opl-cloud-evidence-ledger-contract.json#reconciliationReportV1",
