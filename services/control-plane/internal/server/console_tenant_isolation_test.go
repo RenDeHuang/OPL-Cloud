@@ -406,8 +406,8 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	if err := check.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'control-plane'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read control-plane migration journal: %v", err)
 	}
-	if migrationCount != 17 {
-		t.Fatalf("control-plane migration count = %d, want 17", migrationCount)
+	if migrationCount != len(controlPlaneMigrations(nil, nil)) {
+		t.Fatalf("control-plane migration count = %d, want %d", migrationCount, len(controlPlaneMigrations(nil, nil)))
 	}
 	var autoRenewAuditMigration bool
 	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607170003_workspace_auto_renew_audit')`).Scan(&autoRenewAuditMigration); err != nil || !autoRenewAuditMigration {
