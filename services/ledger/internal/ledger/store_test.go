@@ -297,6 +297,60 @@ func TestWorkspaceDeletionReceiptSchemaMemory(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLifecycleReceiptCanonicalIdempotencyAndCardinalityMemory(t *testing.T) {
+	ctx := context.Background()
+	for _, input := range []ReceiptInput{
+		validWorkspaceLaunchReceiptInput("billing.workspace_purchased.v1"),
+		validWorkspaceLaunchReceiptInput("workspace.created"),
+		validWorkspaceDeletionReceiptInput(),
+	} {
+		t.Run(input.Type+" wrong key", func(t *testing.T) {
+			input.IdempotencyKey = input.RequestID + ":other-receipt"
+			if _, err := NewMemoryStore().RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("wrong canonical key error=%v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+
+	t.Run("same RequestID cannot use another key", func(t *testing.T) {
+		store := NewMemoryStore()
+		input := validWorkspaceLaunchReceiptInput("workspace.created")
+		if _, err := store.RecordReceipt(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+		input.IdempotencyKey = input.RequestID + ":second-purchase-receipt"
+		if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+			t.Fatalf("alternate key error=%v, want ErrInvalidReceiptInput", err)
+		}
+		page, err := store.ListReceipts(ctx, ReceiptQuery{AccountID: input.AccountID})
+		if err != nil || len(page.Receipts) != 1 {
+			t.Fatalf("same RequestID receipts=%#v err=%v", page.Receipts, err)
+		}
+	})
+
+	for _, firstType := range []string{"billing.workspace_purchased.v1", "workspace.created"} {
+		t.Run("mixed launch variants after "+firstType, func(t *testing.T) {
+			store := NewMemoryStore()
+			first := validWorkspaceLaunchReceiptInput(firstType)
+			secondType := "workspace.created"
+			if firstType == secondType {
+				secondType = "billing.workspace_purchased.v1"
+			}
+			second := validWorkspaceLaunchReceiptInput(secondType)
+			if _, err := store.RecordReceipt(ctx, first); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.RecordReceipt(ctx, second); !errors.Is(err, ErrIdempotencyConflict) {
+				t.Fatalf("mixed launch variants error=%v, want ErrIdempotencyConflict", err)
+			}
+			page, err := store.ListReceipts(ctx, ReceiptQuery{AccountID: first.AccountID})
+			if err != nil || len(page.Receipts) != 1 {
+				t.Fatalf("mixed launch receipts=%#v err=%v", page.Receipts, err)
+			}
+		})
+	}
+}
+
 func TestWorkspaceBillingReceiptSchemaMemory(t *testing.T) {
 	testWorkspaceBillingReceiptSchema(t, NewMemoryStore())
 }

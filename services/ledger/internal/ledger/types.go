@@ -220,7 +220,7 @@ func validateReceiptInput(input ReceiptInput) error {
 }
 
 func validWorkspaceLaunchReceipt(input ReceiptInput) bool {
-	if !validCanonicalWorkspaceResourceReceiptIdentity(input) || input.SupersedesReceiptID != "" ||
+	if !validCanonicalWorkspaceResourceReceiptIdentity(input) || input.IdempotencyKey != input.RequestID+":purchase-receipt" || input.SupersedesReceiptID != "" ||
 		len(input.Actor) != 0 || len(input.Plan) != 0 || len(input.Environment) != 0 || len(input.InputRefs) != 0 || len(input.OutputRefs) != 0 ||
 		len(input.ReviewerChecks) != 0 || len(input.Continuation) != 0 {
 		return false
@@ -232,7 +232,7 @@ func validWorkspaceLaunchReceipt(input ReceiptInput) bool {
 }
 
 func validWorkspaceDeletionReceipt(input ReceiptInput) bool {
-	if !validCanonicalWorkspaceResourceReceiptIdentity(input) || len(input.InputRefs) != 1 || len(input.OutputRefs) != 7 || len(input.Cost) != 0 || input.SupersedesReceiptID != "" ||
+	if !validCanonicalWorkspaceResourceReceiptIdentity(input) || input.IdempotencyKey != input.RequestID+":deletion-receipt" || len(input.InputRefs) != 1 || len(input.OutputRefs) != 7 || len(input.Cost) != 0 || input.SupersedesReceiptID != "" ||
 		len(input.Actor) != 0 || len(input.Plan) != 0 || len(input.Environment) != 0 || len(input.ReviewerChecks) != 0 || len(input.Continuation) != 0 {
 		return false
 	}
