@@ -108,6 +108,7 @@ func fabricCapabilityForTest(t *testing.T, claims fabricCapabilityClaimsForTest,
 type capabilityBoundaryProvider struct {
 	testProvider
 	computeCreates atomic.Int32
+	runtimeRepairs atomic.Int32
 }
 
 type staticFabricMutationScopeResolver struct {
@@ -122,6 +123,11 @@ func (r staticFabricMutationScopeResolver) ComputePoolHeadTerminalizationAuthori
 func (p *capabilityBoundaryProvider) CreateComputeAllocation(ctx context.Context, input fabric.ComputeAllocationExecution) (fabric.ComputeAllocation, error) {
 	p.computeCreates.Add(1)
 	return p.testProvider.CreateComputeAllocation(ctx, input)
+}
+
+func (p *capabilityBoundaryProvider) RepairWorkspaceRuntime(_ context.Context, input fabric.WorkspaceRuntimeInput, _ fabric.ComputeAllocation, _ fabric.StorageVolume) (fabric.WorkspaceRuntime, error) {
+	p.runtimeRepairs.Add(1)
+	return fabric.WorkspaceRuntime{WorkspaceID: input.WorkspaceID, OperationID: input.RuntimeOperationID, ImageID: input.ImageID, Status: "running", Ready: true}, nil
 }
 
 func TestFabricMutationAuthorizationRejectsBeforeOperationOrProviderSideEffects(t *testing.T) {
@@ -281,6 +287,70 @@ func TestFabricMutationAuthorizationAcceptsMatchingControlPlaneRequest(t *testin
 	operations, err := store.List(context.Background())
 	if err != nil || len(operations) != 1 || operations[0].AccountID != "acct-alpha" || operations[0].WorkspaceID != "ws-alpha" {
 		t.Fatalf("legal request operation=%#v err=%v", operations, err)
+	}
+}
+
+func TestWorkspaceRuntimeRepairCapabilityRejectsMismatchedScope(t *testing.T) {
+	body := []byte(`{"accountId":"acct-alpha","workspaceId":"workspace-alpha","computeId":"compute-alpha","volumeId":"storage-alpha","attachmentId":"attachment-alpha","attachmentOperationId":"attachment-operation-alpha","runtimeOperationId":"runtime-repair-alpha","previousRuntimeOperationId":"runtime-original-alpha","imageId":"ghcr.io/gaofeng21cn/one-person-lab-app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","gatewaySecretRef":"secret-alpha"}`)
+	matching := fabricCapabilityClaimsForTest{
+		Version: 1, Caller: "control-plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
+		ResourceKind: "workspace_runtime", ResourceID: "workspace-alpha", Action: "repair_workspace_runtime", OperationID: "runtime-repair-once",
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}
+	tests := []struct {
+		name   string
+		claims fabricCapabilityClaimsForTest
+	}{
+		{name: "account", claims: func() fabricCapabilityClaimsForTest { value := matching; value.AccountID = "acct-other"; return value }()},
+		{name: "workspace", claims: func() fabricCapabilityClaimsForTest {
+			value := matching
+			value.WorkspaceID = "workspace-other"
+			return value
+		}()},
+		{name: "resource kind", claims: func() fabricCapabilityClaimsForTest {
+			value := matching
+			value.ResourceKind = "storage_volume"
+			return value
+		}()},
+		{name: "resource id", claims: func() fabricCapabilityClaimsForTest {
+			value := matching
+			value.ResourceID = "workspace-other"
+			return value
+		}()},
+		{name: "action", claims: func() fabricCapabilityClaimsForTest {
+			value := matching
+			value.Action = "create_workspace_runtime"
+			return value
+		}()},
+		{name: "operation", claims: func() fabricCapabilityClaimsForTest {
+			value := matching
+			value.OperationID = "runtime-repair-other"
+			return value
+		}()},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &capabilityBoundaryProvider{}
+			store := fabric.NewMemoryOperationStore()
+			server := NewServerWithAuth(fabric.NewServiceWithOperationStore(provider, store), ServerAuthConfig{
+				ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey,
+			})
+			request := testRequest(http.MethodPost, "/fabric/workspace-runtimes/workspace-alpha/repair", bytes.NewReader(body))
+			request.Header.Set("Idempotency-Key", "runtime-repair-once")
+			request.Header.Set(fabricCapabilityHeader, fabricCapabilityForTest(t, test.claims, body))
+			response := httptest.NewRecorder()
+
+			server.ServeHTTP(response, request)
+
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			operations, err := store.List(context.Background())
+			if err != nil || len(operations) != 0 || provider.runtimeRepairs.Load() != 0 {
+				t.Fatalf("rejected repair changed Fabric state: operations=%#v providerCalls=%d err=%v", operations, provider.runtimeRepairs.Load(), err)
+			}
+		})
 	}
 }
 

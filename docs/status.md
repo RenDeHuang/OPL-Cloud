@@ -10,14 +10,14 @@ or historical provenance.
 
 ## Local-Docker Customer Closure Evidence
 
-The current local deployment was exercised on 2026-08-18 on Docker Desktop
-`linux/arm64` from the worktree candidate at `codex/local-docker-customer-closure`.
+The current local deployment was exercised on 2026-08-19 on Docker Desktop
+`linux/arm64` from the repair candidate at `codex/workspace-fulfillment-repair`.
 The Cloud image is pinned to
-`local/opl-cloud@sha256:0aacdcf19c8e118b22eeb0d181dec14b3973d1e28d6f5ab3dc9677e1637380cf` and the
+`local/opl-cloud@sha256:c0173268256416fae6721880b62313dfc62d03dc43d1dc041d07ebe89c527f03` and the
 App image is pinned to
-`local/one-person-lab-webui@sha256:ac235b97c84935d78228b41545af722f1e28e3641e17cc784812dde3a4d5f5e6`;
-both report `arm64`. The App image is built from the exact v26.8.16 source and
-is not a retagged amd64 image.
+`local/one-person-lab-webui@sha256:244d419fffa2dcf56cf926b3b65cb5fbc60b2b045cebc551c284851824fd8be4`;
+both report `arm64/linux`. The App image is built from the exact v26.8.16
+source and is not a retagged amd64 image.
 
 The reproducible customer-owned entry point is
 `/Users/huangrende/Desktop/opl-cloud/sub2api-local_customer_owned.yaml` with
@@ -50,44 +50,44 @@ tokens are not retained.
 The local `platform_owned` entry point is
 `/Users/huangrende/Desktop/opl-cloud/sub2api-local_platform_owned.yaml` with
 `OPL_DEPLOYMENT_MODE=platform_owned`, `OPL_FABRIC_PROVIDER=local-docker`, and
-Console at `http://127.0.0.1:8788`. Its Cloud services currently run the
-`linux/arm64` candidate
-`local/opl-cloud@sha256:ea40ad981839e6a65bf8d77e53d8f6e88c60b7fedb6ecbdd9dfdc407722cd4fb`
-built from `ab34b5793f48c83e3a28fd8f3778f41bd3afc074`; its Workspace App is
-the same exact v26.8.16 arm64 image stated above.
+Console at `http://127.0.0.1:8788`. Its running Cloud services use the pinned
+`linux/arm64` image stated above; `docker compose config --quiet` passes. Its
+Workspace App uses the same exact v26.8.16 arm64 image.
 
-The verified platform-owned Workspace is
-`ws-9b09960b8f1edd6f35` (`Platform Workspace ARM 1`). It read back as
-`READY/running` with Runtime `rt_c358deba02e8971928`, container
-`opl-runtime-73e98b594ce0fee3`, network `opl-compute-68441bb5198de6b3`, and
-the dynamically allocated URL `http://127.0.0.1:63118/`. The independent
-host-owned `data` and `projects` directories, Workspace Secret, and `/recovery`
-tmpfs remain attached. The runtime's dynamic Docker HostPort is a live routing
-fact and is therefore authoritatively re-read after restart; it is not part of
-the immutable Runtime identity.
+The verified repaired platform-owned Workspace is
+`ws-e11e5845b558e3f72c` (`Test Account Workspace`). It read back as
+`READY/running` with Runtime `rt_9eb31eb76a33b08f8d`, container
+`opl-runtime-a356ecb751784004`, and the dynamically allocated URL
+`http://127.0.0.1:58685/`. The independent host-owned `data` and `projects`
+directories, Workspace Secret, and `/recovery` tmpfs remain attached. The
+runtime's dynamic Docker HostPort is a live routing fact and is therefore
+authoritatively re-read after restart; it is not part of the immutable Runtime
+identity.
 
-The one original create command produced exactly one Workspace Key `166`, one
-Sub2API resource Debit of `-52.58 USD` (`matchCount=1` in authoritative admin
-balance-history readback), and one Ledger Purchase Receipt
-`receipt_1787037825939535675` for `52,580,000` USD micros. The receipt links the
+The original create command produced exactly one Workspace Key `169`, one
+Sub2API resource Debit of `-52.58 USD`, and one Ledger Purchase Receipt
+`receipt_1787070029002415135` for `52,580,000` USD micros. The receipt links the
 same Workspace, Runtime, Key, compute allocation, 10 GB storage allocation,
-and `autoRenew=false`. An exact replay kept the Key, Debit, and Receipt counts
-at one. A Control Plane restart followed by a new authenticated session read
-back the same Workspace and Runtime, Key, Receipt, Sub2API usage, and matching
-host/container SHA-256 for
-`data/.official-profile-first-install-complete`. The recovery fix consumes an
-otherwise failed fresh continuation when its authoritative Runtime read reports
-READY, preserving the persisted recovery invariant without a second provider
-mutation.
+and `autoRenew=false`. The original Runtime failed during first initialization,
+so the operation entered `manual_review/runtime`; the Fulfillment Repair
+command replaced only that Runtime, reused the confirmed Key/Debit/Compute/
+Storage/Attachment/Secret, and completed Activation and the single Receipt.
+An exact repair replay kept all resource, Key, Debit, and Receipt counts at one.
+A Control Plane restart followed by a new authenticated session read back the
+same Workspace and Runtime, Key, Receipt, Sub2API usage, and host/container
+files. Legacy repair records without an explicit binding are accepted only
+when the replacement operation identity strictly proves the predecessor.
 
-From this real Workspace UI, `OPL_PLATFORM_OWNED_OK` completed successfully.
-Current Sub2API usage readback is two requests, `27,502` input tokens, `55`
-output tokens, and `143,000` USD micros. This total includes one Runtime-side
-diagnostic request and the successful UI request. Evidence is retained outside
-Git at
-`/Users/huangrende/Desktop/opl-cloud/evidence/2026-08-18-v2/platform-owned-rerun`;
-its publishable screenshots show the Console login/list/detail, Runtime READY,
-and the Workspace UI result without session credentials.
+From the repaired Workspace UI, `请只回复：OPL Cloud 模型请求成功` completed
+successfully. Key `169` Sub2API usage changed from one request and `53,298`
+USD micros to two requests and `73,668` USD micros. The authoritative delta is
+one request, `20,370` USD micros, `2,512` input tokens, `15` output tokens and
+`14,720` cache-read tokens. Evidence is retained outside Git at
+`/Users/huangrende/Desktop/opl-cloud/evidence/2026-08-19-platform-owned-repair`;
+it includes the Console/Workspace screenshots, conversation/messages readback,
+Sub2API before/after/delta JSON, image identity, Compose validation, and
+post-restart resource/file comparisons. No session credential is retained in
+the evidence JSON.
 
 `managed_tke` and `tencent-tke` are implemented as independent selection
 overlays and are contract-tested, but no live TKE mutation or readiness was run

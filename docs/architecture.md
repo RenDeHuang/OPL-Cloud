@@ -362,6 +362,20 @@ existing attempt and advances the same Launch; `pending`, `absent`, `unknown`,
 read failure, or identity drift leaves the operation unchanged in
 `manual_review`.
 
+Fulfillment Repair is a separate operator mutation command under the same
+Workspace Launch owner; it does not widen Recovery. It applies only after a
+resource-billed Launch has confirmed its Key, Debit, Compute, Storage,
+Attachment, and Secret, consumed its single Runtime attempt as unknown, and has
+not attempted Activation or Receipt. Control Plane supplies only a new immutable
+image digest and persists the repair authorization on the original Launch,
+including the authenticated operator identity and server authorization time.
+Fabric proves the original Runtime operation and retained resource bindings,
+then an explicitly opted-in provider adapter may replace only the Runtime while
+preserving the Runtime ID/service identity and the existing Secret, Compute,
+Storage, and Attachment. READY readback returns the original Launch to
+Activation and its single Purchase Receipt; exact replay cannot create another
+Key, Debit, provider resource set, Secret, Runtime replacement, or Receipt.
+
 Fresh mutation continuation is a separate Control Plane system authorization,
 never an operator Resume authorization. It exists only when the mandatory first
 post-mutation owner read returns exact typed `pending`, and the same operation

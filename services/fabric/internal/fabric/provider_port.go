@@ -55,6 +55,10 @@ type runtimeProvider interface {
 	WorkspaceRuntimeStatus(context.Context, string) (WorkspaceRuntime, error)
 }
 
+type runtimeRepairProvider interface {
+	RepairWorkspaceRuntime(context.Context, WorkspaceRuntimeInput, ComputeAllocation, StorageVolume) (WorkspaceRuntime, error)
+}
+
 // Provider is the retained live Fabric port.
 type Provider interface {
 	computeProvider

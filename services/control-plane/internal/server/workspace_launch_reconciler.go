@@ -210,6 +210,15 @@ type workspaceLaunchContinuationReadClaim struct {
 	CompletedAt     string `json:"completedAt,omitempty"`
 }
 
+type workspaceLaunchRuntimeRepair struct {
+	AuthorizationID string `json:"authorizationId"`
+	LaunchVersion   int    `json:"launchVersion"`
+	AuthorizedBy    string `json:"authorizedBy"`
+	AuthorizedAt    string `json:"authorizedAt"`
+	Reason          string `json:"reason"`
+	ImageDigest     string `json:"imageDigest"`
+}
+
 type workspaceLaunchReconcileOperation struct {
 	ID                              string                                                   `json:"-"`
 	Status                          string                                                   `json:"-"`
@@ -226,6 +235,7 @@ type workspaceLaunchReconcileOperation struct {
 	IdempotentReplayClaims          map[string]workspaceLaunchIdempotentReplayClaim          `json:"idempotentReplayClaims,omitempty"`
 	FreshContinuationAuthorizations map[string]workspaceLaunchFreshContinuationAuthorization `json:"freshContinuationAuthorizations,omitempty"`
 	ContinuationReadClaims          map[string]workspaceLaunchContinuationReadClaim          `json:"continuationReadClaims,omitempty"`
+	RuntimeRepair                   *workspaceLaunchRuntimeRepair                            `json:"runtimeRepair,omitempty"`
 	raw                             map[string]json.RawMessage
 }
 
@@ -1043,6 +1053,18 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 	if value := raw["resumeAuthorizationConsumedAt"]; len(value) > 0 && json.Unmarshal(value, &operation.ResumeAuthorizationConsumedAt) != nil {
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 	}
+	if value := raw["runtimeRepair"]; len(value) > 0 && json.Unmarshal(value, &operation.RuntimeRepair) != nil {
+		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	}
+	if operation.RuntimeRepair != nil && (operation.RuntimeRepair.AuthorizationID == "" || operation.RuntimeRepair.LaunchVersion <= 0 ||
+		operation.RuntimeRepair.AuthorizedBy == "" || operation.RuntimeRepair.AuthorizedAt == "" || operation.RuntimeRepair.Reason == "" || operation.RuntimeRepair.ImageDigest == "") {
+		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	}
+	if operation.RuntimeRepair != nil {
+		if _, err := time.Parse(time.RFC3339Nano, operation.RuntimeRepair.AuthorizedAt); err != nil {
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
+	}
 	if value := raw["idempotentReplayClaims"]; len(value) > 0 && json.Unmarshal(value, &operation.IdempotentReplayClaims) != nil {
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 	}
@@ -1229,12 +1251,14 @@ func workspaceLaunchReconcileOperationRow(operation workspaceLaunchReconcileOper
 		"observations": operation.Observations, "consumedResumeAuthorizations": operation.ConsumedResumeAuthorizations, "resumeAuthorization": operation.ResumeAuthorization,
 		"resumeAuthorizationConsumedAt": operation.ResumeAuthorizationConsumedAt, "idempotentReplayClaims": operation.IdempotentReplayClaims,
 		"freshContinuationAuthorizations": operation.FreshContinuationAuthorizations, "continuationReadClaims": operation.ContinuationReadClaims,
+		"runtimeRepair": operation.RuntimeRepair,
 	} {
 		if key == "consumedResumeAuthorizations" && len(operation.ConsumedResumeAuthorizations) == 0 ||
 			key == "resumeAuthorization" && operation.ResumeAuthorization == nil || key == "resumeAuthorizationConsumedAt" && operation.ResumeAuthorizationConsumedAt == "" ||
 			key == "idempotentReplayClaims" && len(operation.IdempotentReplayClaims) == 0 ||
 			key == "freshContinuationAuthorizations" && len(operation.FreshContinuationAuthorizations) == 0 ||
-			key == "continuationReadClaims" && len(operation.ContinuationReadClaims) == 0 {
+			key == "continuationReadClaims" && len(operation.ContinuationReadClaims) == 0 ||
+			key == "runtimeRepair" && operation.RuntimeRepair == nil {
 			delete(raw, key)
 			continue
 		}

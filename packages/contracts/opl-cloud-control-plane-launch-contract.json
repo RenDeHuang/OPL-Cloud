@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "owner": "services/control-plane",
   "purpose": "Own the Workspace launch business operation, persisted stage decision, and recovery authorization without owning provider resources, spendable balance, or evidence receipts.",
   "state": "current",
@@ -56,7 +56,8 @@
         "resumeAuthorizationConsumedAt",
         "idempotentReplayClaims",
         "freshContinuationAuthorizations",
-        "continuationReadClaims"
+        "continuationReadClaims",
+        "runtimeRepair"
       ],
       "forbiddenResultFields": [
         "phase",
@@ -234,6 +235,24 @@
       "unknown": "fail_closed_before_authorization_persistence",
       "exactReplay": "same_authorizationId_and_approval_digest_returns_persisted_single_use_readback_without_new_authority_budget"
     }
+  },
+  "fulfillmentRepair": {
+    "authority": "services/control-plane",
+    "operation": "replace_failed_runtime_for_paid_workspace_launch",
+    "route": "POST /api/operator/workspace-launches/{operationId}/repair-runtime",
+    "requestFields": ["launchVersion", "reason", "imageDigest"],
+    "authorizationId": "Idempotency-Key request header",
+    "persistedField": "runtimeRepair",
+    "admission": "manual_review_runtime_with_resource_billing_enabled_exact_confirmed_key_debit_compute_storage_attachment_secret_original_runtime_unknown_and_unattempted_activation_receipt",
+    "operatorSuppliedFacts": ["authorizationId", "launchVersion", "reason", "imageDigest"],
+    "serverBoundAuthorizationFacts": ["authorizedBy", "authorizedAt"],
+    "ownerSuppliedFacts": ["accountId", "workspaceId", "computeAllocationId", "storageId", "attachmentId", "attachmentBindingRef", "originalRuntimeOperationId", "gatewaySecretRef"],
+    "preserved": ["launchOperationId", "accountId", "workspaceId", "workspaceApiKeyId", "debitIdentity", "computeAllocationId", "storageId", "attachmentId", "gatewaySecretRef"],
+    "mutationScope": "one_fabric_runtime_replacement_only",
+    "completion": "replacement_runtime_READY_then_original_launch_activation_and_purchase_receipt",
+    "exactReplay": "same_authorizationId_launchVersion_reason_imageDigest_and_authorizedBy_returns_the_persisted_repair_without_another_provider_mutation",
+    "forbidden": ["second_key", "second_debit", "replacement_compute", "replacement_storage", "replacement_attachment", "replacement_secret", "workspace_delete", "operator_resource_identity_injection"],
+    "fabricContract": "opl-cloud-fabric-launch-binding-contract.json#runtimeRepair"
   },
   "notOwned": [
     "spendable_balance",

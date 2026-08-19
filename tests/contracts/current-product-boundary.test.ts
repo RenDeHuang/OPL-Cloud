@@ -40,7 +40,7 @@ test("current launch and settlement facts have four focused owners", async () =>
 test("Control Plane durable launch chain keeps preflight outside mutation stages", async () => {
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
-  assert.equal(contract.schemaVersion, 5);
+  assert.equal(contract.schemaVersion, 6);
   assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
     "launchOperationId", "accountId", "ownerUserId", "workspaceId", "requestHash"
@@ -68,7 +68,7 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
     durableResultControlFields: [
       "schemaVersion", "version", "stage", "attempts", "observations", "consumedResumeAuthorizations",
       "resumeAuthorization", "resumeAuthorizationConsumedAt", "idempotentReplayClaims",
-      "freshContinuationAuthorizations", "continuationReadClaims"
+      "freshContinuationAuthorizations", "continuationReadClaims", "runtimeRepair"
     ],
     forbiddenResultFields: ["phase", "currentDecision"],
     cas: "exact_prior_result_and_launch_identity_single_winner"
@@ -97,6 +97,8 @@ test("Control Plane durable launch chain keeps preflight outside mutation stages
   assert.match(contract.stageDecision.freshTypedPendingContinuation.legacyV3MissingAuthorizationAndClaimFields,
     /zero_system_authorization_and_zero_read_claim/);
   assert.equal(contract.recovery.route, "POST /api/operator/workspace-launches/{operationId}/resume");
+  assert.equal(contract.fulfillmentRepair.route, "POST /api/operator/workspace-launches/{operationId}/repair-runtime");
+  assert.equal(contract.fulfillmentRepair.fabricContract, "opl-cloud-fabric-launch-binding-contract.json#runtimeRepair");
   assert.deepEqual(contract.recovery.requestFields, [
     "launchVersion", "authorizedStage", "reason", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"
   ]);

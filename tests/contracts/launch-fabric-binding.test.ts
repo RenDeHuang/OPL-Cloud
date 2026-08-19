@@ -11,7 +11,7 @@ test("Control Plane owns the launch identity and recovery authorization", async 
   const contract = await json("packages/contracts/opl-cloud-control-plane-launch-contract.json");
 
   assert.equal(contract.owner, "services/control-plane");
-  assert.equal(contract.schemaVersion, 5);
+  assert.equal(contract.schemaVersion, 6);
   assert.equal(contract.launchOperation.action, "workspace.launch.v2");
   assert.equal(contract.launchOperation.resultSchemaVersion, 3);
   assert.deepEqual(contract.launchOperation.identityFields, [
@@ -33,7 +33,7 @@ test("Control Plane owns the launch identity and recovery authorization", async 
     durableResultControlFields: [
       "schemaVersion", "version", "stage", "attempts", "observations", "consumedResumeAuthorizations",
       "resumeAuthorization", "resumeAuthorizationConsumedAt", "idempotentReplayClaims",
-      "freshContinuationAuthorizations", "continuationReadClaims"
+      "freshContinuationAuthorizations", "continuationReadClaims", "runtimeRepair"
     ],
     forbiddenResultFields: ["phase", "currentDecision"],
     cas: "exact_prior_result_and_launch_identity_single_winner"
@@ -159,12 +159,19 @@ test("Control Plane owns the launch identity and recovery authorization", async 
       exactReplay: "same_authorizationId_and_approval_digest_returns_persisted_single_use_readback_without_new_authority_budget"
     }
   });
+  assert.equal(contract.fulfillmentRepair.route, "POST /api/operator/workspace-launches/{operationId}/repair-runtime");
+  assert.equal(contract.fulfillmentRepair.mutationScope, "one_fabric_runtime_replacement_only");
+  assert.deepEqual(contract.fulfillmentRepair.operatorSuppliedFacts, ["authorizationId", "launchVersion", "reason", "imageDigest"]);
+  assert.deepEqual(contract.fulfillmentRepair.serverBoundAuthorizationFacts, ["authorizedBy", "authorizedAt"]);
+  assert.match(contract.fulfillmentRepair.admission, /exact_confirmed_key_debit_compute_storage_attachment_secret/);
+  assert.match(contract.fulfillmentRepair.exactReplay, /without_another_provider_mutation/);
 });
 
 test("Fabric launch binding freezes only the typed successor seam", async () => {
   const contract = await json("packages/contracts/opl-cloud-fabric-launch-binding-contract.json");
 
   assert.equal(contract.owner, "services/fabric");
+  assert.equal(contract.schemaVersion, 3);
   assert.deepEqual(contract.workspaceLaunchApi, {
     preflightRoute: "POST /fabric/workspace-launches/preflight",
     stageReadRoute: "POST /fabric/workspace-launches/stages/read",
@@ -192,6 +199,11 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
     forbiddenFields: ["resumeAuthorizationDigest", "mutationBudget"],
     gatewayCredential: "optional_secret_stage_transport_only_never_hashed_or_persisted"
   });
+  assert.deepEqual(contract.runtimeRepair.preserved, [
+    "computeId", "volumeId", "attachmentId", "attachmentOperationId", "gatewaySecretRef", "runtimeId", "serviceName"
+  ]);
+  assert.equal(contract.runtimeRepair.adapterPolicy, "explicit_opt_in_or_fail_closed");
+  assert.match(contract.runtimeRepair.providerMutation, /without_destroying_gateway_secret/);
   assert.deepEqual(contract.launchBinding.fields, [
     "schemaVersion", "launchOperationId", "accountId", "workspaceId", "stage", "action",
     "fabricOperationId", "idempotencyKey", "requestHash", "expectedResourceBinding"

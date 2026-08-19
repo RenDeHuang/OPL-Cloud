@@ -322,16 +322,17 @@ type StorageAttachment struct {
 }
 
 type WorkspaceRuntimeInput struct {
-	WorkspaceID           string `json:"workspaceId"`
-	ComputeID             string `json:"computeId"`
-	VolumeID              string `json:"volumeId"`
-	AttachmentID          string `json:"attachmentId"`
-	AttachmentOperationID string `json:"attachmentOperationId"`
-	RuntimeOperationID    string `json:"runtimeOperationId"`
-	ImageID               string `json:"imageId"`
-	GatewaySecretRef      string `json:"gatewaySecretRef"`
-	IdempotencyKey        string `json:"-"`
-	OperationID           string `json:"-"`
+	WorkspaceID                string `json:"workspaceId"`
+	ComputeID                  string `json:"computeId"`
+	VolumeID                   string `json:"volumeId"`
+	AttachmentID               string `json:"attachmentId"`
+	AttachmentOperationID      string `json:"attachmentOperationId"`
+	RuntimeOperationID         string `json:"runtimeOperationId"`
+	PreviousRuntimeOperationID string `json:"previousRuntimeOperationId,omitempty"`
+	ImageID                    string `json:"imageId"`
+	GatewaySecretRef           string `json:"gatewaySecretRef"`
+	IdempotencyKey             string `json:"-"`
+	OperationID                string `json:"-"`
 }
 
 type WorkspaceRuntime struct {
