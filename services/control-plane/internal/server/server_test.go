@@ -350,6 +350,53 @@ func TestUnavailablePackageStopsPreviewAndLaunchBeforeExternalCalls(t *testing.T
 	}
 }
 
+func TestCustomerOwnedLaunchAdmissionFollowsProviderPackageAvailability(t *testing.T) {
+	t.Setenv("OPL_DEPLOYMENT_MODE", "customer_owned")
+	t.Setenv("OPL_FABRIC_PROVIDER", "local-docker")
+	for _, tc := range []struct {
+		name           string
+		basicAvailable bool
+		proAvailable   bool
+	}{
+		{name: "Basic only", basicAvailable: true},
+		{name: "Pro only", proAvailable: true},
+		{name: "Basic and Pro", basicAvailable: true, proAvailable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, launch := range []struct {
+				packageID string
+				available bool
+			}{
+				{packageID: "basic", available: tc.basicAvailable},
+				{packageID: "pro", available: tc.proAvailable},
+			} {
+				t.Run(launch.packageID, func(t *testing.T) {
+					fabric := &providerProfileCatalogFabricClient{
+						fakeFabricClient: fakeFabricClient{},
+						packages: []clients.FabricWorkspacePackage{
+							{ID: "basic", Name: "Basic Workspace", SizeGB: 10, Available: tc.basicAvailable},
+							{ID: "pro", Name: "Pro Workspace", SizeGB: 100, Available: tc.proAvailable},
+						},
+					}
+					sub2API := &providerProfileSub2APIClient{testSub2APIClient: &testSub2APIClient{balance: 1_000_000_000_000, charges: map[string]int64{}}}
+					server := NewServer(controlplane.NewService(fakeLedgerClient{}, fabric, sub2API))
+					session := loginForTest(t, server, "customer-owner@opl.local", "CorrectHorseBatteryStaple!")
+					response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", fmt.Sprintf(`{"name":"%s Workspace","packageId":"%s","autoRenew":false}`, launch.packageID, launch.packageID), "profile-"+strings.ReplaceAll(tc.name, " ", "-")+"-"+launch.packageID)
+					if !launch.available {
+						if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"package_unavailable"`) {
+							t.Fatalf("unavailable %s status=%d body=%s", launch.packageID, response.Code, response.Body.String())
+						}
+						return
+					}
+					if response.Code != http.StatusAccepted || strings.Contains(response.Body.String(), "workspace_launch_basic_only") {
+						t.Fatalf("available %s status=%d body=%s", launch.packageID, response.Code, response.Body.String())
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestProviderReconcileDoesNotCreateCanonicalChildBilling(t *testing.T) {
 	assertAbsent := func(t *testing.T, resource map[string]any) {
 		t.Helper()
@@ -974,6 +1021,44 @@ func (f unavailableProCatalogFabricClient) Catalog(_ context.Context) (clients.F
 		{ID: "basic", SizeGB: 10, Available: true},
 		{ID: "pro", SizeGB: 100, Available: false},
 	}}, nil
+}
+
+type providerProfileCatalogFabricClient struct {
+	fakeFabricClient
+	packages []clients.FabricWorkspacePackage
+}
+
+type providerProfileSub2APIClient struct{ *testSub2APIClient }
+
+func (*providerProfileSub2APIClient) ConfiguredUserIdentity(context.Context) (clients.Sub2APIIdentity, error) {
+	return clients.Sub2APIIdentity{ID: 41, Email: "customer-owner@opl.local", Status: "active"}, nil
+}
+
+func (*providerProfileSub2APIClient) UserGroups(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIGroup, error) {
+	if credential.Bearer != "test-user-delegated-token" || userID != 41 {
+		return nil, errors.New("wrong delegated credential")
+	}
+	return []clients.Sub2APIGroup{{ID: 7, Name: "Codex", Status: "active"}}, nil
+}
+
+func (f *providerProfileCatalogFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, error) {
+	return clients.FabricCatalog{WorkspacePackages: append([]clients.FabricWorkspacePackage(nil), f.packages...)}, nil
+}
+
+func (f *providerProfileCatalogFabricClient) PreflightWorkspaceLaunch(_ context.Context, input clients.WorkspaceLaunchPreflightInput) (clients.WorkspaceLaunchPreflight, error) {
+	return clients.WorkspaceLaunchPreflight{
+		SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, Available: true, Reason: "none",
+		LaunchOperationID: input.LaunchOperationID, RequestHash: input.RequestHash,
+		ProviderProfileRef: "test-provider-profile", BindingRef: "test-provider-binding", SpecDigest: strings.Repeat("a", 64),
+	}, nil
+}
+
+func (f *providerProfileCatalogFabricClient) ReadWorkspaceLaunchStage(context.Context, clients.WorkspaceLaunchStageInput) (clients.WorkspaceLaunchStageResult, error) {
+	return clients.WorkspaceLaunchStageResult{}, errors.New("unexpected workspace launch stage read")
+}
+
+func (f *providerProfileCatalogFabricClient) EnsureWorkspaceLaunchStage(context.Context, clients.WorkspaceLaunchStageInput) (clients.WorkspaceLaunchStageResult, error) {
+	return clients.WorkspaceLaunchStageResult{}, errors.New("unexpected workspace launch stage mutation")
 }
 
 type fakeFabricClient struct {

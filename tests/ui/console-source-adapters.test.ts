@@ -29,9 +29,117 @@ test("Console exposes typed source adapters for the customer truth surfaces", as
   assert.equal(typeof workspaceApi.getWorkspaces, "function");
   assert.equal(typeof workspaceApi.findWorkspaceInPages, "function");
   assert.equal(typeof workspaceApi.getWorkspaceRuntimeStatus, "function");
+  assert.equal(typeof workspaceApi.getWorkspaceGatewayBudget, "function");
+  assert.equal(typeof workspaceApi.updateWorkspaceGatewayBudget, "function");
   assert.equal(typeof workspaceApi.revealWorkspaceCredentials, "function");
   assert.equal(typeof workspaceApi.rotateWorkspaceCredentials, "function");
   assert.equal(typeof workspaceApi.updateWorkspaceRenewal, "function");
+});
+
+test("Workspace Gateway budget adapters use the scoped route and exact mutation boundary", async () => {
+  const requests: Array<{ path: string; init?: RequestInit }> = [];
+  const originalFetch = globalThis.fetch;
+  const current = {
+    workspaceId: "workspace / alpha",
+    keyId: "9223372036854775807",
+    status: "active",
+    quotaUsdMicros: "9007199254740993",
+    quotaUsedUsdMicros: "3000000",
+    rateLimit5hUsdMicros: "500000",
+    rateLimit1dUsdMicros: "1000000",
+    rateLimit7dUsdMicros: "4000000",
+    usage5hUsdMicros: "100000",
+    usage1dUsdMicros: "200000",
+    usage7dUsdMicros: "300000",
+    enabled: true,
+    updatedAt: "2026-08-19T01:02:03Z"
+  };
+  globalThis.fetch = async (input, init) => {
+    requests.push({ path: String(input), init });
+    return new Response(JSON.stringify({
+      source: "sub2api",
+      status: "available",
+      available: true,
+      fetchedAt: "2026-08-19T01:02:04Z",
+      data: init?.method === "PATCH" ? { ...current, status: "disabled", enabled: false } : current
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  try {
+    const readback = await workspaceApi.getWorkspaceGatewayBudget("workspace / alpha", "9223372036854775807");
+    const expectedPayload = {
+      quotaUsdMicros: 9_000_000,
+      rateLimit5hUsdMicros: 500_000,
+      rateLimit1dUsdMicros: 1_000_000,
+      rateLimit7dUsdMicros: 4_000_000,
+      enabled: false,
+      resetQuota: true,
+      resetRateLimitUsage: true
+    };
+    const input = { ...expectedPayload, name: "must-not-pass", groupId: "must-not-pass" };
+    const updated = await workspaceApi.updateWorkspaceGatewayBudget(
+      "workspace / alpha",
+      "9223372036854775807",
+      input,
+      "csrf-budget",
+      "workspace-budget:opaque"
+    );
+
+    assert.equal(readback.available && readback.data.quotaUsdMicros, "9007199254740993");
+    assert.equal(updated.available && updated.data.enabled, false);
+    assert.deepEqual(requests.map(({ path }) => path), [
+      "/api/workspaces/workspace%20%2F%20alpha/gateway-budget",
+      "/api/workspaces/workspace%20%2F%20alpha/gateway-budget"
+    ]);
+    assert.equal(requests[0].init?.method, undefined);
+    assert.equal(requests[1].init?.method, "PATCH");
+    assert.equal(new Headers(requests[1].init?.headers).get("content-type"), "application/json");
+    assert.equal(new Headers(requests[1].init?.headers).get("x-opl-csrf"), "csrf-budget");
+    assert.equal(new Headers(requests[1].init?.headers).get("Idempotency-Key"), "workspace-budget:opaque");
+    assert.deepEqual(JSON.parse(String(requests[1].init?.body)), expectedPayload);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Workspace Gateway budget adapter rejects source, identity, field, and micros drift", async () => {
+  const base = {
+    workspaceId: "ws-alpha",
+    keyId: "19",
+    status: "active",
+    quotaUsdMicros: "9000000",
+    quotaUsedUsdMicros: "3000000",
+    rateLimit5hUsdMicros: "500000",
+    rateLimit1dUsdMicros: "1000000",
+    rateLimit7dUsdMicros: "4000000",
+    usage5hUsdMicros: "100000",
+    usage1dUsdMicros: "200000",
+    usage7dUsdMicros: "300000",
+    enabled: true,
+    updatedAt: "2026-08-19T01:02:03Z"
+  };
+  const cases = [
+    { source: "control-plane", data: base },
+    { source: "sub2api", data: { ...base, workspaceId: "ws-other" } },
+    { source: "sub2api", data: { ...base, keyId: "20" } },
+    { source: "sub2api", data: { ...base, quotaUsdMicros: 9_000_000 } },
+    { source: "sub2api", data: { ...base, quotaUsdMicros: "9223372036854775808" } },
+    { source: "sub2api", data: { ...base, unexpected: true } }
+  ];
+
+  for (const item of cases) {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      source: item.source,
+      status: "available",
+      available: true,
+      fetchedAt: "2026-08-19T01:02:04Z",
+      data: item.data
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      workspaceApi.getWorkspaceGatewayBudget("ws-alpha", "19"),
+      /invalid_workspace_gateway_budget_source/
+    );
+  }
 });
 
 test("unavailable source adapters preserve the authoritative reason code", () => {

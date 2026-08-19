@@ -238,6 +238,10 @@ test("session replacement invalidates late reads and clears route state", async 
   assert.match(controller, /setReceiptCursorStack\(\[\]\)/);
   assert.match(controller, /setBalanceHistoryPage\(1\)/);
   assert.match(controller, /setSelectedUsageKeyId\(""\)/);
+  assert.match(controller, /workspaceBudget: emptyRemote\(\)/);
+  assert.match(controller, /setWorkspaceBudgetBusy\(false\)/);
+  assert.match(controller, /workspaceBudgetBusyClaim\.current = null/);
+  assert.match(controller, /workspaceBudgetIntents\.current\.clear\(\)/);
   assert.match(panel, /sessionGeneration\.current \+= 1/);
   assert.match(panel, /listGeneration\.current \+= 1/);
   assert.match(panel, /requestIsCurrent\(session, token\)/);
@@ -263,12 +267,14 @@ test("logout enters a protected hidden state before awaiting authority", async (
   assert.match(publicPages, /重试退出/);
 });
 
-test("Workspace detail and Runtime reads reject stale route readback", async () => {
+test("Workspace detail, Runtime, and budget reads reject stale route readback", async () => {
   const controller = await source("apps/console-ui/src/app/use-console-controller.ts");
   assert.match(controller, /findWorkspaceInPages\(workspaceId\)/);
-  assert.match(controller, /workspaceIdFromPath\(window\.location\.pathname\) !== workspaceId/);
+  assert.match(controller, /workspaceIdFromPath\(window\.location\.pathname\) === workspaceId/);
   assert.match(controller, /getWorkspaceRuntimeStatus\(workspaceId\)/);
-  assert.ok((controller.match(/workspaceIdFromPath\(window\.location\.pathname\) !== workspaceId/g) || []).length >= 2);
+  assert.match(controller, /getWorkspaceGatewayBudget\(workspaceId, workspaceKeyId\)/);
+  assert.match(controller, /isRequestCurrent\(generation, activeSession\.user\.id\)/);
+  assert.match(controller, /workspaceDetailGeneration === workspaceDetailRequestGeneration\.current/);
 });
 
 test("customer routes load only page-owned sources", async () => {
@@ -332,6 +338,7 @@ test("all Console mutations reject late shared-state writes after session replac
   assert.match(controller, /const currentMutationRequest = \(\) =>/);
   for (const name of [
     "submitWorkspaceLaunch",
+    "updateWorkspaceBudget",
     "rotateWorkspacePassword",
     "createSupportMapping",
     "markRead",
@@ -352,17 +359,45 @@ test("all Console mutations reject late shared-state writes after session replac
   }
 });
 
-test("Workspace detail and Runtime failures remain independent", async () => {
+test("Workspace detail admission precedes independent Runtime and budget reads", async () => {
   const controller = await source("apps/console-ui/src/app/use-console-controller.ts");
   const body = controller.slice(controller.indexOf("const loadWorkspaceDetail"), controller.indexOf("const loadUsage"));
-  const runtimeStart = body.indexOf("const runtime = await getWorkspaceRuntimeStatus");
-  const detailBlock = body.slice(0, runtimeStart);
-  const runtimeBlock = body.slice(runtimeStart);
-  assert.match(detailBlock, /findWorkspaceInPages\(workspaceId\)[\s\S]+updateSource\("workspaceDetail"/);
-  assert.match(detailBlock, /failSource\("workspaceDetail"/);
-  assert.doesNotMatch(detailBlock, /failSource\("runtime"/);
-  assert.match(runtimeBlock, /getWorkspaceRuntimeStatus\(workspaceId\)[\s\S]+failSource\("runtime"/);
-  assert.doesNotMatch(runtimeBlock, /failSource\("workspaceDetail"/);
+  assert.ok(body.indexOf("findWorkspaceInPages(workspaceId)") < body.indexOf("getWorkspaceRuntimeStatus(workspaceId)"));
+  assert.ok(body.indexOf("findWorkspaceInPages(workspaceId)") < body.indexOf("getWorkspaceGatewayBudget(workspaceId, workspaceKeyId)"));
+  assert.match(body, /workspaceKeyId = detail\.data\.workspaceApiKeyId \|\| ""/);
+  assert.match(body, /Promise\.allSettled\(\[\s*getWorkspaceRuntimeStatus\(workspaceId\),\s*getWorkspaceGatewayBudget\(workspaceId, workspaceKeyId\)\s*\]\)/);
+  assert.match(body, /runtimeResult\.status === "fulfilled"[\s\S]+failSource\("runtime"/);
+  assert.match(body, /budgetResult\.status === "fulfilled"[\s\S]+failSource\("workspaceBudget"/);
+  assert.doesNotMatch(body, /Promise\.all\(\[\s*getWorkspaceRuntimeStatus/);
+});
+
+test("Workspace budget writes keep one exact-input intent and reject late writes", async () => {
+  const controller = await source("apps/console-ui/src/app/use-console-controller.ts");
+  const body = controller.slice(controller.indexOf("const updateWorkspaceBudget"), controller.indexOf("\n  const ", controller.indexOf("const updateWorkspaceBudget") + 10));
+  assert.match(controller, /const workspaceBudgetIntents = useRef\(new Map/);
+  assert.match(controller, /workspaceBudgetRequestSignature\(input\)/);
+  assert.match(body, /const requestStillCurrent = currentMutationRequest\(\)/);
+  assert.match(body, /sources\.workspaceBudget\.value\?\.available/);
+  assert.match(body, /budget\.workspaceId !== workspace\.id/);
+  assert.match(body, /workspaceBudgetBusyClaim\.current !== null/);
+  assert.match(body, /const busyClaim = Symbol\("workspace-budget"\)/);
+  assert.match(body, /workspaceBudgetBusyClaim\.current = busyClaim/);
+  assert.match(body, /workspaceBudgetIntents\.current\.get\(workspace\.id\)/);
+  assert.match(body, /intent\.keyId !== budget\.keyId/);
+  assert.match(body, /intent\.signature !== signature/);
+  assert.match(body, /上次模型预算更新结果待确认/);
+  assert.match(body, /workspaceIdFromPath\(window\.location\.pathname\) === workspace\.id/);
+  assert.match(body, /workspaceDetailGeneration === workspaceDetailRequestGeneration\.current/);
+  assert.match(body, /updateWorkspaceGatewayBudget\([\s\S]+intent\.input[\s\S]+intent\.idempotencyKey/);
+  assert.match(body, /updateSource\("workspaceBudget", \{ value: result, loading: false, error: "" \}\)/);
+  assert.match(body, /result\.data\.keyId !== budget\.keyId/);
+  assert.match(body, /workspaceBudgetResultMatchesInput\(result\.data, intent\.input\)/);
+  assert.match(body, /模型预算已变化，请按最新状态重新提交/);
+  assert.ok((body.match(/updateSource\("workspaceBudget", \{ value: result, loading: false, error: "" \}\)/g) || []).length >= 2);
+  assert.match(body, /workspaceBudgetIntents\.current\.delete\(workspace\.id\)/);
+  assert.match(body, /workspaceBudgetBusyClaim\.current === busyClaim/);
+  assert.match(body, /workspaceBudgetBusyClaim\.current = null/);
+  assert.doesNotMatch(body, /getWorkspaceGatewayBudget/);
 });
 
 test("request usage and usage summary settle independently", async () => {

@@ -80,6 +80,14 @@ test("Workspace launch uses the selected split-decision flow with API-backed fac
   assert.doesNotMatch(launch, /分别来自各自权威来源|浏览器不会自行计算|服务端权威总价/);
 });
 
+test("Workspace launch renders only provider-available plans", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const launch = pages.slice(pages.indexOf("function WorkspaceLaunchPage"), pages.indexOf("function WorkspaceLaunchConfirm"));
+
+  assert.match(launch, /catalog\.packages\.filter\(\(plan\) => plan\.available && \(plan\.id === "basic" \|\| plan\.id === "pro"\)\)/);
+  assert.doesNotMatch(launch, /disabled=\{!plan\.available\}/);
+});
+
 test("Workspace launch status shows only the authoritative current phase", async () => {
   const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
   const operation = pages.slice(pages.indexOf("function LaunchOperation"), pages.indexOf("function SecretRow"));
@@ -109,6 +117,23 @@ test("Workspace and Overview render server-owned lifecycle, runtime, and billing
   assert.doesNotMatch(pages, /Workspace DTO|套餐 ID 推导/);
   assert.doesNotMatch(pages, /workspace\.packageId === ["']basic["'].*(?:cpu|memory)/s);
   assert.doesNotMatch(pages, /\|\| "opl"/);
+});
+
+test("Workspace detail owns the scoped model budget controls", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const detail = pages.slice(pages.indexOf("const workspaceBudgetLimitFields"), pages.indexOf("function WorkspaceDetailPage"));
+  for (const label of [
+    "模型预算", "总额度（micros）", "5 小时限额（micros）", "1 天限额（micros）", "7 天限额（micros）",
+    "启用 Workspace Key", "保存预算", "重置总额度用量", "重置滚动窗口用量", "总额度已用（micros）",
+    "5 小时已用（micros）", "1 天已用（micros）", "7 天已用（micros）", "更新时间"
+  ]) assert.match(detail, new RegExp(label));
+  assert.match(detail, /controller\.sources\.workspaceBudget/);
+  assert.match(detail, /controller\.updateWorkspaceBudget\(input\)/);
+  assert.match(detail, /controller\.updateWorkspaceBudget\(\{ resetQuota: true \}\)/);
+  assert.match(detail, /controller\.updateWorkspaceBudget\(\{ resetRateLimitUsage: true \}\)/);
+  assert.match(detail, /Number\.isSafeInteger/);
+  assert.match(detail, /value\.trim\(\) === ""/);
+  assert.doesNotMatch(detail, /controller\.(?:updateGatewayKey|deleteGatewayKey|revealGatewayKey)|groupId|重新绑定|修改名称/);
 });
 
 test("Workspace unavailable states offer retry instead of creation", async () => {

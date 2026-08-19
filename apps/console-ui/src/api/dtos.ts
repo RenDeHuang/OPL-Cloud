@@ -233,6 +233,32 @@ export interface WorkspaceRuntimeDTO {
   access?: RuntimeAccessSummary;
 }
 
+export interface WorkspaceGatewayBudgetDTO {
+  workspaceId: string;
+  keyId: string;
+  status: "active" | "disabled" | "quota_exhausted" | "expired";
+  quotaUsdMicros: string;
+  quotaUsedUsdMicros: string;
+  rateLimit5hUsdMicros: string;
+  rateLimit1dUsdMicros: string;
+  rateLimit7dUsdMicros: string;
+  usage5hUsdMicros: string;
+  usage1dUsdMicros: string;
+  usage7dUsdMicros: string;
+  enabled: boolean;
+  updatedAt: string | null;
+}
+
+export interface WorkspaceGatewayBudgetUpdateRequest {
+  quotaUsdMicros?: number;
+  rateLimit5hUsdMicros?: number;
+  rateLimit1dUsdMicros?: number;
+  rateLimit7dUsdMicros?: number;
+  enabled?: boolean;
+  resetQuota?: boolean;
+  resetRateLimitUsage?: boolean;
+}
+
 export interface RuntimeCredentialAccess {
   account: string;
   username: string;

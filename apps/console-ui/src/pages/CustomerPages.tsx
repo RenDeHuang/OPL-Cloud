@@ -15,7 +15,7 @@ import {
   WalletCards
 } from "lucide-react";
 import { RadioGroup } from "@openai/apps-sdk-ui/components/RadioGroup";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { ConsoleController } from "../app/use-console-controller.ts";
 import type {
@@ -26,7 +26,9 @@ import type {
   PlanId,
   PricingPlan,
   SourceEnvelope,
-  WorkspaceDTO
+  WorkspaceDTO,
+  WorkspaceGatewayBudgetDTO,
+  WorkspaceGatewayBudgetUpdateRequest
 } from "../api/dtos.ts";
 import { KeysPanel } from "../components/keys/KeysPanel.tsx";
 import { SourceState } from "../components/source/SourceState.tsx";
@@ -350,7 +352,7 @@ function WorkspaceLaunchPage({ controller }: { controller: ConsoleController }) 
             <fieldset><legend>选择套餐</legend>
               {controller.sources.catalog.loading && !catalog ? <div className="source-loading"><span className="spinner" />正在读取计划与价格</div> : null}
               {controller.sources.catalog.error ? <div className="inline-error"><AlertCircle aria-hidden size={16} />计划与价格暂不可用<Button onClick={() => void controller.refreshCurrentPage()} size="sm" variant="ghost">重试</Button></div> : null}
-              {catalog ? <RadioGroup<PlanId> aria-label="Workspace 套餐" className="workspace-plan-list" direction="col" name="workspace-plan" onChange={controller.setLaunchPlan} value={controller.launchPlan}>{catalog.packages.filter((plan) => plan.id === "basic" || plan.id === "pro").map((plan) => <PlanOption controller={controller} key={plan.id} plan={plan} />)}</RadioGroup> : null}
+              {catalog ? <RadioGroup<PlanId> aria-label="Workspace 套餐" className="workspace-plan-list" direction="col" name="workspace-plan" onChange={controller.setLaunchPlan} value={controller.launchPlan}>{catalog.packages.filter((plan) => plan.available && (plan.id === "basic" || plan.id === "pro")).map((plan) => <PlanOption controller={controller} key={plan.id} plan={plan} />)}</RadioGroup> : null}
             </fieldset>
           </section>
           <WorkspaceOrderSummary
@@ -433,6 +435,86 @@ function SecretRow({ busy, label, onCopy, onHide, onReveal, revealed, value }: {
   return <div><dt>{label}</dt><dd className="credential-actions"><code>{revealed ? value || "-" : "••••••••••••"}</code>{revealed ? <><Button aria-label="隐藏" onClick={onHide} size="sm" uniform variant="ghost"><EyeOff aria-hidden size={16} /></Button><Button aria-label="复制" onClick={onCopy} size="sm" uniform variant="ghost"><Copy aria-hidden size={16} /></Button></> : <Button aria-label="显示" busy={busy} onClick={onReveal} size="sm" variant="outline"><Eye aria-hidden size={16} />显示</Button>}</dd></div>;
 }
 
+type WorkspaceBudgetLimitField = "quotaUsdMicros" | "rateLimit5hUsdMicros" | "rateLimit1dUsdMicros" | "rateLimit7dUsdMicros";
+type WorkspaceBudgetForm = Record<WorkspaceBudgetLimitField, string> & { enabled: boolean };
+
+const workspaceBudgetLimitFields: ReadonlyArray<{ field: WorkspaceBudgetLimitField; label: string }> = [
+  { field: "quotaUsdMicros", label: "总额度（micros）" },
+  { field: "rateLimit5hUsdMicros", label: "5 小时限额（micros）" },
+  { field: "rateLimit1dUsdMicros", label: "1 天限额（micros）" },
+  { field: "rateLimit7dUsdMicros", label: "7 天限额（micros）" }
+];
+
+function workspaceBudgetForm(budget: WorkspaceGatewayBudgetDTO | null): WorkspaceBudgetForm {
+  return {
+    quotaUsdMicros: budget?.quotaUsdMicros || "",
+    rateLimit5hUsdMicros: budget?.rateLimit5hUsdMicros || "",
+    rateLimit1dUsdMicros: budget?.rateLimit1dUsdMicros || "",
+    rateLimit7dUsdMicros: budget?.rateLimit7dUsdMicros || "",
+    enabled: budget?.enabled ?? false
+  };
+}
+
+function parseBudgetMicros(value: string) {
+  if (value.trim() === "" || !/^(0|[1-9]\d*)$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function WorkspaceBudgetPanel({ controller }: { controller: ConsoleController }) {
+  const budget = sourceData(controller.sources.workspaceBudget.value);
+  const [form, setForm] = useState<WorkspaceBudgetForm>(() => workspaceBudgetForm(budget));
+  const [errors, setErrors] = useState<Partial<Record<WorkspaceBudgetLimitField, string>>>({});
+
+  useEffect(() => {
+    setForm(workspaceBudgetForm(budget));
+    setErrors({});
+  }, [budget]);
+
+  const updateLimit = (field: WorkspaceBudgetLimitField, value: string) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    setErrors((current) => ({ ...current, [field]: "" }));
+  };
+
+  const save = () => {
+    const input: WorkspaceGatewayBudgetUpdateRequest = { enabled: form.enabled };
+    const nextErrors: Partial<Record<WorkspaceBudgetLimitField, string>> = {};
+    for (const { field } of workspaceBudgetLimitFields) {
+      const value = parseBudgetMicros(form[field]);
+      if (value === null) nextErrors[field] = "请输入非负安全整数";
+      else input[field] = value;
+    }
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+    void controller.updateWorkspaceBudget(input);
+  };
+
+  return <section className="panel workspace-budget-panel">
+    <div className="panel-title"><h2>模型预算</h2><span>{budget ? `Workspace Key · ${budget.keyId}` : "Workspace Key"}</span></div>
+    <SourceState error={controller.sources.workspaceBudget.error} loading={controller.sources.workspaceBudget.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.workspaceBudget.value} unavailableTitle="模型预算暂不可用">
+      {(liveBudget) => <div className="workspace-details key-form">
+        <div className="key-form-grid">
+          {workspaceBudgetLimitFields.map(({ field, label }) => <Field description="0 表示不限额" disabled={controller.workspaceBudgetBusy} error={errors[field]} inputMode="numeric" key={field} label={label} min="0" onChange={(event) => updateLimit(field, event.currentTarget.value)} required step="1" type="number" value={form[field]} />)}
+        </div>
+        <Checkbox checked={form.enabled} disabled={controller.workspaceBudgetBusy} label="启用 Workspace Key" onChange={(enabled) => setForm((current) => ({ ...current, enabled }))} />
+        <dl className="data-list">
+          <div><dt>状态</dt><dd>{liveBudget.status}</dd></div>
+          <div><dt>总额度已用（micros）</dt><dd><code>{liveBudget.quotaUsedUsdMicros}</code></dd></div>
+          <div><dt>5 小时已用（micros）</dt><dd><code>{liveBudget.usage5hUsdMicros}</code></dd></div>
+          <div><dt>1 天已用（micros）</dt><dd><code>{liveBudget.usage1dUsdMicros}</code></dd></div>
+          <div><dt>7 天已用（micros）</dt><dd><code>{liveBudget.usage7dUsdMicros}</code></dd></div>
+          <div><dt>更新时间</dt><dd>{liveBudget.updatedAt ? formatDate(liveBudget.updatedAt, true) : "-"}</dd></div>
+        </dl>
+        <div className="workspace-actions">
+          <Button busy={controller.workspaceBudgetBusy} color="primary" onClick={save}>保存预算</Button>
+          <Button busy={controller.workspaceBudgetBusy} onClick={() => void controller.updateWorkspaceBudget({ resetQuota: true })} variant="outline">重置总额度用量</Button>
+          <Button busy={controller.workspaceBudgetBusy} onClick={() => void controller.updateWorkspaceBudget({ resetRateLimitUsage: true })} variant="outline">重置滚动窗口用量</Button>
+        </div>
+      </div>}
+    </SourceState>
+  </section>;
+}
+
 function WorkspaceDetailPage({ controller }: { controller: ConsoleController }) {
   const workspaceSource = controller.sources.workspaceDetail.value;
   const runtime = sourceData(controller.sources.runtime.value);
@@ -459,6 +541,7 @@ function WorkspaceDetailPage({ controller }: { controller: ConsoleController }) 
               }}
             </SourceState>
           </section>
+          <WorkspaceBudgetPanel controller={controller} />
           <section className="panel workspace-facts-panel"><div className="panel-title"><h2>套餐与条款</h2></div><dl className="data-list"><div><dt>套餐</dt><dd>{detail.packageId?.toUpperCase() || "-"}</dd></div><div><dt>CPU / 内存规格</dt><dd>-</dd></div><div><dt>持久存储</dt><dd>{detail.storageGb ? `${detail.storageGb} GB` : "-"}</dd></div><div><dt>Workspace 月度总价</dt><dd>{formatUsdMicros(detail.totalUsdMicros)}</dd></div><div><dt>价格版本</dt><dd>{detail.priceVersion || "-"}</dd></div><div><dt>创建时间</dt><dd>{formatDate(detail.createdAt, true)}</dd></div><div><dt>权益期</dt><dd>{detail.periodStart && detail.paidThrough ? `${formatDate(detail.periodStart)} 至 ${formatDate(detail.paidThrough)}` : "-"}</dd></div><div><dt>续费状态</dt><dd>{detail.renewalStatus || "-"}</dd></div><div><dt>自动续费</dt><dd>{detail.autoRenew === true ? "开启" : detail.autoRenew === false ? "关闭" : "-"}</dd></div></dl></section>
         </> : null}
       </SourceState>
