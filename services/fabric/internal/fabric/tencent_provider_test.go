@@ -105,6 +105,59 @@ func TestTencentProviderProfileBindsWorkspaceFactsAndIgnoresLaterProfileDrift(t 
 	}
 }
 
+func TestTencentProviderProfileControlsBasicAndProAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		basicAvailable bool
+		proAvailable   bool
+	}{
+		{name: "Basic only", basicAvailable: true},
+		{name: "Pro only", proAvailable: true},
+		{name: "Basic and Pro", basicAvailable: true, proAvailable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var profile tencentProviderProfile
+			if err := json.Unmarshal([]byte(testTencentProviderProfile), &profile); err != nil {
+				t.Fatal(err)
+			}
+			for index := range profile.Packages {
+				switch profile.Packages[index].ID {
+				case "basic":
+					profile.Packages[index].Available = tc.basicAvailable
+				case "pro":
+					profile.Packages[index].Available = tc.proAvailable
+				}
+			}
+			raw, err := json.Marshal(profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(tencentProviderProfileEnv, string(raw))
+			provider := NewTencentProvider()
+			descriptor := provider.Descriptor()
+			if len(descriptor.Catalog.WorkspacePackages) != 2 {
+				t.Fatalf("catalog packages=%#v", descriptor.Catalog.WorkspacePackages)
+			}
+			for index, packageID := range []string{"basic", "pro"} {
+				wantAvailable := map[string]bool{"basic": tc.basicAvailable, "pro": tc.proAvailable}[packageID]
+				catalogPackage := descriptor.Catalog.WorkspacePackages[index]
+				if catalogPackage.ID != packageID || catalogPackage.Available != wantAvailable {
+					t.Fatalf("%s catalog package=%#v wantAvailable=%v", packageID, catalogPackage, wantAvailable)
+				}
+				_, planAvailable := descriptor.Plans[packageID]
+				if planAvailable != wantAvailable {
+					t.Fatalf("%s descriptor plan available=%v want=%v", packageID, planAvailable, wantAvailable)
+				}
+				sizeGB := map[string]int{"basic": 10, "pro": 100}[packageID]
+				_, resolveErr := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: packageID, SizeGB: sizeGB})
+				if wantAvailable && resolveErr != nil || !wantAvailable && !errors.Is(resolveErr, ErrProviderPlanUnavailable) {
+					t.Fatalf("%s resolve error=%v wantAvailable=%v", packageID, resolveErr, wantAvailable)
+				}
+			}
+		})
+	}
+}
+
 func TestTencentProviderProfileRejectsMissingProviderFacts(t *testing.T) {
 	for _, raw := range []string{
 		`{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic","available":true,"compute":{"id":"pool-basic","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"SA5.MEDIUM4"},"nodePoolId":"","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`,

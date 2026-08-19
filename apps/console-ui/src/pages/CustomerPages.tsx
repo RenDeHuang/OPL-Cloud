@@ -350,7 +350,7 @@ function WorkspaceLaunchPage({ controller }: { controller: ConsoleController }) 
             <fieldset><legend>选择套餐</legend>
               {controller.sources.catalog.loading && !catalog ? <div className="source-loading"><span className="spinner" />正在读取计划与价格</div> : null}
               {controller.sources.catalog.error ? <div className="inline-error"><AlertCircle aria-hidden size={16} />计划与价格暂不可用<Button onClick={() => void controller.refreshCurrentPage()} size="sm" variant="ghost">重试</Button></div> : null}
-              {catalog ? <RadioGroup<PlanId> aria-label="Workspace 套餐" className="workspace-plan-list" direction="col" name="workspace-plan" onChange={controller.setLaunchPlan} value={controller.launchPlan}>{catalog.packages.filter((plan) => plan.id === "basic" || plan.id === "pro").map((plan) => <PlanOption controller={controller} key={plan.id} plan={plan} />)}</RadioGroup> : null}
+              {catalog ? <RadioGroup<PlanId> aria-label="Workspace 套餐" className="workspace-plan-list" direction="col" name="workspace-plan" onChange={controller.setLaunchPlan} value={controller.launchPlan}>{catalog.packages.filter((plan) => plan.available && (plan.id === "basic" || plan.id === "pro")).map((plan) => <PlanOption controller={controller} key={plan.id} plan={plan} />)}</RadioGroup> : null}
             </fieldset>
           </section>
           <WorkspaceOrderSummary

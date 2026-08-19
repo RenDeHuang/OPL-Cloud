@@ -44,6 +44,52 @@ func TestLocalDockerProviderUsesConfiguredProfileForCatalogAndPlan(t *testing.T)
 	}
 }
 
+func TestLocalDockerProviderProfileControlsBasicAndProAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		basicAvailable bool
+		proAvailable   bool
+	}{
+		{name: "Basic only", basicAvailable: true},
+		{name: "Pro only", proAvailable: true},
+		{name: "Basic and Pro", basicAvailable: true, proAvailable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile, err := json.Marshal(localDockerProviderProfile{
+				SchemaVersion: 1,
+				Packages: []localDockerPackageProfile{
+					{ID: "basic", Name: "Basic Workspace", Available: tc.basicAvailable, Compute: ComputePlan{ID: "local-basic", Server: "2c4g", CPU: 2, MemoryGB: 4, DiskGB: 10, InstanceType: "local-2c4g"}, Storage: localDockerStoragePlan{SizeGB: 10, QuotaPolicy: "linux-project"}},
+					{ID: "pro", Name: "Pro Workspace", Available: tc.proAvailable, Compute: ComputePlan{ID: "local-pro", Server: "8c16g", CPU: 8, MemoryGB: 16, DiskGB: 100, InstanceType: "local-8c16g"}, Storage: localDockerStoragePlan{SizeGB: 100, QuotaPolicy: "linux-project"}},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := newLocalDockerProvider(LocalDockerProviderConfig{ProviderProfileJSON: profile}, &recordingDockerRunner{})
+			descriptor := provider.Descriptor()
+			if len(descriptor.Catalog.WorkspacePackages) != 2 {
+				t.Fatalf("catalog packages=%#v", descriptor.Catalog.WorkspacePackages)
+			}
+			for index, packageID := range []string{"basic", "pro"} {
+				wantAvailable := map[string]bool{"basic": tc.basicAvailable, "pro": tc.proAvailable}[packageID]
+				catalogPackage := descriptor.Catalog.WorkspacePackages[index]
+				if catalogPackage.ID != packageID || catalogPackage.Available != wantAvailable {
+					t.Fatalf("%s catalog package=%#v wantAvailable=%v", packageID, catalogPackage, wantAvailable)
+				}
+				_, planAvailable := descriptor.Plans[packageID]
+				if planAvailable != wantAvailable {
+					t.Fatalf("%s descriptor plan available=%v want=%v", packageID, planAvailable, wantAvailable)
+				}
+				sizeGB := map[string]int{"basic": 10, "pro": 100}[packageID]
+				_, resolveErr := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: packageID, SizeGB: sizeGB})
+				if wantAvailable && resolveErr != nil || !wantAvailable && !errors.Is(resolveErr, ErrProviderPlanUnavailable) {
+					t.Fatalf("%s resolve error=%v wantAvailable=%v", packageID, resolveErr, wantAvailable)
+				}
+			}
+		})
+	}
+}
+
 type localDockerCapacityRunner struct {
 	info      []byte
 	container dockerContainerInspect

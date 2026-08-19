@@ -137,6 +137,29 @@ func TestWorkspacePricingPreviewAllowsOnlyFrozenPackageStoragePairs(t *testing.T
 	}
 }
 
+func TestCustomerOwnedBasicAndProHaveNoCloudResourceCharge(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	app.deployment = deploymentProfile{Mode: deploymentCustomerOwned, FabricProvider: fabricLocalDocker}
+	for _, packageID := range []string{"basic", "pro"} {
+		t.Run(packageID, func(t *testing.T) {
+			preview, err := app.pricingPreviewResponse(context.Background(), map[string]any{"resourceType": "workspace", "packageId": packageID}, allPricingPackagesAvailable())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preview["resourceBillingMode"] != "none" || preview["totalChargeUsdMicros"] != int64(0) || preview["chargeUsdMicros"] != int64(0) {
+				t.Fatalf("%s customer-owned quote=%#v", packageID, preview)
+			}
+			for _, componentName := range []string{"compute", "storage"} {
+				component := mapField(preview, componentName)
+				snapshot := mapField(component, "priceSnapshot")
+				if component["chargeUsdMicros"] != int64(0) || snapshot["chargeUsdMicros"] != int64(0) {
+					t.Fatalf("%s %s charge component=%#v", packageID, componentName, component)
+				}
+			}
+		})
+	}
+}
+
 func TestPricingPreviewHTTPRequiresCanonicalFields(t *testing.T) {
 	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), newMemoryTableStore())
 	if err != nil {

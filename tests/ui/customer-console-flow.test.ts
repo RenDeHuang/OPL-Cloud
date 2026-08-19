@@ -80,6 +80,14 @@ test("Workspace launch uses the selected split-decision flow with API-backed fac
   assert.doesNotMatch(launch, /分别来自各自权威来源|浏览器不会自行计算|服务端权威总价/);
 });
 
+test("Workspace launch renders only provider-available plans", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const launch = pages.slice(pages.indexOf("function WorkspaceLaunchPage"), pages.indexOf("function WorkspaceLaunchConfirm"));
+
+  assert.match(launch, /catalog\.packages\.filter\(\(plan\) => plan\.available && \(plan\.id === "basic" \|\| plan\.id === "pro"\)\)/);
+  assert.doesNotMatch(launch, /disabled=\{!plan\.available\}/);
+});
+
 test("Workspace launch status shows only the authoritative current phase", async () => {
   const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
   const operation = pages.slice(pages.indexOf("function LaunchOperation"), pages.indexOf("function SecretRow"));
