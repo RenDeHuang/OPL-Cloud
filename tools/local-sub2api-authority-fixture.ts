@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const qualificationUserID = 41;
+const qualificationAdminUserID = 1;
 const qualificationHost = "0.0.0.0";
 const maxBodyBytes = 64 * 1024;
 
@@ -25,6 +26,18 @@ function validateQualificationEmail(value) {
     throw new Error("qualification email must use a reserved .test or localhost domain");
   }
   return email;
+}
+
+function qualificationAdminConfigFromEnv(env) {
+  const names = ["OPL_QUALIFICATION_ADMIN_EMAIL", "OPL_QUALIFICATION_ADMIN_PASSWORD", "OPL_QUALIFICATION_ADMIN_TOKEN"];
+  const values = Object.fromEntries(names.map((name) => [name, String(env[name] || "").trim()]));
+  if (names.every((name) => !values[name])) return undefined;
+  if (names.some((name) => !values[name])) throw new Error("qualification admin identity must configure email, password, and token together");
+  return {
+    email: validateQualificationEmail(values.OPL_QUALIFICATION_ADMIN_EMAIL),
+    password: validateSecret(values.OPL_QUALIFICATION_ADMIN_PASSWORD, "OPL_QUALIFICATION_ADMIN_PASSWORD"),
+    token: validateSecret(values.OPL_QUALIFICATION_ADMIN_TOKEN, "OPL_QUALIFICATION_ADMIN_TOKEN")
+  };
 }
 
 function validateMicros(value, name, { positive = false, negative = false } = {}) {
@@ -56,6 +69,10 @@ export function qualificationAuthorityConfigFromEnv(env = process.env) {
     "OPL_QUALIFICATION_INITIAL_USD_MICROS",
     { positive: true }
   );
+  const admin = qualificationAdminConfigFromEnv(env);
+  if (admin && (admin.email === email || admin.password === password || admin.token === userToken || admin.token === authorityToken)) {
+    throw new Error("qualification admin identity must be distinct from the user and authority tokens");
+  }
   return {
     host: qualificationHost,
     port: Number(rawPort),
@@ -65,7 +82,8 @@ export function qualificationAuthorityConfigFromEnv(env = process.env) {
     userToken,
     authorityToken,
     initialUsdMicros,
-    statePath
+    statePath,
+    ...(admin ? { admin } : {})
   };
 }
 
@@ -89,11 +107,22 @@ function validateConfig(input) {
   if (config.password === config.userToken || config.password === config.authorityToken || config.userToken === config.authorityToken) {
     throw new Error("qualification password and tokens must be distinct");
   }
+  if (input.admin !== undefined) {
+    const admin = input.admin;
+    config.admin = {
+      email: validateQualificationEmail(String(admin?.email || "")),
+      password: validateSecret(String(admin?.password || ""), "qualification admin password"),
+      token: validateSecret(String(admin?.token || ""), "qualification admin token")
+    };
+    if (config.admin.email === config.email || config.admin.password === config.password || config.admin.token === config.userToken || config.admin.token === config.authorityToken) {
+      throw new Error("qualification admin identity must be distinct from the user and authority tokens");
+    }
+  }
   return config;
 }
 
-function refreshToken(config) {
-  return `qualification-refresh-${createHash("sha256").update(config.userToken).digest("hex").slice(0, 32)}`;
+function refreshToken(token) {
+  return `qualification-refresh-${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
 }
 
 function now() {
@@ -234,6 +263,17 @@ function keyPayload(key) {
   };
 }
 
+function qualificationAdminPayload(config) {
+  return {
+    id: qualificationAdminUserID,
+    email: config.admin.email,
+    balance: 0,
+    status: "active",
+    created_at: null,
+    updated_at: null
+  };
+}
+
 function pagination(url, defaultSize = 100) {
   const page = Number(url.searchParams.get("page") || "1");
   const pageSize = Number(url.searchParams.get("page_size") || String(defaultSize));
@@ -302,25 +342,31 @@ export async function startQualificationAuthority(input) {
 
       if (method === "POST" && url.pathname === "/api/v1/auth/login") {
         const input = await readJSON(request);
-        if (String(input.email || "").toLowerCase() !== config.email || input.password !== config.password) {
+        const email = String(input.email || "").toLowerCase();
+        const ownerLogin = email === config.email && input.password === config.password;
+        const adminLogin = config.admin && email === config.admin.email && input.password === config.admin.password;
+        if (!ownerLogin && !adminLogin) {
           failure(response, 401, "invalid_credentials");
           return;
         }
+        const token = adminLogin ? config.admin.token : config.userToken;
+        const user = adminLogin ? qualificationAdminPayload(config) : { id: qualificationUserID, email: config.email, status: "active" };
         success(response, {
-          access_token: config.userToken,
-          refresh_token: refreshToken(config),
-          user: { id: qualificationUserID, email: config.email, status: "active" }
+          access_token: token,
+          refresh_token: refreshToken(token),
+          user
         });
         return;
       }
 
       if (method === "POST" && url.pathname === "/api/v1/auth/refresh") {
         const input = await readJSON(request);
-        if (input.refresh_token !== refreshToken(config)) {
+        const token = input.refresh_token === refreshToken(config.userToken) ? config.userToken : config.admin && input.refresh_token === refreshToken(config.admin.token) ? config.admin.token : "";
+        if (!token) {
           failure(response, 401, "invalid_refresh_token");
           return;
         }
-        success(response, { access_token: config.userToken, refresh_token: refreshToken(config) });
+        success(response, { access_token: token, refresh_token: refreshToken(token) });
         return;
       }
 
@@ -333,7 +379,7 @@ export async function startQualificationAuthority(input) {
         return;
       }
 
-      if (!bearer(request, config.userToken)) {
+      if (!bearer(request, config.userToken) && (!config.admin || !bearer(request, config.admin.token))) {
         failure(response, 401, "unauthorized");
         return;
       }
@@ -348,10 +394,16 @@ export async function startQualificationAuthority(input) {
         return;
       }
 
+      if (config.admin && method === "GET" && url.pathname === `/api/v1/admin/users/${qualificationAdminUserID}`) {
+        success(response, qualificationAdminPayload(config));
+        return;
+      }
+
       if (method === "GET" && url.pathname === "/api/v1/admin/users") {
         const { page: pageNumber, pageSize } = pagination(url);
         const search = String(url.searchParams.get("search") || "").toLowerCase();
-        const users = !search || config.email.includes(search) ? [userPayload(state)] : [];
+        const users = [userPayload(state), ...(config.admin ? [qualificationAdminPayload(config)] : [])]
+          .filter((user) => !search || user.email.includes(search));
         success(response, page(users, pageNumber, pageSize));
         return;
       }

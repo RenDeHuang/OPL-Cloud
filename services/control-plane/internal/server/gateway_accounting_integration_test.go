@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -16,7 +17,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	gatewayAccountingAdminEmail    = "admin@opl.local"
+	gatewayAccountingAdminEmail    = "admin-gateway@example.test"
 	gatewayAccountingAdminPassword = "gateway-accounting-admin-password"
 	gatewayAccountingOwnerPassword = "gateway-accounting-owner-password"
 	gatewayAccountingInitialMicros = int64(100_000_000)
@@ -44,7 +44,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 	ledger, ledgerClient := startGatewayAccountingLedger(t)
 
 	t.Run("stable debit and replay", func(t *testing.T) {
-		fixture := newGatewayAccountingSub2API(t, "owner-success@example.com", false)
+		fixture := newGatewayAccountingSub2API(t, "owner-success@example.test", false)
 		process := newGatewayAccountingControlPlane(t, ledger, fixture, "acct-gateway-success", "usr-gateway-success")
 		api := process.login(t, fixture.ownerEmail, gatewayAccountingOwnerPassword)
 
@@ -69,6 +69,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 				t.Fatalf("canonical launch copied %s truth: rows=%#v err=%v", resource, rows, err)
 			}
 		}
+		fabricCallsBeforeTerminalReadback := len(*process.fabric.calls)
 		terminal := api.mustRequest(t, http.MethodGet, "/api/workspace-launches/"+launchID, nil, "", http.StatusOK)
 		if stringValue(terminal["operationId"]) != operation.ID || stringValue(terminal["accountId"]) != operation.stringFact("accountId") ||
 			stringValue(terminal["workspaceId"]) != operation.stringFact("workspaceId") || stringValue(terminal["runtimeServiceName"]) != operation.stringFact("runtimeServiceName") ||
@@ -80,15 +81,15 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 			stringValue(runtimeStatus["url"]) != operation.stringFact("url") || stringValue(runtimeStatus["serviceName"]) != operation.stringFact("runtimeServiceName") || runtimeStatus["ready"] != true {
 			t.Fatalf("terminal Fabric runtime readback = %#v operation=%s", runtimeStatus, workspaceLaunchReconcileResultSummary(operation))
 		}
-		if process.fabric.calls == nil || len(*process.fabric.calls) != 1 || (*process.fabric.calls)[0] != "fabric.runtime-status" {
+		if process.fabric.calls == nil || len(*process.fabric.calls) != fabricCallsBeforeTerminalReadback+1 || (*process.fabric.calls)[fabricCallsBeforeTerminalReadback] != "fabric.runtime-status" {
 			t.Fatalf("terminal Fabric runtime calls = %#v", process.fabric.calls)
 		}
 		assertGatewayAccountingCanonicalWorkspaceOpen(t, api, operation)
-		if len(*process.fabric.calls) != 1 {
+		if len(*process.fabric.calls) != fabricCallsBeforeTerminalReadback+1 {
 			t.Fatalf("canonical Workspace open used legacy or extra Fabric reads: %#v", *process.fabric.calls)
 		}
 
-		beforeReplay := fixture.writeCounts()
+		beforeReplay := fixture.writeCounts(t)
 		replay := api.mustRequest(t, http.MethodPost, "/api/workspace-launches", map[string]any{
 			"name": "Gateway accounting success", "packageId": "basic", "autoRenew": false,
 		}, "gateway-accounting-success", http.StatusAccepted)
@@ -98,7 +99,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 		if err := process.handler.app.runWorkspaceLaunchesOnce(context.Background(), process.handler.service); err != nil {
 			t.Fatalf("replay worker: %v", err)
 		}
-		if afterReplay := fixture.writeCounts(); afterReplay != beforeReplay || afterReplay.charges != 1 || afterReplay.refunds != 0 {
+		if afterReplay := fixture.writeCounts(t); afterReplay != beforeReplay || afterReplay.charges != 1 || afterReplay.refunds != 0 {
 			t.Fatalf("Sub2API writes after replay = %#v, before %#v", afterReplay, beforeReplay)
 		}
 
@@ -106,7 +107,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 	})
 
 	t.Run("response loss parks without false success", func(t *testing.T) {
-		fixture := newGatewayAccountingSub2API(t, "owner-unknown@example.com", true)
+		fixture := newGatewayAccountingSub2API(t, "owner-unknown@example.test", true)
 		process := newGatewayAccountingControlPlane(t, ledger, fixture, "acct-gateway-unknown", "usr-gateway-unknown")
 		api := process.login(t, fixture.ownerEmail, gatewayAccountingOwnerPassword)
 
@@ -118,7 +119,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 		if operation.Status != "manual_review" || operation.Stage != "debit" {
 			t.Fatalf("unknown debit terminal state = %s/%s", operation.Status, operation.Stage)
 		}
-		if counts := fixture.writeCounts(); counts.charges != 1 || counts.refunds != 0 {
+		if counts := fixture.writeCounts(t); counts.charges != 1 || counts.refunds != 0 {
 			t.Fatalf("unknown debit Sub2API writes = %#v", counts)
 		}
 
@@ -131,7 +132,7 @@ func TestGatewayAccountingAuthoritativeLocalChain(t *testing.T) {
 		if err := process.handler.app.runWorkspaceLaunchesOnce(context.Background(), process.handler.service); err != nil {
 			t.Fatalf("manual-review worker replay: %v", err)
 		}
-		if counts := fixture.writeCounts(); counts.charges != 1 || counts.refunds != 0 {
+		if counts := fixture.writeCounts(t); counts.charges != 1 || counts.refunds != 0 {
 			t.Fatalf("manual-review replay Sub2API writes = %#v", counts)
 		}
 
@@ -160,55 +161,108 @@ type gatewayAccountingWriteCounts struct {
 	keys    int
 }
 
-type gatewayAccountingHistoryRow struct {
-	code      string
-	value     int64
-	usedAt    time.Time
-	createdAt time.Time
-}
-
-type gatewayAccountingKey struct {
-	id        int64
-	name      string
-	value     string
-	groupID   int64
-	createdAt time.Time
-}
-
 type gatewayAccountingSub2API struct {
-	testingServer *httptest.Server
-	client        *clients.Sub2APIHTTPClient
-	ownerEmail    string
-	responseLoss  bool
-
-	mu           sync.Mutex
-	balance      int64
-	history      []gatewayAccountingHistoryRow
-	keys         map[int64]gatewayAccountingKey
-	writes       gatewayAccountingWriteCounts
-	nextKeyID    int64
-	lossInjected bool
-	historyLoss  bool
+	client         *clients.Sub2APIHTTPClient
+	baseURL        string
+	authorityToken string
+	ownerEmail     string
+	responseLoss   bool
+	process        *exec.Cmd
+	lossInjected   bool
+	historyLoss    bool
+	mu             sync.Mutex
 }
 
 func newGatewayAccountingSub2API(t *testing.T, ownerEmail string, responseLoss bool) *gatewayAccountingSub2API {
 	t.Helper()
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve integration test location")
+	}
+	repositoryRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "../../../.."))
+	statePath := filepath.Join(t.TempDir(), "authority-state.json")
+	password := gatewayAccountingOwnerPassword
+	userToken := "gateway-accounting-user-token-32-chars"
+	authorityToken := "gateway-accounting-authority-token-32-chars"
+	command := exec.Command("node", "--experimental-strip-types", filepath.Join(repositoryRoot, "tools", "local-sub2api-authority-fixture.ts"))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve Sub2API authority port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	command.Env = gatewayAccountingProcessEnv(os.Environ(), map[string]string{
+		"OPL_QUALIFICATION_PORT":               strconv.Itoa(port),
+		"OPL_QUALIFICATION_USER_EMAIL":         ownerEmail,
+		"OPL_QUALIFICATION_USER_PASSWORD":      password,
+		"OPL_QUALIFICATION_USER_TOKEN":         userToken,
+		"OPL_QUALIFICATION_ADMIN_EMAIL":        gatewayAccountingAdminEmail,
+		"OPL_QUALIFICATION_ADMIN_PASSWORD":     gatewayAccountingAdminPassword,
+		"OPL_QUALIFICATION_ADMIN_TOKEN":        "gateway-accounting-admin-token-32-chars",
+		"OPL_QUALIFICATION_AUTHORITY_TOKEN":    authorityToken,
+		"OPL_QUALIFICATION_INITIAL_USD_MICROS": strconv.FormatInt(gatewayAccountingInitialMicros, 10),
+		"OPL_QUALIFICATION_STATE_PATH":         statePath,
+	})
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatalf("open Sub2API authority stdout: %v", err)
+	}
+	var logs bytes.Buffer
+	command.Stderr = &logs
+	if err := command.Start(); err != nil {
+		t.Fatalf("start Sub2API authority: %v", err)
+	}
+	ready := make(chan struct {
+		origin string
+		err    error
+	}, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			var payload struct {
+				Status string `json:"status"`
+				Origin string `json:"origin"`
+			}
+			if json.Unmarshal(scanner.Bytes(), &payload) == nil && payload.Status == "READY" && payload.Origin != "" {
+				ready <- struct {
+					origin string
+					err    error
+				}{origin: payload.Origin}
+				return
+			}
+		}
+		ready <- struct {
+			origin string
+			err    error
+		}{err: fmt.Errorf("Sub2API authority exited before READY: %s", strings.TrimSpace(logs.String()))}
+	}()
+	var origin string
+	select {
+	case result := <-ready:
+		if result.err != nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			t.Fatal(result.err)
+		}
+		origin = result.origin
+	case <-time.After(10 * time.Second):
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		t.Fatalf("Sub2API authority did not become ready: %s", strings.TrimSpace(logs.String()))
+	}
 	fixture := &gatewayAccountingSub2API{
-		ownerEmail: ownerEmail, responseLoss: responseLoss, balance: gatewayAccountingInitialMicros,
-		keys: map[int64]gatewayAccountingKey{}, nextKeyID: 700,
+		baseURL: origin, authorityToken: authorityToken, ownerEmail: ownerEmail, responseLoss: responseLoss, process: command,
 	}
-	fixture.testingServer = httptest.NewServer(http.HandlerFunc(fixture.serveHTTP))
-	t.Cleanup(fixture.testingServer.Close)
-	baseClient := fixture.testingServer.Client()
-	baseTransport := baseClient.Transport
-	if baseTransport == nil {
-		baseTransport = http.DefaultTransport
-	}
-	baseClient.Transport = &gatewayAccountingFaultTransport{base: baseTransport, fixture: fixture}
-	baseClient.Timeout = 5 * time.Second
+	t.Cleanup(func() {
+		if command.Process != nil {
+			_ = command.Process.Kill()
+		}
+		_ = command.Wait()
+	})
+	baseClient := &http.Client{Timeout: 5 * time.Second}
+	baseClient.Transport = &gatewayAccountingFaultTransport{base: http.DefaultTransport, fixture: fixture}
 	client, err := clients.NewSub2APIHTTPClient(clients.Sub2APIConfig{
-		BaseURL: fixture.testingServer.URL, AdminEmail: gatewayAccountingAdminEmail,
-		AdminPassword: gatewayAccountingAdminPassword, Timeout: 3 * time.Second,
+		BaseURL: origin, AdminEmail: gatewayAccountingAdminEmail, AdminPassword: gatewayAccountingAdminPassword, Timeout: 3 * time.Second,
 	}, baseClient)
 	if err != nil {
 		t.Fatal(err)
@@ -217,265 +271,35 @@ func newGatewayAccountingSub2API(t *testing.T, ownerEmail string, responseLoss b
 	return fixture
 }
 
-func (f *gatewayAccountingSub2API) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login":
-		f.login(w, r)
-	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups/available":
-		if !gatewayAccountingBearer(r, "gateway-owner-token") {
-			gatewayAccountingJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized"})
-			return
-		}
-		gatewayAccountingEnvelope(w, []any{map[string]any{
-			"id": 7, "name": "Codex", "description": "Codex", "platform": "openai",
-			"rate_multiplier": 1, "subscription_type": "standard", "status": "active",
-		}})
-	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/usage/search-api-keys":
-		f.searchKeys(w, r)
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/admin/users/") && strings.HasSuffix(r.URL.Path, "/api-keys"):
-		f.userKeys(w, r)
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/admin/users/") && strings.HasSuffix(r.URL.Path, "/balance-history"):
-		f.balanceHistory(w, r)
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/admin/users/"):
-		f.user(w, r)
-	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/keys":
-		f.createKey(w, r)
-	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/admin/redeem-codes/create-and-redeem":
-		f.redeem(w, r)
-	default:
-		gatewayAccountingJSON(w, http.StatusNotFound, map[string]any{"code": "not_found"})
+func (f *gatewayAccountingSub2API) writeCounts(t *testing.T) gatewayAccountingWriteCounts {
+	t.Helper()
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, f.baseURL+"/qualification/state", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func (f *gatewayAccountingSub2API) login(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+	request.Header.Set("Authorization", "Bearer "+f.authorityToken)
+	response, err := (&http.Client{Timeout: 3 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatalf("read Sub2API authority state: %v", err)
 	}
-	if json.NewDecoder(r.Body).Decode(&input) != nil {
-		gatewayAccountingJSON(w, http.StatusBadRequest, map[string]any{"code": "invalid_login"})
-		return
+	defer response.Body.Close()
+	var payload struct {
+		Code json.Number `json:"code"`
+		Data struct {
+			WriteCounts struct {
+				KeyCreates int `json:"keyCreates"`
+				Debits     int `json:"debits"`
+				Refunds    int `json:"refunds"`
+			} `json:"writeCounts"`
+		} `json:"data"`
 	}
-	var id int64
-	var token string
-	switch {
-	case input.Email == gatewayAccountingAdminEmail && input.Password == gatewayAccountingAdminPassword:
-		id, token = 1, "gateway-admin-token"
-	case input.Email == f.ownerEmail && input.Password == gatewayAccountingOwnerPassword:
-		id, token = gatewayAccountingSub2APIUserID, "gateway-owner-token"
-	default:
-		gatewayAccountingJSON(w, http.StatusUnauthorized, map[string]any{"code": "invalid_credentials"})
-		return
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
+		t.Fatalf("decode Sub2API authority state: %v", err)
 	}
-	gatewayAccountingEnvelope(w, map[string]any{
-		"access_token": token, "refresh_token": token + "-refresh",
-		"user": map[string]any{"id": id, "email": input.Email, "status": "active"},
-	})
-}
-
-func (f *gatewayAccountingSub2API) user(w http.ResponseWriter, r *http.Request) {
-	if !gatewayAccountingBearer(r, "gateway-admin-token") {
-		gatewayAccountingJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized"})
-		return
+	if response.StatusCode != http.StatusOK || payload.Code != json.Number("0") {
+		t.Fatalf("Sub2API authority state status=%d code=%q", response.StatusCode, payload.Code)
 	}
-	rawID := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/users/")
-	id, err := strconv.ParseInt(rawID, 10, 64)
-	if err != nil || id != 1 && id != gatewayAccountingSub2APIUserID {
-		gatewayAccountingJSON(w, http.StatusNotFound, map[string]any{"code": "user_not_found"})
-		return
-	}
-	f.mu.Lock()
-	balance := f.balance
-	f.mu.Unlock()
-	email := f.ownerEmail
-	if id == 1 {
-		email, balance = gatewayAccountingAdminEmail, 0
-	}
-	now := time.Now().UTC()
-	gatewayAccountingEnvelope(w, map[string]any{
-		"id": id, "email": email, "balance": gatewayAccountingUSD(balance), "status": "active",
-		"created_at": now.Add(-time.Hour).Format(time.RFC3339Nano), "updated_at": now.Format(time.RFC3339Nano),
-	})
-}
-
-func (f *gatewayAccountingSub2API) searchKeys(w http.ResponseWriter, r *http.Request) {
-	if !gatewayAccountingBearer(r, "gateway-admin-token") || r.URL.Query().Get("user_id") != strconv.FormatInt(gatewayAccountingSub2APIUserID, 10) {
-		gatewayAccountingJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized"})
-		return
-	}
-	name := r.URL.Query().Get("q")
-	f.mu.Lock()
-	items := make([]any, 0, len(f.keys))
-	for _, key := range f.keys {
-		if key.name == name {
-			items = append(items, map[string]any{"id": key.id, "name": key.name, "user_id": gatewayAccountingSub2APIUserID})
-		}
-	}
-	f.mu.Unlock()
-	gatewayAccountingEnvelope(w, items)
-}
-
-func (f *gatewayAccountingSub2API) userKeys(w http.ResponseWriter, r *http.Request) {
-	if !gatewayAccountingBearer(r, "gateway-admin-token") {
-		gatewayAccountingJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized"})
-		return
-	}
-	prefix := "/api/v1/admin/users/"
-	rawID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, prefix), "/api-keys")
-	if rawID != strconv.FormatInt(gatewayAccountingSub2APIUserID, 10) {
-		gatewayAccountingJSON(w, http.StatusNotFound, map[string]any{"code": "user_not_found"})
-		return
-	}
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
-	f.mu.Lock()
-	keys := make([]gatewayAccountingKey, 0, len(f.keys))
-	for _, key := range f.keys {
-		keys = append(keys, key)
-	}
-	f.mu.Unlock()
-	sort.Slice(keys, func(i, j int) bool { return keys[i].id < keys[j].id })
-	pages := 1
-	if len(keys) > 0 {
-		pages = (len(keys) + pageSize - 1) / pageSize
-	}
-	items := []any{}
-	start := (page - 1) * pageSize
-	if page > 0 && pageSize > 0 && start >= 0 && start < len(keys) {
-		end := start + pageSize
-		if end > len(keys) {
-			end = len(keys)
-		}
-		for _, key := range keys[start:end] {
-			items = append(items, gatewayAccountingKeyPayload(key))
-		}
-	}
-	gatewayAccountingEnvelope(w, map[string]any{"items": items, "total": len(keys), "page": page, "page_size": pageSize, "pages": pages})
-}
-
-func (f *gatewayAccountingSub2API) createKey(w http.ResponseWriter, r *http.Request) {
-	if !gatewayAccountingBearer(r, "gateway-owner-token") || strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
-		gatewayAccountingJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized"})
-		return
-	}
-	var input struct {
-		Name    string      `json:"name"`
-		GroupID int64       `json:"group_id"`
-		Quota   json.Number `json:"quota"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	decoder.UseNumber()
-	if decoder.Decode(&input) != nil || input.Name == "" || input.GroupID != 7 {
-		gatewayAccountingJSON(w, http.StatusBadRequest, map[string]any{"code": "invalid_key"})
-		return
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.writes.keys++
-	for _, key := range f.keys {
-		if key.name == input.Name {
-			gatewayAccountingEnvelope(w, gatewayAccountingKeyPayload(key))
-			return
-		}
-	}
-	f.nextKeyID++
-	key := gatewayAccountingKey{
-		id: f.nextKeyID, name: input.Name, value: "sk-gateway-accounting-" + strconv.FormatInt(f.nextKeyID, 10),
-		groupID: input.GroupID, createdAt: time.Now().UTC(),
-	}
-	f.keys[key.id] = key
-	gatewayAccountingEnvelope(w, gatewayAccountingKeyPayload(key))
-}
-
-func (f *gatewayAccountingSub2API) balanceHistory(w http.ResponseWriter, r *http.Request) {
-	if !gatewayAccountingBearer(r, "gateway-admin-token") {
-		gatewayAccountingJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized"})
-		return
-	}
-	prefix := "/api/v1/admin/users/"
-	rawID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, prefix), "/balance-history")
-	if rawID != strconv.FormatInt(gatewayAccountingSub2APIUserID, 10) {
-		gatewayAccountingJSON(w, http.StatusNotFound, map[string]any{"code": "user_not_found"})
-		return
-	}
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
-	f.mu.Lock()
-	history := append([]gatewayAccountingHistoryRow(nil), f.history...)
-	f.mu.Unlock()
-	sort.Slice(history, func(i, j int) bool { return history[i].createdAt.After(history[j].createdAt) })
-	pages := 1
-	if len(history) > 0 {
-		pages = (len(history) + pageSize - 1) / pageSize
-	}
-	items := []any{}
-	start := (page - 1) * pageSize
-	if page > 0 && pageSize > 0 && start >= 0 && start < len(history) {
-		end := start + pageSize
-		if end > len(history) {
-			end = len(history)
-		}
-		for _, row := range history[start:end] {
-			items = append(items, map[string]any{
-				"code": row.code, "type": "balance", "value": gatewayAccountingUSD(row.value), "status": "used",
-				"used_by": gatewayAccountingSub2APIUserID, "used_at": row.usedAt.Format(time.RFC3339Nano), "created_at": row.createdAt.Format(time.RFC3339Nano),
-			})
-		}
-	}
-	gatewayAccountingEnvelope(w, map[string]any{"items": items, "total": len(history), "page": page, "page_size": pageSize, "pages": pages})
-}
-
-func (f *gatewayAccountingSub2API) redeem(w http.ResponseWriter, r *http.Request) {
-	if !gatewayAccountingBearer(r, "gateway-admin-token") || strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
-		gatewayAccountingJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized"})
-		return
-	}
-	var input struct {
-		Code   string      `json:"code"`
-		Type   string      `json:"type"`
-		Value  json.Number `json:"value"`
-		UserID int64       `json:"user_id"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	decoder.UseNumber()
-	if decoder.Decode(&input) != nil || input.Type != "balance" || input.UserID != gatewayAccountingSub2APIUserID || input.Code != r.Header.Get("Idempotency-Key") {
-		gatewayAccountingJSON(w, http.StatusBadRequest, map[string]any{"code": "invalid_redeem"})
-		return
-	}
-	value, err := clients.ParseUSDDecimalMicros(input.Value.String())
-	if err != nil || value == 0 {
-		gatewayAccountingJSON(w, http.StatusBadRequest, map[string]any{"code": "invalid_redeem_value"})
-		return
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, row := range f.history {
-		if row.code == input.Code {
-			gatewayAccountingJSON(w, http.StatusConflict, map[string]any{"code": "redeem_conflict"})
-			return
-		}
-	}
-	if f.balance+value < 0 {
-		gatewayAccountingJSON(w, http.StatusConflict, map[string]any{"code": "insufficient_balance"})
-		return
-	}
-	now := time.Now().UTC()
-	f.balance += value
-	f.history = append(f.history, gatewayAccountingHistoryRow{code: input.Code, value: value, usedAt: now, createdAt: now})
-	if value < 0 {
-		f.writes.charges++
-	} else {
-		f.writes.refunds++
-	}
-	gatewayAccountingEnvelope(w, map[string]any{"redeem_code": map[string]any{
-		"code": input.Code, "type": "balance", "value": gatewayAccountingUSD(value), "status": "used", "used_by": input.UserID,
-	}})
-}
-
-func (f *gatewayAccountingSub2API) writeCounts() gatewayAccountingWriteCounts {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.writes
+	return gatewayAccountingWriteCounts{charges: payload.Data.WriteCounts.Debits, refunds: payload.Data.WriteCounts.Refunds, keys: payload.Data.WriteCounts.KeyCreates}
 }
 
 type gatewayAccountingFaultTransport struct {
@@ -995,35 +819,4 @@ func gatewayAccountingProcessEnv(base []string, overrides map[string]string) []s
 		result = append(result, key+"="+value)
 	}
 	return result
-}
-
-func gatewayAccountingKeyPayload(key gatewayAccountingKey) map[string]any {
-	return map[string]any{
-		"id": key.id, "user_id": gatewayAccountingSub2APIUserID, "name": key.name, "key": key.value, "group_id": key.groupID, "status": "active",
-		"ip_whitelist": []string{}, "ip_blacklist": []string{}, "quota": 0, "quota_used": 0,
-		"rate_limit_5h": 0, "rate_limit_1d": 0, "rate_limit_7d": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0,
-		"created_at": key.createdAt.Format(time.RFC3339Nano), "updated_at": key.createdAt.Format(time.RFC3339Nano), "current_concurrency": 0,
-	}
-}
-
-func gatewayAccountingBearer(r *http.Request, token string) bool {
-	return r.Header.Get("Authorization") == "Bearer "+token
-}
-
-func gatewayAccountingUSD(micros int64) json.RawMessage {
-	sign := ""
-	if micros < 0 {
-		sign, micros = "-", -micros
-	}
-	return json.RawMessage(fmt.Sprintf("%s%d.%06d", sign, micros/1_000_000, micros%1_000_000))
-}
-
-func gatewayAccountingEnvelope(w http.ResponseWriter, data any) {
-	gatewayAccountingJSON(w, http.StatusOK, map[string]any{"data": data})
-}
-
-func gatewayAccountingJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
 }
