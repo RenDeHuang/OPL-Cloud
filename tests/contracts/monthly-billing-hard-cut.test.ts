@@ -304,8 +304,8 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.equal(billing.workspaceLaunchFulfillment.launchReceiptContract, launchReceiptContract);
 	assert.equal(billing.workspaceLaunchFulfillment.purchaseReceiptIdentity, undefined);
 	assert.equal(billing.workspaceLaunchFulfillment.successReceiptType, undefined);
-	assert.equal(management.workspaceOwnership.independentFacts.includes("launchReceiptId"), true);
-	assert.equal(management.workspaceOwnership.independentFacts.includes("purchaseReceiptId"), false);
+	assert.equal(management.workspaceOwnership.independentFacts.includes("purchaseReceiptId"), true);
+	assert.equal(management.workspaceOwnership.independentFacts.includes("launchReceiptId"), false);
 	assert.equal(management.workspaceDeletion.action, "workspace.delete.v2");
 	assert.equal(management.workspaceDeletion.schemaVersion, 2);
 	assert.equal(management.workspaceDeletion.semantics, "permanently_delete_all_workspace_resources_without_automatic_refund");
@@ -332,6 +332,11 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		launchReceiptContract,
 		providerSpecificFields: false,
 		resources: ["runtime", "compute", "storage", "attachment", "workspace_key", "gateway_secret"]
+	});
+	assert.deepEqual(management.workspaceDeletion.launchReceiptIdentity, {
+		field: "launchReceiptId",
+		source: "immutable_launch_operation_receiptId_and_matching_workspaceLaunchReceiptV1",
+		workspaceProjectionField: false
 	});
 	assert.deepEqual(management.workspaceDeletion.orderedStages, [
 		"claimed",
@@ -454,7 +459,38 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		variant: "zeroCost",
 		newWrites: "must_match_workspaceLaunchReceiptV1",
 		historicalReadOnlyMatcher: {
-			resourceRefs: ["serverId", "dockerId", "storageId", "storageMountPath", "runtimeStatus", "credentialStatus"],
+			schemaVersion: 3,
+			type: "workspace.created",
+			status: "completed",
+			surface: "workspace",
+			topLevelIdentity: {
+				requiredFields: ["accountId", "workspaceId"],
+				allowedFields: ["accountId", "workspaceId"],
+				extraFields: "reject"
+			},
+			requestId: "<launchOperationId>:purchase-receipt",
+			execution: {
+				requiredFields: ["operationId", "runtimeId"],
+				allowedFields: ["operationId", "runtimeId"],
+				extraFields: "reject",
+				constraints: { operationId: "equals_requestId" }
+			},
+			outputRefs: {
+				requiredFields: ["url"],
+				allowedFields: ["url"],
+				extraFields: "reject"
+			},
+			owner: {
+				requiredFields: ["accountId", "userId"],
+				allowedFields: ["accountId", "userId"],
+				extraFields: "reject",
+				constraints: {
+					accountId: "equals_top_level_accountId",
+					userId: "equals_launch_ownerUserId"
+				}
+			},
+			cost: "must_be_empty",
+			supersedesReceiptId: "must_be_empty",
 			existingReceiptsReadable: true,
 			newWritesAllowed: false
 		}

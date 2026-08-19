@@ -522,7 +522,38 @@
     "variant": "zeroCost",
     "newWrites": "must_match_workspaceLaunchReceiptV1",
     "historicalReadOnlyMatcher": {
-      "resourceRefs": ["serverId", "dockerId", "storageId", "storageMountPath", "runtimeStatus", "credentialStatus"],
+      "schemaVersion": 3,
+      "type": "workspace.created",
+      "status": "completed",
+      "surface": "workspace",
+      "topLevelIdentity": {
+        "requiredFields": ["accountId", "workspaceId"],
+        "allowedFields": ["accountId", "workspaceId"],
+        "extraFields": "reject"
+      },
+      "requestId": "<launchOperationId>:purchase-receipt",
+      "execution": {
+        "requiredFields": ["operationId", "runtimeId"],
+        "allowedFields": ["operationId", "runtimeId"],
+        "extraFields": "reject",
+        "constraints": {"operationId": "equals_requestId"}
+      },
+      "outputRefs": {
+        "requiredFields": ["url"],
+        "allowedFields": ["url"],
+        "extraFields": "reject"
+      },
+      "owner": {
+        "requiredFields": ["accountId", "userId"],
+        "allowedFields": ["accountId", "userId"],
+        "extraFields": "reject",
+        "constraints": {
+          "accountId": "equals_top_level_accountId",
+          "userId": "equals_launch_ownerUserId"
+        }
+      },
+      "cost": "must_be_empty",
+      "supersedesReceiptId": "must_be_empty",
       "existingReceiptsReadable": true,
       "newWritesAllowed": false
     }
