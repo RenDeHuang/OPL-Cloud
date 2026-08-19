@@ -59,13 +59,14 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			writeError(w, http.StatusConflict, errWorkspaceLaunchRepairNotEligible.Error())
 			return
 		}
+		operatorUserID := app.sessionUserID(r)
 		exactReplay := operation.RuntimeRepair != nil && operation.RuntimeRepair.AuthorizationID == key &&
-			operation.RuntimeRepair.LaunchVersion == int(launchVersion) && operation.RuntimeRepair.Reason == reason && operation.RuntimeRepair.ImageDigest == imageDigest
+			operation.RuntimeRepair.AuthorizedBy == operatorUserID && operation.RuntimeRepair.LaunchVersion == int(launchVersion) && operation.RuntimeRepair.Reason == reason && operation.RuntimeRepair.ImageDigest == imageDigest
 		if !exactReplay && operation.Version != int(launchVersion) {
 			writeError(w, http.StatusConflict, errWorkspaceLaunchRepairNotEligible.Error())
 			return
 		}
-		repaired, err := app.repairWorkspaceLaunchRuntime(r.Context(), service, operationID, int(launchVersion), key, reason, imageDigest)
+		repaired, err := app.repairWorkspaceLaunchRuntime(r.Context(), service, operationID, int(launchVersion), key, operatorUserID, reason, imageDigest)
 		if err != nil {
 			if errors.Is(err, errBillingReviewNotFound) {
 				writeError(w, http.StatusNotFound, "workspace_launch_not_found")
@@ -79,7 +80,11 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
-		body["repair"] = map[string]any{"operationId": operationID, "authorizationId": key, "reason": reason, "imageDigest": imageDigest}
+		repair := map[string]any{"operationId": operationID, "authorizationId": key, "authorizedBy": operatorUserID, "reason": reason, "imageDigest": imageDigest}
+		if repaired.RuntimeRepair != nil {
+			repair["authorizedAt"] = repaired.RuntimeRepair.AuthorizedAt
+		}
+		body["repair"] = repair
 		writeJSON(w, http.StatusOK, body)
 	}))
 	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/resume-approval-candidates", app.protected(true, func(w http.ResponseWriter, r *http.Request) {

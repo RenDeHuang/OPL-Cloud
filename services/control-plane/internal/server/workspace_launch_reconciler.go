@@ -213,6 +213,8 @@ type workspaceLaunchContinuationReadClaim struct {
 type workspaceLaunchRuntimeRepair struct {
 	AuthorizationID string `json:"authorizationId"`
 	LaunchVersion   int    `json:"launchVersion"`
+	AuthorizedBy    string `json:"authorizedBy"`
+	AuthorizedAt    string `json:"authorizedAt"`
 	Reason          string `json:"reason"`
 	ImageDigest     string `json:"imageDigest"`
 }
@@ -1055,8 +1057,13 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
 	}
 	if operation.RuntimeRepair != nil && (operation.RuntimeRepair.AuthorizationID == "" || operation.RuntimeRepair.LaunchVersion <= 0 ||
-		operation.RuntimeRepair.Reason == "" || operation.RuntimeRepair.ImageDigest == "") {
+		operation.RuntimeRepair.AuthorizedBy == "" || operation.RuntimeRepair.AuthorizedAt == "" || operation.RuntimeRepair.Reason == "" || operation.RuntimeRepair.ImageDigest == "") {
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	}
+	if operation.RuntimeRepair != nil {
+		if _, err := time.Parse(time.RFC3339Nano, operation.RuntimeRepair.AuthorizedAt); err != nil {
+			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		}
 	}
 	if value := raw["idempotentReplayClaims"]; len(value) > 0 && json.Unmarshal(value, &operation.IdempotentReplayClaims) != nil {
 		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation

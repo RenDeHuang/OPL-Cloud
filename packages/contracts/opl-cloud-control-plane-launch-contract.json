@@ -245,11 +245,12 @@
     "persistedField": "runtimeRepair",
     "admission": "manual_review_runtime_with_resource_billing_enabled_exact_confirmed_key_debit_compute_storage_attachment_secret_original_runtime_unknown_and_unattempted_activation_receipt",
     "operatorSuppliedFacts": ["authorizationId", "launchVersion", "reason", "imageDigest"],
+    "serverBoundAuthorizationFacts": ["authorizedBy", "authorizedAt"],
     "ownerSuppliedFacts": ["accountId", "workspaceId", "computeAllocationId", "storageId", "attachmentId", "attachmentBindingRef", "originalRuntimeOperationId", "gatewaySecretRef"],
     "preserved": ["launchOperationId", "accountId", "workspaceId", "workspaceApiKeyId", "debitIdentity", "computeAllocationId", "storageId", "attachmentId", "gatewaySecretRef"],
     "mutationScope": "one_fabric_runtime_replacement_only",
     "completion": "replacement_runtime_READY_then_original_launch_activation_and_purchase_receipt",
-    "exactReplay": "same_authorizationId_launchVersion_reason_and_imageDigest_returns_the_persisted_repair_without_another_provider_mutation",
+    "exactReplay": "same_authorizationId_launchVersion_reason_imageDigest_and_authorizedBy_returns_the_persisted_repair_without_another_provider_mutation",
     "forbidden": ["second_key", "second_debit", "replacement_compute", "replacement_storage", "replacement_attachment", "replacement_secret", "workspace_delete", "operator_resource_identity_injection"],
     "fabricContract": "opl-cloud-fabric-launch-binding-contract.json#runtimeRepair"
   },

@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -181,7 +182,7 @@ func TestWorkspaceLaunchRuntimeRepairConvergesAndReplaysExactlyOnce(t *testing.T
 	service := controlplane.NewService(ledger, fabric)
 	app := &controlPlaneServer{tables: store}
 
-	got, err := app.repairWorkspaceLaunchRuntime(ctx, service, operation.ID, launchVersion, "repair-auth-unit", "replace incompatible runtime image", workspaceLaunchRepairImage)
+	got, err := app.repairWorkspaceLaunchRuntime(ctx, service, operation.ID, launchVersion, "repair-auth-unit", "usr-unit", "replace incompatible runtime image", workspaceLaunchRepairImage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +212,7 @@ func TestWorkspaceLaunchRuntimeRepairConvergesAndReplaysExactlyOnce(t *testing.T
 		}
 	}
 
-	replayed, err := app.repairWorkspaceLaunchRuntime(ctx, service, operation.ID, launchVersion, "repair-auth-unit", "replace incompatible runtime image", workspaceLaunchRepairImage)
+	replayed, err := app.repairWorkspaceLaunchRuntime(ctx, service, operation.ID, launchVersion, "repair-auth-unit", "usr-unit", "replace incompatible runtime image", workspaceLaunchRepairImage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,5 +222,11 @@ func TestWorkspaceLaunchRuntimeRepairConvergesAndReplaysExactlyOnce(t *testing.T
 	if fabric.repairs != 1 || store.activationMutations != 1 || ledger.records != 1 || len(ledger.receipts) != 1 || len(fabricCalls) != 0 {
 		t.Fatalf("exact replay mutated state: repairs=%d activation=%d receipt calls=%d receipts=%d earlier fabric=%v",
 			fabric.repairs, store.activationMutations, ledger.records, len(ledger.receipts), fabricCalls)
+	}
+	if got.RuntimeRepair == nil || got.RuntimeRepair.AuthorizedBy != "usr-unit" {
+		t.Fatalf("repair audit actor missing: %#v", got.RuntimeRepair)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, got.RuntimeRepair.AuthorizedAt); err != nil {
+		t.Fatalf("repair audit timestamp invalid: %#v err=%v", got.RuntimeRepair, err)
 	}
 }

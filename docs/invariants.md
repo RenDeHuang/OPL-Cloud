@@ -194,6 +194,9 @@ schemas, workflows, and focused tests.
   Storage, Attachment, and Secret, one consumed unknown Runtime attempt, and no
   Activation or Receipt attempt. The operator may provide only the exact Launch
   version, reason, immutable replacement image digest, and idempotency identity.
+  Control Plane binds the authenticated operator user and server timestamp into
+  the persisted repair authorization. A replay from another operator conflicts
+  instead of creating another repair.
 - Fabric must prove the persisted original Runtime operation and exact retained
   Compute, Storage, Attachment, and Secret bindings before repair mutation. An
   opted-in provider may replace only Runtime; it must preserve those resources

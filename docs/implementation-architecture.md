@@ -342,6 +342,9 @@ Fulfillment Repair command. Control Plane admits only the exact paid Launch
 whose Key, Debit, Compute, Storage, Attachment, and Secret are confirmed and
 whose Activation and Receipt have not started. The operator provides only the
 new immutable image digest, reason, Launch version, and idempotency identity;
+Control Plane binds the authenticated operator user and server timestamp into
+the persisted repair authorization before mutation, and exact replay preserves
+those facts.
 all resource identities come from the persisted Launch. Fabric checks the
 persisted original Runtime evidence before mutation, serializes repair per
 Workspace, retains the Secret and all non-Runtime resources, replaces the

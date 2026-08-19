@@ -162,6 +162,7 @@ test("Control Plane owns the launch identity and recovery authorization", async 
   assert.equal(contract.fulfillmentRepair.route, "POST /api/operator/workspace-launches/{operationId}/repair-runtime");
   assert.equal(contract.fulfillmentRepair.mutationScope, "one_fabric_runtime_replacement_only");
   assert.deepEqual(contract.fulfillmentRepair.operatorSuppliedFacts, ["authorizationId", "launchVersion", "reason", "imageDigest"]);
+  assert.deepEqual(contract.fulfillmentRepair.serverBoundAuthorizationFacts, ["authorizedBy", "authorizedAt"]);
   assert.match(contract.fulfillmentRepair.admission, /exact_confirmed_key_debit_compute_storage_attachment_secret/);
   assert.match(contract.fulfillmentRepair.exactReplay, /without_another_provider_mutation/);
 });

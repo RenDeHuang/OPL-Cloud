@@ -367,7 +367,8 @@ Workspace Launch owner; it does not widen Recovery. It applies only after a
 resource-billed Launch has confirmed its Key, Debit, Compute, Storage,
 Attachment, and Secret, consumed its single Runtime attempt as unknown, and has
 not attempted Activation or Receipt. Control Plane supplies only a new immutable
-image digest and persists the repair authorization on the original Launch.
+image digest and persists the repair authorization on the original Launch,
+including the authenticated operator identity and server authorization time.
 Fabric proves the original Runtime operation and retained resource bindings,
 then an explicitly opted-in provider adapter may replace only the Runtime while
 preserving the Runtime ID/service identity and the existing Secret, Compute,

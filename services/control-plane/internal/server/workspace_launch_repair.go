@@ -78,8 +78,8 @@ func workspaceLaunchRuntimeRepairEligible(operation workspaceLaunchReconcileOper
 // paid Launch. The original Key, debit, Compute, Storage, Attachment and Secret
 // identities are read from the persisted Launch and cannot be supplied by the
 // operator.
-func (app *controlPlaneServer) repairWorkspaceLaunchRuntime(ctx context.Context, service *controlplane.Service, operationID string, launchVersion int, authorizationID, reason, imageDigest string) (workspaceLaunchReconcileOperation, error) {
-	if app == nil || service == nil || operationID == "" || launchVersion <= 0 || authorizationID == "" || reason == "" || imageDigest == "" {
+func (app *controlPlaneServer) repairWorkspaceLaunchRuntime(ctx context.Context, service *controlplane.Service, operationID string, launchVersion int, authorizationID, authorizedBy, reason, imageDigest string) (workspaceLaunchReconcileOperation, error) {
+	if app == nil || service == nil || operationID == "" || launchVersion <= 0 || authorizationID == "" || strings.TrimSpace(authorizedBy) == "" || reason == "" || imageDigest == "" {
 		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchRepairNotEligible
 	}
 	unlock := app.lockResource("workspace-launch-repair", operationID)
@@ -95,7 +95,7 @@ func (app *controlPlaneServer) repairWorkspaceLaunchRuntime(ctx context.Context,
 	if err != nil {
 		return workspaceLaunchReconcileOperation{}, err
 	}
-	if operation.RuntimeRepair != nil && operation.RuntimeRepair.AuthorizationID == authorizationID &&
+	if operation.RuntimeRepair != nil && operation.RuntimeRepair.AuthorizationID == authorizationID && operation.RuntimeRepair.AuthorizedBy == strings.TrimSpace(authorizedBy) &&
 		operation.RuntimeRepair.LaunchVersion == launchVersion && operation.RuntimeRepair.Reason == reason && operation.RuntimeRepair.ImageDigest == imageDigest {
 		if operation.Status == "pending" && (operation.Stage == "activation" || operation.Stage == "receipt") {
 			return reconcileWorkspaceLaunchRuntimeRepairTail(ctx, app.workspaceLaunchReconciler(service, clients.SessionDelegatedCredential{}, 0), operation)
@@ -147,7 +147,10 @@ func (app *controlPlaneServer) repairWorkspaceLaunchRuntime(ctx context.Context,
 		continuation.ConsumedAt = app.workspaceLaunchReconciler(service, clients.SessionDelegatedCredential{}, 0).clockNow().Format(time.RFC3339Nano)
 		operation.FreshContinuationAuthorizations["runtime"] = continuation
 	}
-	operation.RuntimeRepair = &workspaceLaunchRuntimeRepair{AuthorizationID: authorizationID, LaunchVersion: launchVersion, Reason: reason, ImageDigest: imageDigest}
+	operation.RuntimeRepair = &workspaceLaunchRuntimeRepair{
+		AuthorizationID: authorizationID, LaunchVersion: launchVersion, AuthorizedBy: strings.TrimSpace(authorizedBy),
+		AuthorizedAt: time.Now().UTC().Format(time.RFC3339Nano), Reason: reason, ImageDigest: imageDigest,
+	}
 	operation.Stage, operation.Status = "activation", "pending"
 	operation.ResumeAuthorization = nil
 	operation.ResumeAuthorizationConsumedAt = ""
