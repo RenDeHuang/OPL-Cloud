@@ -201,6 +201,12 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 	mux.HandleFunc("POST /api/workspaces/{workspaceId}/workspace-key/rotate", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		app.rotateWorkspaceGatewayKey(w, r, service)
 	}))
+	mux.HandleFunc("GET /api/workspaces/{workspaceId}/gateway-budget", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		app.workspaceGatewayBudget(w, r, service)
+	}))
+	mux.HandleFunc("PATCH /api/workspaces/{workspaceId}/gateway-budget", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		app.updateWorkspaceGatewayBudget(w, r, service)
+	}))
 	mux.HandleFunc("POST /api/workspaces/{workspaceId}/auto-renew", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		key, ok := requiredMutationKey(w, r)

@@ -898,6 +898,20 @@ func TestWorkspaceKeyRotationConcurrent(t *testing.T) {
 	assertWorkspaceKeyRotationComplete(t, fixture, <-firstDone)
 }
 
+func TestWorkspaceKeyRotationRejectsUnfinishedBudgetMutation(t *testing.T) {
+	fixture := newWorkspaceKeyRotationFixture(t, "")
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), map[string]any{
+		"id": "budget-manual-review", "operationId": "budget-manual-review", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
+		"resourceId": "ws-alpha", "resourceKind": "workspace_gateway_budget", "action": workspaceGatewayBudgetAction,
+		"provider": "sub2api", "status": "manual_review", "result": `{}`,
+	}))
+
+	response := fixture.rotate(t, "rotate-budget-blocked")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_gateway_budget_update_in_progress") || fixture.client.createWrites != 0 {
+		t.Fatalf("rotation crossed unfinished budget operation: status=%d body=%s writes=%d", response.Code, response.Body.String(), fixture.client.createWrites)
+	}
+}
+
 func TestWorkspaceKeyRotationTemporaryNameConflict(t *testing.T) {
 	fixture := newWorkspaceKeyRotationFixture(t, "")
 	name := workspaceReservedKeyName("ws-alpha")

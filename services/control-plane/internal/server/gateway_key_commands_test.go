@@ -31,6 +31,9 @@ type gatewayKeyCommandClient struct {
 	deleteErr              error
 	deleteFailsBeforeWrite bool
 	userKeyReadIDs         []int64
+	userKeyErr             error
+	postUpdateQuotaUsed    int64
+	postUpdateUsage        [3]int64
 }
 
 func (*gatewayKeyCommandClient) PublicEndpoint() string { return "https://gflabtoken.cn/v1" }
@@ -73,6 +76,9 @@ func (c *gatewayKeyCommandClient) UserKey(_ context.Context, credential clients.
 		return clients.Sub2APIWorkspaceKey{}, err
 	}
 	c.userKeyReadIDs = append(c.userKeyReadIDs, keyID)
+	if c.userKeyErr != nil {
+		return clients.Sub2APIWorkspaceKey{}, c.userKeyErr
+	}
 	key, ok := c.keys[keyID]
 	if !ok || key.UserID != userID {
 		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIKeyNotFound
@@ -157,6 +163,12 @@ func (c *gatewayKeyCommandClient) UpdateUserKey(_ context.Context, credential cl
 		}
 	}
 	c.keys[keyID] = key
+	if c.postUpdateQuotaUsed != 0 || c.postUpdateUsage != [3]int64{} {
+		live := key
+		live.QuotaUsedUSDMicros = c.postUpdateQuotaUsed
+		live.Usage5hUSDMicros, live.Usage1dUSDMicros, live.Usage7dUSDMicros = c.postUpdateUsage[0], c.postUpdateUsage[1], c.postUpdateUsage[2]
+		c.keys[keyID] = live
+	}
 	if c.updateErr != nil {
 		return clients.Sub2APIWorkspaceKey{}, c.updateErr
 	}

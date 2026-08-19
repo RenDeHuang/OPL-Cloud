@@ -328,6 +328,15 @@ func (app *controlPlaneServer) claimWorkspaceKeyRotation(ctx context.Context, op
 	if existing, complete, err := app.workspaceKeyRotation(ctx, operationID, accountID, workspaceID, requestHash); err != nil || existing.Phase != "" {
 		return existing, complete, err
 	}
+	budgetOperations, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
+		WorkspaceID: workspaceID, Action: workspaceGatewayBudgetAction, ExcludedStatuses: []string{"succeeded"},
+	})
+	if err != nil {
+		return workspaceKeyRotationOperation{}, false, errWorkspaceKeyRotationState
+	}
+	if len(budgetOperations) != 0 {
+		return workspaceKeyRotationOperation{}, false, errWorkspaceGatewayBudgetInProgress
+	}
 	operations, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
 		WorkspaceID: workspaceID, Action: "workspace.gateway_key.rotate", ExcludedStatuses: []string{"succeeded"},
 	})
@@ -382,7 +391,7 @@ func (app *controlPlaneServer) rotateWorkspaceGatewayKey(w http.ResponseWriter, 
 	}
 	operationID := "workspace-key-rotate-" + stableID(workspaceID, idempotencyKey)[:18]
 	requestHash := stableID("workspace-key-rotation-v1", workspaceID, string(mustJSON(input)))
-	claimUnlock := app.lockResource("workspace-key-rotation-claim", workspaceID)
+	claimUnlock := app.lockWorkspaceGatewayMutation(workspaceID)
 	_, _, err := app.claimWorkspaceKeyRotation(r.Context(), operationID, accountID, workspaceID, requestHash, oldKeyID)
 	claimUnlock()
 	if err != nil {
@@ -410,9 +419,13 @@ func (app *controlPlaneServer) rotateWorkspaceGatewayKey(w http.ResponseWriter, 
 	app.writeWorkspaceKeyRotationResponse(w, operationID, workspaceID, operation)
 }
 
+func (app *controlPlaneServer) lockWorkspaceGatewayMutation(workspaceID string) func() {
+	return app.lockResource("workspace-gateway-mutation", workspaceID)
+}
+
 func writeWorkspaceKeyRotationError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, errWorkspaceKeyRotationInProgress), errors.Is(err, errWorkspaceKeyRotationConflict), errors.Is(err, errWorkspaceAPIKeyCASConflict), errors.Is(err, errIdempotencyConflict):
+	case errors.Is(err, errWorkspaceKeyRotationInProgress), errors.Is(err, errWorkspaceGatewayBudgetInProgress), errors.Is(err, errWorkspaceKeyRotationConflict), errors.Is(err, errWorkspaceAPIKeyCASConflict), errors.Is(err, errIdempotencyConflict):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, errWorkspaceKeyRotationState):
 		writeError(w, http.StatusInternalServerError, "state_persist_failed")
