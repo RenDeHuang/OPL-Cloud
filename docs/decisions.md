@@ -38,6 +38,11 @@ their own Workspace image and Provider Profile receipts. Formal publication adds
 the versioned release identity to the already qualified Cloud image bytes; it
 does not rebuild them.
 
+The formal Cloud Release publisher allowlist contains the repository owner and
+`RenDeHuang`. A manual dispatch or rerun is admitted only when the original
+actor and current triggering actor are the same allowlisted publisher. This
+does not grant Candidate workflow or Instance deployment authority.
+
 ## 2026-08-15: Pre-1.0 Instance Qualification Gates Product Publication
 
 During the current immature pre-1.0 phase, a formal OPL Cloud Release is the
@@ -45,9 +50,9 @@ result of successful candidate adoption, not an input used to discover whether
 the product can deploy. Cloud must first produce a replaceable candidate bound
 to one exact canonical product SHA and image digest. `opl-instance-medopl` then
 deploys and qualifies that candidate through its protected workflow. Only after
-the required deployment and product acceptance readback succeeds may the
-repository owner explicitly publish the same SHA and image bytes as a formal
-Release.
+the required deployment and product acceptance readback succeeds may an
+allowlisted Cloud Release publisher explicitly publish the same SHA and image
+bytes as a formal Release.
 
 This decision responds to observed version churn. Eight Releases, `v0.1.0`
 through `v0.1.7`, were published in roughly 49 hours while successive changes
@@ -76,13 +81,15 @@ Secrets, provider state, deployment, rollback, acceptance, and receipts. Cloud
 does not dispatch or operate the Instance; the Product owner consumes its
 exact-SHA/digest receipt as the pre-1.0 publication gate.
 
-Only the repository owner may explicitly dispatch a formal Release from
-`main`. PRs, merges, CI, schedules, collaborator actions, deployment retries,
-and failed qualification do not publish a version. The create-only workflow
-prevents accidental version reuse, but it does not remove the repository
-owner's authority to repair or delete public artifacts through a separate
-explicit cleanup decision. Documentation-only, test-only, CI-performance, and
-Instance-only changes do not independently justify a Product Release.
+Only the repository owner and `RenDeHuang` may explicitly dispatch a formal
+Release from `main`, and the original actor must equal the current triggering
+actor. PRs, merges, CI, schedules, any other collaborator actions, deployment
+retries, and failed qualification do not publish a version. The create-only
+workflow prevents accidental version reuse, but it does not remove the
+repository owner's authority to repair or delete public artifacts through a
+separate explicit cleanup decision. Documentation-only, test-only,
+CI-performance, and Instance-only changes do not independently justify a
+Product Release.
 
 ## 2026-08-15: Keep The Go/TypeScript Service Architecture And Adopt Frameworks By Evidence
 
