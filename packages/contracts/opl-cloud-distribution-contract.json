@@ -13,7 +13,23 @@
     "workflow": ".github/workflows/build-opl-cloud-candidate.yml",
     "contract": "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV1",
     "registry": "ghcr.io/gaofeng21cn/one-person-lab-cloud",
-    "platform": "linux/amd64",
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "portableAssets": [
+      "compose.yaml",
+      "compose.deployment-platform-owned.yaml",
+      "compose.deployment-managed-tke.yaml",
+      "compose.deployment-customer-owned.yaml",
+      "compose.fabric-local-docker.yaml",
+      "compose.fabric-tencent-tke.yaml",
+      "compose.local-workspace.yaml",
+      "opl-cloud.env.example"
+    ],
+    "bundleManifest": "opl-cloud-candidate.json",
+    "checksumManifest": "SHA256SUMS",
+    "qualificationFactsOwner": "instance_or_installer_receipt",
     "formalPublication": false,
     "instanceDeployment": false
   },

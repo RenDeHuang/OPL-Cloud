@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import YAML from "yaml";
 
 const root = new URL("../", import.meta.url);
 const workflowRoot = new URL(".github/workflows/", root);
@@ -27,11 +28,25 @@ for (const required of ["ghcr.io/${{ github.repository }}", "linux/amd64,linux/a
 }
 
 const candidate = await readFile(new URL(".github/workflows/build-opl-cloud-candidate.yml", root), "utf8");
-for (const forbidden of ["environment: production", "tencentyun.com", "medopl.cn", "gh release", "git tag", "kubectl"]) {
-  if (candidate.includes(forbidden)) throw new Error(`Cloud candidate owns a forbidden concern: ${forbidden}`);
+const candidateWorkflow = YAML.parse(candidate);
+const candidateInputs = Object.keys(candidateWorkflow.on?.workflow_dispatch?.inputs || {});
+const candidateJobs = Object.keys(candidateWorkflow.jobs || {});
+const candidateJob = candidateWorkflow.jobs?.candidate;
+if (JSON.stringify(candidateInputs) !== JSON.stringify(["product_sha"]) ||
+    JSON.stringify(candidateJobs) !== JSON.stringify(["candidate"]) ||
+    candidateJob?.environment !== undefined ||
+    candidateJob?.env?.IMAGE_REPOSITORY !== "ghcr.io/${{ github.repository }}" ||
+    candidateJob?.permissions?.contents !== "read" || candidateJob?.permissions?.packages !== "write") {
+  throw new Error("Cloud Candidate workflow authority boundary is invalid");
 }
-for (const required of ["ghcr.io/${{ github.repository }}", "--platform linux/amd64", "--push", "tools/cloud-candidate-receipt.ts"]) {
-  if (!candidate.includes(required)) throw new Error(`Cloud candidate is missing: ${required}`);
+const candidateCommands = (candidateJob.steps || []).map((step) => step.run || "").join("\n");
+for (const forbidden of ["tencentyun.com", "medopl.cn", "gh release", "git tag", "kubectl", "WORKSPACE_IMAGE", "workspace_image", "releaseTag"]) {
+  if (candidateCommands.includes(forbidden) || candidateInputs.includes(forbidden)) {
+    throw new Error(`Cloud Candidate owns a forbidden concern: ${forbidden}`);
+  }
+}
+for (const required of ["--platform linux/amd64,linux/arm64", "--push", "tools/cloud-candidate-receipt.ts validate-bundle", "opl-cloud-candidate.json", "SHA256SUMS"]) {
+  if (!candidateCommands.includes(required)) throw new Error(`Cloud Candidate is missing: ${required}`);
 }
 
 const compose = await readFile(new URL("compose.yaml", root), "utf8");
@@ -71,7 +86,11 @@ if (!/sha256sum\s+-c\s/.test(dockerfile)) {
 
 const contract = JSON.parse(await readFile(new URL("packages/contracts/opl-cloud-distribution-contract.json", root), "utf8"));
 if (contract.productRepository !== "gaofeng21cn/one-person-lab-cloud" ||
-    contract.instanceHandoff?.repository !== "gaofeng21cn/opl-instance-medopl") {
+    contract.instanceHandoff?.repository !== "gaofeng21cn/opl-instance-medopl" ||
+    JSON.stringify(contract.candidate?.platforms) !== JSON.stringify(["linux/amd64", "linux/arm64"]) ||
+    contract.candidate?.bundleManifest !== "opl-cloud-candidate.json" ||
+    contract.candidate?.checksumManifest !== "SHA256SUMS" ||
+    contract.candidate?.qualificationFactsOwner !== "instance_or_installer_receipt") {
   throw new Error("distribution owner boundary is invalid");
 }
 
