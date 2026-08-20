@@ -26,19 +26,32 @@ test("Cloud owns one neutral non-Release candidate receipt contract", async () =
   assert.equal(receipt.kind, "opl_cloud_candidate");
   assert.equal(receipt.productRepository, "gaofeng21cn/one-person-lab-cloud");
   assert.equal(receipt.cloudImageRepository, "ghcr.io/gaofeng21cn/one-person-lab-cloud");
-  assert.equal(receipt.platform, "linux/amd64");
+  assert.deepEqual(receipt.platforms, ["linux/amd64", "linux/arm64"]);
   assert.deepEqual(receipt.exactKeys, [
     "schemaVersion",
     "kind",
     "product",
-    "platform",
     "cloudImage",
-    "workspaceImage",
+    "assets",
     "provenance"
   ]);
   assert.deepEqual(receipt.productExactKeys, ["repository", "sha", "tree"]);
-  assert.deepEqual(receipt.cloudImageExactKeys, ["repository", "ref", "digest", "revision"]);
-  assert.deepEqual(receipt.workspaceImageExactKeys, ["ref", "digest"]);
+  assert.deepEqual(receipt.cloudImageExactKeys, ["repository", "indexRef", "indexDigest", "revision", "platforms"]);
+  assert.deepEqual(receipt.platformExactKeys, ["platform", "digest"]);
+  assert.deepEqual(receipt.assetExactKeys, ["name", "sha256"]);
+  assert.deepEqual(receipt.portableAssets, [
+    "compose.yaml",
+    "compose.deployment-platform-owned.yaml",
+    "compose.deployment-managed-tke.yaml",
+    "compose.deployment-customer-owned.yaml",
+    "compose.fabric-local-docker.yaml",
+    "compose.fabric-tencent-tke.yaml",
+    "compose.local-workspace.yaml",
+    "opl-cloud.env.example"
+  ]);
+  assert.equal(receipt.manifest, "opl-cloud-candidate.json");
+  assert.equal(receipt.checksumManifest, "SHA256SUMS");
+  assert.equal(receipt.checksumCoverage, "portable_assets_and_candidate_manifest");
   assert.deepEqual(receipt.provenanceExactKeys, [
     "workflowRepository",
     "workflowSha",
@@ -46,14 +59,16 @@ test("Cloud owns one neutral non-Release candidate receipt contract", async () =
     "workflowRunAttempt"
   ]);
   assert.equal(receipt.receiptDigest, "sha256_of_canonical_json_bytes");
-  assert.equal(receipt.workspaceRegistryReadbackOwner, "instance_or_installer");
+  assert.equal(receipt.qualificationFactsOwner, "instance_or_installer_receipt");
 
+  const receiptSource = JSON.stringify(receipt);
   for (const forbidden of [
     "J2", "J4", "J5", "build_source", "reconcile", "registryMutationAttempts",
     "medopl.cn", "tencentyun.com", "accountId", "operationId", "providerId",
-    "kubeconfig", "password", "secret", "releaseTag"
+    "kubeconfig", "password", "secret", "releaseTag", "workspaceImage",
+    "providerProfile", "domain"
   ]) {
-    assert.doesNotMatch(source, new RegExp(forbidden, "i"));
+    assert.doesNotMatch(receiptSource, new RegExp(forbidden, "i"));
   }
 });
 
@@ -63,7 +78,20 @@ test("distribution contract exposes candidate handoff without changing release o
     workflow: ".github/workflows/build-opl-cloud-candidate.yml",
     contract: "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV1",
     registry: "ghcr.io/gaofeng21cn/one-person-lab-cloud",
-    platform: "linux/amd64",
+    platforms: ["linux/amd64", "linux/arm64"],
+    portableAssets: [
+      "compose.yaml",
+      "compose.deployment-platform-owned.yaml",
+      "compose.deployment-managed-tke.yaml",
+      "compose.deployment-customer-owned.yaml",
+      "compose.fabric-local-docker.yaml",
+      "compose.fabric-tencent-tke.yaml",
+      "compose.local-workspace.yaml",
+      "opl-cloud.env.example"
+    ],
+    bundleManifest: "opl-cloud-candidate.json",
+    checksumManifest: "SHA256SUMS",
+    qualificationFactsOwner: "instance_or_installer_receipt",
     formalPublication: false,
     instanceDeployment: false
   });
