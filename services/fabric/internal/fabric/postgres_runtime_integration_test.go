@@ -1519,17 +1519,20 @@ func TestPostgresServiceRestartsTencentComputeDestroyAfterUncertainMutation(t *t
 					"describeNodePoolRequestId": "req-postgres-delete-node-pool", "verifyMachineDeletedReqId": "req-postgres-delete-machine-present", "describeCvmRequestId": "req-postgres-delete-cvm-present",
 				},
 			}, nil
-		case "sync_compute_allocation":
+		case "read_compute_destroy_status":
 			readbackCalls.Add(1)
 			if readbackState.Load() == computeDestroyReadbackPresent {
 				return computeDestroyPhasePresentReadback(request.Allocation.InstanceID), nil
 			}
+			absent := false
 			return provisionerResponse{
 				OK: true, Status: "external_deleted", NodePoolID: request.Pool.NodePoolID, InstanceID: request.Allocation.InstanceID,
 				NodeName: request.Allocation.NodeName, PrivateIP: request.Allocation.PrivateIP, CVMStatus: "NOT_FOUND", TKEStatus: "NOT_FOUND", ProviderRequestID: "req-postgres-sync-absent",
+				MachinePresent: &absent, MutationCount: 0,
 				ProviderData: map[string]string{
 					"clusterId": "cls-alpha", "region": "ap-guangzhou", "nodePoolId": request.Pool.NodePoolID,
 					"machineName": request.Allocation.MachineName, "nodeName": request.Allocation.NodeName, "privateIp": request.Allocation.PrivateIP,
+					"machineType": "NativeCVM", "cvmApplicable": "true", "machinePresent": "false",
 					"syncResult": "missing", "tkeStatus": "NOT_FOUND", "cvmStatus": "NOT_FOUND",
 					"describeClusterMachinesReq": "req-postgres-sync-machine-absent", "describeCvmRequestId": "req-postgres-sync-cvm-absent",
 				},
@@ -1611,6 +1614,7 @@ func TestPostgresDestroyStorageVolumeNeverRedispatchesDispatchUncertainTencentMu
 	resource := storageDestroyTestVolume("storage-postgres-uncertain-destroy")
 	resource.ProviderData["pvName"] = k8sName(resource.ID) + "-pv"
 	resource.ProviderData["pvcName"] = k8sName(resource.ID) + "-data"
+	resource.ProviderData["region"] = "ap-guangzhou"
 	provider := NewTencentProvider()
 	var destroyActions atomic.Int32
 	var readbackCalls atomic.Int32
@@ -1626,14 +1630,14 @@ func TestPostgresDestroyStorageVolumeNeverRedispatchesDispatchUncertainTencentMu
 				return provisionerResponse{
 					OK: true, StorageVolumeID: resource.ProviderResourceID, CBSStatus: "NOT_FOUND", Status: "external_deleted", ProviderRequestID: "req-postgres-cbs-absent",
 					ProviderData: map[string]string{
-						"storageVolumeId": resource.ProviderResourceID, "cbsStatus": "NOT_FOUND", "status": "external_deleted",
+						"storageVolumeId": resource.ProviderResourceID, "cbsStatus": "NOT_FOUND", "status": "external_deleted", "region": "ap-guangzhou",
 						"storageDestroyPhase": "absence_confirmed", "storageDestroyMutationCount": "0", "describeCbsRequestId": "req-postgres-cbs-absent",
 					},
 				}, nil
 			}
 			return provisionerResponse{
 				OK: true, StorageVolumeID: resource.ProviderResourceID, CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-postgres-cbs-unattached",
-				ProviderData: map[string]string{"storageVolumeId": resource.ProviderResourceID, "cbsStatus": "UNATTACHED", "describeCbsRequestId": "req-postgres-cbs-unattached"},
+				ProviderData: map[string]string{"storageVolumeId": resource.ProviderResourceID, "cbsStatus": "UNATTACHED", "describeCbsRequestId": "req-postgres-cbs-unattached", "region": "ap-guangzhou"},
 			}, nil
 		default:
 			return provisionerResponse{}, fmt.Errorf("unexpected provisioner action: %s", request.Action)
@@ -1656,7 +1660,7 @@ func TestPostgresDestroyStorageVolumeNeverRedispatchesDispatchUncertainTencentMu
 	}
 	first := NewServiceWithOperationStore(provider, firstStore)
 	firstResult, err := first.DestroyStorageVolume(ctx, resource.ID)
-	if err == nil || firstResult.ProviderData["storageDestroyPhase"] != storageDestroyPhaseDispatchAuthorized || firstResult.ProviderData["storageDestroyMutationCount"] != "0" || destroyActions.Load() != 1 || readbackCalls.Load() != 0 {
+	if err == nil || firstResult.ProviderData["storageDestroyPhase"] != storageDestroyPhaseDispatchAuthorized || firstResult.ProviderData["storageDestroyMutationCount"] != "0" || destroyActions.Load() != 1 || readbackCalls.Load() != 1 {
 		_ = firstStore.client.Close()
 		t.Fatalf("first destroy=%#v err=%v actions=%d readback=%d", firstResult, err, destroyActions.Load(), readbackCalls.Load())
 	}
@@ -1679,14 +1683,14 @@ func TestPostgresDestroyStorageVolumeNeverRedispatchesDispatchUncertainTencentMu
 	restarted := NewServiceWithOperationStore(provider, reopenedStore)
 	replayed, err := restarted.DestroyStorageVolume(ctx, resource.ID)
 	if !errors.Is(err, errStorageDestroyRecoveryUnconfirmed) || replayed.CBSStatus != "UNATTACHED" || replayed.ProviderData["storageDestroyPhase"] != storageDestroyPhaseDispatchAuthorized ||
-		destroyActions.Load() != 1 || readbackCalls.Load() != 1 {
+		destroyActions.Load() != 1 || readbackCalls.Load() != 2 {
 		t.Fatalf("reopened present readback=%#v first=%#v err=%v actions=%d readback=%d", replayed, firstResult, err, destroyActions.Load(), readbackCalls.Load())
 	}
 
 	authoritativeAbsence.Store(true)
 	replayed, err = restarted.DestroyStorageVolume(ctx, resource.ID)
 	if err != nil || replayed.Status != "external_deleted" || replayed.CBSStatus != "NOT_FOUND" || replayed.ProviderData["storageDestroyPhase"] != "absence_confirmed" ||
-		replayed.ProviderData["storageDestroyMutationCount"] != "0" || destroyActions.Load() != 1 || readbackCalls.Load() != 2 {
+		replayed.ProviderData["storageDestroyMutationCount"] != "0" || destroyActions.Load() != 1 || readbackCalls.Load() != 3 {
 		t.Fatalf("reopened absence replay=%#v first=%#v err=%v actions=%d readback=%d", replayed, firstResult, err, destroyActions.Load(), readbackCalls.Load())
 	}
 	latest, found, latestErr = reopenedStore.LatestResourceOperation(ctx, "storage_volume", resource.ID)
