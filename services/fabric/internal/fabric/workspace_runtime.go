@@ -630,11 +630,11 @@ func validateRuntimeInput(input WorkspaceRuntimeInput, compute ComputeAllocation
 }
 
 func validWorkspaceRuntimeImageIdentity(value string) bool {
-	value = strings.TrimSpace(value)
-	prefix := workspaceImageRepository + "@sha256:"
-	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+sha256.Size*2 {
+	trimmed := strings.TrimSpace(value)
+	_, digest, found := strings.Cut(trimmed, "@")
+	if !found || digest != strings.ToLower(digest) {
 		return false
 	}
-	digest := strings.TrimPrefix(value, prefix)
-	return digest == strings.ToLower(digest) && validDigest(digest)
+	_, ok := immutableImageDigest(trimmed)
+	return ok
 }

@@ -133,9 +133,11 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   assert.equal(new Set(exampleTokens).size, 5);
   assert.match(
     portableEnvironment,
-    /^OPL_WORKSPACE_IMAGE=ghcr\.io\/gaofeng21cn\/one-person-lab-webui@sha256:caff36778d8e39ca23682445d8734d6c335ed01e337e9e86dbba9e56657db501$/m
+    /^OPL_WORKSPACE_IMAGE=<replace-with-workspace-repository@sha256:64-hex-digest>$/m
   );
-  assert.match(portableEnvironment, /current stable Workspace release is linux\/amd64 only/);
+  assert.match(portableEnvironment, /repository@sha256 reference selected for this installation/);
+  assert.doesNotMatch(portableEnvironment, /ghcr\.io\/gaofeng21cn\/one-person-lab-webui@sha256:/);
+  assert.doesNotMatch(portableEnvironment, /current stable Workspace release/);
   assert.match(portableEnvironment, /^OPL_DOCKER_SOCKET_PATH=\/var\/run\/docker\.sock$/m);
   const postgresInit = compose.configs["opl-postgres-init"].content as string;
   assert.match(postgresInit, /PostgreSQL passwords must contain at least 32 characters/);

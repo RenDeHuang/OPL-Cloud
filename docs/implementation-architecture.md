@@ -65,9 +65,10 @@ remain in their owning implementation boundaries.
 
 The required Core path is
 `Console -> Control Plane -> Workspace launcher/provider -> local Docker`.
-Fabric now implements the local Docker side of that path and defaults to it;
-Tencent/TKE requires explicit instance selection. Fabric also owns typed launch
-stage mutation/readback routes with exact immutable operation bindings. The
+Fabric now implements the local Docker side of that path; the installer must
+explicitly select `OPL_FABRIC_PROVIDER` and startup fails closed when it is
+missing or unknown. Tencent/TKE likewise requires explicit instance selection.
+Fabric also owns typed launch stage mutation/readback routes with exact immutable operation bindings. The
 portable Compose profile still starts PostgreSQL, Control Plane, Fabric, and
 Ledger with Workspace launch workers disabled, so Compose health alone remains
 a control-service installation check rather than end-to-end Workspace evidence.
@@ -278,8 +279,9 @@ Speculative route and object entries remain outside the active contracts.
 ## Provider Port
 
 Fabric exposes one Go `Provider` port paid by both `local-docker` and
-`tencent-tke`. Process startup defaults to `local-docker` independently of
-`NODE_ENV`; only `OPL_FABRIC_PROVIDER=tencent-tke` selects the Tencent adapter.
+`tencent-tke`. Process startup requires the installer-provided
+`OPL_FABRIC_PROVIDER`; missing or unknown values fail before an adapter is
+selected. The selected instance profile chooses the concrete adapter.
 The Fabric CI job enables the real local Docker integration test, which verifies
 the provider writes and owner-authoritative readback rather than treating an
 interface or control-service health check as portability evidence.
@@ -552,12 +554,11 @@ the fixed value through named constants. The ABI is not an environment override,
 an Instance-selectable option, an installation default, or a separate feature
 lane.
 
-The Instance currently injects the `.com` domain, but Cloud source still falls
-back to `workspace.medopl.cn` in Control Plane URL projection and Tencent
-catalog/runtime helpers. Fabric's Tencent catalog also exposes that fallback
-without consulting the active Provider Profile. Those are current
-instance-specific leaks, not target defaults: managed Tencent/TKE must require
-an explicit Workspace domain and fail closed when it is absent. The `.cn`
+The Instance injects its concrete domain, and Cloud now requires that explicit
+`OPL_WORKSPACE_DOMAIN` input in Control Plane and the Tencent adapter before
+startup or provider access. URL projection, catalog ingress facts and runtime
+readback use the admitted installation value; no medopl hostname is synthesized.
+The `.cn`
 Kubernetes label and annotation keys are persisted metadata identifiers rather
 than access domains; they require owner inventory and a bounded metadata
 namespace migration instead of a mechanical `.com` replacement.
@@ -639,9 +640,9 @@ bundle validator recomputes every digest and rejects missing, extra,
 non-canonical, or malformed inputs. The canonical Candidate manifest schema
 contains no selected Workspace image, Provider Profile, domain, or Instance
 fact; each qualification owner records those in its own later receipt. The
-bundle still carries the current `opl-cloud.env.example`; removal of its
-installation-specific defaults remains owned by
-`LOCAL-WORKSPACE-INSTALL-CONTRACT-01`. The workflow creates no Git tag, GitHub
+bundle still carries the current `opl-cloud.env.example`; its installation-owned
+domain, provider, namespace, provisioner and Workspace image inputs are
+placeholders that the installer must replace. The workflow creates no Git tag, GitHub
 Release, versioned image tag, or Instance action.
 
 The formal Release workflow still cannot promote those already qualified bytes.

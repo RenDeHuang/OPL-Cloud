@@ -7,22 +7,20 @@ import (
 	"time"
 )
 
-func TestSelectedProviderDefaultsLocalOutsideProduction(t *testing.T) {
-	provider, err := selectedProvider(func(string) string { return "" })
-	if err != nil || provider.Descriptor().Name != "local-docker" {
-		t.Fatalf("selected provider = %#v, %v", provider, err)
+func TestSelectedProviderRequiresExplicitProviderOutsideProduction(t *testing.T) {
+	if _, err := selectedProvider(func(string) string { return "" }); err == nil {
+		t.Fatal("missing provider was accepted outside production")
 	}
 }
 
-func TestSelectedProviderDefaultsLocalInProduction(t *testing.T) {
-	provider, err := selectedProvider(func(key string) string {
+func TestSelectedProviderRequiresExplicitProviderInProduction(t *testing.T) {
+	if _, err := selectedProvider(func(key string) string {
 		if key == "NODE_ENV" {
 			return "production"
 		}
 		return ""
-	})
-	if err != nil || provider.Descriptor().Name != "local-docker" {
-		t.Fatalf("selected provider = %#v, %v", provider, err)
+	}); err == nil {
+		t.Fatal("missing provider was accepted in production")
 	}
 }
 

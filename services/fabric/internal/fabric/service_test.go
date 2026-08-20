@@ -14,6 +14,17 @@ import (
 	"time"
 )
 
+const defaultLocalDockerWorkspaceImageRepository = "ghcr.io/gaofeng21cn/one-person-lab-webui"
+
+func TestLocalDockerRequiresExplicitTrustedWorkspaceImage(t *testing.T) {
+	t.Setenv("OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES", "")
+	provider := NewLocalDockerProvider()
+	image := defaultLocalDockerWorkspaceImageRepository + "@sha256:" + strings.Repeat("a", 64)
+	if provider.ValidateWorkspaceImageReference(image) {
+		t.Fatal("Local-Docker accepted a Workspace image without explicit trusted input")
+	}
+}
+
 type readinessRecordingProvider struct {
 	testProvider
 	calls        atomic.Int32

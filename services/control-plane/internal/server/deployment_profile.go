@@ -29,15 +29,16 @@ type deploymentProfile struct {
 func deploymentProfileFromEnv() (deploymentProfile, error) {
 	mode := deploymentMode(strings.TrimSpace(os.Getenv("OPL_DEPLOYMENT_MODE")))
 	if mode == "" {
-		mode = deploymentPlatformOwned
+		return deploymentProfile{}, errors.New("OPL_DEPLOYMENT_MODE is required")
 	}
 	switch mode {
 	case deploymentPlatformOwned, deploymentManagedTKE, deploymentCustomerOwned:
+		if workspaceDomain() == "" {
+			return deploymentProfile{}, errors.New("OPL_WORKSPACE_DOMAIN is required")
+		}
 		provider := fabricProvider(strings.TrimSpace(os.Getenv("OPL_FABRIC_PROVIDER")))
 		if provider == "" {
-			// Direct in-process tests use the provider-neutral local default. The
-			// portable Compose base requires an explicit provider overlay.
-			provider = fabricLocalDocker
+			return deploymentProfile{}, errors.New("OPL_FABRIC_PROVIDER is required")
 		}
 		switch provider {
 		case fabricLocalDocker, fabricTencentTKE:

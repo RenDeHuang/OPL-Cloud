@@ -24,10 +24,34 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	_ = os.Setenv("OPL_DEPLOYMENT_MODE", "platform_owned")
+	_ = os.Setenv("OPL_FABRIC_PROVIDER", "local-docker")
+	_ = os.Setenv("OPL_WORKSPACE_DOMAIN", "workspace.medopl.cn")
 	if os.Getenv("OPL_WORKSPACE_IMAGE") == "" {
 		_ = os.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/opl/workspace@sha256:"+strings.Repeat("f", 64))
 	}
 	os.Exit(m.Run())
+}
+
+func TestDeploymentProfileRequiresExplicitInstallationInputs(t *testing.T) {
+	for _, key := range []string{"OPL_DEPLOYMENT_MODE", "OPL_FABRIC_PROVIDER", "OPL_WORKSPACE_DOMAIN"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "")
+			if _, err := deploymentProfileFromEnv(); err == nil {
+				t.Fatalf("missing %s was accepted", key)
+			}
+		})
+	}
+}
+
+func TestWorkspaceDomainDoesNotSynthesizeInstallationHostname(t *testing.T) {
+	t.Setenv("OPL_WORKSPACE_DOMAIN", "")
+	if got := workspaceDomain(); got != "" {
+		t.Fatalf("workspaceDomain() = %q, want empty without caller input", got)
+	}
+	if isWorkspaceHost("workspace.medopl.cn") {
+		t.Fatal("missing Workspace domain accepted the historical hostname")
+	}
 }
 
 func mustStore(t *testing.T, err error) {
