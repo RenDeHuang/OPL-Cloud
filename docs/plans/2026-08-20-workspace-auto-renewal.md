@@ -91,4 +91,3 @@ receipt 身份，并通过已有 Fabric readback、Sub2API wallet 和 Ledger rec
   不会产生第二 debit、第二 provider mutation、refund 猜测或隐式 reactivation。
 - Console 只调用 Control Plane product API，显示服务端 authoritative state；
   focused checks、`npm run verify:local` 和 `npm run verify:local:full` 通过。
-
