@@ -1556,6 +1556,26 @@ func TestTencentProviderDestroyComputeRejectsUntrustedResponseWithoutProviderDat
 	}
 }
 
+func TestTencentProviderDestroyComputePersistsMutationMarkerWhenErrorEvidenceIsIncomplete(t *testing.T) {
+	input := canonicalTencentComputeDestroyFixture()
+	input.Status = "destroying"
+	provider := NewTencentProvider()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		return provisionerResponse{
+			OK: false, ErrorCode: "missing", ProviderRequestID: "req-delete-missing", MutationCount: 1,
+			InstanceID: request.Allocation.InstanceID, NodePoolID: request.Pool.NodePoolID, NodeName: request.Allocation.NodeName,
+		}, nil
+	}
+
+	result, err := provider.DestroyComputeAllocation(context.Background(), input)
+	if err == nil || err.Error() != "missing" || !validTencentComputeDestroyAttemptEvidence(result) ||
+		result.ProviderData[tencentComputeDestroyMutationCountKey] != "1" ||
+		result.ProviderData[tencentComputeDestroyPhaseKey] != tencentComputeDestroyPhaseAttempted ||
+		!sameComputeDestroyStableIdentity(input, result) {
+		t.Fatalf("incomplete mutation evidence was not persisted safely: result=%#v input=%#v err=%v", result, input, err)
+	}
+}
+
 func TestTencentServiceRestartKeepsCanonicalResourceAfterUntrustedDestroyResponse(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryOperationStore()
