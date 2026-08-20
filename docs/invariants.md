@@ -123,10 +123,13 @@ schemas, workflows, and focused tests.
   without an automatic refund. Delete, Cancel Renewal, and Refund are
   independent product operations.
 - Before the first cleanup mutation, Control Plane reads and matches the
-  immutable succeeded Launch and its exact charged or zero-cost Launch Receipt.
-  A positive Debit, purchase amount, refund code, or wallet-history entry is not
-  Delete authority. The ordered completion chain is `runtime + Secret absence
-  -> attachment absence -> storage absence -> compute absence -> Key absence ->
+  immutable succeeded Launch and its exact charged or zero-cost Launch Receipt
+  for Runtime, compute, storage, and attachment identity. The current Workspace
+  projection and one strict completed Key Rotation lineage back to the Launch
+  Key own the current Workspace Key and Gateway Secret identity. A positive
+  Debit, purchase amount, refund code, or wallet-history entry is not Delete
+  authority. The ordered completion chain is `runtime + Secret absence ->
+  attachment absence -> storage absence -> compute absence -> Key absence ->
   Workspace absence -> deletion Receipt -> complete`.
 - Fabric reports Runtime and Gateway Secret owner observations as typed
   `ready/absent/pending/conflict/error` facts. Both must be authoritatively
@@ -144,8 +147,12 @@ schemas, workflows, and focused tests.
 - Ledger records one non-financial `workspace.deleted.v1` Receipt after
   Workspace absence. Receipt failure retries only that Receipt and never repeats
   Key deletion or Fabric cleanup. A non-terminal legacy `workspace.delete.v1`
-  operation blocks v2 before mutation, and Delete cannot run concurrently with
-  a non-terminal Renewal.
+  operation blocks v2 before mutation. Delete cannot run concurrently with a
+  non-terminal Renewal or Key Rotation; Delete and Rotation claims use the same
+  durable Workspace lock before either operation can cross an external mutation
+  boundary. Workspace absence removes the exact matching Control Plane compute,
+  storage, attachment, and Workspace projections in the same transaction as the
+  `workspace_absent` cursor; any identity mismatch rolls back the whole step.
 
 ## Launch And Recovery
 

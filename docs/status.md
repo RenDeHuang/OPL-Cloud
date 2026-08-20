@@ -363,16 +363,20 @@ Sub2API management origin and credentials are never exposed to the browser.
   or broader removal.
 - The authenticated Workspace owner can issue one durable, resumable
   `workspace.delete.v2` command. Control Plane matches the immutable succeeded
-  Launch and its exact charged or zero-cost Launch Receipt, then advances
-  `Runtime + Secret -> attachment -> storage -> compute -> Sub2API Key ->
-  Workspace -> workspace.deleted.v1 Receipt`. Delete performs no Debit-history
-  lookup, refund, or other wallet mutation. Workspace absence and its
-  `workspace_absent` operation cursor persist atomically; later Receipt and
-  completion cursors persist independently, and a Ledger failure retries only
-  the deletion Receipt. A non-terminal historical `workspace.delete.v1` row blocks
-  v2 without migration or reinterpretation, and non-terminal Delete and Renewal
-  operations are mutually exclusive. Unpaid expiry suspends the Workspace and
-  records expiry evidence without invoking Fabric deletion.
+  Launch and its exact charged or zero-cost Launch Receipt for Runtime, compute,
+  storage, and attachment identity. The current Workspace projection plus a
+  strict completed Rotation lineage supplies the current Key and Gateway Secret
+  identity, which Fabric rechecks before mutation. Delete then advances `Runtime
+  + Secret -> attachment -> storage -> compute -> Sub2API Key -> Workspace ->
+  workspace.deleted.v1 Receipt` without a Debit-history lookup, refund, or other
+  wallet mutation. Workspace, compute, storage, and attachment projection
+  absence persist in the same transaction as the `workspace_absent` cursor;
+  later Receipt and completion cursors persist independently, and a Ledger
+  failure retries only the deletion Receipt. A non-terminal historical
+  `workspace.delete.v1` row blocks v2 without migration or reinterpretation.
+  Non-terminal Delete, Renewal, and Key Rotation are durably mutually exclusive
+  before external mutation. Unpaid expiry suspends the Workspace and records
+  expiry evidence without invoking Fabric deletion.
 - Focused Fabric tests use fake Tencent SDKs to prove at-most-once CVM/CBS
   deletion dispatch, exact immutable identity, response-loss recovery through
   provider-authoritative readback, and permanent Machine/CVM/CBS absence. They

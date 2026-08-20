@@ -36,6 +36,8 @@ type workspaceDeleteFabric struct {
 	observeErr          error
 	observeRuntimeID    string
 	observeKeyID        int64
+	observeSecretRef    string
+	observeFingerprint  string
 	events              *workspaceDeleteEvents
 }
 
@@ -143,8 +145,16 @@ func (f *workspaceDeleteFabric) ObserveWorkspaceRuntimeGatewaySecret(_ context.C
 		if keyID == 0 {
 			keyID = 19
 		}
+		secretRef := f.observeSecretRef
+		if secretRef == "" {
+			secretRef = "opl-gateway-ws-alpha"
+		}
+		fingerprint := f.observeFingerprint
+		if fingerprint == "" {
+			fingerprint = "sha256:" + strings.Repeat("a", 64)
+		}
 		observation.Binding = &clients.WorkspaceRuntimeGatewaySecretBinding{
-			WorkspaceID: workspaceID, WorkspaceAPIKeyID: keyID, SecretRef: "opl-gateway-ws-alpha", Fingerprint: "sha256:" + strings.Repeat("a", 64), Bound: state == clients.WorkspaceOwnerObservationReady,
+			WorkspaceID: workspaceID, WorkspaceAPIKeyID: keyID, SecretRef: secretRef, Fingerprint: fingerprint, Bound: state == clients.WorkspaceOwnerObservationReady,
 		}
 	}
 	return observation, nil
@@ -559,6 +569,21 @@ func newWorkspaceDeleteCompletionFixtureWith(t *testing.T, store controlPlaneTab
 	if err := fixture.store.SaveWorkspace(context.Background(), workspace); err != nil {
 		t.Fatal(err)
 	}
+	if err := fixture.store.SaveCompute(context.Background(), map[string]any{
+		"id": "compute-alpha", "accountId": "acct-alpha", "ownerUserId": fixture.workspace["ownerUserId"], "workspaceId": "ws-alpha", "status": "running",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.SaveStorage(context.Background(), map[string]any{
+		"id": "storage-alpha", "accountId": "acct-alpha", "ownerUserId": fixture.workspace["ownerUserId"], "workspaceId": "ws-alpha", "status": "available",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.SaveAttachment(context.Background(), map[string]any{
+		"id": "attachment-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "volumeId": "storage-alpha", "status": "attached",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	fixture.workspace = workspace
 	return fixture, sub2API, ledger
 }
@@ -584,6 +609,12 @@ func TestWorkspaceDeleteCompletesExactOwnerChain(t *testing.T) {
 	}
 	if len(ledger.receipts) != 1 || len(ledger.keys) != 1 {
 		t.Fatalf("Ledger writes receipts=%#v keys=%#v", ledger.receipts, ledger.keys)
+	}
+	computes, computeErr := fixture.store.ListComputes(context.Background(), "acct-alpha")
+	storages, storageErr := fixture.store.ListStorages(context.Background(), "acct-alpha")
+	attachments, attachmentErr := fixture.store.ListAttachments(context.Background(), "acct-alpha")
+	if computeErr != nil || storageErr != nil || attachmentErr != nil || len(computes) != 0 || len(storages) != 0 || len(attachments) != 0 {
+		t.Fatalf("Delete left resource projections computes=%#v storages=%#v attachments=%#v errors=%v/%v/%v", computes, storages, attachments, computeErr, storageErr, attachmentErr)
 	}
 	receipt := ledger.receipts[0]
 	if receipt.Type != "workspace.deleted.v1" || receipt.Status != "completed" || receipt.Surface != "control_plane" || receipt.AccountID != "acct-alpha" || receipt.WorkspaceID != "ws-alpha" ||
@@ -618,6 +649,80 @@ func TestWorkspaceDeleteCompletesExactOwnerChain(t *testing.T) {
 	}
 	if got := events.snapshot(); strings.Join(got, "\n") != strings.Join(wantEvents, "\n") {
 		t.Fatalf("owner completion events=%#v want=%#v", got, wantEvents)
+	}
+}
+
+func TestWorkspaceDeleteUsesCurrentGatewayIdentityAfterCompletedRotationLineage(t *testing.T) {
+	fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
+	const (
+		firstKeyID   = int64(29)
+		currentKeyID = int64(39)
+	)
+	first := workspaceKeyRotationOperation{
+		RequestHash: "rotation-first-request", Phase: "succeeded", OldKeyID: 19, NewKeyID: firstKeyID, ReplacementGroupID: 7,
+		ReplacementName: "opl-workspace-replacement-first", RetiredName: "opl-workspace-retired-first",
+		BudgetSnapshotCaptured: true, BudgetCapturedAt: "2026-08-16T00:00:00Z",
+		SecretRef: "opl-gateway-ws-alpha", Fingerprint: "sha256:" + strings.Repeat("b", 64), ReceiptID: "receipt-rotation-first", CompletedAt: "2026-08-16T00:00:00Z",
+		AuditEvent: workspaceDeleteRotationAudit("rotation-first", "acct-alpha", "ws-alpha"),
+	}
+	second := workspaceKeyRotationOperation{
+		RequestHash: "rotation-second-request", Phase: "succeeded", OldKeyID: firstKeyID, NewKeyID: currentKeyID, ReplacementGroupID: 7,
+		ReplacementName: "opl-workspace-replacement-second", RetiredName: "opl-workspace-retired-second",
+		BudgetSnapshotCaptured: true, BudgetCapturedAt: "2026-08-17T00:00:00Z",
+		SecretRef: "opl-gateway-ws-alpha", Fingerprint: "sha256:" + strings.Repeat("c", 64), ReceiptID: "receipt-rotation-second", CompletedAt: "2026-08-17T00:00:00Z",
+		AuditEvent: workspaceDeleteRotationAudit("rotation-second", "acct-alpha", "ws-alpha"),
+	}
+	if err := fixture.store.SaveRuntimeOperation(context.Background(), workspaceKeyRotationRow("rotation-first", "acct-alpha", "ws-alpha", "succeeded", first)); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.CompareAndSwapWorkspaceAPIKey(context.Background(), "ws-alpha", 19, firstKeyID); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.SaveRuntimeOperation(context.Background(), workspaceKeyRotationRow("rotation-second", "acct-alpha", "ws-alpha", "succeeded", second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.CompareAndSwapWorkspaceAPIKey(context.Background(), "ws-alpha", firstKeyID, currentKeyID); err != nil {
+		t.Fatal(err)
+	}
+	sub2API.mu.Lock()
+	sub2API.keyID = currentKeyID
+	sub2API.mu.Unlock()
+	fixture.fabric.mu.Lock()
+	fixture.fabric.observeKeyID = currentKeyID
+	fixture.fabric.observeSecretRef = second.SecretRef
+	fixture.fabric.observeFingerprint = second.Fingerprint
+	fixture.fabric.mu.Unlock()
+
+	response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-after-rotations")
+	if response.Code != http.StatusOK {
+		row, _, _ := fixture.store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
+		t.Fatalf("Delete after rotations status=%d body=%s operation=%#v", response.Code, response.Body.String(), row)
+	}
+	if sub2API.keyDeletes != 1 || sub2API.keyID != currentKeyID || sub2API.keyExists {
+		t.Fatalf("Delete did not remove only current Key: id=%d deletes=%d exists=%v", sub2API.keyID, sub2API.keyDeletes, sub2API.keyExists)
+	}
+	if len(ledger.receipts) != 1 || int64(numberField(ledger.receipts[0].Execution, "workspaceApiKeyId", 0)) != currentKeyID ||
+		stringValue(ledger.receipts[0].Execution["workspaceKeyFingerprint"]) != second.Fingerprint || stringValue(ledger.receipts[0].Execution["gatewaySecretRef"]) != second.SecretRef {
+		t.Fatalf("Deletion Receipt did not bind current gateway identity: %#v", ledger.receipts)
+	}
+}
+
+func TestWorkspaceDeleteStopsBeforeMutationWhileKeyRotationIsActive(t *testing.T) {
+	fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
+	rotation := workspaceKeyRotationOperation{
+		RequestHash: "rotation-active-request", Phase: "replacement_check", OldKeyID: 19,
+		ReplacementName: "opl-workspace-replacement-active", RetiredName: "opl-workspace-retired-active",
+		AuditEvent: workspaceDeleteRotationAudit("rotation-active", "acct-alpha", "ws-alpha"),
+	}
+	if err := fixture.store.ClaimWorkspaceKeyRotation(context.Background(), workspaceKeyRotationRow("rotation-active", "acct-alpha", "ws-alpha", "started", rotation)); err != nil {
+		t.Fatal(err)
+	}
+	response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-during-rotation")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errWorkspaceKeyRotationInProgress.Error()) {
+		t.Fatalf("Delete during Rotation status=%d body=%s", response.Code, response.Body.String())
+	}
+	if calls := fixture.fabric.recordedCalls(); len(calls) != 0 || sub2API.keyDeletes != 0 || len(ledger.receipts) != 0 {
+		t.Fatalf("Delete crossed mutation boundary calls=%#v keyDeletes=%d receipts=%#v", calls, sub2API.keyDeletes, ledger.receipts)
 	}
 }
 
@@ -1536,12 +1641,86 @@ func TestWorkspaceDeleteRenewalMutualExclusionMemoryAndSQLite(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDeleteRotationMutualExclusionMemoryAndSQLite(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "sqlite", new: func(t *testing.T) controlPlaneTableStore {
+			return NewTestEntStateStore(t, t.TempDir()+"/workspace-delete-rotation.sqlite")
+		}},
+	} {
+		t.Run(storeCase.name, func(t *testing.T) {
+			exerciseWorkspaceDeleteRotationMutualExclusion(t, storeCase.new(t))
+		})
+	}
+}
+
 func TestPostgresWorkspaceDeleteStoreLifecycle(t *testing.T) {
 	exerciseWorkspaceDeleteStoreLifecycle(t, newPostgresWorkspaceRenewalStore(t))
 }
 
 func TestPostgresWorkspaceDeleteRenewalMutualExclusion(t *testing.T) {
 	exerciseWorkspaceDeleteRenewalMutualExclusion(t, newPostgresWorkspaceRenewalStore(t))
+}
+
+func TestPostgresWorkspaceDeleteRotationMutualExclusion(t *testing.T) {
+	exerciseWorkspaceDeleteRotationMutualExclusion(t, newPostgresWorkspaceRenewalStore(t))
+}
+
+func TestPostgresWorkspaceDeleteRotationConcurrentClaim(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	store := newPostgresWorkspaceRenewalStore(t)
+	workspace := currentWorkspaceRenewalAPIRow()
+	workspaceID := "workspace-delete-rotation-concurrent-claim"
+	workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
+	workspace["workspaceApiKeyId"] = int64(19)
+	if err := store.SaveWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	deleteOperation := workspaceDeleteStoreOperationForWorkspace(workspace, time.Now().UTC().Format(time.RFC3339Nano))
+	rotation := workspaceKeyRotationOperation{
+		RequestHash: "rotation-concurrent-request", Phase: "replacement_check", OldKeyID: 19,
+		ReplacementName: "opl-workspace-replacement-concurrent", RetiredName: "opl-workspace-retired-concurrent",
+		AuditEvent: workspaceDeleteRotationAudit("rotation-concurrent", "acct-delete", workspaceID),
+	}
+	rotationRow := workspaceKeyRotationRow("rotation-concurrent", "acct-delete", workspaceID, "started", rotation)
+	type claimResult struct {
+		kind string
+		err  error
+	}
+	start := make(chan struct{})
+	results := make(chan claimResult, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		results <- claimResult{kind: "delete", err: store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(deleteOperation)})}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		results <- claimResult{kind: "rotation", err: store.ClaimWorkspaceKeyRotation(ctx, rotationRow)}
+	}()
+	close(start)
+	wg.Wait()
+	close(results)
+	succeeded, conflicted := 0, 0
+	for result := range results {
+		if result.err == nil {
+			succeeded++
+		} else if errors.Is(result.err, errWorkspaceDeleteCASConflict) || errors.Is(result.err, errWorkspaceKeyRotationInProgress) {
+			conflicted++
+		} else {
+			t.Fatalf("unexpected %s claim error: %v", result.kind, result.err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("concurrent Delete/Rotation claims succeeded=%d conflicted=%d", succeeded, conflicted)
+	}
 }
 
 func TestPostgresWorkspaceDeleteRenewalConcurrentClaim(t *testing.T) {
@@ -1772,6 +1951,65 @@ func exerciseWorkspaceDeleteRenewalMutualExclusion(t *testing.T, store controlPl
 	}
 }
 
+func exerciseWorkspaceDeleteRotationMutualExclusion(t *testing.T, store controlPlaneTableStore) {
+	t.Helper()
+	ctx := context.Background()
+	for _, phase := range []string{"replacement_check", "replacement_create", "secret_write", "runtime_bind", "runtime_readback", "workspace_commit", "retire_old", "promote_new", "delete_old", "receipt"} {
+		workspace := currentWorkspaceRenewalAPIRow()
+		workspaceID := "workspace-delete-blocked-by-rotation-" + phase
+		workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
+		workspace["workspaceApiKeyId"] = int64(19)
+		if err := store.SaveWorkspace(ctx, workspace); err != nil {
+			t.Fatal(err)
+		}
+		rotation := workspaceKeyRotationOperation{
+			RequestHash: "rotation-request-" + phase, Phase: "replacement_check", OldKeyID: 19,
+			ReplacementName: "opl-workspace-replacement-" + phase, RetiredName: "opl-workspace-retired-" + phase,
+			AuditEvent: workspaceDeleteRotationAudit("rotation-"+phase, "acct-delete", workspaceID),
+		}
+		row := workspaceKeyRotationRow("rotation-"+phase, "acct-delete", workspaceID, "started", rotation)
+		if err := store.ClaimWorkspaceKeyRotation(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+		rotation.Phase = phase
+		if err := store.SaveRuntimeOperation(ctx, workspaceKeyRotationRow("rotation-"+phase, "acct-delete", workspaceID, "started", rotation)); err != nil {
+			t.Fatal(err)
+		}
+		operation := workspaceDeleteStoreOperationForWorkspace(workspace, time.Now().UTC().Format(time.RFC3339Nano))
+		if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(operation)}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
+			t.Fatalf("Rotation phase %s did not block Delete claim: %v", phase, err)
+		}
+	}
+
+	workspace := currentWorkspaceRenewalAPIRow()
+	workspaceID := "workspace-rotation-blocked-by-delete"
+	workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
+	workspace["workspaceApiKeyId"] = int64(19)
+	if err := store.SaveWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	operation := workspaceDeleteStoreOperationForWorkspace(workspace, time.Now().UTC().Format(time.RFC3339Nano))
+	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(operation)}); err != nil {
+		t.Fatal(err)
+	}
+	rotation := workspaceKeyRotationOperation{
+		RequestHash: "rotation-blocked-request", Phase: "replacement_check", OldKeyID: 19,
+		ReplacementName: "opl-workspace-replacement-blocked", RetiredName: "opl-workspace-retired-blocked",
+		AuditEvent: workspaceDeleteRotationAudit("rotation-blocked-by-delete", "acct-delete", workspaceID),
+	}
+	if err := store.ClaimWorkspaceKeyRotation(ctx, workspaceKeyRotationRow("rotation-blocked-by-delete", "acct-delete", workspaceID, "started", rotation)); !errors.Is(err, errWorkspaceKeyRotationInProgress) {
+		t.Fatalf("active Delete did not block Rotation claim: %v", err)
+	}
+}
+
+func workspaceDeleteRotationAudit(operationID, accountID, workspaceID string) map[string]any {
+	return map[string]any{
+		"id": "audit-" + stableID(operationID, "workspace.gateway_key.rotate")[:12], "action": "workspace.gateway_key.rotate",
+		"resourceKind": "workspace_gateway_key", "resourceId": workspaceID, "actorAccountId": accountID, "targetAccountId": accountID,
+		"actorUserId": "usr-delete", "createdAt": "2026-08-16T00:00:00Z",
+	}
+}
+
 func TestWorkspaceRenewalWorkerSkipsActiveDeleteV2(t *testing.T) {
 	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
 	operation := workspaceDeleteStoreOperationForWorkspace(fixture.workspace, time.Now().UTC().Format(time.RFC3339Nano))
@@ -1889,8 +2127,24 @@ func exerciseWorkspaceDeleteStoreLifecycle(t *testing.T, store controlPlaneTable
 	workspace := map[string]any{
 		"id": "ws-delete-store", "accountId": "acct-delete", "ownerAccountId": "acct-delete", "ownerUserId": "usr-delete",
 		"currentComputeAllocationId": "compute-delete", "storageId": "storage-delete", "currentAttachmentId": "attachment-delete",
+		"runtimeId": "runtime-delete", "workspaceApiKeyId": int64(19),
 	}
 	if err := store.SaveWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCompute(ctx, map[string]any{
+		"id": "compute-delete", "accountId": "acct-delete", "ownerUserId": "usr-delete", "workspaceId": "ws-delete-store", "status": "destroyed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveStorage(ctx, map[string]any{
+		"id": "storage-delete", "accountId": "acct-delete", "ownerUserId": "usr-delete", "workspaceId": "ws-delete-store", "status": "destroyed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAttachment(ctx, map[string]any{
+		"id": "attachment-delete", "accountId": "acct-delete", "workspaceId": "ws-delete-store", "computeAllocationId": "compute-delete", "storageId": "storage-delete", "volumeId": "storage-delete", "status": "detached",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	claimed := workspaceDeleteStoreOperation(now)
@@ -1939,11 +2193,38 @@ func exerciseWorkspaceDeleteStoreLifecycle(t *testing.T, store controlPlaneTable
 	keyAbsent := current
 	keyAbsent.Phase, keyAbsent.KeyStatus = "key_absent", "absent"
 	current = advance(current, keyAbsent, false, false)
+	if err := store.SaveCompute(ctx, map[string]any{
+		"id": "compute-delete", "accountId": "acct-delete", "ownerUserId": "usr-delete", "workspaceId": "ws-other", "status": "destroyed",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	deleted := current
 	deleted.Phase = "workspace_absent"
+	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{
+		DeleteWorkspace: true, ExpectedResult: stringValue(workspaceDeleteOperationRow(current)["result"]), DesiredOperation: workspaceDeleteOperationRow(deleted),
+	}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
+		t.Fatalf("mismatched resource projection did not block atomic delete: %v", err)
+	}
+	if _, found, err := store.GetWorkspace(ctx, claimed.WorkspaceID); err != nil || !found {
+		t.Fatalf("failed projection delete removed Workspace found=%v err=%v", found, err)
+	}
+	if err := store.SaveCompute(ctx, map[string]any{
+		"id": "compute-delete", "accountId": "acct-delete", "ownerUserId": "usr-delete", "workspaceId": "ws-delete-store", "status": "destroyed",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	current = advance(current, deleted, true, false)
 	if _, found, err := store.GetWorkspace(ctx, claimed.WorkspaceID); err != nil || found {
 		t.Fatalf("Workspace after atomic delete found=%v err=%v", found, err)
+	}
+	if _, found, err := store.GetCompute(ctx, claimed.ComputeID); err != nil || found {
+		t.Fatalf("Compute projection after atomic delete found=%v err=%v", found, err)
+	}
+	if _, found, err := store.GetStorage(ctx, claimed.StorageID); err != nil || found {
+		t.Fatalf("Storage projection after atomic delete found=%v err=%v", found, err)
+	}
+	if _, found, err := store.GetAttachment(ctx, claimed.AttachmentID); err != nil || found {
+		t.Fatalf("Attachment projection after atomic delete found=%v err=%v", found, err)
 	}
 	receiptRecorded := current
 	receiptRecorded.Phase, receiptRecorded.DeletionReceiptID = "deletion_receipt_recorded", "receipt-delete-store"
@@ -1971,11 +2252,12 @@ func workspaceDeleteStoreOperation(now string) workspaceDeleteOperation {
 
 func workspaceDeleteStoreOperationForWorkspace(workspace map[string]any, now string) workspaceDeleteOperation {
 	workspaceID := stringValue(workspace["id"])
+	workspaceAPIKeyID := int64(numberField(workspace, "workspaceApiKeyId", 19))
 	operation := workspaceDeleteOperation{
 		SchemaVersion: 2, OperationID: workspaceDeleteOperationID(workspaceID), AccountID: stringValue(workspace["accountId"]), OwnerUserID: stringValue(workspace["ownerUserId"]), Sub2APIUserID: 41,
 		WorkspaceID: workspaceID, ResourceType: "workspace", ResourceID: workspaceID, LaunchOperationID: "workspace-launch-" + workspaceID, LaunchReceiptID: "receipt-launch-" + workspaceID,
 		RuntimeID: "runtime-delete", RuntimeServiceName: "runtime-delete",
-		ComputeID: "compute-delete", StorageID: "storage-delete", AttachmentID: "attachment-delete", WorkspaceAPIKeyID: 19,
+		ComputeID: "compute-delete", StorageID: "storage-delete", AttachmentID: "attachment-delete", WorkspaceAPIKeyID: workspaceAPIKeyID,
 		GatewaySecretRef: "opl-gateway-ws-delete-store", GatewayFingerprint: "sha256:" + strings.Repeat("a", 64),
 		Phase: "claimed", Status: "running", CreatedAt: now,
 	}

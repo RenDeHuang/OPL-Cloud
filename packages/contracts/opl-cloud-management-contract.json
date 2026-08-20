@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 22,
+  "schemaVersion": 23,
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
@@ -148,10 +148,17 @@
       "gatewaySecretRef"
     ],
     "providerNeutralResourceIdentity": {
-      "authority": "succeeded_immutable_launch_operation_and_matching_launch_receipt",
+      "authority": "succeeded_immutable_launch_operation_and_matching_launch_receipt_for_runtime_compute_storage_and_attachment",
       "launchReceiptContract": "opl-cloud-evidence-ledger-contract.json#workspaceLaunchReceiptV1",
       "providerSpecificFields": false,
-      "resources": ["runtime", "compute", "storage", "attachment", "workspace_key", "gateway_secret"]
+      "resources": ["runtime", "compute", "storage", "attachment"]
+    },
+    "currentGatewayIdentity": {
+      "workspaceApiKeyIdAuthority": "current_workspace_projection",
+      "unchangedLaunchKeyAuthority": "immutable_launch_workspace_key_and_gateway_secret_identity",
+      "rotatedKeyAuthority": "strict_completed_workspace_gateway_key_rotation_lineage_from_launch_key_to_current_workspace_key",
+      "preMutationReadback": "fabric_runtime_gateway_secret_observation_must_match_current_key_secret_ref_and_fingerprint",
+      "resources": ["workspace_key", "gateway_secret"]
     },
     "launchReceiptIdentity": {
       "field": "launchReceiptId",
@@ -169,6 +176,11 @@
       "deletion_receipt_recorded",
       "complete"
     ],
+    "workspaceProjectionAbsence": {
+      "transaction": "workspace_absent_cursor_workspace_compute_storage_attachment",
+      "resourceIdentity": "exact_operation_resource_id_account_and_workspace_match",
+      "mismatch": "fail_closed"
+    },
     "legacyV1HardCut": {
       "action": "workspace.delete.v1",
       "completedAndWorkspaceAbsent": "stable_historical_terminal_replay",

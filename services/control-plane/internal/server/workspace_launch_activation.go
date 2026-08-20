@@ -81,6 +81,11 @@ func workspaceLaunchActivationRow(operation workspaceLaunchReconcileOperation) (
 }
 
 func workspaceLaunchProjectionMatches(operation workspaceLaunchReconcileOperation, workspace map[string]any) bool {
+	return workspaceLaunchStableProjectionMatches(operation, workspace) &&
+		int64(numberField(workspace, "workspaceApiKeyId", 0)) == operation.int64Fact("workspaceApiKeyId")
+}
+
+func workspaceLaunchStableProjectionMatches(operation workspaceLaunchReconcileOperation, workspace map[string]any) bool {
 	return firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) == operation.stringFact("accountId") &&
 		stringValue(workspace["ownerUserId"]) == operation.stringFact("ownerUserId") && stringValue(workspace["id"]) == operation.stringFact("workspaceId") &&
 		stringValue(workspace["name"]) == operation.stringFact("name") && stringValue(workspace["packageId"]) == operation.stringFact("packageId") &&
@@ -90,7 +95,6 @@ func workspaceLaunchProjectionMatches(operation workspaceLaunchReconcileOperatio
 		firstNonEmpty(stringValue(workspace["currentAttachmentId"]), stringValue(workspace["attachmentId"])) == operation.stringFact("attachmentId") &&
 		stringValue(workspace["runtimeId"]) == operation.stringFact("runtimeId") &&
 		stringValue(nested(workspace, "runtime", "serviceName")) == operation.stringFact("runtimeServiceName") &&
-		int64(numberField(workspace, "workspaceApiKeyId", 0)) == operation.int64Fact("workspaceApiKeyId") &&
 		stringValue(nested(workspace, "access", "username")) == operation.stringFact("runtimeUsername") &&
 		stringValue(nested(workspace, "access", "credentialStatus")) == operation.stringFact("credentialStatus") &&
 		stringValue(nested(workspace, "access", "credentialVersion")) == operation.stringFact("credentialVersion") &&

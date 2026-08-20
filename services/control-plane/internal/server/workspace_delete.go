@@ -128,6 +128,12 @@ type workspaceDeleteStoreMutation struct {
 	DesiredOperation       map[string]any
 }
 
+type workspaceDeleteGatewayIdentity struct {
+	WorkspaceAPIKeyID  int64
+	GatewaySecretRef   string
+	GatewayFingerprint string
+}
+
 func (app *controlPlaneServer) deleteWorkspace(w http.ResponseWriter, r *http.Request, service *controlplane.Service) {
 	authorizationID, ok := requiredMutationKey(w, r)
 	if !ok {
@@ -198,6 +204,10 @@ func (app *controlPlaneServer) deleteWorkspace(w http.ResponseWriter, r *http.Re
 		}
 		operation, err = app.newWorkspaceDeleteOperation(r.Context(), service, workspace, sub2APIUserID, time.Now().UTC())
 		if err != nil {
+			if errors.Is(err, errWorkspaceKeyRotationInProgress) {
+				writeError(w, http.StatusConflict, errWorkspaceKeyRotationInProgress.Error())
+				return
+			}
 			writeError(w, http.StatusBadGateway, "workspace_delete_identity_unconfirmed")
 			return
 		}
@@ -361,8 +371,15 @@ func (app *controlPlaneServer) newWorkspaceDeleteOperation(ctx context.Context, 
 	workspaceID := stringValue(workspace["id"])
 	accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
 	ownerUserID := firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"]))
-	launch, err := app.succeededWorkspaceLaunchForAccess(ctx, workspace)
-	if err != nil || launch.int64Fact("sub2apiUserId") != sub2APIUserID {
+	launch, found, err := app.canonicalWorkspaceLaunch(ctx, workspace, workspaceLaunchStableProjectionMatches)
+	if err != nil || !found || launch.int64Fact("sub2apiUserId") != sub2APIUserID {
+		return workspaceDeleteOperation{}, errWorkspaceDeleteUnconfirmed
+	}
+	gatewayIdentity, err := app.currentWorkspaceDeleteGatewayIdentity(ctx, workspace, launch)
+	if err != nil {
+		if errors.Is(err, errWorkspaceKeyRotationInProgress) {
+			return workspaceDeleteOperation{}, err
+		}
 		return workspaceDeleteOperation{}, errWorkspaceDeleteUnconfirmed
 	}
 	current, err := workspaceLaunchPurchaseReceiptInput(launch)
@@ -384,8 +401,8 @@ func (app *controlPlaneServer) newWorkspaceDeleteOperation(ctx context.Context, 
 		SchemaVersion: 2, OperationID: workspaceDeleteOperationID(workspaceID), AccountID: accountID, OwnerUserID: ownerUserID, Sub2APIUserID: sub2APIUserID,
 		WorkspaceID: workspaceID, ResourceType: "workspace", ResourceID: workspaceID, LaunchOperationID: launch.ID, LaunchReceiptID: launchReceiptID,
 		RuntimeID: launch.stringFact("runtimeId"), RuntimeServiceName: launch.stringFact("runtimeServiceName"), ComputeID: launch.stringFact("computeAllocationId"),
-		StorageID: launch.stringFact("storageId"), AttachmentID: launch.stringFact("attachmentId"), WorkspaceAPIKeyID: launch.int64Fact("workspaceApiKeyId"),
-		GatewaySecretRef: launch.stringFact("gatewaySecretRef"), GatewayFingerprint: launch.stringFact("workspaceKeyFingerprint"),
+		StorageID: launch.stringFact("storageId"), AttachmentID: launch.stringFact("attachmentId"), WorkspaceAPIKeyID: gatewayIdentity.WorkspaceAPIKeyID,
+		GatewaySecretRef: gatewayIdentity.GatewaySecretRef, GatewayFingerprint: gatewayIdentity.GatewayFingerprint,
 		Phase: "claimed", Status: "running", CreatedAt: now.Format(time.RFC3339Nano),
 	}
 	operation.RequestHash = workspaceDeleteRequestHash(operation)
@@ -393,6 +410,66 @@ func (app *controlPlaneServer) newWorkspaceDeleteOperation(ctx context.Context, 
 		return workspaceDeleteOperation{}, errWorkspaceDeleteUnconfirmed
 	}
 	return operation, nil
+}
+
+func (app *controlPlaneServer) currentWorkspaceDeleteGatewayIdentity(ctx context.Context, workspace map[string]any, launch workspaceLaunchReconcileOperation) (workspaceDeleteGatewayIdentity, error) {
+	workspaceID := stringValue(workspace["id"])
+	accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
+	currentKeyID, ok := positiveIntegerField(workspace, "workspaceApiKeyId")
+	launchKeyID := launch.int64Fact("workspaceApiKeyId")
+	if !ok || launchKeyID <= 0 {
+		return workspaceDeleteGatewayIdentity{}, errWorkspaceDeleteUnconfirmed
+	}
+	rows, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{AccountID: accountID, WorkspaceID: workspaceID, Action: "workspace.gateway_key.rotate"})
+	if err != nil {
+		return workspaceDeleteGatewayIdentity{}, errWorkspaceDeleteUnconfirmed
+	}
+	byNewKeyID := make(map[int64]workspaceKeyRotationOperation, len(rows))
+	for _, row := range rows {
+		if stringValue(row["status"]) != "succeeded" {
+			return workspaceDeleteGatewayIdentity{}, errWorkspaceKeyRotationInProgress
+		}
+		rotation, decodeErr := decodeWorkspaceKeyRotation(row)
+		if decodeErr != nil || stringValue(row["accountId"]) != accountID || stringValue(row["workspaceId"]) != workspaceID ||
+			stringValue(row["action"]) != "workspace.gateway_key.rotate" || !workspaceKeyRotationSucceededEvidenceValid(rotation) {
+			return workspaceDeleteGatewayIdentity{}, errWorkspaceDeleteUnconfirmed
+		}
+		if _, duplicate := byNewKeyID[rotation.NewKeyID]; duplicate {
+			return workspaceDeleteGatewayIdentity{}, errWorkspaceDeleteUnconfirmed
+		}
+		byNewKeyID[rotation.NewKeyID] = rotation
+	}
+	if currentKeyID == launchKeyID {
+		identity := workspaceDeleteGatewayIdentity{
+			WorkspaceAPIKeyID: currentKeyID, GatewaySecretRef: launch.stringFact("gatewaySecretRef"), GatewayFingerprint: launch.stringFact("workspaceKeyFingerprint"),
+		}
+		if len(byNewKeyID) != 0 || identity.GatewaySecretRef == "" || identity.GatewayFingerprint == "" {
+			return workspaceDeleteGatewayIdentity{}, errWorkspaceDeleteUnconfirmed
+		}
+		return identity, nil
+	}
+	currentRotation, ok := byNewKeyID[currentKeyID]
+	if !ok {
+		return workspaceDeleteGatewayIdentity{}, errWorkspaceDeleteUnconfirmed
+	}
+	visited := make(map[int64]struct{}, len(byNewKeyID))
+	for keyID := currentKeyID; keyID != launchKeyID; {
+		if _, cycle := visited[keyID]; cycle {
+			return workspaceDeleteGatewayIdentity{}, errWorkspaceDeleteUnconfirmed
+		}
+		rotation, exists := byNewKeyID[keyID]
+		if !exists {
+			return workspaceDeleteGatewayIdentity{}, errWorkspaceDeleteUnconfirmed
+		}
+		visited[keyID] = struct{}{}
+		keyID = rotation.OldKeyID
+	}
+	if len(visited) != len(byNewKeyID) {
+		return workspaceDeleteGatewayIdentity{}, errWorkspaceDeleteUnconfirmed
+	}
+	return workspaceDeleteGatewayIdentity{
+		WorkspaceAPIKeyID: currentKeyID, GatewaySecretRef: currentRotation.SecretRef, GatewayFingerprint: currentRotation.Fingerprint,
+	}, nil
 }
 
 func workspaceDeleteLaunchReceiptMatches(actual clients.ReceiptInput, expected []clients.ReceiptInput) bool {
@@ -620,6 +697,60 @@ func workspaceRenewalBlocksDelete(row map[string]any) bool {
 	}
 	operation, err := decodeWorkspaceRenewalOperation(row)
 	return err != nil || operation.Status == "manual_review" || !terminalWorkspaceRenewal(operation)
+}
+
+func workspaceKeyRotationBlocksDelete(row map[string]any) bool {
+	if stringValue(row["action"]) != "workspace.gateway_key.rotate" {
+		return false
+	}
+	operation, err := decodeWorkspaceKeyRotation(row)
+	return err != nil || stringValue(row["status"]) != "succeeded" || !workspaceKeyRotationSucceededEvidenceValid(operation)
+}
+
+func workspaceDeleteBlocksRotation(row map[string]any) bool {
+	if stringValue(row["action"]) != workspaceDeleteAction {
+		return false
+	}
+	operation, err := decodeWorkspaceDeleteOperation(row)
+	return err != nil || operation.Status != "succeeded" || operation.Phase != "complete"
+}
+
+func workspaceDeleteWorkspaceProjectionMatches(operation workspaceDeleteOperation, row map[string]any, requireResources bool) bool {
+	if row == nil || firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])) != operation.AccountID ||
+		firstNonEmpty(stringValue(row["ownerUserId"]), stringValue(row["ownerId"])) != operation.OwnerUserID {
+		return false
+	}
+	if keyID, ok := positiveIntegerField(row, "workspaceApiKeyId"); ok && keyID != operation.WorkspaceAPIKeyID {
+		return false
+	}
+	return !requireResources ||
+		firstNonEmpty(stringValue(row["currentComputeAllocationId"]), stringValue(row["computeAllocationId"])) == operation.ComputeID &&
+			stringValue(row["storageId"]) == operation.StorageID &&
+			firstNonEmpty(stringValue(row["currentAttachmentId"]), stringValue(row["attachmentId"])) == operation.AttachmentID &&
+			stringValue(row["runtimeId"]) == operation.RuntimeID
+}
+
+func workspaceDeleteResourceProjectionMatches(operation workspaceDeleteOperation, kind string, row map[string]any) bool {
+	if row == nil {
+		return true
+	}
+	if firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])) != operation.AccountID || stringValue(row["workspaceId"]) != operation.WorkspaceID {
+		return false
+	}
+	if ownerID := firstNonEmpty(stringValue(row["ownerUserId"]), stringValue(row["ownerId"])); ownerID != "" && ownerID != operation.OwnerUserID {
+		return false
+	}
+	switch kind {
+	case "compute":
+		return stringValue(row["id"]) == operation.ComputeID
+	case "storage":
+		return stringValue(row["id"]) == operation.StorageID
+	case "attachment":
+		return stringValue(row["id"]) == operation.AttachmentID && stringValue(row["computeAllocationId"]) == operation.ComputeID &&
+			firstNonEmpty(stringValue(row["storageId"]), stringValue(row["volumeId"])) == operation.StorageID
+	default:
+		return false
+	}
 }
 
 func workspaceDeleteBlocksRenewal(row map[string]any) bool {

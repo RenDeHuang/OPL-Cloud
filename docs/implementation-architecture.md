@@ -470,17 +470,24 @@ debit code, user, total, component, and downstream resource identities.
 Workspace DELETE is a separate durable `workspace.delete.v2` Control Plane
 owner operation. Before cleanup, it reads the immutable succeeded Launch and
 matches its exact charged or zero-cost Ledger Launch Receipt; it does not read
-Debit history or invoke a wallet mutation. It then consumes Fabric's typed
+Debit history or invoke a wallet mutation. Runtime, compute, storage, and
+attachment remain bound to the Launch, while the current Workspace Key and
+Gateway Secret are recovered from the current Workspace projection and the
+strict completed Key Rotation lineage from the Launch Key. It then consumes Fabric's typed
 Runtime and Gateway Secret observations (`ready/absent/pending/conflict/error`)
 and advances only through the same-operation chain `runtime + Secret absence ->
 attachment absence -> storage absence -> compute absence -> Sub2API Key absence
 -> Control Plane Workspace absence -> Ledger workspace.deleted.v1 Receipt ->
 complete`. The operation binds the same account, Workspace, Launch Receipt,
-Runtime, Key, and provider-neutral resources throughout. Fabric owns resource
+Runtime, current Key, and provider-neutral resources throughout. The
+`workspace_absent` transaction deletes the exact matching Control Plane
+compute, storage, attachment, and Workspace projections with its cursor. Fabric owns resource
 mutation and authoritative absence, including Tencent Machine/CVM/CBS readback;
 Sub2API owns exact Key deletion and performs zero Delete wallet mutations.
 Ledger Receipt failure retries only the deletion Receipt. Non-terminal legacy
-v1 Delete and concurrent Renewal fail closed before a v2 mutation.
+v1 Delete and concurrent Renewal fail closed before a v2 mutation. Delete and
+Key Rotation use the same durable Workspace claim order and block each other
+before Fabric or Sub2API mutation.
 
 Each Workspace operation owns renewal intent and one combined monthly debit.
 Compute and storage rows are provider/compatibility facts, not independent

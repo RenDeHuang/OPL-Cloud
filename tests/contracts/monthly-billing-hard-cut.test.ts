@@ -53,7 +53,7 @@ test("current contracts name Sub2API as the only spendable balance", async () =>
 test("management contract hard-cuts customer identity to Sub2API and one atomic owner graph", async () => {
   const management = await readJson("opl-cloud-management-contract.json");
 
-  assert.equal(management.schemaVersion, 22);
+  assert.equal(management.schemaVersion, 23);
   assert.deepEqual(management.entities.account.requiredFields, ["id", "ownerUserId", "status", "sub2apiUserId", "workspacePurchaseEnabled", "createdAt", "updatedAt"]);
   assert.deepEqual(management.entities.user, {
     requiredFields: ["id", "email", "accountId", "role", "status", "createdAt", "updatedAt"],
@@ -372,10 +372,17 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		"gatewaySecretRef"
 	]);
 	assert.deepEqual(management.workspaceDeletion.providerNeutralResourceIdentity, {
-		authority: "succeeded_immutable_launch_operation_and_matching_launch_receipt",
+		authority: "succeeded_immutable_launch_operation_and_matching_launch_receipt_for_runtime_compute_storage_and_attachment",
 		launchReceiptContract,
 		providerSpecificFields: false,
-		resources: ["runtime", "compute", "storage", "attachment", "workspace_key", "gateway_secret"]
+		resources: ["runtime", "compute", "storage", "attachment"]
+	});
+	assert.deepEqual(management.workspaceDeletion.currentGatewayIdentity, {
+		workspaceApiKeyIdAuthority: "current_workspace_projection",
+		unchangedLaunchKeyAuthority: "immutable_launch_workspace_key_and_gateway_secret_identity",
+		rotatedKeyAuthority: "strict_completed_workspace_gateway_key_rotation_lineage_from_launch_key_to_current_workspace_key",
+		preMutationReadback: "fabric_runtime_gateway_secret_observation_must_match_current_key_secret_ref_and_fingerprint",
+		resources: ["workspace_key", "gateway_secret"]
 	});
 	assert.deepEqual(management.workspaceDeletion.launchReceiptIdentity, {
 		field: "launchReceiptId",
@@ -393,6 +400,11 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		"deletion_receipt_recorded",
 		"complete"
 	]);
+	assert.deepEqual(management.workspaceDeletion.workspaceProjectionAbsence, {
+		transaction: "workspace_absent_cursor_workspace_compute_storage_attachment",
+		resourceIdentity: "exact_operation_resource_id_account_and_workspace_match",
+		mismatch: "fail_closed"
+	});
 	for (const forbidden of ["debitCode", "refundCode", "refundReceiptId", "refundUsdMicros"]) {
 		assert.equal(management.workspaceDeletion.identityFields.includes(forbidden), false, `Delete identity must not contain ${forbidden}`);
 	}
@@ -553,7 +565,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		providerFacts: ["compute_renewal", "storage_renewal"],
 		receiptType: "billing.workspace_renewed.v1"
 	});
-	assert.equal(management.schemaVersion, 22);
+	assert.equal(management.schemaVersion, 23);
 	assert.equal(evidence.schemaVersion, 16);
 	assert.equal(evidence.reconciliationReportV1.result.blockNewWorkspaces, "status_equals_mismatch");
 	assert.deepEqual(management.operatorBillingReviewProjection.included, [

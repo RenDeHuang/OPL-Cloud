@@ -13,7 +13,10 @@ import (
 	controlplaneent "opl-cloud/services/control-plane/ent"
 	"opl-cloud/services/control-plane/ent/account"
 	"opl-cloud/services/control-plane/ent/adminauditevent"
+	"opl-cloud/services/control-plane/ent/computeallocation"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
+	"opl-cloud/services/control-plane/ent/storageattachment"
+	"opl-cloud/services/control-plane/ent/storagevolume"
 	"opl-cloud/services/control-plane/ent/user"
 	"opl-cloud/services/control-plane/ent/workspace"
 )
@@ -561,6 +564,49 @@ func (s *postgresEntStateStore) CompareAndSwapWorkspaceAPIKey(ctx context.Contex
 	return tx.Commit()
 }
 
+func (s *postgresEntStateStore) ClaimWorkspaceKeyRotation(ctx context.Context, row map[string]any) error {
+	operation, ok := validWorkspaceKeyRotationClaim(row)
+	if !ok {
+		return errWorkspaceKeyRotationState
+	}
+	workspaceID, accountID := stringValue(row["workspaceId"]), stringValue(row["accountId"])
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	workspaceEntity, err := client.Workspace.Query().Where(workspace.IDEQ(workspaceID), lockRowForUpdate).Only(ctx)
+	if err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errWorkspaceKeyRotationInProgress
+		}
+		return err
+	}
+	workspaceRow := recordFromEnt(workspaceEntity, workspaceEntFields)
+	currentKeyID, keyOK := positiveIntegerField(workspaceRow, "workspaceApiKeyId")
+	if firstNonEmpty(stringValue(workspaceRow["accountId"]), stringValue(workspaceRow["ownerAccountId"])) != accountID || !keyOK || currentKeyID != operation.OldKeyID {
+		return errWorkspaceKeyRotationInProgress
+	}
+	operationEntities, err := client.RuntimeOperation.Query().Where(runtimeoperation.WorkspaceIDEQ(workspaceID), lockRowForUpdate).All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, entity := range operationEntities {
+		existing := recordFromEnt(entity, runtimeOpEntFields)
+		if workspaceKeyRotationBlocksDelete(existing) || workspaceDeleteBlocksRotation(existing) {
+			return errWorkspaceKeyRotationInProgress
+		}
+	}
+	if err := saveRecord(ctx, stringValue(row["id"]), row, client.RuntimeOperation.Create(), runtimeOpEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			return errWorkspaceKeyRotationInProgress
+		}
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *postgresEntStateStore) ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
@@ -1050,9 +1096,13 @@ func (s *postgresEntStateStore) ApplyWorkspaceDelete(ctx context.Context, mutati
 			return workspaceErr
 		}
 		workspaceRow := recordFromEnt(workspaceEntity, workspaceEntFields)
-		if firstNonEmpty(stringValue(workspaceRow["accountId"]), stringValue(workspaceRow["ownerAccountId"])) != desired.AccountID ||
-			firstNonEmpty(stringValue(workspaceRow["ownerUserId"]), stringValue(workspaceRow["ownerId"])) != desired.OwnerUserID {
+		if !workspaceDeleteWorkspaceProjectionMatches(desired, workspaceRow, mutation.DeleteWorkspace) {
 			return errWorkspaceDeleteCASConflict
+		}
+	}
+	if mutation.DeleteWorkspace {
+		if err := validateWorkspaceDeleteResourceProjections(ctx, client, desired); err != nil {
+			return err
 		}
 	}
 	if mutation.Create {
@@ -1061,7 +1111,8 @@ func (s *postgresEntStateStore) ApplyWorkspaceDelete(ctx context.Context, mutati
 			return err
 		}
 		for _, entity := range operationEntities {
-			if workspaceRenewalBlocksDelete(recordFromEnt(entity, runtimeOpEntFields)) {
+			row := recordFromEnt(entity, runtimeOpEntFields)
+			if workspaceRenewalBlocksDelete(row) || workspaceKeyRotationBlocksDelete(row) {
 				return errWorkspaceDeleteCASConflict
 			}
 		}
@@ -1101,9 +1152,46 @@ func (s *postgresEntStateStore) ApplyWorkspaceDelete(ctx context.Context, mutati
 		}
 	}
 	if mutation.DeleteWorkspace {
+		if _, err := client.StorageAttachment.Delete().Where(storageattachment.IDEQ(desired.AttachmentID)).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := client.StorageVolume.Delete().Where(storagevolume.IDEQ(desired.StorageID)).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := client.ComputeAllocation.Delete().Where(computeallocation.IDEQ(desired.ComputeID)).Exec(ctx); err != nil {
+			return err
+		}
 		if err := client.Workspace.DeleteOneID(desired.WorkspaceID).Exec(ctx); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+func validateWorkspaceDeleteResourceProjections(ctx context.Context, client *controlplaneent.Client, operation workspaceDeleteOperation) error {
+	computeEntity, err := client.ComputeAllocation.Query().Where(computeallocation.IDEQ(operation.ComputeID), lockRowForUpdate).Only(ctx)
+	if err == nil {
+		if !workspaceDeleteResourceProjectionMatches(operation, "compute", recordFromEnt(computeEntity, computeEntFields)) {
+			return errWorkspaceDeleteCASConflict
+		}
+	} else if !controlplaneent.IsNotFound(err) {
+		return err
+	}
+	storageEntity, err := client.StorageVolume.Query().Where(storagevolume.IDEQ(operation.StorageID), lockRowForUpdate).Only(ctx)
+	if err == nil {
+		if !workspaceDeleteResourceProjectionMatches(operation, "storage", recordFromEnt(storageEntity, storageEntFields)) {
+			return errWorkspaceDeleteCASConflict
+		}
+	} else if !controlplaneent.IsNotFound(err) {
+		return err
+	}
+	attachmentEntity, err := client.StorageAttachment.Query().Where(storageattachment.IDEQ(operation.AttachmentID), lockRowForUpdate).Only(ctx)
+	if err == nil {
+		if !workspaceDeleteResourceProjectionMatches(operation, "attachment", recordFromEnt(attachmentEntity, attachmentEntFields)) {
+			return errWorkspaceDeleteCASConflict
+		}
+	} else if !controlplaneent.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
