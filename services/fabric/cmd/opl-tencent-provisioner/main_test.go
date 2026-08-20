@@ -6302,6 +6302,10 @@ func TestTencentProvisionerDeleteAttemptPersistsThroughFabricServiceRestart(t *t
 	t.Setenv(computeDestroyProvisionerHelperEnv, "1")
 	t.Setenv(computeDestroyProvisionerStateFileEnv, stateFile)
 	t.Setenv(computeDestroyProvisionerDeletesFileEnv, deletesFile)
+	t.Setenv("OPL_TENCENT_REGION", "ap-guangzhou")
+	t.Setenv("OPL_WORKSPACE_DOMAIN", "workspace.fixture.invalid")
+	t.Setenv("OPL_WORKSPACE_IMAGE", "registry.fixture.invalid/opl/workspace@sha256:"+strings.Repeat("a", 64))
+	t.Setenv("OPL_K8S_NAMESPACE", "opl-fixture")
 	t.Setenv("OPL_TENCENT_PROVISIONER_BIN", os.Args[0])
 	t.Setenv("PATH", tempDir+":"+os.Getenv("PATH"))
 	for key, value := range protectedResourceEnv() {
