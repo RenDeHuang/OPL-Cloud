@@ -708,7 +708,11 @@ func workspaceKeyRotationBlocksDelete(row map[string]any) bool {
 }
 
 func workspaceDeleteBlocksRotation(row map[string]any) bool {
-	if stringValue(row["action"]) != workspaceDeleteAction {
+	action := stringValue(row["action"])
+	if action == workspaceDeleteLegacyAction {
+		return true
+	}
+	if action != workspaceDeleteAction {
 		return false
 	}
 	operation, err := decodeWorkspaceDeleteOperation(row)
@@ -720,7 +724,7 @@ func workspaceDeleteWorkspaceProjectionMatches(operation workspaceDeleteOperatio
 		firstNonEmpty(stringValue(row["ownerUserId"]), stringValue(row["ownerId"])) != operation.OwnerUserID {
 		return false
 	}
-	if keyID, ok := positiveIntegerField(row, "workspaceApiKeyId"); ok && keyID != operation.WorkspaceAPIKeyID {
+	if keyID, ok := positiveIntegerField(row, "workspaceApiKeyId"); !ok || keyID != operation.WorkspaceAPIKeyID {
 		return false
 	}
 	return !requireResources ||
@@ -1083,7 +1087,8 @@ func workspaceDeleteRuntimeAndSecretReady(operation workspaceDeleteOperation, ru
 }
 
 func workspaceDeleteKeyMatches(operation workspaceDeleteOperation, key clients.Sub2APIWorkspaceKey) bool {
-	return key.ID == operation.WorkspaceAPIKeyID && key.UserID == operation.Sub2APIUserID && key.Name == workspaceReservedKeyName(operation.WorkspaceID) && key.Status == "active"
+	return key.ID == operation.WorkspaceAPIKeyID && key.UserID == operation.Sub2APIUserID && key.Name == workspaceReservedKeyName(operation.WorkspaceID) &&
+		(key.Status == "active" || key.Status == "quota_exhausted")
 }
 
 func workspaceDeletionReceiptInput(operation workspaceDeleteOperation) clients.ReceiptInput {

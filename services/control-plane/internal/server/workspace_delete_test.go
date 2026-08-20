@@ -267,6 +267,7 @@ type workspaceDeleteSub2API struct {
 	keyResponseLost bool
 	keyName         string
 	keyUserID       int64
+	keyStatus       string
 	events          *workspaceDeleteEvents
 }
 
@@ -289,7 +290,11 @@ func (s *workspaceDeleteSub2API) UserKey(_ context.Context, _ clients.SessionDel
 	if name == "" {
 		name = workspaceReservedKeyName("ws-alpha")
 	}
-	return clients.Sub2APIWorkspaceKey{ID: keyID, UserID: returnedUserID, Name: name, Status: "active"}, nil
+	status := s.keyStatus
+	if status == "" {
+		status = "active"
+	}
+	return clients.Sub2APIWorkspaceKey{ID: keyID, UserID: returnedUserID, Name: name, Status: status}, nil
 }
 
 func (s *workspaceDeleteSub2API) DeleteUserKey(_ context.Context, _ clients.SessionDelegatedCredential, userID, keyID int64) error {
@@ -686,6 +691,7 @@ func TestWorkspaceDeleteUsesCurrentGatewayIdentityAfterCompletedRotationLineage(
 	}
 	sub2API.mu.Lock()
 	sub2API.keyID = currentKeyID
+	sub2API.keyStatus = "quota_exhausted"
 	sub2API.mu.Unlock()
 	fixture.fabric.mu.Lock()
 	fixture.fabric.observeKeyID = currentKeyID
@@ -701,9 +707,25 @@ func TestWorkspaceDeleteUsesCurrentGatewayIdentityAfterCompletedRotationLineage(
 	if sub2API.keyDeletes != 1 || sub2API.keyID != currentKeyID || sub2API.keyExists {
 		t.Fatalf("Delete did not remove only current Key: id=%d deletes=%d exists=%v", sub2API.keyID, sub2API.keyDeletes, sub2API.keyExists)
 	}
+	if len(sub2API.historyReads) != 0 || len(sub2API.refunds) != 0 {
+		t.Fatalf("Delete after quota-exhausted Rotation performed wallet calls: history=%#v refunds=%#v", sub2API.historyReads, sub2API.refunds)
+	}
 	if len(ledger.receipts) != 1 || int64(numberField(ledger.receipts[0].Execution, "workspaceApiKeyId", 0)) != currentKeyID ||
 		stringValue(ledger.receipts[0].Execution["workspaceKeyFingerprint"]) != second.Fingerprint || stringValue(ledger.receipts[0].Execution["gatewaySecretRef"]) != second.SecretRef {
 		t.Fatalf("Deletion Receipt did not bind current gateway identity: %#v", ledger.receipts)
+	}
+}
+
+func TestWorkspaceDeleteAllowsQuotaExhaustedLaunchKey(t *testing.T) {
+	fixture, sub2API, ledger := newWorkspaceDeleteCompletionFixture(t)
+	sub2API.keyStatus = "quota_exhausted"
+
+	response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-quota-exhausted-launch-key")
+	if response.Code != http.StatusOK || sub2API.keyDeletes != 1 || sub2API.keyExists || len(ledger.receipts) != 1 {
+		t.Fatalf("quota-exhausted Launch Key delete status=%d body=%s deletes=%d exists=%v receipts=%#v", response.Code, response.Body.String(), sub2API.keyDeletes, sub2API.keyExists, ledger.receipts)
+	}
+	if len(sub2API.historyReads) != 0 || len(sub2API.refunds) != 0 {
+		t.Fatalf("quota-exhausted Launch Key delete performed wallet calls: history=%#v refunds=%#v", sub2API.historyReads, sub2API.refunds)
 	}
 }
 
@@ -1657,6 +1679,22 @@ func TestWorkspaceDeleteRotationMutualExclusionMemoryAndSQLite(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDeleteLegacyV1BlocksRotationMemoryAndSQLite(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "sqlite", new: func(t *testing.T) controlPlaneTableStore {
+			return NewTestEntStateStore(t, t.TempDir()+"/workspace-delete-legacy-rotation.sqlite")
+		}},
+	} {
+		t.Run(storeCase.name, func(t *testing.T) {
+			exerciseWorkspaceDeleteLegacyV1BlocksRotation(t, storeCase.new)
+		})
+	}
+}
+
 func TestPostgresWorkspaceDeleteStoreLifecycle(t *testing.T) {
 	exerciseWorkspaceDeleteStoreLifecycle(t, newPostgresWorkspaceRenewalStore(t))
 }
@@ -1667,6 +1705,12 @@ func TestPostgresWorkspaceDeleteRenewalMutualExclusion(t *testing.T) {
 
 func TestPostgresWorkspaceDeleteRotationMutualExclusion(t *testing.T) {
 	exerciseWorkspaceDeleteRotationMutualExclusion(t, newPostgresWorkspaceRenewalStore(t))
+}
+
+func TestPostgresWorkspaceDeleteLegacyV1BlocksRotation(t *testing.T) {
+	exerciseWorkspaceDeleteLegacyV1BlocksRotation(t, func(t *testing.T) controlPlaneTableStore {
+		return newPostgresWorkspaceRenewalStore(t)
+	})
 }
 
 func TestPostgresWorkspaceDeleteRotationConcurrentClaim(t *testing.T) {
@@ -1739,6 +1783,7 @@ func TestPostgresWorkspaceDeleteRenewalConcurrentClaim(t *testing.T) {
 	workspaceID := "workspace-delete-renewal-concurrent-claim"
 	workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
 	workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = true, "usr-delete", time.Now().UTC().Format(time.RFC3339Nano)
+	workspace["workspaceApiKeyId"] = int64(19)
 	if err := store.SaveWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
@@ -1863,6 +1908,7 @@ func exerciseWorkspaceDeleteRenewalMutualExclusion(t *testing.T, store controlPl
 		workspaceID := "workspace-delete-blocked-by-renewal-" + renewalStatus
 		workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
 		workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = true, "usr-delete", time.Now().UTC().Format(time.RFC3339Nano)
+		workspace["workspaceApiKeyId"] = int64(19)
 		if err := store.SaveWorkspace(ctx, workspace); err != nil {
 			t.Fatal(err)
 		}
@@ -1884,6 +1930,7 @@ func exerciseWorkspaceDeleteRenewalMutualExclusion(t *testing.T, store controlPl
 		workspaceID := "workspace-delete-after-terminal-renewal-" + renewalStatus
 		workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
 		workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = true, "usr-delete", time.Now().UTC().Format(time.RFC3339Nano)
+		workspace["workspaceApiKeyId"] = int64(19)
 		if err := store.SaveWorkspace(ctx, workspace); err != nil {
 			t.Fatal(err)
 		}
@@ -1907,6 +1954,7 @@ func exerciseWorkspaceDeleteRenewalMutualExclusion(t *testing.T, store controlPl
 	invalidWorkspaceID := "workspace-delete-blocked-by-invalid-renewal"
 	invalidWorkspace["id"], invalidWorkspace["accountId"], invalidWorkspace["ownerAccountId"], invalidWorkspace["ownerUserId"] = invalidWorkspaceID, "acct-delete", "acct-delete", "usr-delete"
 	invalidWorkspace["autoRenew"], invalidWorkspace["authorizedBy"], invalidWorkspace["authorizedAt"] = true, "usr-delete", time.Now().UTC().Format(time.RFC3339Nano)
+	invalidWorkspace["workspaceApiKeyId"] = int64(19)
 	if err := store.SaveWorkspace(ctx, invalidWorkspace); err != nil {
 		t.Fatal(err)
 	}
@@ -1926,6 +1974,7 @@ func exerciseWorkspaceDeleteRenewalMutualExclusion(t *testing.T, store controlPl
 	workspaceID := "workspace-renewal-blocked-by-delete"
 	workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = workspaceID, "acct-delete", "acct-delete", "usr-delete"
 	workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = true, "usr-delete", time.Now().UTC().Format(time.RFC3339Nano)
+	workspace["workspaceApiKeyId"] = int64(19)
 	if err := store.SaveWorkspace(ctx, workspace); err != nil {
 		t.Fatal(err)
 	}
@@ -1999,6 +2048,31 @@ func exerciseWorkspaceDeleteRotationMutualExclusion(t *testing.T, store controlP
 	}
 	if err := store.ClaimWorkspaceKeyRotation(ctx, workspaceKeyRotationRow("rotation-blocked-by-delete", "acct-delete", workspaceID, "started", rotation)); !errors.Is(err, errWorkspaceKeyRotationInProgress) {
 		t.Fatalf("active Delete did not block Rotation claim: %v", err)
+	}
+}
+
+func exerciseWorkspaceDeleteLegacyV1BlocksRotation(t *testing.T, newStore func(*testing.T) controlPlaneTableStore) {
+	t.Helper()
+	for _, phase := range []string{"claimed", "storage_destroyed"} {
+		t.Run(phase, func(t *testing.T) {
+			fixture, _, ledger := newWorkspaceDeleteCompletionFixtureWith(t, newStore(t), &workspaceDeleteFabric{})
+			legacy := workspaceDeleteLegacyFixtureRow(fixture, ledger.purchase.ReceiptInput, phase, "running")
+			if err := fixture.store.SaveRuntimeOperation(context.Background(), legacy); err != nil {
+				t.Fatal(err)
+			}
+			operationID := "rotation-blocked-by-legacy-" + phase
+			rotation := workspaceKeyRotationOperation{
+				RequestHash: "rotation-blocked-by-legacy-request-" + phase, Phase: "replacement_check", OldKeyID: 19,
+				ReplacementName: "opl-workspace-replacement-legacy-" + phase, RetiredName: "opl-workspace-retired-legacy-" + phase,
+				AuditEvent: workspaceDeleteRotationAudit(operationID, "acct-alpha", "ws-alpha"),
+			}
+			if err := fixture.store.ClaimWorkspaceKeyRotation(context.Background(), workspaceKeyRotationRow(operationID, "acct-alpha", "ws-alpha", "started", rotation)); !errors.Is(err, errWorkspaceKeyRotationInProgress) {
+				t.Fatalf("historical v1 phase %s did not block Rotation claim: %v", phase, err)
+			}
+			if row, found, err := fixture.store.GetRuntimeOperation(context.Background(), operationID); err != nil || found {
+				t.Fatalf("blocked Rotation was persisted: found=%v row=%#v err=%v", found, row, err)
+			}
+		})
 	}
 }
 
@@ -2148,6 +2222,17 @@ func exerciseWorkspaceDeleteStoreLifecycle(t *testing.T, store controlPlaneTable
 		t.Fatal(err)
 	}
 	claimed := workspaceDeleteStoreOperation(now)
+	clearWorkspaceDeleteKeyProjection(t, store, claimed.WorkspaceID)
+	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(claimed)}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
+		t.Fatalf("invalid Workspace Key projection did not block Delete claim: %v", err)
+	}
+	if _, found, err := store.GetRuntimeOperation(ctx, claimed.OperationID); err != nil || found {
+		t.Fatalf("failed Delete claim persisted operation found=%v err=%v", found, err)
+	}
+	workspace["workspaceApiKeyId"] = int64(19)
+	if err := store.SaveWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(claimed)}); err != nil {
 		t.Fatal(err)
 	}
@@ -2193,13 +2278,29 @@ func exerciseWorkspaceDeleteStoreLifecycle(t *testing.T, store controlPlaneTable
 	keyAbsent := current
 	keyAbsent.Phase, keyAbsent.KeyStatus = "key_absent", "absent"
 	current = advance(current, keyAbsent, false, false)
+	clearWorkspaceDeleteKeyProjection(t, store, claimed.WorkspaceID)
+	deleted := current
+	deleted.Phase = "workspace_absent"
+	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{
+		DeleteWorkspace: true, ExpectedResult: stringValue(workspaceDeleteOperationRow(current)["result"]), DesiredOperation: workspaceDeleteOperationRow(deleted),
+	}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
+		t.Fatalf("invalid Workspace Key projection did not roll back atomic delete: %v", err)
+	}
+	if _, found, err := store.GetWorkspace(ctx, claimed.WorkspaceID); err != nil || !found {
+		t.Fatalf("failed Key projection check removed Workspace found=%v err=%v", found, err)
+	}
+	if row, found, err := store.GetRuntimeOperation(ctx, claimed.OperationID); err != nil || !found || stringValue(row["result"]) != stringValue(workspaceDeleteOperationRow(current)["result"]) {
+		t.Fatalf("failed Key projection check advanced cursor found=%v row=%#v err=%v", found, row, err)
+	}
+	workspace["workspaceApiKeyId"] = int64(19)
+	if err := store.SaveWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.SaveCompute(ctx, map[string]any{
 		"id": "compute-delete", "accountId": "acct-delete", "ownerUserId": "usr-delete", "workspaceId": "ws-other", "status": "destroyed",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	deleted := current
-	deleted.Phase = "workspace_absent"
 	if err := store.ApplyWorkspaceDelete(ctx, workspaceDeleteStoreMutation{
 		DeleteWorkspace: true, ExpectedResult: stringValue(workspaceDeleteOperationRow(current)["result"]), DesiredOperation: workspaceDeleteOperationRow(deleted),
 	}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
@@ -2243,6 +2344,24 @@ func exerciseWorkspaceDeleteStoreLifecycle(t *testing.T, store controlPlaneTable
 		RequireWorkspaceAbsent: true, ExpectedResult: stringValue(workspaceDeleteOperationRow(complete)["result"]), DesiredOperation: workspaceDeleteOperationRow(complete),
 	}); !errors.Is(err, errWorkspaceDeleteCASConflict) {
 		t.Fatalf("terminal operation accepted a write: %v", err)
+	}
+}
+
+func clearWorkspaceDeleteKeyProjection(t *testing.T, store controlPlaneTableStore, workspaceID string) {
+	t.Helper()
+	switch typed := store.(type) {
+	case *memoryTableStore:
+		typed.mu.Lock()
+		defer typed.mu.Unlock()
+		row := cloneMap(typed.workspaces[workspaceID])
+		delete(row, "workspaceApiKeyId")
+		typed.workspaces[workspaceID] = row
+	case *postgresEntStateStore:
+		if err := typed.client.Workspace.UpdateOneID(workspaceID).ClearWorkspaceAPIKeyID().Exec(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("unsupported Workspace Delete store %T", store)
 	}
 }
 
