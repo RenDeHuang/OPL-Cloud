@@ -112,6 +112,15 @@ Sub2API management origin and credentials are never exposed to the browser.
 
 ## Implementation Snapshot
 
+- The versioned Workspace Runtime ABI contract owns the fixed internal WebUI
+  protocol and port `http/3000`. Control Plane proxy routing, Fabric
+  Local-Docker publish/health/readback, and Fabric Tencent/TKE
+  Deployment/probe/Service/NetworkPolicy/readback project the same fact through
+  owner-scoped constants. Production readiness no longer presents the fixed
+  port as an Instance-selectable environment option. Focused contract, Control
+  Plane, Fabric, and production-readiness tests plus the full local
+  PostgreSQL/Docker gate cover this source behavior; this is not an Instance
+  deployment, Workspace-image qualification, or C1 pricing evidence.
 - Control Plane's retained Ent persistence implementation is split inside the
   existing `server` package into identity, resource, and Workspace capability
   files. Fabric's retained Tencent provider implementation is likewise split
