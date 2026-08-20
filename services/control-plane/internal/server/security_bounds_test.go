@@ -2,34 +2,16 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"strconv"
 	"testing"
 	"time"
 )
 
 func TestWorkspaceServiceTargetAcceptsOnlyDNSServiceIdentity(t *testing.T) {
-	raw, err := os.ReadFile("../../../../packages/contracts/opl-cloud-workspace-runtime-abi-contract.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var contract struct {
-		WorkspaceWebUI struct {
-			Port int `json:"port"`
-		} `json:"workspaceWebUI"`
-	}
-	if err := json.Unmarshal(raw, &contract); err != nil {
-		t.Fatal(err)
-	}
-	if workspaceRuntimeWebUIPort != strconv.Itoa(contract.WorkspaceWebUI.Port) {
-		t.Fatalf("Control Plane Workspace Runtime port=%s, contract=%d", workspaceRuntimeWebUIPort, contract.WorkspaceWebUI.Port)
-	}
 	for _, valid := range []string{"opl-runtime-alpha", "opl-compute-alpha"} {
 		target, err := workspaceServiceTarget(valid)
-		if err != nil || target.String() != "http://"+valid+":"+workspaceRuntimeWebUIPort {
+		if err != nil || target.String() != "http://"+valid+":3000" {
 			t.Fatalf("workspaceServiceTarget(%q) = %v, %v", valid, target, err)
 		}
 	}

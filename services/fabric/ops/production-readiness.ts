@@ -75,6 +75,7 @@ function looksLikeProductionDomain(domain) {
 
 function matchesOplAppContract(env) {
   return (
+    String(env.OPL_WORKSPACE_WEBUI_PORT || "3000") === "3000" &&
     String(env.OPL_WORKSPACE_DATA_DIR || "/data") === "/data" &&
     String(env.OPL_WORKSPACE_PROJECTS_DIR || "/projects") === "/projects"
   );
@@ -138,7 +139,7 @@ export async function productionReadiness({ env = process.env, commandExists = (
         looksLikeRegistryImage({ image: env.OPL_WORKSPACE_IMAGE, registry: env.TENCENT_TCR_REGISTRY }),
       "OPL_CLOUD_IMAGE and OPL_WORKSPACE_IMAGE must use configured TCR repository@sha256 references"
     ),
-    check("opl_app_contract", matchesOplAppContract(env), "one-person-lab-app must persist /data plus /projects"),
+    check("opl_app_contract", matchesOplAppContract(env), "one-person-lab-app WebUI must expose port 3000 and persist /data plus /projects"),
     check("aionui_admin_password_seed", hasAionUiAdminPasswordSeed(env), "AionUI WebUI login must use a strong per-Workspace password seed"),
     check("workspace_domain", looksLikeProductionDomain(env.OPL_WORKSPACE_DOMAIN), "OPL_WORKSPACE_DOMAIN must be a production wildcard domain"),
     check("database_url", Boolean(env.DATABASE_URL), "DATABASE_URL is required for production persistence"),

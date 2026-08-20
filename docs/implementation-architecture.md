@@ -546,11 +546,12 @@ Browser
 ```
 
 The current Workspace Runtime compatibility boundary fixes the internal WebUI
-port at `3000`. `opl-cloud-workspace-runtime-abi-contract.json` is its versioned
-cross-module owner; Control Plane proxy routing and both Fabric adapters project
-the fixed value through named constants. The ABI is not an environment override,
-an Instance-selectable option, an installation default, or a separate feature
-lane.
+port at `3000`; Control Plane proxy routing and both Fabric adapters assume that
+same port. `OPL_WORKSPACE_WEBUI_PORT` is present as an environment surface, but
+current validation accepts only `3000`, so it is not a real Instance option.
+The open dedup work is to give this cross-module ABI one versioned contract owner
+and remove the false configuration surface without making the port an
+installation default or a separate feature lane.
 
 The Instance currently injects the `.com` domain, but Cloud source still falls
 back to `workspace.medopl.cn` in Control Plane URL projection and Tencent

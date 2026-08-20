@@ -22,32 +22,23 @@ async function filesUnder(directory, include = () => true) {
   return files;
 }
 
-test("pricing contract leaves current catalog values to Control Plane runtime", async () => {
+test("pricing contract preserves the Basic and Pro monthly package facts", async () => {
   const pricing = await json("packages/contracts/opl-cloud-pricing-contract.json");
 
-  assert.deepEqual(pricing.runtimeCatalog, {
-    authority: "control_plane_customer_pricing_runtime",
-    versioning: "every_catalog_revision_has_a_non_empty_priceVersion",
-    acceptedVersionResolution: "explicit_exact_lookup_unknown_version_fails_closed",
-    currentValues: "not_stored_in_this_contract"
+  assert.deepEqual(pricing.workspaceMonthly.basic, {
+    packageId: "basic",
+    sizeGb: 10,
+    computeUsdMicros: 50000000,
+    storageUsdMicros: 2580000,
+    totalUsdMicros: 52580000
   });
-  assert.equal(pricing.providerCostEvidence.authority, "fabric");
-  for (const currentCatalogField of [
-    "priceVersion",
-    "billingUnit",
-    "currency",
-    "displayCurrency",
-    "walletCurrency",
-    "computeMonthly",
-    "storagePer10GbMonthly",
-    "storageBlockMonthly",
-    "storageMonthly",
-    "workspaceMonthly",
-    "internalProviderCostEvidence",
-    "storageSize"
-  ]) {
-    assert.equal(pricing[currentCatalogField], undefined, `pricing contract must not own ${currentCatalogField}`);
-  }
+  assert.deepEqual(pricing.workspaceMonthly.pro, {
+    packageId: "pro",
+    sizeGb: 100,
+    computeUsdMicros: 214280000,
+    storageUsdMicros: 25800000,
+    totalUsdMicros: 240080000
+  });
 });
 
 test("identity contracts expose operator-provisioned owners and keep Organization internal", async () => {
