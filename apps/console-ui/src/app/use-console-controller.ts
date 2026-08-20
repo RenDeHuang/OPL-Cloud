@@ -66,6 +66,7 @@ import {
   revealWorkspaceCredentials,
   rotateWorkspaceCredentials,
   updateWorkspaceGatewayBudget,
+  updateWorkspaceRenewal,
   workspaceDeleteIdempotencyKey,
   workspaceLaunchIdempotencyKey
 } from "../api/workspaces-api.ts";
@@ -82,6 +83,11 @@ type WorkspaceBudgetIntent = {
   keyId: string;
   signature: string;
   input: WorkspaceGatewayBudgetUpdateRequest;
+  idempotencyKey: string;
+};
+
+type WorkspaceRenewalIntent = {
+  autoRenew: boolean;
   idempotencyKey: string;
 };
 
@@ -139,6 +145,7 @@ function friendlyError(error: unknown) {
     workspace_not_found: "Workspace 不存在或无权访问",
     workspace_credentials_unavailable: "Workspace 凭证暂不可用",
     workspace_not_running: "Workspace 尚未就绪",
+    workspace_reactivation_required: "Workspace 已到期，需先完成重新激活",
     upstream_unavailable: "服务暂不可用，请稍后重试"
   };
   return messages[raw] || (raw.includes("failed") || raw.includes("_") ? "请求失败，请重试" : raw);
@@ -211,6 +218,7 @@ export function useConsoleController() {
   const [usagePage, setUsagePage] = useState(1);
   const [launchName, setLaunchName] = useState("");
   const [launchPlan, setLaunchPlan] = useState<PlanId>("basic");
+  const [launchAutoRenew, setLaunchAutoRenew] = useState(false);
   const [launchStep, setLaunchStep] = useState<WorkspaceLaunchStep>("configure");
   const [launchConfirmed, setLaunchConfirmed] = useState(false);
   const [previews, setPreviews] = useState<Partial<Record<PlanId, WorkspacePricePreview>>>({});
@@ -251,6 +259,7 @@ export function useConsoleController() {
   const workspaceLaunchIntent = useRef<{ input: WorkspaceLaunchRequest; idempotencyKey: string } | null>(null);
   const workspaceDeleteIntent = useRef<{ workspaceId: string; idempotencyKey: string } | null>(null);
   const runtimeRotationIntent = useRef<{ workspaceId: string; idempotencyKey: string } | null>(null);
+  const workspaceRenewalIntents = useRef(new Map<string, WorkspaceRenewalIntent>());
   const workspaceBudgetIntents = useRef(new Map<string, WorkspaceBudgetIntent>());
   const workspaceBudgetBusyClaim = useRef<symbol | null>(null);
   const walletAdjustmentIntent = useRef<{ accountId: string; input: WalletAdjustmentRequest; idempotencyKey: string } | null>(null);
@@ -309,6 +318,7 @@ export function useConsoleController() {
     setLaunchConfirmed(false);
     setLaunchName("");
     setLaunchPlan("basic");
+    setLaunchAutoRenew(false);
     setPreviews({});
     usageRequestGeneration.current += 1;
     setSelectedUsageKeyId("");
@@ -337,6 +347,7 @@ export function useConsoleController() {
     workspaceLaunchIntent.current = null;
     workspaceDeleteIntent.current = null;
     runtimeRotationIntent.current = null;
+    workspaceRenewalIntents.current.clear();
     workspaceBudgetBusyClaim.current = null;
     workspaceBudgetIntents.current.clear();
     workspaceDetailRequestGeneration.current += 1;
@@ -455,6 +466,7 @@ export function useConsoleController() {
       const catalog = await getPricingCatalog();
       if (!isRequestCurrent(generation, activeSession.user.id)) return;
       updateSource("catalog", { value: catalog, loading: false, error: "" });
+      if (catalog.resourceBillingMode === "none") setLaunchAutoRenew(false);
       if (!catalog.packages.some((plan) => plan.id === launchPlan && plan.available)) {
         const firstAvailablePlan = catalog.packages.find((plan) => plan.available);
         if (firstAvailablePlan) setLaunchPlan(firstAvailablePlan.id);
@@ -491,6 +503,10 @@ export function useConsoleController() {
         updateSource("runtime", { value: unavailableSource("fabric"), loading: false, error: "" });
         updateSource("workspaceBudget", { value: unavailableSource("sub2api"), loading: false, error: "" });
         return;
+      }
+      const renewalIntent = workspaceRenewalIntents.current.get(workspaceId);
+      if (renewalIntent?.autoRenew === detail.data.autoRenew) {
+        workspaceRenewalIntents.current.delete(workspaceId);
       }
       workspaceKeyId = detail.data.workspaceApiKeyId || "";
     } catch (error) {
@@ -929,8 +945,12 @@ export function useConsoleController() {
   const submitWorkspaceLaunch = async () => {
     if (!session || commandBusy || launchStep !== "confirm" || !launchConfirmed || !selectedPlan || selectedPrice === null || balanceSufficient !== true || !launchName.trim()) return;
     const requestStillCurrent = currentMutationRequest();
-    const input: WorkspaceLaunchRequest = { name: launchName.trim(), packageId: selectedPlan.id, autoRenew: false };
-    if (!workspaceLaunchIntent.current || !sameLaunchRequest(workspaceLaunchIntent.current.input, input)) {
+    const input: WorkspaceLaunchRequest = { name: launchName.trim(), packageId: selectedPlan.id, autoRenew: customerOwned ? false : launchAutoRenew };
+    if (workspaceLaunchIntent.current && !sameLaunchRequest(workspaceLaunchIntent.current.input, input)) {
+      flash("上次 Workspace 开通结果待确认，请按原配置重试", "danger");
+      return;
+    }
+    if (!workspaceLaunchIntent.current) {
       workspaceLaunchIntent.current = { input, idempotencyKey: workspaceLaunchIdempotencyKey() };
     }
     setCommandBusy(true);
@@ -1029,6 +1049,77 @@ export function useConsoleController() {
       flash(friendlyError(error), "danger");
     } finally {
       if (mutationStillCurrent()) setCommandBusy(false);
+    }
+  };
+
+  const updateCurrentWorkspaceRenewal = async (autoRenew: boolean) => {
+    const detailSource = sources.workspaceDetail.value;
+    const workspace = detailSource?.available ? detailSource.data : null;
+    if (!session || !workspace || commandBusy || workspace.renewalStatus !== "active") return false;
+    const requestStillCurrent = currentMutationRequest();
+    const workspaceDetailGeneration = workspaceDetailRequestGeneration.current;
+    const workspaceStillCurrent = () => workspaceDetailGeneration === workspaceDetailRequestGeneration.current
+      && workspaceIdFromPath(window.location.pathname) === workspace.id;
+    let intent = workspaceRenewalIntents.current.get(workspace.id);
+    if (intent && intent.autoRenew !== autoRenew) {
+      flash("上次自动续费更新结果待确认，请按原设置重试", "danger");
+      return false;
+    }
+    if (!intent) {
+      intent = {
+        autoRenew,
+        idempotencyKey: `workspace-renewal:${workspace.id}:${crypto.randomUUID()}`
+      };
+      workspaceRenewalIntents.current.set(workspace.id, intent);
+    }
+    setCommandBusy(true);
+    try {
+      const response = await updateWorkspaceRenewal(workspace.id, { autoRenew }, session.csrfToken, intent.idempotencyKey);
+      if (!requestStillCurrent() || !workspaceStillCurrent()) return false;
+      if (response.autoRenew !== autoRenew || !response.renewalStatus.trim()
+        || [response.effectiveAfter, response.nextRenewalAt, response.paidThrough].some((value) => Number.isNaN(Date.parse(value)))) {
+        throw new Error("workspace_renewal_response_mismatch");
+      }
+      const readback = await findWorkspaceInPages(workspace.id);
+      if (!requestStillCurrent() || !workspaceStillCurrent()) return false;
+      if (!readback.available || !readback.data || readback.data.id !== workspace.id
+        || readback.data.autoRenew !== response.autoRenew || readback.data.paidThrough !== response.paidThrough
+        || readback.data.nextRenewalAt !== response.nextRenewalAt) {
+        throw new Error("workspace_renewal_readback_mismatch");
+      }
+      workspaceRenewalIntents.current.delete(workspace.id);
+      setSources((current) => {
+        const currentList = current.workspaces.value;
+        const workspaces = currentList?.available
+          ? {
+              ...current.workspaces,
+              value: {
+                ...currentList,
+                data: {
+                  ...currentList.data,
+                  items: currentList.data.items.map((item) => item.id === workspace.id ? readback.data : item)
+                }
+              }
+            }
+          : current.workspaces;
+        return {
+          ...current,
+          workspaces,
+          workspaceDetail: { value: readback, loading: false, error: "" }
+        };
+      });
+      flash(autoRenew ? "自动续费已开启" : "自动续费已关闭");
+      return true;
+    } catch (error) {
+      if (!requestStillCurrent() || !workspaceStillCurrent()) return false;
+      const status = error && typeof error === "object" && "status" in error
+        ? Number((error as { status?: number }).status)
+        : 0;
+      if (status > 0 && status < 500) workspaceRenewalIntents.current.delete(workspace.id);
+      flash(mutationError(error), "danger");
+      return false;
+    } finally {
+      if (requestStillCurrent()) setCommandBusy(false);
     }
   };
 
@@ -1607,6 +1698,8 @@ export function useConsoleController() {
     setLaunchName,
     launchPlan,
     setLaunchPlan,
+    launchAutoRenew,
+    setLaunchAutoRenew,
     launchStep,
     setLaunchStep,
     launchConfirmed,
@@ -1615,6 +1708,7 @@ export function useConsoleController() {
     selectedPlan,
     selectedPrice,
     balanceSufficient,
+    customerOwned,
     launchOperation,
     launchPollIssue,
     openLaunchedWorkspace,
@@ -1623,6 +1717,7 @@ export function useConsoleController() {
     commandBusy,
     workspaceDeleteIssue,
     deleteCurrentWorkspace,
+    updateCurrentWorkspaceRenewal,
     supportTickets,
     supportLoading,
     supportError,

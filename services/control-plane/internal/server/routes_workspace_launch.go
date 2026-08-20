@@ -38,10 +38,6 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusBadRequest, "invalid_pricing_input")
 			return
 		}
-		if autoRenew {
-			writeError(w, http.StatusConflict, "autoRenew_unavailable")
-			return
-		}
 		if _, supplied := input["priceVersion"]; supplied {
 			writeError(w, http.StatusBadRequest, "client_pricing_forbidden")
 			return
@@ -98,6 +94,10 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			app.respondWorkspaceLaunchContinuation(w, r, persisted)
 			return
 		}
+		if autoRenew && !app.deployment.resourceBillingEnabled() {
+			writeError(w, http.StatusConflict, "autoRenew_unavailable")
+			return
+		}
 		active, err := queryRuntimeOperations(r.Context(), app.tables, runtimeOperationQuery{
 			AccountID: accountID, ExcludedStatuses: []string{"succeeded", "refunded", "failed"},
 		})
@@ -128,7 +128,9 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		admission := controlledBasicPilotAdmissionFromEnv()
 		code := ""
 		if !app.deployment.customerOwned() {
-			code = admission.rejectNewLaunch(accountID, packageID, autoRenew)
+			// The route admits renewal intent against the active billing mode;
+			// pilot admission continues to own account, package, and capacity policy.
+			code = admission.rejectNewLaunch(accountID, packageID, false)
 		}
 		acceptanceBApproved := false
 		if code == "workspace_launch_admission_disabled" {

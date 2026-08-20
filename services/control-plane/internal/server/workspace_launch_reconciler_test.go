@@ -1954,6 +1954,46 @@ func TestWorkspaceLaunchActivationCanonicalOperatorAdvancesToReceipt(t *testing.
 	}
 }
 
+func TestWorkspaceLaunchActivationPreservesAutoRenewAuthorization(t *testing.T) {
+	operation := workspaceLaunchCanonicalActivationOperation(t)
+	operation.raw["autoRenew"] = json.RawMessage(`true`)
+	row, err := workspaceLaunchActivationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["autoRenew"] != true || row["authorizedBy"] != operation.stringFact("ownerUserId") || row["authorizedAt"] != operation.CreatedAt {
+		t.Fatalf("activation renewal intent=%#v operation=%s", row, workspaceLaunchReconcileResultSummary(operation))
+	}
+	if err := validateWorkspaceBillingState(row); err != nil {
+		t.Fatalf("activation billing projection invalid: %v row=%#v", err, row)
+	}
+	if !workspaceLaunchProjectionMatches(operation, row) {
+		t.Fatalf("activation readback did not match durable launch intent: %#v", row)
+	}
+	for _, field := range []string{"autoRenew", "authorizedBy", "authorizedAt"} {
+		drifted := cloneMap(row)
+		switch field {
+		case "autoRenew":
+			drifted[field] = false
+		default:
+			drifted[field] = "drifted"
+		}
+		if workspaceLaunchProjectionMatches(operation, drifted) {
+			t.Fatalf("%s drift matched durable launch intent: %#v", field, drifted)
+		}
+	}
+}
+
+func TestWorkspaceLaunchActivationRejectsAutoRenewForNonBillingWorkspace(t *testing.T) {
+	operation := workspaceLaunchCanonicalActivationOperation(t)
+	operation.raw["autoRenew"] = json.RawMessage(`true`)
+	operation.raw["resourceBillingEnabled"] = json.RawMessage(`false`)
+	operation.raw["totalChargeUsdMicros"] = json.RawMessage(`0`)
+	if row, err := workspaceLaunchActivationRow(operation); !errors.Is(err, errInvalidWorkspaceLaunchOperation) {
+		t.Fatalf("non-billing auto-renew activation row=%#v err=%v", row, err)
+	}
+}
+
 func TestWorkspaceLaunchActivationWritesProjectionWithoutFabricRows(t *testing.T) {
 	store := newMemoryTableStore()
 	store.users["usr-unit"] = map[string]any{"id": "usr-unit", "accountId": "acct-unit", "role": "owner", "status": "active"}
@@ -2019,6 +2059,7 @@ func TestWorkspaceLaunchProjectionMatchesCanonicalCurrentResourceFields(t *testi
 		"currentComputeAllocationId": "compute-fabric", "storageId": "storage-fabric", "currentAttachmentId": "attachment-fabric",
 		"runtimeId": "runtime-fabric", "runtime": map[string]any{"serviceName": "runtime-service"}, "state": "running",
 		"workspaceApiKeyId": int64(9), "access": map[string]any{"username": "opl", "credentialStatus": "configured", "credentialVersion": "v1", "secretRef": "secret-ref"},
+		"autoRenew": false, "authorizedBy": "", "authorizedAt": "",
 		"priceVersion": operation.stringFact("priceVersion"), "totalUsdMicros": operation.int64Fact("totalChargeUsdMicros"), "storageGb": operation.intFact("sizeGb"),
 		"periodStart": "2026-08-15T00:00:00Z", "paidThrough": "2026-09-15T00:00:00Z", "billingAnchorDay": 15,
 	}

@@ -116,7 +116,17 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   assert.equal(product.pilotBoundary.unpaidExpiry, "deny_access_zero_fabric_or_tencent_mutation_expire_by_provider");
   assert.equal(product.pilotBoundary.workspaceDataAuthority, "cbs");
   assert.deepEqual(product.pilotBoundary.unsupportedCustomerCapabilities, ["backup", "recovery", "sync", "transfer"]);
-  assert.equal(product.pilotBoundary.autoRenewCustomerControl, "hidden_until_real_renewal_evidence");
+  assert.equal(product.schemaVersion, 5);
+  assert.deepEqual(product.pilotBoundary.autoRenewCustomerControl, {
+    scope: "workspace",
+    authority: "control_plane_workspace_billing_state",
+    route: "POST /api/workspaces/{workspaceId}/auto-renew",
+    values: [true, false],
+    launchIntent: "durable_launch_operation_to_workspace_activation_projection",
+    enable: "authorize_future_periods_without_immediate_debit_or_provider_mutation",
+    disable: "revoke_future_periods_without_resource_delete_or_refund",
+    expiredEnable: "workspace_reactivation_required"
+  });
   assert.equal(boundary.browserBoundary.onlyCalls, "control_plane_product_apis");
   assert.deepEqual(boundary.browserBoundary.forbidden, ["sub2api_management_direct", "sub2api_management_redirect", "sub2api_management_iframe", "html_scraping", "raw_admin_dto"]);
   assert.deepEqual(boundary.customerMutationBoundary, { payment: false, topUp: false, keyCreate: true, keyRevoke: true });

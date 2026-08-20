@@ -218,10 +218,6 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusBadRequest, "autoRenew_required")
 			return
 		}
-		if autoRenew {
-			writeError(w, http.StatusConflict, "autoRenew_unavailable")
-			return
-		}
 		workspaceID := r.PathValue("workspaceId")
 		workspace, ok := app.getWorkspace(workspaceID)
 		if !ok {
@@ -235,6 +231,10 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		user, ok := app.sessionUserContext(r)
 		if !ok || firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != stringValue(user["id"]) {
 			writeError(w, http.StatusForbidden, "workspace_owner_required")
+			return
+		}
+		if autoRenew && workspace["resourceBillingEnabled"] == false {
+			writeError(w, http.StatusConflict, "autoRenew_unavailable")
 			return
 		}
 		operationID := workspaceAutoRenewCommandID(workspaceID, key)
@@ -263,7 +263,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				writeJSON(w, http.StatusOK, result.Response)
 				return
 			}
-			if workspace["autoRenew"] == false {
+			if workspace["autoRenew"] == autoRenew {
 				paidThrough, parseErr := time.Parse(time.RFC3339, stringValue(workspace["paidThrough"]))
 				if parseErr != nil {
 					writeError(w, http.StatusConflict, "workspace_billing_state_invalid")
@@ -278,7 +278,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				if found {
 					operations = append(operations, operation)
 				}
-				response, responseErr := workspaceAutoRenewResponse(workspace, operations, false, time.Now().UTC())
+				response, responseErr := workspaceAutoRenewResponse(workspace, operations, autoRenew, time.Now().UTC())
 				if errors.Is(responseErr, errWorkspaceReactivationRequired) {
 					writeError(w, http.StatusConflict, responseErr.Error())
 					return

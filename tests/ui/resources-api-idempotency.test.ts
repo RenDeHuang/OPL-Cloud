@@ -19,12 +19,12 @@ test("Workspace launch uses one durable request and caller idempotency key", asy
     requests.push({ url: String(input), init });
     return response({
       operationId: "launch-alpha", status: "preparing", phase: "compute", accountId: "acct-alpha",
-      name: "Alpha", packageId: "basic", sizeGb: 10, autoRenew: false,
+      name: "Alpha", packageId: "basic", sizeGb: 10, autoRenew: true,
       priceVersion: "pilot-usd-2026-07-v1", currency: "USD", totalChargeUsdMicros: 52_580_000
     }, 202);
   };
 
-  const input = { name: "Alpha", packageId: "basic", sizeGb: 10, autoRenew: false } as const;
+  const input = { name: "Alpha", packageId: "basic", sizeGb: 10, autoRenew: true } as const;
   await workspaceApi.launchWorkspace(input, "csrf-alpha", "launch-once");
   await workspaceApi.launchWorkspace(input, "csrf-alpha", "launch-once");
 
@@ -96,6 +96,8 @@ test("Workspace launch keeps one submission intent and exposes bounded polling r
   assert.match(controller, /const workspaceLaunchPollAttempts = 30/);
   assert.match(controller, /pollWorkspaceLaunch/);
   assert.match(controller, /if \(!unknown\) workspaceLaunchIntent\.current = null/);
+  assert.match(controller, /workspaceLaunchIntent\.current && !sameLaunchRequest\(workspaceLaunchIntent\.current\.input, input\)/);
+  assert.match(controller, /上次 Workspace 开通结果待确认，请按原配置重试/);
 });
 
 test("Workspace credential rotation reuses its intent key until a confirmed success", async () => {
@@ -110,14 +112,14 @@ test("Workspace credential and renewal commands use explicit routes and mutation
   globalThis.fetch = async (input, init) => {
     requests.push({ url: String(input), init });
     if (String(input).endsWith("/auto-renew")) {
-      return response({ autoRenew: false, effectiveAfter: "2026-08-01T00:00:00Z", nextRenewalAt: "2026-07-31T00:00:00Z", paidThrough: "2026-08-01T00:00:00Z", renewalStatus: "cancelled" });
+      return response({ autoRenew: true, effectiveAfter: "2026-07-31T00:00:00Z", nextRenewalAt: "2026-07-31T00:00:00Z", paidThrough: "2026-08-01T00:00:00Z", renewalStatus: "scheduled" });
     }
     return response({ workspaceId: "workspace-alpha", access: { account: "owner", username: "owner", password: "secret", credentialStatus: "active", credentialVersion: "v2" } });
   };
 
   await workspaceApi.revealWorkspaceCredentials("workspace-alpha", "csrf-alpha");
   await workspaceApi.rotateWorkspaceCredentials("workspace-alpha", "csrf-alpha", "rotate-once");
-  await workspaceApi.updateWorkspaceRenewal("workspace-alpha", { autoRenew: false }, "csrf-alpha", "renew-once");
+  const renewal = await workspaceApi.updateWorkspaceRenewal("workspace-alpha", { autoRenew: true }, "csrf-alpha", "renew-once");
 
   assert.deepEqual(requests.map(({ url }) => url), [
     "/api/workspaces/workspace-alpha/runtime-credentials/reveal",
@@ -127,4 +129,6 @@ test("Workspace credential and renewal commands use explicit routes and mutation
   const keys = requests.map(({ init }) => new Headers(init?.headers).get("Idempotency-Key"));
   assert.match(keys[0] ?? "", /^runtime-credential-reveal:/);
   assert.deepEqual(keys.slice(1), ["rotate-once", "renew-once"]);
+  assert.deepEqual(JSON.parse(String(requests[2]?.init?.body)), { autoRenew: true });
+  assert.equal(renewal.autoRenew, true);
 });

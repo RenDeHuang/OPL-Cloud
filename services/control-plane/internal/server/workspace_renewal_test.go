@@ -127,22 +127,140 @@ func enableWorkspaceAutoRenewForTest(t *testing.T, fixture workspaceRenewalAPIFi
 	return workspace
 }
 
-func TestWorkspaceAutoRenewRejectsEnableWithoutMutation(t *testing.T) {
+func TestWorkspaceAutoRenewEnablePersistsAuthorizationAndReplaysOriginalCommand(t *testing.T) {
 	fixture := newWorkspaceRenewalAPIFixture(t)
 	workspaceID := stringValue(fixture.workspace["id"])
-	before, _ := fixture.app.getWorkspace(workspaceID)
-	operationsBefore, _ := fixture.app.tables.ListRuntimeOperations(context.Background())
-	auditsBefore, _ := fixture.app.tables.ListAuditEvents(context.Background(), stringValue(fixture.workspace["accountId"]))
-
-	response := fixture.request(t, `{"autoRenew":true}`, "workspace-renewal-enable-forbidden")
-	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "autoRenew_unavailable") {
-		t.Fatalf("enable status=%d body=%s", response.Code, response.Body.String())
+	key := "workspace-renewal-enable"
+	first := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":true}`, key))
+	stored, _ := fixture.app.getWorkspace(workspaceID)
+	ownerID := sessionUserIDForTest(t, fixture.server, fixture.owner)
+	if first["autoRenew"] != true || stored["autoRenew"] != true || stored["authorizedBy"] != ownerID || stringValue(stored["authorizedAt"]) == "" {
+		t.Fatalf("enable response=%#v stored=%#v", first, stored)
 	}
-	after, _ := fixture.app.getWorkspace(workspaceID)
+	if _, err := time.Parse(time.RFC3339, stringValue(stored["authorizedAt"])); err != nil {
+		t.Fatalf("authorizedAt=%q: %v", stored["authorizedAt"], err)
+	}
+	operations, err := fixture.app.tables.ListRuntimeOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	audits, err := fixture.app.tables.ListAuditEvents(context.Background(), stringValue(fixture.workspace["accountId"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandID := workspaceAutoRenewCommandID(workspaceID, key)
+	if len(operations) != 1 || recordByID(operations, commandID) == nil || len(audits) != 1 || recordByID(audits, workspaceAutoRenewAuditID(commandID)) == nil {
+		t.Fatalf("enable history operations=%#v audits=%#v", operations, audits)
+	}
+
+	replay := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":true}`, key))
+	noOp := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":true}`, "workspace-renewal-enable-noop"))
 	operationsAfter, _ := fixture.app.tables.ListRuntimeOperations(context.Background())
 	auditsAfter, _ := fixture.app.tables.ListAuditEvents(context.Background(), stringValue(fixture.workspace["accountId"]))
-	if string(mustJSON(before)) != string(mustJSON(after)) || len(operationsAfter) != len(operationsBefore) || len(auditsAfter) != len(auditsBefore) {
-		t.Fatalf("rejected enable mutated state: before=%#v after=%#v operations=%d/%d audits=%d/%d", before, after, len(operationsBefore), len(operationsAfter), len(auditsBefore), len(auditsAfter))
+	if string(mustJSON(replay)) != string(mustJSON(first)) || string(mustJSON(noOp)) != string(mustJSON(first)) || len(operationsAfter) != 1 || len(auditsAfter) != 1 {
+		t.Fatalf("enable replay/no-op changed result or history: first=%#v replay=%#v noOp=%#v operations=%d audits=%d", first, replay, noOp, len(operationsAfter), len(auditsAfter))
+	}
+	conflict := fixture.request(t, `{"autoRenew":false}`, key)
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), errIdempotencyConflict.Error()) {
+		t.Fatalf("conflicting replay status=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+}
+
+func TestWorkspaceLaunchAcceptsAndPersistsAutoRenewIntent(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv(controlledBasicPilotAccountsEnv, "acct-alpha")
+	t.Setenv("OPL_TENCENT_ZONE", "ap-guangzhou-1")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+	server, store, _, _, _ := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	key := "workspace-launch-auto-renew"
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Auto Renew","packageId":"basic","autoRenew":true}`, key)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("auto-renew launch status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil || body["autoRenew"] != true {
+		t.Fatalf("auto-renew launch response=%#v err=%v", body, err)
+	}
+	row, found, err := store.GetRuntimeOperation(context.Background(), workspaceLaunchOperationID("acct-alpha", key))
+	if err != nil || !found {
+		t.Fatalf("launch operation found=%v err=%v", found, err)
+	}
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil || !operation.boolFact("autoRenew") {
+		t.Fatalf("durable launch intent operation=%#v err=%v", operation, err)
+	}
+}
+
+func TestWorkspaceLaunchRejectsAutoRenewBeforeNonBillingMutation(t *testing.T) {
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+	server, store, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	handler, ok := server.(*controlPlaneHTTPHandler)
+	if !ok {
+		t.Fatal("unexpected control-plane test handler")
+	}
+	handler.app.deployment = deploymentProfile{Mode: deploymentCustomerOwned, FabricProvider: fabricLocalDocker}
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"No Billing Renewal","packageId":"basic","autoRenew":true}`, "workspace-launch-non-billing-auto-renew")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "autoRenew_unavailable") {
+		t.Fatalf("non-billing auto-renew status=%d body=%s", response.Code, response.Body.String())
+	}
+	operations, err := store.ListRuntimeOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations) != 0 || len(client.charges) != 0 || len(*events) != 0 {
+		t.Fatalf("non-billing auto-renew crossed mutation boundary: operations=%#v charges=%#v events=%#v", operations, client.charges, *events)
+	}
+}
+
+func TestWorkspaceAutoRenewRejectsEnableForNonBillingWorkspaceWithoutMutation(t *testing.T) {
+	fixture := newWorkspaceRenewalAPIFixture(t)
+	workspace := cloneMap(fixture.workspace)
+	workspace["id"] = "workspace-renewal-non-billing"
+	workspace["resourceBillingEnabled"], workspace["renewalStatus"] = false, workspaceBillingNotApplicable
+	workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = false, "", ""
+	workspace["computeUsdMicros"], workspace["storageUsdMicros"], workspace["totalUsdMicros"] = int64(0), int64(0), int64(0)
+	workspace["computeAllocationId"], workspace["currentComputeAllocationId"] = "compute-non-billing", "compute-non-billing"
+	workspace["storageId"] = "storage-non-billing"
+	mustStore(t, fixture.app.tables.SaveWorkspace(context.Background(), workspace))
+
+	response := requestWithMutationKeyForTest(t, fixture.server, fixture.owner, http.MethodPost, "/api/workspaces/workspace-renewal-non-billing/auto-renew", `{"autoRenew":true}`, "workspace-non-billing-enable")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "autoRenew_unavailable") {
+		t.Fatalf("non-billing enable status=%d body=%s", response.Code, response.Body.String())
+	}
+	stored, _ := fixture.app.getWorkspace("workspace-renewal-non-billing")
+	operations, _ := fixture.app.tables.ListRuntimeOperations(context.Background())
+	audits, _ := fixture.app.tables.ListAuditEvents(context.Background(), stringValue(workspace["accountId"]))
+	if stored["autoRenew"] != false || len(operations) != 0 || len(audits) != 0 {
+		t.Fatalf("non-billing enable mutated state: workspace=%#v operations=%#v audits=%#v", stored, operations, audits)
+	}
+}
+
+func TestWorkspaceAutoRenewIntentIsIndependentPerWorkspace(t *testing.T) {
+	fixture := newWorkspaceRenewalAPIFixture(t)
+	ownerID := sessionUserIDForTest(t, fixture.server, fixture.owner)
+	workspaceB := cloneMap(fixture.workspace)
+	workspaceB["id"], workspaceB["autoRenew"] = "workspace-renewal-b", true
+	workspaceB["authorizedBy"], workspaceB["authorizedAt"] = ownerID, time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
+	mustStore(t, fixture.app.tables.SaveWorkspace(context.Background(), workspaceB))
+
+	enableA := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":true}`, "workspace-a-enable"))
+	disableBResponse := requestWithMutationKeyForTest(t, fixture.server, fixture.owner, http.MethodPost, "/api/workspaces/workspace-renewal-b/auto-renew", `{"autoRenew":false}`, "workspace-b-disable")
+	disableB := decodeWorkspaceAutoRenewResponse(t, disableBResponse)
+	storedA, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
+	storedB, _ := fixture.app.getWorkspace("workspace-renewal-b")
+	if enableA["autoRenew"] != true || disableB["autoRenew"] != false || storedA["autoRenew"] != true || storedB["autoRenew"] != false || storedA["paidThrough"] != storedB["paidThrough"] {
+		t.Fatalf("independent intent A=%#v B=%#v storedA=%#v storedB=%#v", enableA, disableB, storedA, storedB)
+	}
+	operations, err := fixture.app.tables.ListRuntimeOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for workspaceID, key := range map[string]string{stringValue(fixture.workspace["id"]): "workspace-a-enable", "workspace-renewal-b": "workspace-b-disable"} {
+		if recordByID(operations, workspaceAutoRenewCommandID(workspaceID, key)) == nil {
+			t.Fatalf("missing Workspace-scoped command for %s: %#v", workspaceID, operations)
+		}
 	}
 }
 
