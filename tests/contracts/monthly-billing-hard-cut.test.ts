@@ -141,15 +141,15 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
 test("pricing contract owns schemas and snapshot invariants without a current catalog", async () => {
   const pricing = await readJson("opl-cloud-pricing-contract.json");
 
-  assert.equal(pricing.schemaVersion, 10);
+  assert.equal(pricing.schemaVersion, 11);
   assert.equal(pricing.runtimeCatalog.authority, "control_plane_customer_pricing_runtime");
   assert.equal(pricing.runtimeCatalog.acceptedVersionResolution, "explicit_exact_lookup_unknown_version_fails_closed");
   assert.equal(pricing.runtimeCatalog.currentValues, "not_stored_in_this_contract");
   assert.deepEqual(pricing.catalogResponseSchema, {
-    requiredFields: ["priceVersion", "billingUnit", "currency", "displayCurrency", "walletCurrency", "storageSize", "storagePer10GbMonthly", "packages"],
+    requiredFields: ["priceVersion", "billingUnit", "currency", "displayCurrency", "walletCurrency", "storageSize", "storageBlockMonthly", "packages"],
     packageFields: ["id", "name", "available"],
     storageSizeFields: ["minimumGb", "stepGb"],
-    storagePriceFields: ["priceVersion", "currency", "displayCurrency", "usdMicros"]
+    storagePriceFields: ["priceVersion", "currency", "displayCurrency", "blockSizeGb", "usdMicros"]
   });
   assert.deepEqual(pricing.previewSchema, {
     commonRequiredFields: ["resourceType", "priceVersion", "packageId", "currency", "displayCurrency", "billingUnit"],
@@ -173,7 +173,7 @@ test("pricing contract owns schemas and snapshot invariants without a current ca
     customerChargeDerivation: "forbidden",
     customerDto: "forbidden"
   });
-  for (const currentCatalogField of ["priceVersion", "computeMonthly", "storagePer10GbMonthly", "storageMonthly", "workspaceMonthly", "internalProviderCostEvidence", "storageSize"]) {
+  for (const currentCatalogField of ["priceVersion", "computeMonthly", "storagePer10GbMonthly", "storageBlockMonthly", "storageMonthly", "workspaceMonthly", "internalProviderCostEvidence", "storageSize"]) {
     assert.equal(pricing[currentCatalogField], undefined, `pricing contract must not own ${currentCatalogField}`);
   }
   const numericFacts = [];
@@ -186,7 +186,7 @@ test("pricing contract owns schemas and snapshot invariants without a current ca
   };
   collectNumericFacts(pricing);
   assert.deepEqual(numericFacts, [
-    ["schemaVersion", 10],
+    ["schemaVersion", 11],
     ["workspaceCharge.customerDebitCardinalityPerPeriod", 1]
   ]);
 });

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 10,
+  "schemaVersion": 11,
   "owner": "OPL Control Plane",
   "purpose": "Cross-module customer pricing schemas and invariants for OPL Workspace charges. Current customer catalog versions, packages, and prices belong only to the versioned Control Plane runtime catalog; provider-cost evidence belongs to Fabric.",
   "state": "current",
@@ -15,10 +15,10 @@
   },
   "machineBoundary": "Customer charges use non-negative integer USD micros from the accepted Control Plane quote. Provider cost evidence and exchange rates never derive, alter, or appear as a customer charge.",
   "catalogResponseSchema": {
-    "requiredFields": ["priceVersion", "billingUnit", "currency", "displayCurrency", "walletCurrency", "storageSize", "storagePer10GbMonthly", "packages"],
+    "requiredFields": ["priceVersion", "billingUnit", "currency", "displayCurrency", "walletCurrency", "storageSize", "storageBlockMonthly", "packages"],
     "packageFields": ["id", "name", "available"],
     "storageSizeFields": ["minimumGb", "stepGb"],
-    "storagePriceFields": ["priceVersion", "currency", "displayCurrency", "usdMicros"]
+    "storagePriceFields": ["priceVersion", "currency", "displayCurrency", "blockSizeGb", "usdMicros"]
   },
   "previewSchema": {
     "commonRequiredFields": ["resourceType", "priceVersion", "packageId", "currency", "displayCurrency", "billingUnit"],
