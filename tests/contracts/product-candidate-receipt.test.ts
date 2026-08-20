@@ -9,7 +9,7 @@ test("Cloud owns one neutral non-Release candidate receipt contract", async () =
   const contract = JSON.parse(source);
 
   assert.deepEqual(Object.keys(contract).sort(), [
-    "candidateReceiptV1",
+    "candidateReceiptV2",
     "lifecycle",
     "machineBoundary",
     "owner",
@@ -17,12 +17,13 @@ test("Cloud owns one neutral non-Release candidate receipt contract", async () =
     "schemaVersion",
     "state"
   ]);
-  assert.equal(contract.schemaVersion, 1);
+  assert.equal(contract.schemaVersion, 2);
   assert.equal(contract.owner, "OPL Cloud");
   assert.equal(contract.state, "current");
   assert.equal(contract.lifecycle.type, "long_term_contract");
 
-  const receipt = contract.candidateReceiptV1;
+  const receipt = contract.candidateReceiptV2;
+  assert.equal(receipt.schemaVersion, 2);
   assert.equal(receipt.kind, "opl_cloud_candidate");
   assert.equal(receipt.productRepository, "gaofeng21cn/one-person-lab-cloud");
   assert.equal(receipt.cloudImageRepository, "ghcr.io/gaofeng21cn/one-person-lab-cloud");
@@ -72,33 +73,40 @@ test("Cloud owns one neutral non-Release candidate receipt contract", async () =
   }
 });
 
-test("distribution contract exposes candidate handoff without changing release ownership", async () => {
+test("distribution contract locates a V2 Candidate bundle without duplicating its schema", async () => {
   const contract = JSON.parse(await readFile("packages/contracts/opl-cloud-distribution-contract.json", "utf8"));
+  assert.equal(contract.schemaVersion, 2);
   assert.deepEqual(contract.candidate, {
     workflow: ".github/workflows/build-opl-cloud-candidate.yml",
-    contract: "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV1",
+    contract: "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV2",
     registry: "ghcr.io/gaofeng21cn/one-person-lab-cloud",
-    platforms: ["linux/amd64", "linux/arm64"],
-    portableAssets: [
-      "compose.yaml",
-      "compose.deployment-platform-owned.yaml",
-      "compose.deployment-managed-tke.yaml",
-      "compose.deployment-customer-owned.yaml",
-      "compose.fabric-local-docker.yaml",
-      "compose.fabric-tencent-tke.yaml",
-      "compose.local-workspace.yaml",
-      "opl-cloud.env.example"
-    ],
-    bundleManifest: "opl-cloud-candidate.json",
-    checksumManifest: "SHA256SUMS",
-    qualificationFactsOwner: "instance_or_installer_receipt",
+    artifactLocator: {
+      kind: "github_actions_artifact",
+      exactKeys: ["workflowRunId", "artifactName"],
+      workflowRunIdField: "provenance.workflowRunId",
+      artifactNameTemplate: "opl-cloud-candidate-{product.sha}",
+      artifactNameProductShaField: "product.sha"
+    },
     formalPublication: false,
     instanceDeployment: false
   });
-  assert.deepEqual(contract.instanceHandoff.inputs, ["candidate_receipt_b64"]);
+  assert.deepEqual(contract.instanceHandoff.inputs, ["candidate_manifest_b64"]);
+  assert.equal(
+    contract.instanceHandoff.artifactLocatorContract,
+    "packages/contracts/opl-cloud-distribution-contract.json#candidate.artifactLocator"
+  );
   assert.equal(
     contract.instanceHandoff.contract,
-    "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV1"
+    "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV2"
   );
+  const manifest = { product: { sha: "a".repeat(40) }, provenance: { workflowRunId: "12345" } };
+  const locator = contract.candidate.artifactLocator;
+  assert.deepEqual({
+    workflowRunId: manifest.provenance.workflowRunId,
+    artifactName: locator.artifactNameTemplate.replace("{product.sha}", manifest.product.sha)
+  }, {
+    workflowRunId: "12345",
+    artifactName: `opl-cloud-candidate-${"a".repeat(40)}`
+  });
   assert.equal(contract.distribution.workflow, ".github/workflows/release-opl-cloud-image.yml");
 });

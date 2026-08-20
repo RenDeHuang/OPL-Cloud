@@ -85,12 +85,38 @@ if (!/sha256sum\s+-c\s/.test(dockerfile)) {
 }
 
 const contract = JSON.parse(await readFile(new URL("packages/contracts/opl-cloud-distribution-contract.json", root), "utf8"));
-if (contract.productRepository !== "gaofeng21cn/one-person-lab-cloud" ||
+const candidateContract = JSON.parse(await readFile(new URL("packages/contracts/opl-cloud-candidate-receipt-contract.json", root), "utf8"));
+const candidateReceipt = candidateContract.candidateReceiptV2;
+const expectedCandidateAssets = [
+  "compose.yaml",
+  "compose.deployment-platform-owned.yaml",
+  "compose.deployment-managed-tke.yaml",
+  "compose.deployment-customer-owned.yaml",
+  "compose.fabric-local-docker.yaml",
+  "compose.fabric-tencent-tke.yaml",
+  "compose.local-workspace.yaml",
+  "opl-cloud.env.example"
+];
+if (candidateContract.schemaVersion !== 2 || candidateReceipt?.schemaVersion !== 2 ||
+    JSON.stringify(candidateReceipt?.platforms) !== JSON.stringify(["linux/amd64", "linux/arm64"]) ||
+    JSON.stringify(candidateReceipt?.portableAssets) !== JSON.stringify(expectedCandidateAssets) ||
+    candidateReceipt?.manifest !== "opl-cloud-candidate.json" ||
+    candidateReceipt?.checksumManifest !== "SHA256SUMS") {
+  throw new Error("Candidate receipt contract boundary is invalid");
+}
+if (contract.schemaVersion !== 2 || contract.productRepository !== "gaofeng21cn/one-person-lab-cloud" ||
     contract.instanceHandoff?.repository !== "gaofeng21cn/opl-instance-medopl" ||
-    JSON.stringify(contract.candidate?.platforms) !== JSON.stringify(["linux/amd64", "linux/arm64"]) ||
-    contract.candidate?.bundleManifest !== "opl-cloud-candidate.json" ||
-    contract.candidate?.checksumManifest !== "SHA256SUMS" ||
-    contract.candidate?.qualificationFactsOwner !== "instance_or_installer_receipt") {
+    contract.candidate?.contract !== "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV2" ||
+    JSON.stringify(Object.keys(contract.candidate || {}).sort()) !== JSON.stringify([
+      "artifactLocator", "contract", "formalPublication", "instanceDeployment", "registry", "workflow"
+    ]) ||
+    contract.candidate?.artifactLocator?.kind !== "github_actions_artifact" ||
+    JSON.stringify(contract.candidate?.artifactLocator?.exactKeys) !== JSON.stringify(["workflowRunId", "artifactName"]) ||
+    contract.candidate?.artifactLocator?.workflowRunIdField !== "provenance.workflowRunId" ||
+    contract.candidate?.artifactLocator?.artifactNameTemplate !== "opl-cloud-candidate-{product.sha}" ||
+    contract.candidate?.artifactLocator?.artifactNameProductShaField !== "product.sha" ||
+    contract.instanceHandoff?.artifactLocatorContract !== "packages/contracts/opl-cloud-distribution-contract.json#candidate.artifactLocator" ||
+    JSON.stringify(contract.instanceHandoff?.inputs) !== JSON.stringify(["candidate_manifest_b64"])) {
   throw new Error("distribution owner boundary is invalid");
 }
 

@@ -457,9 +457,12 @@ run-scoped `linux/amd64` + `linux/arm64` OCI index, reads back its index and bot
 child manifest digests plus revision, and packages the portable installation
 assets with canonical `opl-cloud-candidate.json` and strict `SHA256SUMS`. The
 manifest binds exact Product SHA/tree, Cloud index/children, per-asset SHA-256,
-and workflow provenance. It contains no Workspace image, Provider Profile,
-domain, or Instance fact and creates no Git tag, GitHub Release, versioned image
-tag, or Instance action. Focused source tests prove canonical serialization and
+and workflow provenance. Its schema contains no selected Workspace image,
+Provider Profile, domain, or Instance fact. The bundle still includes the
+current environment template and does not close
+`LOCAL-WORKSPACE-INSTALL-CONTRACT-01`. It creates no Git tag, GitHub Release,
+versioned image tag, or Instance action. Focused source tests prove canonical
+serialization and
 rejection of identity drift, path traversal, tampered, missing, extra, and
 malformed bundle inputs. No hosted run has yet built this current portable
 Candidate, so source capability is not Candidate, qualification, or production

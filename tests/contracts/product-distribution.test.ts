@@ -5,22 +5,24 @@ import YAML from "yaml";
 
 test("portable distribution is product-owned and instance-neutral", async () => {
   const contract = JSON.parse(await readFile("packages/contracts/opl-cloud-distribution-contract.json", "utf8"));
+  assert.equal(contract.schemaVersion, 2);
   assert.equal(contract.productRepository, "gaofeng21cn/one-person-lab-cloud");
   assert.equal(contract.instanceHandoff.repository, "gaofeng21cn/opl-instance-medopl");
-  assert.deepEqual(contract.candidate.platforms, ["linux/amd64", "linux/arm64"]);
-  assert.equal(contract.candidate.bundleManifest, "opl-cloud-candidate.json");
-  assert.equal(contract.candidate.checksumManifest, "SHA256SUMS");
-  assert.deepEqual(contract.candidate.portableAssets, [
-    "compose.yaml",
-    "compose.deployment-platform-owned.yaml",
-    "compose.deployment-managed-tke.yaml",
-    "compose.deployment-customer-owned.yaml",
-    "compose.fabric-local-docker.yaml",
-    "compose.fabric-tencent-tke.yaml",
-    "compose.local-workspace.yaml",
-    "opl-cloud.env.example"
+  assert.deepEqual(Object.keys(contract.candidate).sort(), [
+    "artifactLocator",
+    "contract",
+    "formalPublication",
+    "instanceDeployment",
+    "registry",
+    "workflow"
   ]);
-  assert.equal(contract.candidate.qualificationFactsOwner, "instance_or_installer_receipt");
+  assert.deepEqual(contract.candidate.artifactLocator, {
+    kind: "github_actions_artifact",
+    exactKeys: ["workflowRunId", "artifactName"],
+    workflowRunIdField: "provenance.workflowRunId",
+    artifactNameTemplate: "opl-cloud-candidate-{product.sha}",
+    artifactNameProductShaField: "product.sha"
+  });
   assert.deepEqual(contract.distribution.platforms, ["linux/amd64", "linux/arm64"]);
   assert.deepEqual(contract.distribution.releaseAssets, [
     "compose.yaml",

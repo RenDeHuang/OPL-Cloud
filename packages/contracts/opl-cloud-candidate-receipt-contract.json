@@ -1,14 +1,15 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "owner": "OPL Cloud",
   "purpose": "Bind one exact canonical Cloud source revision to one portable multi-architecture Cloud image and deterministic installation asset bundle before qualification.",
   "state": "current",
-  "machineBoundary": "Cloud owns replaceable Candidate identity and portable bytes; Instance and installer owners separately bind Workspace images, Provider Profiles, domains, deployment, qualification, and rollback facts.",
+  "machineBoundary": "Cloud owns the replaceable Candidate manifest identity and portable bundle bytes; the canonical manifest does not bind selected Workspace images, Provider Profiles, domains, deployment, qualification, or rollback facts.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same portable Candidate identity boundary."
   },
-  "candidateReceiptV1": {
+  "candidateReceiptV2": {
+    "schemaVersion": 2,
     "kind": "opl_cloud_candidate",
     "productRepository": "gaofeng21cn/one-person-lab-cloud",
     "cloudImageRepository": "ghcr.io/gaofeng21cn/one-person-lab-cloud",

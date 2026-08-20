@@ -207,7 +207,7 @@ jobs:
             --arg workflowRunAttempt "$GITHUB_RUN_ATTEMPT" \
             --slurpfile assets "$assets" '
             {
-              schemaVersion: 1,
+              schemaVersion: 2,
               kind: "opl_cloud_candidate",
               product: {repository: $productRepository, sha: $productSha, tree: $productTree},
               cloudImage: {

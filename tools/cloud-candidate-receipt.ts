@@ -60,7 +60,7 @@ export function canonicalJson(value: unknown): string {
 
 export function validateCloudCandidateReceipt(value: unknown): Record<string, unknown> {
   if (hasForbiddenKey(value)) throw new Error("cloud_candidate_receipt_sensitive");
-  if (!exactKeys(value, RECEIPT_KEYS) || value.schemaVersion !== 1 || value.kind !== "opl_cloud_candidate") {
+  if (!exactKeys(value, RECEIPT_KEYS) || value.schemaVersion !== 2 || value.kind !== "opl_cloud_candidate") {
     throw new Error("cloud_candidate_receipt_invalid");
   }
 
@@ -77,7 +77,7 @@ export function validateCloudCandidateReceipt(value: unknown): Record<string, un
       cloudImage.platforms.length !== PLATFORMS.length ||
       !cloudImage.platforms.every((entry, index) => exactKeys(entry, PLATFORM_KEYS) &&
         entry.platform === PLATFORMS[index] && DIGEST.test(String(entry.digest || ""))) ||
-      new Set(cloudImage.platforms.map((entry) => String(entry.digest))).size !== PLATFORMS.length ||
+      new Set([cloudImage.indexDigest, ...cloudImage.platforms.map((entry) => entry.digest)]).size !== PLATFORMS.length + 1 ||
       !Array.isArray(assets) || assets.length !== PORTABLE_ASSETS.length ||
       !assets.every((asset, index) => exactKeys(asset, ASSET_KEYS) &&
         asset.name === PORTABLE_ASSETS[index] && SHA256.test(String(asset.sha256 || ""))) ||
@@ -138,7 +138,11 @@ export async function validateCandidateBundle(directory: string): Promise<Record
       if (!(await lstat(join(directory, name))).isFile()) throw new Error("cloud_candidate_bundle_invalid");
     }
 
-    const receipt = await readReceipt(join(directory, MANIFEST_NAME));
+    const manifestBytes = await readFile(join(directory, MANIFEST_NAME));
+    const receipt = validateCloudCandidateReceipt(JSON.parse(manifestBytes.toString("utf8")));
+    if (manifestBytes.toString("utf8") !== `${canonicalJson(receipt)}\n`) {
+      throw new Error("cloud_candidate_bundle_invalid");
+    }
     const assets = receipt.assets as Array<{ name: string; sha256: string }>;
     const checksumSource = await readFile(join(directory, CHECKSUM_MANIFEST_NAME), "utf8");
     if (!checksumSource.endsWith("\n")) throw new Error("cloud_candidate_bundle_invalid");
@@ -158,7 +162,7 @@ export async function validateCandidateBundle(directory: string): Promise<Record
         throw new Error("cloud_candidate_bundle_invalid");
       }
     }
-    const manifestDigest = sha256(await readFile(join(directory, MANIFEST_NAME)));
+    const manifestDigest = sha256(manifestBytes);
     if (checksums.at(-1)?.sha256 !== manifestDigest) throw new Error("cloud_candidate_bundle_invalid");
     return receipt;
   } catch {

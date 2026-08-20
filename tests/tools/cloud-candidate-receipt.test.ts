@@ -39,7 +39,7 @@ function sha256(value: string | Buffer) {
 
 function candidate(overrides: Record<string, unknown> = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "opl_cloud_candidate",
     product: {
       repository: "gaofeng21cn/one-person-lab-cloud",
@@ -107,12 +107,12 @@ test("candidate validator rejects image, platform, revision, asset, and path dri
   const assets = candidate().assets as Array<Record<string, unknown>>;
   const invalid = [
     candidate({ unexpected: true }),
-    candidate({ schemaVersion: 2 }),
+    candidate({ schemaVersion: 1 }),
     candidate({ kind: "build_cloud_source_to_tcr" }),
     candidate({ product: { ...candidate().product, sha: "A".repeat(40) } }),
     candidate({ cloudImage: { ...cloudImage, revision: "f".repeat(40) } }),
     candidate({ cloudImage: { ...cloudImage, indexRef: `${cloudRepository}:candidate` } }),
-    candidate({ cloudImage: { ...cloudImage, indexDigest: amd64Digest } }),
+    candidate({ cloudImage: { ...cloudImage, indexDigest: amd64Digest, indexRef: `${cloudRepository}@${amd64Digest}` } }),
     candidate({ cloudImage: { ...cloudImage, platforms: [platforms[0]] } }),
     candidate({ cloudImage: { ...cloudImage, platforms: [...platforms].reverse() } }),
     candidate({ cloudImage: { ...cloudImage, platforms: [{ ...platforms[0], platform: "linux/s390x" }, platforms[1]] } }),
@@ -177,6 +177,15 @@ test("candidate bundle validator rejects tampered, missing, extra, and malformed
   const sumsPath = join(malformed.directory, "SHA256SUMS");
   await writeFile(sumsPath, (await readFile(sumsPath, "utf8")).replace("  compose.yaml", " *compose.yaml"));
   await assert.rejects(validateCandidateBundle(malformed.directory), /cloud_candidate_bundle_invalid/);
+
+  const noncanonical = await createBundle();
+  const manifestPath = join(noncanonical.directory, manifestName);
+  await writeFile(manifestPath, `${JSON.stringify(noncanonical.receipt, null, 2)}\n`);
+  const noncanonicalSumsPath = join(noncanonical.directory, "SHA256SUMS");
+  const noncanonicalSums = (await readFile(noncanonicalSumsPath, "utf8")).trimEnd().split("\n");
+  noncanonicalSums[noncanonicalSums.length - 1] = `${sha256(await readFile(manifestPath))}  ${manifestName}`;
+  await writeFile(noncanonicalSumsPath, `${noncanonicalSums.join("\n")}\n`);
+  await assert.rejects(validateCandidateBundle(noncanonical.directory), /cloud_candidate_bundle_invalid/);
 });
 
 test("candidate export-env exposes only exact immutable Cloud consumer facts", async () => {
