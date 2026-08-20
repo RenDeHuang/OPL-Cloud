@@ -71,8 +71,8 @@ func TestMonthlyPricingCatalogUsesFixedPilotUSDPrices(t *testing.T) {
 	}
 	assertPackage(0, "basic")
 	assertPackage(1, "pro")
-	storagePrice := mapField(catalog, "storagePer10GbMonthly")
-	if storagePrice["priceVersion"] != pilotPriceVersion || storagePrice["currency"] != "USD" || storagePrice["usdMicros"] != int64(2_580_000) {
+	storagePrice := mapField(catalog, "storageBlockMonthly")
+	if storagePrice["priceVersion"] != pilotPriceVersion || storagePrice["currency"] != "USD" || storagePrice["blockSizeGb"] != int64(10) || storagePrice["usdMicros"] != int64(2_580_000) {
 		t.Fatalf("default storage price = %#v", storagePrice)
 	}
 	if _, ok := storagePrice["cnyCents"]; ok {
@@ -127,7 +127,7 @@ func TestPricingPreviewUsesVersionedStorageCatalogFacts(t *testing.T) {
 
 	dto := pricingCatalogDTO(alternate)
 	if mapField(dto, "storageSize")["minimumGb"] != int64(20) || mapField(dto, "storageSize")["stepGb"] != int64(20) ||
-		mapField(dto, "storagePer10GbMonthly")["usdMicros"] != int64(7_000_000) {
+		mapField(dto, "storageBlockMonthly")["blockSizeGb"] != int64(20) || mapField(dto, "storageBlockMonthly")["usdMicros"] != int64(7_000_000) {
 		t.Fatalf("catalog DTO did not use versioned storage facts: %#v", dto)
 	}
 }

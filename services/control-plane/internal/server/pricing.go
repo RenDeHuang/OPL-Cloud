@@ -76,10 +76,10 @@ func pricingCatalogDTO(catalog pricingCatalogData) map[string]any {
 	return map[string]any{
 		"priceVersion": catalog.Version, "billingUnit": catalog.BillingUnit,
 		"displayCurrency": catalog.Currency, "walletCurrency": catalog.WalletCurrency,
-		"currency":              catalog.Currency,
-		"storageSize":           map[string]any{"minimumGb": catalog.StorageBlockGB, "stepGb": catalog.StorageBlockGB},
-		"storagePer10GbMonthly": map[string]any{"priceVersion": catalog.Version, "currency": catalog.Currency, "displayCurrency": catalog.Currency, "usdMicros": catalog.StorageBlockPriceUSDMicros},
-		"packages":              packageRows(catalog),
+		"currency":            catalog.Currency,
+		"storageSize":         map[string]any{"minimumGb": catalog.StorageBlockGB, "stepGb": catalog.StorageBlockGB},
+		"storageBlockMonthly": map[string]any{"priceVersion": catalog.Version, "currency": catalog.Currency, "displayCurrency": catalog.Currency, "blockSizeGb": catalog.StorageBlockGB, "usdMicros": catalog.StorageBlockPriceUSDMicros},
+		"packages":            packageRows(catalog),
 	}
 }
 
