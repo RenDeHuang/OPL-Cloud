@@ -111,7 +111,7 @@ but they do not become another lane or SSOT writer.
 | Fabric | Control Plane, local installer, Instance | `FABRIC-PROVIDER-PROFILE-01`, `RESOURCE-BINDING-01`, `SECURITY-SCAN-REMEDIATION-04` | Remove installation-specific defaults, keep both providers behind typed adapters, and close only the provider-profile slice needed by this Release. |
 | Ledger | Control Plane | No independent current lane | Record purchase/deletion receipts and accepted price snapshots for the consuming Control Plane lanes; do not price or mutate wallet balance. |
 | Gateway / Sub2API | Control Plane | No Cloud lane or service; it is the external authority consumed by Control Plane-owned lanes | Keep Sub2API as the only wallet, Key, routing and usage owner; do not add a second Gateway. |
-| Contracts | Control Plane, Fabric, Ledger, tools | `CONTRACT-DEDUP-02` | Remove the second mutable price catalog and give the fixed Runtime port one versioned ABI owner; do not create pricing-conflict or port-specific lanes. |
+| Contracts | Control Plane, Fabric, Ledger, tools | No independent current lane | Retain pricing schemas and invariants without a second mutable catalog, and retain the fixed Runtime port through its versioned ABI owner. |
 | Release and local install | All Cloud modules, local installation owner, Instance | `LOCAL-CONTROL-SERVICES-01`, `LOCAL-WORKSPACE-INSTALL-CONTRACT-01`, `PRODUCT-RELEASE-01` | Build one multi-architecture Candidate, qualify that exact digest on both paths, and promote without rebuild. |
 | `opl-instance-medopl` | Cloud Candidate and reusable Fabric adapter | `INSTANCE-MEDOPL-01` | Own `.com`, Tencent profile/image, deployment, generic admission, post-activation readback, executed rollback and receipts. Completed provider-acceptance migration remains folded here. |
 | Per owning module / developer tooling | Real callers only | `MODULE-COHESION-01`, `SIMPLIFY-ACTIONS-REUSE-01`, `SIMPLIFY-CLI-ARGS-01`, `SIMPLIFY-STATIC-ASSETS-01` | Proceed only in owner-scoped slices; none is a blanket Release gate. |
@@ -133,7 +133,7 @@ For this specific dual-path Release, the blocking set is the four P0 rows plus
 the release slices of `OPS-ACCOUNT-IDENTITY-READBACK-01`,
 `LOCAL-CONTROL-SERVICES-01`,
 `LOCAL-WORKSPACE-INSTALL-CONTRACT-01`, `FABRIC-PROVIDER-PROFILE-01`,
-`CONTRACT-DEDUP-02`, and `SIMPLIFY-CP-FACADE-01`. The remaining P1/P2/P3 rows do
+and `SIMPLIFY-CP-FACADE-01`. The remaining P1/P2/P3 rows do
 not become Release gates unless fresh owner evidence proves they affect the
 exact Candidate.
 
@@ -150,8 +150,6 @@ handled by its existing lane; resolved history belongs in Git history or
 | Renewal implementation is unreachable from current customer commands | Still open; finish or demote the feature | `WORKSPACE-RENEWAL-REACTIVATION-01` |
 | Target Suspend/Resume differs from operator Launch Resume | Still open; implement a distinct lifecycle or move it later | `WORKSPACE-LIFECYCLE-CLOSURE-01` |
 | Candidate qualification and Release publication order differ from the current workflows | Build a portable multi-architecture Candidate and promote its exact bytes after both receipts | `PRODUCT-RELEASE-01` |
-| Control Plane price code and the pricing JSON both carry exact current amounts | Keep exact prices in one versioned Control Plane runtime catalog; contracts retain schema/invariants | `CONTRACT-DEDUP-02` |
-| Port `3000` is a fixed Runtime ABI but a current environment variable implies arbitrary configurability | Give the ABI one versioned cross-module owner and remove the false configuration surface | `CONTRACT-DEDUP-02` |
 | Cloud still provides medopl domain/image fallbacks although installations own those inputs | Require explicit profile/domain/image inputs and fail closed | `FABRIC-PROVIDER-PROFILE-01` |
 | Acceptance B is retired target intent but source/config/persisted projections still consume it | Prove zero external consumer, zero configured environment and zero non-terminal persisted dependency, then hard-cut it | `SIMPLIFY-CP-FACADE-01` |
 
@@ -200,15 +198,6 @@ Closed finding evidence and the current alert inventory belong in
 | `SECURITY-GITHUB-AGENT-PILOT` | `candidate` | `P3` | GitHub `Agents` is available as a Copilot cloud-agent task/PR surface, but this repository already has a canonical Codex lifecycle and no demonstrated need for a second autonomous writer or scheduled automation | Development workflow only; no release, deployment, Secrets, production, product-Agent, or domain-agent authority | Adopt only after a narrow documentation/test-maintenance pilot proves unique ownership, PR-only output, least tools, branch-protection compliance, bounded cost, and no duplicate lifecycle; otherwise retain no repository agent profile or automation |
 | `SECURITY-SECRET-VALIDITY` | `external_owner` | `P2` | Secret scanning and push protection are enabled, but the repository setting continues to report `secret_scanning_validity_checks=disabled` after a write attempt | GitHub feature/plan availability and repository owner settings | GitHub reports validity checks enabled, or owner-authoritative documentation confirms the feature is unavailable for this repository; until then no completion claim is made |
 | `SECURITY-SCAN-REMEDIATION-04` | `in_review` | `P1` | One current low-severity Fabric resource-exhaustion finding remains open: authenticated heartbeat, Runtime status and operation-list requests use unbounded shared history. A bounded lookup/heartbeat/pagination candidate is not yet canonical or re-scanned | Fabric owns operation persistence and HTTP pagination; Control Plane/runner transport and lease authority remain unchanged; production callers consume the bounded Fabric contract without adding a second history owner | Fresh canonical `main` readback plus a sealed scan no longer reports `resource-exhaustion.fabric-operation-history`; focused memory and PostgreSQL store tests prove point lookup, duplicate fail-closed behavior, bounded heartbeat cardinality, Runtime identity bounds, and cursor pagination; caller tests prove complete multi-page readback and repeated-cursor rejection. Platform, Instance adoption, and production claims remain separately owner-authoritative |
-
-## Phased Contract Slimdown
-
-Completed contract-retirement evidence belongs in [status.md](./status.md). The
-remaining open contract phase is:
-
-| ID | State | Priority | Phase and scope | Safety retained | Acceptance |
-| --- | --- | --- | --- | --- | --- |
-| `CONTRACT-DEDUP-02` | `next` | `P1` | Exact current price values are duplicated between Control Plane runtime code and `opl-cloud-pricing-contract.json`. Runtime port `3000` is repeated across Control Plane/Fabric and `OPL_WORKSPACE_WEBUI_PORT` implies arbitrary configuration although the current implementation accepts only `3000` | public APIs, accepted price snapshots, Runtime compatibility, security, integrity, permissions, irreversible side effects | Control Plane has one versioned runtime price catalog and accepted Workspaces retain immutable snapshots; cross-module contracts describe price schema/invariants without a second mutable catalog. One versioned Workspace Runtime ABI contract owns port `3000`; Control Plane proxy and both Fabric adapters consume or validate that fact, the false environment option is removed, and focused tests enforce the ABI without a new lane |
 
 ## Simplification Backlog
 
