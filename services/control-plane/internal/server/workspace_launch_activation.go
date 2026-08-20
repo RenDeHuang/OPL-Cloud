@@ -47,18 +47,9 @@ func workspaceLaunchActivationRow(operation workspaceLaunchReconcileOperation) (
 		return nil, errInvalidWorkspaceLaunchOperation
 	}
 	resourceBillingEnabled := operation.raw["resourceBillingEnabled"] == nil || operation.boolFact("resourceBillingEnabled")
-	computePrice, storagePrice := int64(0), int64(0)
-	if resourceBillingEnabled {
-		quote, err := workspacePricingPreview(defaultPricingCatalog(), map[string]any{"packageId": operation.stringFact("packageId"), "sizeGb": operation.intFact("sizeGb")})
-		if err != nil {
-			return nil, err
-		}
-		var computeOK, storageOK bool
-		computePrice, computeOK = requiredPositiveInteger(mapField(quote, "compute"), "chargeUsdMicros")
-		storagePrice, storageOK = requiredPositiveInteger(mapField(quote, "storage"), "chargeUsdMicros")
-		if !computeOK || !storageOK {
-			return nil, errInvalidWorkspaceLaunchOperation
-		}
+	computePrice, storagePrice, err := workspaceLaunchAcceptedPriceComponents(operation)
+	if err != nil {
+		return nil, err
 	}
 	row := workspaceProjectionRow(domain.WorkspaceProjection{
 		ID: operation.stringFact("workspaceId"), AccountID: operation.stringFact("accountId"), OwnerID: operation.stringFact("ownerUserId"),
@@ -156,17 +147,12 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) mutateWorkspaceLaunchReceipt(c
 func workspaceLaunchPurchaseReceiptInput(operation workspaceLaunchReconcileOperation) (clients.ReceiptInput, error) {
 	execution := workspaceLaunchCanonicalReceiptExecution(operation)
 	owner := map[string]any{"accountId": operation.stringFact("accountId"), "workspaceId": operation.stringFact("workspaceId"), "ownerUserId": operation.stringFact("ownerUserId")}
-	if operation.raw["resourceBillingEnabled"] != nil && !operation.boolFact("resourceBillingEnabled") {
-		return clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "control_plane", AccountID: operation.stringFact("accountId"), WorkspaceID: operation.stringFact("workspaceId"), RequestID: operation.ID, Execution: execution, Owner: owner}, nil
-	}
-	quote, err := workspacePricingPreview(defaultPricingCatalog(), map[string]any{"packageId": operation.stringFact("packageId"), "sizeGb": operation.intFact("sizeGb")})
+	computePrice, storagePrice, err := workspaceLaunchAcceptedPriceComponents(operation)
 	if err != nil {
 		return clients.ReceiptInput{}, err
 	}
-	computePrice, computeOK := requiredPositiveInteger(mapField(quote, "compute"), "chargeUsdMicros")
-	storagePrice, storageOK := requiredPositiveInteger(mapField(quote, "storage"), "chargeUsdMicros")
-	if !computeOK || !storageOK {
-		return clients.ReceiptInput{}, errors.New("workspace_launch_pricing_snapshot_invalid")
+	if operation.raw["resourceBillingEnabled"] != nil && !operation.boolFact("resourceBillingEnabled") {
+		return clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "control_plane", AccountID: operation.stringFact("accountId"), WorkspaceID: operation.stringFact("workspaceId"), RequestID: operation.ID, Execution: execution, Owner: owner}, nil
 	}
 	return clients.ReceiptInput{
 		Type: "billing.workspace_purchased.v1", Status: "completed", Surface: "control_plane", AccountID: operation.stringFact("accountId"),
@@ -180,6 +166,31 @@ func workspaceLaunchPurchaseReceiptInput(operation workspaceLaunchReconcileOpera
 				"storage": map[string]any{"resourceType": "storage", "resourceId": operation.stringFact("storageId"), "sizeGb": int64(operation.intFact("sizeGb")), "chargeUsdMicros": storagePrice}}},
 		Owner: owner,
 	}, nil
+}
+
+func workspaceLaunchAcceptedPriceComponents(operation workspaceLaunchReconcileOperation) (int64, int64, error) {
+	catalog, found := pricingCatalogByVersion(operation.stringFact("priceVersion"))
+	if !found {
+		return 0, 0, errors.New("workspace_launch_price_version_unknown")
+	}
+	resourceBillingEnabled := operation.raw["resourceBillingEnabled"] == nil || operation.boolFact("resourceBillingEnabled")
+	if !resourceBillingEnabled {
+		if operation.int64Fact("totalChargeUsdMicros") != 0 {
+			return 0, 0, errors.New("workspace_launch_pricing_snapshot_invalid")
+		}
+		return 0, 0, nil
+	}
+	quote, err := workspacePricingPreview(catalog, map[string]any{"packageId": operation.stringFact("packageId"), "sizeGb": operation.intFact("sizeGb")})
+	if err != nil {
+		return 0, 0, err
+	}
+	computePrice, computeOK := requiredPositiveInteger(mapField(quote, "compute"), "chargeUsdMicros")
+	storagePrice, storageOK := requiredPositiveInteger(mapField(quote, "storage"), "chargeUsdMicros")
+	totalPrice, totalOK := requiredPositiveInteger(quote, "totalChargeUsdMicros")
+	if !computeOK || !storageOK || !totalOK || totalPrice != operation.int64Fact("totalChargeUsdMicros") {
+		return 0, 0, errors.New("workspace_launch_pricing_snapshot_invalid")
+	}
+	return computePrice, storagePrice, nil
 }
 
 func workspaceLaunchCanonicalReceiptExecution(operation workspaceLaunchReconcileOperation) map[string]any {

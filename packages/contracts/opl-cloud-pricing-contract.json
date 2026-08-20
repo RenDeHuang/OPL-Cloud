@@ -1,15 +1,16 @@
 {
   "schemaVersion": 10,
   "owner": "OPL Control Plane",
-  "purpose": "Cross-module pricing schemas and invariants for OPL Workspace customer charges. Current catalog versions, packages, prices, and provider cost values belong only to the versioned Control Plane runtime catalog.",
+  "purpose": "Cross-module customer pricing schemas and invariants for OPL Workspace charges. Current customer catalog versions, packages, and prices belong only to the versioned Control Plane runtime catalog; provider-cost evidence belongs to Fabric.",
   "state": "current",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Remove only when pricing no longer crosses module boundaries, or replace with a newer current contract for the same pricing schema and accepted-snapshot invariants."
   },
   "runtimeCatalog": {
-    "authority": "control_plane_runtime",
+    "authority": "control_plane_customer_pricing_runtime",
     "versioning": "every_catalog_revision_has_a_non_empty_priceVersion",
+    "acceptedVersionResolution": "explicit_exact_lookup_unknown_version_fails_closed",
     "currentValues": "not_stored_in_this_contract"
   },
   "machineBoundary": "Customer charges use non-negative integer USD micros from the accepted Control Plane quote. Provider cost evidence and exchange rates never derive, alter, or appear as a customer charge.",
@@ -42,6 +43,7 @@
     "capacityAuthority": "live_fabric_preflight_immediately_before_first_debit"
   },
   "providerCostEvidence": {
+    "authority": "fabric",
     "visibility": "internal_reconciliation_only",
     "customerChargeDerivation": "forbidden",
     "customerDto": "forbidden"
