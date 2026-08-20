@@ -20,6 +20,7 @@ const (
 	tencentComputeDestroyPhaseDispatchAuthorized = "dispatch_authorized_uncertain"
 	tencentComputeDestroyPhaseAttempted          = "delete_attempted_uncertain"
 	tencentComputeDestroyPhaseAbsent             = "cloud_absence_confirmed"
+	tencentComputeDestroyMutationCountKey        = "deleteMutationCount"
 )
 
 func (p *TencentProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
@@ -828,7 +829,14 @@ func (p *TencentProvider) DestroyComputeAllocation(ctx context.Context, allocati
 		expectedInstanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
 		if !response.OK {
 			if !validTencentComputeDestroyAttemptResponse(response, allocation) {
-				return allocation, provisionerError(response)
+				if !validTencentComputeDestroyMutationEvidence(response, allocation) {
+					return allocation, provisionerError(response)
+				}
+				attempted := cloneComputeAllocation(allocation)
+				attempted.ProviderData[tencentComputeDestroyMutationCountKey] = strconv.Itoa(response.MutationCount)
+				attempted.ProviderData[tencentComputeDestroyPhaseKey] = tencentComputeDestroyPhaseAttempted
+				attempted.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, attempted.ProviderRequestID)
+				return attempted, provisionerError(response)
 			}
 			attempted := cloneComputeAllocation(allocation)
 			for key, value := range response.ProviderData {
@@ -921,6 +929,30 @@ func validTencentComputeDestroyAttemptResponse(response provisionerResponse, exp
 		strings.TrimSpace(response.ProviderData["describeNodePoolRequestId"]) != "" &&
 		response.ProviderData["machineType"] == expected.ProviderData["machineType"] && response.ProviderData["cvmApplicable"] == expected.ProviderData["cvmApplicable"] &&
 		validTencentComputeDeleteResponseProviderData(response.ProviderData, expected.ProviderData)
+}
+
+func validTencentComputeDestroyMutationEvidence(response provisionerResponse, expected ComputeAllocation) bool {
+	if response.MutationCount != 1 || !validTencentComputeDestroyStableIdentity(expected) {
+		return false
+	}
+	if response.InstanceID != "" && response.InstanceID != firstNonEmpty(expected.InstanceID, expected.CVMInstanceID) {
+		return false
+	}
+	if response.NodeName != "" && response.NodeName != expected.NodeName {
+		return false
+	}
+	if response.NodePoolID != "" && response.NodePoolID != expected.NodePoolID {
+		return false
+	}
+	for key, value := range response.ProviderData {
+		if isTencentComputeDeleteEvidenceKey(key) {
+			continue
+		}
+		if expectedValue, exists := expected.ProviderData[key]; exists && expectedValue != value {
+			return false
+		}
+	}
+	return true
 }
 
 func validTencentComputeDeleteResponseProviderData(response, expected map[string]string) bool {
@@ -1058,9 +1090,14 @@ func validTencentComputeAbsenceEvidence(allocation ComputeAllocation) bool {
 func validTencentComputeDestroyAttemptEvidence(allocation ComputeAllocation) bool {
 	if !validTencentComputeDestroyStableIdentity(allocation) || allocation.Status != "destroying" || allocation.ProviderData == nil ||
 		allocation.ProviderData[tencentComputeDestroyPhaseKey] != tencentComputeDestroyPhaseAttempted ||
-		allocation.ProviderData["deleteMethod"] != "DeleteClusterMachines" || allocation.ProviderData["scaleDown"] != "true" || allocation.ProviderData["deleteMode"] != "terminate" ||
-		strings.TrimSpace(allocation.ProviderData["describeNodePoolRequestId"]) == "" || strings.TrimSpace(allocation.NodePoolID) == "" ||
-		strings.TrimSpace(allocation.MachineName) == "" || strings.TrimSpace(allocation.NodeName) == "" {
+		strings.TrimSpace(allocation.NodePoolID) == "" || strings.TrimSpace(allocation.MachineName) == "" || strings.TrimSpace(allocation.NodeName) == "" {
+		return false
+	}
+	if allocation.ProviderData[tencentComputeDestroyMutationCountKey] == "1" {
+		return true
+	}
+	if allocation.ProviderData["deleteMethod"] != "DeleteClusterMachines" || allocation.ProviderData["scaleDown"] != "true" || allocation.ProviderData["deleteMode"] != "terminate" ||
+		strings.TrimSpace(allocation.ProviderData["describeNodePoolRequestId"]) == "" {
 		return false
 	}
 	switch allocation.ProviderData["machineType"] {
@@ -1099,7 +1136,7 @@ func isTencentComputeDeleteEvidenceKey(key string) bool {
 	switch key {
 	case "machinePresent", "tkeStatus", "cvmStatus", "deleteMethod", "scaleDown", "deleteMode",
 		"describeNodePoolRequestId", "modifySelfProvisioningReqId", "verifyMachineDeletedReqId", "describeCvmRequestId",
-		tencentComputeDestroyPhaseKey, "syncResult", "describeClusterMachinesReq":
+		tencentComputeDestroyPhaseKey, tencentComputeDestroyMutationCountKey, "syncResult", "describeClusterMachinesReq":
 		return true
 	default:
 		return false
