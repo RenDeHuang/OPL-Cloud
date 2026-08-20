@@ -33,9 +33,11 @@ test("portable Local-Docker assets configure from a standalone download director
   assert.match(environmentSource, /^OPL_SUB2API_ADMIN_PASSWORD=<replace-with-admin-password>$/m);
   assert.match(
     environmentSource,
-    /^OPL_WORKSPACE_IMAGE=ghcr\.io\/gaofeng21cn\/one-person-lab-webui@sha256:caff36778d8e39ca23682445d8734d6c335ed01e337e9e86dbba9e56657db501$/m
+    /^OPL_WORKSPACE_IMAGE=<replace-with-workspace-repository@sha256:64-hex-digest>$/m
   );
-  assert.match(environmentSource, /current stable Workspace release is linux\/amd64 only/);
+  assert.match(environmentSource, /repository@sha256 reference selected for this installation/);
+  assert.doesNotMatch(environmentSource, /ghcr\.io\/gaofeng21cn\/one-person-lab-webui@sha256:/);
+  assert.doesNotMatch(environmentSource, /current stable Workspace release/);
   assert.match(environmentSource, /^OPL_DOCKER_SOCKET_PATH=\/var\/run\/docker\.sock$/m);
   assert.match(environmentSource, /^OPL_POSTGRES_DATA_ROOT=\/absolute\/path\/to\/opl-cloud-data\/postgres$/m);
   assert.match(environmentSource, /^OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER=opl-cloud-control-plane$/m);

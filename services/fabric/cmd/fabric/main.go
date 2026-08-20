@@ -48,9 +48,9 @@ func main() {
 }
 
 func selectedProvider(getenv func(string) string) (fabric.Provider, error) {
-	name := getenv("OPL_FABRIC_PROVIDER")
+	name := strings.TrimSpace(getenv("OPL_FABRIC_PROVIDER"))
 	if name == "" {
-		name = "local-docker"
+		return nil, errors.New("OPL_FABRIC_PROVIDER is required")
 	}
 	switch name {
 	case "local-docker":

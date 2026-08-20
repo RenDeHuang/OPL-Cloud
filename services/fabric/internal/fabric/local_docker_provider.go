@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-const defaultLocalDockerWorkspaceImageRepository = "ghcr.io/gaofeng21cn/one-person-lab-webui"
 const localDockerProviderProfileEnv = "OPL_FABRIC_LOCAL_DOCKER_PROVIDER_PROFILE_JSON"
 
 type dockerRunner interface {
@@ -95,7 +94,7 @@ type LocalDockerProvider struct {
 }
 
 func NewLocalDockerProvider() *LocalDockerProvider {
-	trustedSources := []string{defaultLocalDockerWorkspaceImageRepository}
+	trustedSources := []string{}
 	if raw, configured := os.LookupEnv("OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES"); configured {
 		trustedSources = strings.Split(raw, ",")
 	}
@@ -117,7 +116,10 @@ func newLocalDockerProvider(config LocalDockerProviderConfig, runner dockerRunne
 	}
 	trustedSources := config.TrustedWorkspaceImageSources
 	if trustedSources == nil {
-		trustedSources = []string{defaultLocalDockerWorkspaceImageRepository}
+		trustedSources = []string{}
+		if raw, configured := os.LookupEnv("OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES"); configured {
+			trustedSources = strings.Split(raw, ",")
+		}
 	}
 	trustedRepositories, trustedReferences := localDockerWorkspaceImageTrust(trustedSources)
 	secretRoot := strings.TrimSpace(config.GatewaySecretRoot)

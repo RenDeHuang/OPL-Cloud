@@ -117,6 +117,7 @@ func TestLedgerCapabilityKeyIsRequiredAndSeparatedInProduction(t *testing.T) {
 func TestSub2APIConfigRequiredAndBoundedInProduction(t *testing.T) {
 	values := map[string]string{
 		"NODE_ENV":                       "production",
+		"OPL_DEPLOYMENT_MODE":            "platform_owned",
 		"OPL_SUB2API_BASE_URL":           "https://gflabtoken.cn",
 		"OPL_SUB2API_ADMIN_EMAIL":        "opl-control-plane@example.test",
 		"OPL_SUB2API_ADMIN_PASSWORD":     "secret",
@@ -144,5 +145,16 @@ func TestSub2APIConfigRequiredAndBoundedInProduction(t *testing.T) {
 				t.Fatalf("production config should reject missing %s", key)
 			}
 		})
+	}
+}
+
+func TestSub2APIConfigRequiresExplicitDeploymentMode(t *testing.T) {
+	values := map[string]string{
+		"OPL_SUB2API_BASE_URL":       "https://gflabtoken.cn",
+		"OPL_SUB2API_ADMIN_EMAIL":    "opl-control-plane@example.test",
+		"OPL_SUB2API_ADMIN_PASSWORD": "secret",
+	}
+	if _, err := sub2APIConfigFromEnv(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("missing OPL_DEPLOYMENT_MODE was accepted")
 	}
 }

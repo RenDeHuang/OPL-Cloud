@@ -77,11 +77,11 @@ initial implementation may select one primary adapter per instance while every
 Workspace persists its exact provider binding so later instances can expose
 more than one provider without changing Workspace identity.
 
-`local-docker` is now implemented as the default Core adapter. Fabric startup
-selects it even when `NODE_ENV=production`; `tencent-tke` is available only when
-an instance explicitly sets `OPL_FABRIC_PROVIDER=tencent-tke`. Both adapters pay
-the same provider-neutral Fabric port, while provider writes and authoritative
-readback stay inside the selected adapter. The real Docker integration gate
+`local-docker` is now implemented as a Core adapter, but Fabric startup requires
+the installer to provide `OPL_FABRIC_PROVIDER`; a missing value never selects an
+adapter. `tencent-tke` is available when an instance explicitly selects it. Both
+adapters pay the same provider-neutral Fabric port, while provider writes and
+authoritative readback stay inside the selected adapter. The real Docker integration gate
 exercises compute, storage, attachment, Secret binding, and Runtime, but this
 Fabric evidence alone does not prove the complete Console-to-Workspace path.
 Current facts belong to [status](status.md), and the remaining end-to-end gap

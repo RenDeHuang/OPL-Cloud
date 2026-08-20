@@ -436,7 +436,7 @@ func computePoolsFromFabricCatalog(catalog clients.FabricCatalog) []any {
 }
 
 func workspaceDomain() string {
-	return strings.Trim(strings.TrimPrefix(strings.TrimPrefix(firstNonEmpty(os.Getenv("OPL_WORKSPACE_DOMAIN"), "workspace.medopl.cn"), "https://"), "http://"), "/")
+	return strings.Trim(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(os.Getenv("OPL_WORKSPACE_DOMAIN")), "https://"), "http://"), "/")
 }
 
 func mustJSON(value any) []byte {

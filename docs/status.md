@@ -258,8 +258,10 @@ Sub2API management origin and credentials are never exposed to the browser.
   authority fixture. The Ledger `sslmode=disable` exception is limited to an
   explicit non-production, loopback `OPL_POSTGRES_TESTS=1` gate; it is test
   plumbing, not production evidence.
-- Fabric defaults to a real `local-docker` adapter and keeps Tencent/TKE behind
-  explicit instance selection. CI exercises local compute, storage, attachment,
+- Fabric requires an explicit installer-selected provider and keeps
+  `local-docker` and Tencent/TKE behind the same provider-neutral port. Missing
+  provider, domain, namespace, provisioner path, or trusted Workspace image
+  inputs fail closed before adapter access. CI exercises local compute, storage, attachment,
   Secret binding, Runtime, and authoritative readback. The generic provider-facts
   Service path now performs only identity validation, adapter delegation, error
   projection, and `LastReadAt` stamping. Tencent `InstanceType`, `providerData`,

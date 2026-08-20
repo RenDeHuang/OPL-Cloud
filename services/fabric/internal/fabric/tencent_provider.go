@@ -28,10 +28,8 @@ import (
 )
 
 const (
-	defaultNamespace                 = "opl-cloud"
 	gatewayService                   = "opl-cloud-control-plane"
 	webuiUsername                    = "opl"
-	workspaceImageRepository         = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
 	tencentProviderProfileEnv        = "OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON"
 	tencentProviderRegionEnv         = "OPL_TENCENT_REGION"
 	tencentWorkspaceRuntimeWebUIPort = 3000
@@ -88,11 +86,50 @@ type TencentProvider struct {
 	region          string
 	storageDiskType string
 	profileErr      error
+	workspaceImage  string
+	workspaceDomain string
+	namespace       string
+	provisionerPath string
+	installationErr error
+}
+
+func normalizeWorkspaceDomain(value string) string {
+	return strings.Trim(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(value), "https://"), "http://"), "/")
+}
+
+func tencentInstallationConfigError(domain, image, namespaceValue, provisionerPath string) error {
+	missing := make([]string, 0, 4)
+	if domain == "" {
+		missing = append(missing, "OPL_WORKSPACE_DOMAIN")
+	}
+	if !validWorkspaceRuntimeImageIdentity(image) {
+		missing = append(missing, "OPL_WORKSPACE_IMAGE (immutable repository@sha256 reference)")
+	}
+	if namespaceValue == "" {
+		missing = append(missing, "OPL_K8S_NAMESPACE")
+	}
+	if provisionerPath == "" {
+		missing = append(missing, "OPL_TENCENT_PROVISIONER_BIN")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required Tencent installation configuration: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func (p *TencentProvider) validateInstallationConfig() error {
+	if p == nil {
+		return fmt.Errorf("tencent_provider_unavailable")
+	}
+	return p.installationErr
 }
 
 func (p *TencentProvider) callKubectl(ctx context.Context, args []string, stdin []byte, target protectedresource.Target) ([]byte, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("kubectl_action_required")
+	}
+	if err := p.validateInstallationConfig(); err != nil {
+		return nil, err
 	}
 	switch args[0] {
 	case "get", "wait", "logs", "describe", "version":
@@ -117,11 +154,28 @@ type monthlyPreflightEvaluation struct {
 func NewTencentProvider() *TencentProvider {
 	raw := []byte(strings.TrimSpace(os.Getenv(tencentProviderProfileEnv)))
 	profile, plans, profileErr := decodeTencentProviderProfile(raw)
-	return &TencentProvider{
-		provision: executeProvisioner, kubectl: executeKubectl, convergenceWait: boundedClaimReadbackWait,
-		profile: profile, plans: plans, region: strings.TrimSpace(os.Getenv(tencentProviderRegionEnv)),
+	workspaceImage := strings.TrimSpace(os.Getenv("OPL_WORKSPACE_IMAGE"))
+	workspaceDomain := normalizeWorkspaceDomain(os.Getenv("OPL_WORKSPACE_DOMAIN"))
+	namespaceValue := strings.TrimSpace(os.Getenv("OPL_K8S_NAMESPACE"))
+	provisionerPath := strings.TrimSpace(os.Getenv("OPL_TENCENT_PROVISIONER_BIN"))
+	provider := &TencentProvider{
+		convergenceWait: boundedClaimReadbackWait,
+		profile:         profile, plans: plans, region: strings.TrimSpace(os.Getenv(tencentProviderRegionEnv)),
 		storageDiskType: strings.TrimSpace(os.Getenv("TENCENT_CBS_DISK_TYPE")), profileErr: profileErr,
+		workspaceImage: workspaceImage, workspaceDomain: workspaceDomain, namespace: namespaceValue,
+		provisionerPath: provisionerPath,
+		installationErr: tencentInstallationConfigError(workspaceDomain, workspaceImage, namespaceValue, provisionerPath),
 	}
+	provider.provision = func(ctx context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if err := provider.validateInstallationConfig(); err != nil {
+			return provisionerResponse{}, err
+		}
+		return executeProvisionerAt(ctx, provisionerPath, request)
+	}
+	provider.kubectl = func(ctx context.Context, args []string, stdin []byte) ([]byte, error) {
+		return executeKubectlAt(ctx, namespaceValue, args, stdin)
+	}
+	return provider
 }
 
 func (p *TencentProvider) Descriptor() ProviderDescriptor {
@@ -132,10 +186,15 @@ func (p *TencentProvider) Descriptor() ProviderDescriptor {
 			SchemaVersion: 1, Owner: "OPL Fabric",
 			WorkspacePackages: []WorkspacePackage{},
 			StorageClasses:    []StorageClass{{ID: "workspace-cbs", StorageClassName: "cbs", Provider: "tencent-tke", Available: true}},
-			IngressDomains:    []IngressDomain{{ID: "workspace", Host: "workspace.medopl.cn", PathPattern: "/w/<workspaceId>/", Available: true}},
+			IngressDomains: []IngressDomain{{ID: "workspace", Host: func() string {
+				if p == nil {
+					return ""
+				}
+				return p.workspaceDomain
+			}(), PathPattern: "/w/<workspaceId>/", Available: p != nil && p.workspaceDomain != ""}},
 		},
 	}
-	if p == nil || p.profileErr != nil {
+	if p == nil || p.profileErr != nil || p.installationErr != nil {
 		return descriptor
 	}
 	packages := make([]WorkspacePackage, 0, len(p.profile.Packages))
@@ -152,7 +211,7 @@ func (p *TencentProvider) Descriptor() ProviderDescriptor {
 }
 
 func (p *TencentProvider) ResolveWorkspacePlan(_ context.Context, input WorkspaceLaunchPlanInput) (json.RawMessage, error) {
-	if p == nil || p.profileErr != nil || !validTencentProviderRegion(p.region) {
+	if p == nil || p.profileErr != nil || p.installationErr != nil || !validTencentProviderRegion(p.region) {
 		return nil, ErrProviderPlanUnavailable
 	}
 	item, ok := p.plans[input.PackageID]
@@ -286,8 +345,8 @@ func validateTencentComputeAllocationIdentity(allocation ComputeAllocation, prep
 	return nil
 }
 
-func (*TencentProvider) ValidateWorkspaceImageReference(value string) bool {
-	return validWorkspaceRuntimeImageIdentity(value)
+func (p *TencentProvider) ValidateWorkspaceImageReference(value string) bool {
+	return p != nil && p.installationErr == nil && p.workspaceImage != "" && validWorkspaceRuntimeImageIdentity(value)
 }
 
 func boundedClaimReadbackWait(ctx context.Context, attempt int) error {
@@ -1197,7 +1256,18 @@ func workspaceResources(plan plan) map[string]any {
 }
 
 func executeProvisioner(ctx context.Context, request provisionerRequest) (provisionerResponse, error) {
-	path := firstNonEmpty(os.Getenv("OPL_TENCENT_PROVISIONER_BIN"), "/usr/local/bin/opl-tencent-provisioner")
+	path := strings.TrimSpace(os.Getenv("OPL_TENCENT_PROVISIONER_BIN"))
+	if path == "" {
+		return provisionerResponse{}, fmt.Errorf("OPL_TENCENT_PROVISIONER_BIN is required")
+	}
+	return executeProvisionerAt(ctx, path, request)
+}
+
+func executeProvisionerAt(ctx context.Context, path string, request provisionerRequest) (provisionerResponse, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return provisionerResponse{}, fmt.Errorf("OPL_TENCENT_PROVISIONER_BIN is required")
+	}
 	body, _ := json.Marshal(request)
 	cmd := exec.CommandContext(ctx, path)
 	cmd.Stdin = bytes.NewReader(body)
@@ -1211,12 +1281,24 @@ func executeProvisioner(ctx context.Context, request provisionerRequest) (provis
 }
 
 func executeKubectl(ctx context.Context, args []string, stdin []byte) ([]byte, error) {
+	namespaceValue := namespace()
+	if namespaceValue == "" {
+		return nil, fmt.Errorf("OPL_K8S_NAMESPACE is required")
+	}
+	return executeKubectlAt(ctx, namespaceValue, args, stdin)
+}
+
+func executeKubectlAt(ctx context.Context, namespaceValue string, args []string, stdin []byte) ([]byte, error) {
+	namespaceValue = strings.TrimSpace(namespaceValue)
+	if namespaceValue == "" {
+		return nil, fmt.Errorf("OPL_K8S_NAMESPACE is required")
+	}
 	kubeconfig := os.Getenv("TENCENT_DEPLOY_KUBECONFIG_REF")
 	base := []string{}
 	if kubeconfig != "" {
 		base = append(base, "--kubeconfig", kubeconfig)
 	}
-	base = append(base, "--namespace", namespace())
+	base = append(base, "--namespace", namespaceValue)
 	base = append(base, args...)
 	cmd := exec.CommandContext(ctx, "kubectl", base...)
 	if stdin != nil {
@@ -1255,11 +1337,11 @@ func mustJSON(value any) []byte {
 }
 
 func namespace() string {
-	return firstNonEmpty(os.Getenv("OPL_K8S_NAMESPACE"), defaultNamespace)
+	return strings.TrimSpace(os.Getenv("OPL_K8S_NAMESPACE"))
 }
 
 func workspaceDomain() string {
-	return strings.Trim(strings.TrimPrefix(strings.TrimPrefix(firstNonEmpty(os.Getenv("OPL_WORKSPACE_DOMAIN"), "workspace.medopl.cn"), "https://"), "http://"), "/")
+	return normalizeWorkspaceDomain(os.Getenv("OPL_WORKSPACE_DOMAIN"))
 }
 
 func b64(value string) string {
