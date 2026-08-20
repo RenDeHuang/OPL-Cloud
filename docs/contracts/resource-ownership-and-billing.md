@@ -35,8 +35,8 @@ The two are not interchangeable.
 | Concern | Owner | Rule |
 | --- | --- | --- |
 | Spendable account balance | OPL Gateway | The only mutable wallet balance |
-| Account-total billing view and policy | OPL Console | Projects Gateway balance, AI usage, Workspace charges, refunds, and receipts without storing a second balance |
-| Workspace monthly charge | OPL Console | One settlement operation per Workspace and billing period, debited from the Gateway balance |
+| Account-total billing projection and policy | OPL Control Plane | Owns the versioned price catalog and projects Gateway balance, AI usage, Workspace charges, refunds, and receipts without storing a second balance; Console presents its DTOs |
+| Workspace monthly charge | OPL Control Plane | Owns one settlement operation per Workspace and billing period, debited from the Gateway balance; Console does not initiate a second settlement path |
 | Provider/resource cost facts | OPL Fabric | Emits resource and provider facts; owns no wallet and keeps no balance |
 | Charge and reconciliation evidence | OPL Ledger | Append-only receipts; never a spendable wallet |
 

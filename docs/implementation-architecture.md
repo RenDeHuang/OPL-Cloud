@@ -181,12 +181,14 @@ implementation repos. `opl-cloud` is retained only as the short package, image,
 binary, service, namespace, environment-variable and runner identifier.
 
 `opl-instance-medopl` owns one concrete installation: domain names, provider
-profile, region and resource ids, enabled plans and prices, image pins, secret
-references, promotion policy, and deployment receipts. Instance repositories
-consume exact `one-person-lab-cloud` candidates for pre-publication
-qualification and immutable Releases after publication. Their internal
-artifacts may use the `opl-cloud` identifier, but they never copy runtime code,
-product contracts, or spendable-balance state.
+profile, region and resource ids, the enabled subset of Cloud-defined plans,
+image pins, secret references, promotion policy, and deployment receipts. The
+current fixed customer prices and `priceVersion` are implemented by the Cloud
+Control Plane catalog; an Instance does not override them. Instance repositories
+consume exact `one-person-lab-cloud` candidates for pre-publication qualification
+and immutable Releases after publication. Their internal artifacts may use the
+`opl-cloud` identifier, but they never copy runtime code, product contracts, or
+spendable-balance state.
 
 The Instance boundary also owns medopl-specific production, acceptance,
 recovery, canary, rollback, and approval/evidence tooling. Those sources and
@@ -536,11 +538,30 @@ The current medopl Tencent/TKE extension data path is:
 
 ```text
 Browser
-  -> workspace.medopl.cn shared CLB / TKE Ingress
+  -> configured Instance Workspace domain (currently workspace.medopl.com)
+  -> shared CLB / TKE Ingress
   -> Control Plane reverse proxy
   -> Fabric-created per-Workspace ClusterIP Service :3000
   -> Workspace runtime
 ```
+
+The current Workspace Runtime compatibility boundary fixes the internal WebUI
+port at `3000`; Control Plane proxy routing and both Fabric adapters assume that
+same port. `OPL_WORKSPACE_WEBUI_PORT` is present as an environment surface, but
+current validation accepts only `3000`, so it is not a real Instance option.
+The open dedup work is to give this cross-module ABI one versioned contract owner
+and remove the false configuration surface without making the port an
+installation default or a separate feature lane.
+
+The Instance currently injects the `.com` domain, but Cloud source still falls
+back to `workspace.medopl.cn` in Control Plane URL projection and Tencent
+catalog/runtime helpers. Fabric's Tencent catalog also exposes that fallback
+without consulting the active Provider Profile. Those are current
+instance-specific leaks, not target defaults: managed Tencent/TKE must require
+an explicit Workspace domain and fail closed when it is absent. The `.cn`
+Kubernetes label and annotation keys are persisted metadata identifiers rather
+than access domains; they require owner inventory and a bounded metadata
+namespace migration instead of a mechanical `.com` replacement.
 
 `/w/<workspaceId>/` selects a Workspace from the URL. Root `/api/`, `/ws`, and
 other Workspace-host requests select it from the `opl_ws_active` cookie or a
@@ -598,20 +619,23 @@ security-model change is authorized by this document.
 ## Product Release And Instance Qualification
 
 During the current pre-1.0 phase, Cloud must produce a replaceable candidate
-from one exact canonical product SHA before formal publication.
-`opl-instance-medopl` owns deployment and qualification of that exact SHA and
-image digest through its protected environment. Only after successful rollout
-and product-acceptance readback may the repository owner manually publish the
-same SHA and image bytes as a formal Release. Cloud does not dispatch or operate
-the Instance, and failed development or deployment attempts do not create a
-formal version.
+from one exact canonical product SHA before formal publication. The supported
+Local-Docker path and `opl-instance-medopl` must qualify the same Cloud image
+identity with their own Workspace image and Provider Profile receipts. The
+Instance owns Tencent/TKE deployment and qualification through its protected
+environment. Only after both paths succeed may the repository owner manually
+publish the same SHA and Cloud image bytes as a formal Release. Cloud does not
+dispatch or operate the Instance, and failed development or deployment attempts
+do not create a formal version.
 
-The owner-only `build-opl-cloud-candidate.yml` workflow now implements the
-pre-publication half of that path. It verifies one exact canonical Product SHA,
-builds and pushes one run-scoped `linux/amd64` image, reads back its registry
-digest, platform, and OCI revision, and uploads one canonical neutral Candidate
-receipt binding that Cloud image to an immutable Workspace image. It creates no
-Git tag, GitHub Release, versioned image tag, or Instance action.
+The owner-only `build-opl-cloud-candidate.yml` workflow implements only part of
+that path. It verifies one exact canonical Product SHA, builds and pushes one
+run-scoped `linux/amd64` image, reads back its registry digest, platform, and OCI
+revision, and uploads one Candidate receipt that also binds one deployment's
+Workspace image. It creates no Git tag, GitHub Release, versioned image tag, or
+Instance action. It does not yet produce the multi-architecture Cloud identity
+needed by both local and Tencent/TKE qualification, and its single Workspace
+image binding is not a provider-neutral release identity.
 
 The formal Release workflow still cannot promote those already qualified bytes.
 It builds and validates the OCI layout in a read-only job, passes one
@@ -658,10 +682,12 @@ product Agents and domain agents are separate concepts.
 The private `opl-instance-medopl` repository owns the current medopl/TKE
 configuration, production environment, deployment workflow, rollback, canaries,
 receipts, and instance-specific tool source. Its first TKE deployment receipt
-proves the exact `v0.1.7` Cloud artifact and public health readback, while
-keeping readiness and Acceptance B incomplete. Fresh production claims still
-require Instance workflow readback for the exact Cloud candidate SHA and image
-digest; formal publication must retain those same bytes.
+proves the exact `v0.1.7` Cloud artifact and public health readback. A later old
+Candidate reached deployment verification and a Qualification Decision, but the
+latest generic admission remained blocked before normal purchase, so no
+`workspace_verified` receipt exists. Fresh production claims still require
+generic Instance admission and post-activation readback for the exact Cloud
+candidate SHA and image digest; formal publication must retain those same bytes.
 
 Control Plane remains one Pod. Existing load evidence covers request concurrency
 and replay, but its historical per-resource renewal scan is not proof of the

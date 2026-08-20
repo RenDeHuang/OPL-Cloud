@@ -24,9 +24,10 @@ It follows the development framework from `one-person-lab`. The short
 ## Instance Boundary
 
 `opl-instance-medopl` owns the concrete medopl installation: domains, provider
-profile, region and resource ids, enabled plans and prices, image pins, secret
-references, promotion policy, and deployment receipts. It does not copy this
-repository's runtime code or product contracts.
+profile, region and resource ids, the enabled subset of Cloud-defined plans,
+image pins, secret references, promotion policy, and deployment receipts. Cloud
+Control Plane owns the versioned customer price catalog. The Instance does not
+copy this repository's runtime code or product contracts.
 
 Medopl-specific manifests, production workflows, Secrets, runbooks, rollback,
 canaries, and receipts belong only in that instance repository. This repository

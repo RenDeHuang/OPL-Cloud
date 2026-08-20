@@ -6,7 +6,7 @@ artifacts, and owner-admitted product releases.
 
 - Generic Docker installation: [Install OPL Cloud](../installation.md)
 - Product/instance ownership: [Architecture](../architecture.md)
-- medopl.cn production operations: private
+- medopl production operations and `.com` domain bindings: private
   `gaofeng21cn/opl-instance-medopl` repository
 
 Production credentials, provider resources, approval gates, rollout, rollback,
@@ -35,12 +35,13 @@ reviewable release unit with all of the following:
 - **Objective:** the complete product problem or bounded product milestone the
   Release closes;
 - **Owner:** the primary Product module responsible for that outcome;
-- **Acceptance:** the scoped Product checks plus the exact
-  `opl-instance-medopl` deployment and product readback required before
-  publication;
+- **Acceptance:** the scoped Product checks plus exact supported Local-Docker
+  and `opl-instance-medopl` deployment/product readback for the same Candidate
+  required before publication;
 - **Artifact impact:** the runtime image, public contract, schema, dependency,
   installation asset, or security boundary that requires new released bytes;
-- **Consumer:** during pre-1.0, the `opl-instance-medopl` candidate deployment;
+- **Consumers:** during pre-1.0, the supported local installation and
+  `opl-instance-medopl` Candidate deployment;
 - **Predecessor gap:** why the current Release cannot satisfy that consumer;
 - **Known blockers:** confirmation that no known Product-side blocker remains
   for the same objective.
@@ -54,28 +55,35 @@ machine-contract owner.
 PR checks, CI artifacts, and exact-SHA candidate images are replaceable inputs.
 They may fail, be superseded, or be deleted without creating a formal version.
 The candidate must identify one canonical Cloud SHA and one digest-addressed
-multi-architecture image. It must be available to the Instance deployment path
+multi-architecture image. It must be available to both qualification paths
 without creating a Git tag, GitHub Release, or versioned GHCR tag.
 
-`opl-instance-medopl` owns the protected deployment and qualification. It binds
-the candidate SHA and digest, deploys through Instance `main`, performs the
-required rollout and product acceptance, and returns an owner-authoritative
-receipt. A failed or unknown deployment returns the release unit to development;
+The local installation owner qualifies that Candidate on a supported clean Linux
+Docker host using an explicit Local-Docker Provider Profile and immutable
+Workspace image, then returns a local owner-authoritative receipt.
+`opl-instance-medopl` independently binds the same Candidate SHA and digest,
+deploys through Instance `main` with its explicit `.com` domains, Tencent/TKE
+Provider Profile and immutable Workspace image, performs the required rollout
+and product acceptance, and returns an Instance owner-authoritative receipt. A
+failed or unknown result on either path returns the release unit to development;
 it does not create a Product Release.
 
 ### Publication
 
 After candidate qualification succeeds, the repository owner verifies the
 unused version, exact canonical SHA, candidate digest, required checks,
-Instance receipt, release assets, checksums, and provenance. The owner then
+local receipt, Instance receipt, release assets, checksums, and provenance. Both
+receipts must bind the same Cloud SHA and multi-architecture index digest while
+recording their own Workspace image and Provider Profile. The owner then
 explicitly dispatches the Release workflow from Cloud `main`. Publication must
 promote the exact qualified image bytes and must fail if it would rebuild a
 different digest.
 
-The current workflow does not yet meet that sequence: one manual dispatch both
-builds the OCI image and publishes the formal Release. Until a separate
-deployable candidate path and exact-byte promotion are implemented, do not
-publish a successor to `v0.1.7`.
+The current workflow does not yet meet that sequence: the Candidate path is
+single-architecture and the formal manual dispatch rebuilds the OCI image before
+publication. Until a portable multi-architecture Candidate, both qualification
+receipts, and exact-byte promotion are implemented, do not publish a successor
+to `v0.1.7`.
 
 The workflow remains create-only for ordinary publication and rejects reuse of
 an existing tag, Release, or GHCR release tag. This prevents accidental
@@ -97,10 +105,11 @@ next attempt:
 
 | Proven owner | Required action | Formal Product Release |
 | --- | --- | --- |
+| Local installation asset, host contract, Local-Docker adapter, or local qualification tool | Fix the owning Cloud product/install surface, create a new Candidate when bytes change, and repeat local qualification | Not admitted until both paths pass |
 | Instance configuration, workflow, provider, cluster, Secret, account, approval, or runtime data | Correct or retry in the Instance owner with the same candidate when its bytes remain valid | Not admitted |
 | Unknown or conflicting evidence | Stop mutation and obtain authoritative readback for the exact candidate | Not admitted |
-| Product runtime, public contract, schema, installation asset, dependency, or security boundary | Fix Cloud, create a new candidate SHA/digest, and repeat Instance qualification | Allowed only after the new candidate succeeds |
+| Product runtime, public contract, schema, installation asset, dependency, or security boundary | Fix Cloud, create a new Candidate SHA/digest, and repeat both qualification paths | Allowed only after the new Candidate succeeds on both paths |
 
 An urgent security correction may define a narrow release unit, but during the
-current pre-1.0 phase it still requires exact candidate qualification before
-formal publication.
+current pre-1.0 phase it still requires both exact Candidate qualification paths
+before formal publication.

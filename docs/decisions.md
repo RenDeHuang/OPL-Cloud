@@ -1,5 +1,43 @@
 # Decisions
 
+## 2026-08-20: Cloud Owns Pricing And Portable Releases; Instances Bind Deployment
+
+OPL Cloud owns Workspace package identity, the versioned customer price catalog,
+exact integer USD-micros prices, quotes, purchase admission, price snapshots, and
+settlement policy. Control Plane is the runtime owner of those decisions; Console
+only presents Control Plane DTOs. An Instance may enable the subset of Cloud
+packages that its Provider Profile can fulfill, but it cannot redefine their
+customer prices. Fabric owns provider availability, capacity, infrastructure
+plans, and provider-cost evidence; Sub2API remains the only spendable wallet;
+Ledger records the accepted price snapshot and never prices a purchase.
+
+The reusable Cloud product carries no medopl domain, private Workspace image
+repository, or Tencent resource default. `opl-instance-medopl` explicitly binds
+`cloud.medopl.com`, `workspace.medopl.com`, an immutable Workspace image, and its
+Tencent/TKE Provider Profile. A local installation independently binds its own
+immutable Workspace image and Local-Docker profile on a supported Linux Docker
+host. macOS may run the control-services profile, but Docker Desktop is not a
+supported Local-Docker Workspace host under the current project-quota contract.
+The fixed Workspace WebUI port `3000` remains the current App/Fabric
+compatibility ABI, not an Instance-selectable deployment setting and not an
+independent roadmap lane.
+
+Acceptance B is retired as product intent, release admission, and Instance
+qualification semantics. Protected generic deployment verification, product
+admission, normal Workspace purchase, and post-activation readback replace it.
+Cloud source still contains Acceptance B routes, headers, environment inputs,
+contract fields, and persisted-operation projections; these are current
+implementation residue to hard-cut after caller and non-terminal-state inventory,
+not a reason to create a new product lane or retain a compatibility path.
+
+One portable Cloud Release must support both the Local-Docker adapter and the
+Tencent/TKE adapter without embedding either installation's configuration. A
+release candidate is one multi-architecture Cloud OCI identity from one exact
+canonical SHA. Local and Instance owners qualify that same Cloud identity with
+their own Workspace image and Provider Profile receipts. Formal publication adds
+the versioned release identity to the already qualified Cloud image bytes; it
+does not rebuild them.
+
 ## 2026-08-15: Pre-1.0 Instance Qualification Gates Product Publication
 
 During the current immature pre-1.0 phase, a formal OPL Cloud Release is the
@@ -20,15 +58,16 @@ the current GitHub Release, tag, and GHCR public surfaces.
 
 Candidate and Release identities are distinct. Candidate CI output, assets, and
 exact-SHA image tags may be replaced or discarded before qualification. A
-formal Release must promote the exact candidate SHA and digest that the Instance
-qualified; it must not rebuild different image bytes after the successful
-deployment. Cloud therefore owns a separate owner-only Candidate workflow that
-builds one `linux/amd64` image from an exact canonical SHA, reads back its
-registry digest and revision, and emits the canonical neutral Candidate receipt
-without creating a Git tag, GitHub Release, or versioned image tag. Exact-byte
-promotion of an already qualified Candidate remains an explicit implementation
-gap. Until that gap is closed and the Candidate has a successful Instance
-receipt, no successor to `v0.1.7` is admitted.
+formal Release must promote the exact candidate SHA and digest that both the
+supported local path and the Instance qualified; it must not rebuild different
+image bytes after successful qualification. Cloud therefore requires a separate
+owner-only Candidate workflow to build one multi-architecture image from an
+exact canonical SHA, read back its index, child-platform digests and revision,
+and emit the canonical provider-neutral Candidate receipt without creating a
+Git tag, GitHub Release, or versioned image tag. Exact-byte promotion of an
+already qualified Candidate remains an explicit implementation gap. Until that
+gap is closed and the Candidate has successful local and Instance receipts, no
+successor to `v0.1.7` is admitted.
 
 The dependency is evidence-only and does not move authority between
 repositories. Cloud owns reusable product source, candidate/release mechanics,
@@ -195,7 +234,8 @@ multi-architecture GHCR image, GitHub Release, Compose assets, and reusable
 provider adapters. Its release workflow uses no production environment and does
 not deploy, diagnose, verify, or roll back a concrete installation.
 
-`opl-instance-medopl` is the only medopl.cn customization and deployment owner.
+`opl-instance-medopl` is the only medopl instance customization and deployment
+owner.
 Its `main` workflow and protected `production` environment select Tencent/TKE,
 hold Secrets, consume an exact Cloud product SHA and image digest, and own
 deployment, canary, rollback, and receipts. Product source is never copied into
@@ -217,8 +257,8 @@ prototypes or history, not parallel current writers.
 
 A concrete installation is an instance, not a deployment-code fork. The first
 commercial instance is `opl-instance-medopl`. It owns medopl domains, provider
-profile, enabled plans and prices, image pins, secret references, promotion
-policy, and deployment receipts while consuming immutable
+profile, the enabled subset of Cloud-defined plans, image pins, secret
+references, promotion policy, and deployment receipts while consuming immutable
 `one-person-lab-cloud` releases.
 
 An account may own zero or more independent Workspaces. There is no fixed
@@ -230,9 +270,11 @@ Fabric's target contract is provider-neutral. Tencent TKE is the first adapter,
 not the product definition. Launch and recovery share one Control Plane state
 machine; provider-specific facts and mutations stay in the adapter.
 
-Gateway/Sub2API remains the only spendable wallet. Console owns the account-total
-billing projection, pricing, and settlement policy. Fabric has no balance, and
-Ledger records immutable billing and reconciliation evidence.
+Gateway/Sub2API remains the only spendable wallet. Control Plane owns the
+versioned customer price catalog, account-total billing projection, quotes, and
+settlement policy; Console only presents its DTOs. Fabric has no balance or
+customer-pricing authority, and Ledger records immutable billing and
+reconciliation evidence.
 
 ## 2026-07-14: Sub2API Is The Only Spendable Balance
 

@@ -121,10 +121,13 @@ labels, but it is not a repository boundary.
 
 An instance repository materializes one installation without copying product or
 runtime code. It owns non-secret domains, provider selection, region and
-resource profile, enabled plans and prices, image pins, secret references, and
-deployment receipts. An instance may run on a hosted cloud, a local server, or
-a Mac. Secrets remain in the selected secret owner, never in the instance
-repository.
+resource profile, the enabled subset of Cloud-defined plans, image pins, secret
+references, and deployment receipts. Cloud Control Plane owns the versioned
+customer price catalog; an Instance cannot override it. An instance may run on
+a hosted cloud or a supported Linux Docker host. macOS may run the
+control-services profile, but Docker Desktop is not a supported Local-Docker
+Workspace host under the current project-quota contract. Secrets remain in the
+selected secret owner, never in the instance repository.
 
 ## Development And Supply-Chain Authority
 
@@ -154,6 +157,11 @@ Tencent/TKE is a medopl instance provider choice and migration surface. Existing
 Tencent/TKE source and workflow evidence may remain current implementation
 facts until the instance cutover is complete, but they do not define generic
 Cloud identity, MVP acceptance, or the portable provider contract.
+
+The portable product Release nevertheless contains and contract-tests both the
+Local-Docker and Tencent/TKE adapters. They consume the same Cloud image and
+provider-neutral contracts while receiving separate installation-owned
+Workspace images, Provider Profiles, domains, and qualification receipts.
 
 ```mermaid
 flowchart TB
@@ -268,23 +276,24 @@ thin Console
 -> Control Plane
 -> Workspace launcher/provider
 -> local Docker OPL App/WebUI Workspace
--> Gateway balance, usage, debit/refund authority in Sub2API
+-> Gateway balance, usage, and debit authority in Sub2API
 -> minimal Ledger receipts and reconciliation evidence
 ```
 
 Core completion requires a real Workspace create, readback, access, and delete
-path on a MacBook or single-server Docker host. Starting the Cloud control
-services with Compose is distribution plumbing and cannot satisfy this
-boundary. Console remains limited to the Workspace, balance, and usage controls
-needed by that path. Sub2API remains the only spendable wallet; Ledger does not
-become a second wallet or accounting engine.
+path on a supported Linux Docker host. Starting the Cloud control services with
+Compose is distribution plumbing and cannot satisfy this boundary. Console
+remains limited to the Workspace, balance, and usage controls needed by that
+path. Delete performs no wallet mutation; Sub2API remains the only spendable
+wallet, and Ledger does not become a second wallet or accounting engine.
 
 Extensions include Tencent/TKE and generic Kubernetes provider adapters,
 managed or institution-owned resources, OPL Serve, self-service signup,
 payment/top-up, detailed Console refinement, and Ledger evidence verticals not
 required by the Core path. An instance selects extensions without redefining
 the Core product. `opl-instance-medopl` selects the Tencent/TKE extension for
-medopl.cn; Tencent/TKE is not an MVP prerequisite for OPL Cloud itself.
+the medopl instance; Tencent/TKE is not an MVP prerequisite for the local Core
+journey, but it is a supported adapter of the portable Release.
 
 This section owns the stable Core/Extension technical boundary. Current
 capability belongs to [status](status.md), while gaps and priority belong only
@@ -493,12 +502,13 @@ generic product identity nor Control Plane contains Tencent resource names.
 
 ## Balance And Billing Boundary
 
-Gateway is the only spendable account-balance owner. Console owns the
-account-total billing projection, pricing and settlement policy, and initiates
-one monthly settlement per Workspace and billing period. Fabric reports
-resource/provider facts and owns no wallet or balance. Ledger records
-append-only charge, refund, resource, and reconciliation receipts without
-becoming a second balance store.
+Gateway is the only spendable account-balance owner. Cloud Control Plane owns
+the versioned customer price catalog, quotes, account-total billing projection,
+and settlement policy, and initiates one monthly settlement per Workspace and
+billing period. Console only presents Control Plane DTOs. Fabric reports
+resource/provider facts and owns no wallet, balance, or customer price. Ledger
+records append-only charge, refund, resource, and reconciliation receipts
+without becoming a second balance store or pricing engine.
 
 ## Package Lifecycle Boundary
 
