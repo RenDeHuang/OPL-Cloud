@@ -627,14 +627,22 @@ publisher manually publish the same SHA and Cloud image bytes as a formal
 Release. Cloud does not dispatch or operate the Instance, and failed
 development or deployment attempts do not create a formal version.
 
-The owner-only `build-opl-cloud-candidate.yml` workflow implements only part of
-that path. It verifies one exact canonical Product SHA, builds and pushes one
-run-scoped `linux/amd64` image, reads back its registry digest, platform, and OCI
-revision, and uploads one Candidate receipt that also binds one deployment's
-Workspace image. It creates no Git tag, GitHub Release, versioned image tag, or
-Instance action. It does not yet produce the multi-architecture Cloud identity
-needed by both local and Tencent/TKE qualification, and its single Workspace
-image binding is not a provider-neutral release identity.
+The owner-only `build-opl-cloud-candidate.yml` workflow verifies one exact
+canonical Product SHA and tree, builds and pushes one run-scoped
+`linux/amd64` + `linux/arm64` OCI index, and reads back the index digest, both
+child manifest digests, platforms, and OCI revision. Its portable Candidate
+bundle contains the installation assets, canonical
+`opl-cloud-candidate.json`, and `SHA256SUMS`. The manifest binds the Cloud
+source/image identity and each installation asset digest; `SHA256SUMS` covers
+the installation assets and manifest without a checksum self-reference. The
+bundle validator recomputes every digest and rejects missing, extra,
+non-canonical, or malformed inputs. The canonical Candidate manifest schema
+contains no selected Workspace image, Provider Profile, domain, or Instance
+fact; each qualification owner records those in its own later receipt. The
+bundle still carries the current `opl-cloud.env.example`; removal of its
+installation-specific defaults remains owned by
+`LOCAL-WORKSPACE-INSTALL-CONTRACT-01`. The workflow creates no Git tag, GitHub
+Release, versioned image tag, or Instance action.
 
 The formal Release workflow still cannot promote those already qualified bytes.
 It builds and validates the OCI layout in a read-only job, passes one

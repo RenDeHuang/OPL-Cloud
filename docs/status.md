@@ -112,6 +112,16 @@ Sub2API management origin and credentials are never exposed to the browser.
 
 ## Implementation Snapshot
 
+- Control Plane runtime owns the only current versioned customer price catalog;
+  the pricing machine contract retains cross-module schemas and invariants
+  without a second mutable list of exact current amounts. Accepted Workspace
+  periods keep immutable price snapshots, and activation and Receipt creation
+  resolve the exact accepted `priceVersion` without falling back to the current
+  catalog. Storage block size and price are versioned together, and the public
+  catalog binds each block price to its `blockSizeGb`. Focused contract and Go
+  tests plus the full local PostgreSQL/Docker gate cover this source behavior;
+  this is not Instance deployment, production billing, or C2 Runtime ABI
+  evidence.
 - The versioned Workspace Runtime ABI contract owns the fixed internal WebUI
   protocol and port `http/3000`. Control Plane proxy routing, Fabric
   Local-Docker publish/health/readback, and Fabric Tencent/TKE
@@ -462,15 +472,29 @@ The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
 workflow, owner-only non-Release Candidate workflow, Candidate receipt
 contract/validator, and focused distribution checks exist at source level. The
 Candidate workflow verifies an exact canonical Product SHA, builds one
-run-scoped `linux/amd64` image, reads back its registry digest/platform/revision,
-and uploads the canonical receipt without a Git tag, GitHub Release, versioned
-image tag, or Instance action. It has been dispatched twice. Latest successful
-run `32272457575` produced Candidate receipt
+run-scoped `linux/amd64` + `linux/arm64` OCI index, reads back its index and both
+child manifest digests plus revision, and packages the portable installation
+assets with canonical `opl-cloud-candidate.json` and strict `SHA256SUMS`. The
+manifest binds exact Product SHA/tree, Cloud index/children, per-asset SHA-256,
+and workflow provenance. Its schema contains no selected Workspace image,
+Provider Profile, domain, or Instance fact. The bundle still includes the
+current environment template and does not close
+`LOCAL-WORKSPACE-INSTALL-CONTRACT-01`. It creates no Git tag, GitHub Release,
+versioned image tag, or Instance action. Focused source tests prove canonical
+serialization and
+rejection of identity drift, path traversal, tampered, missing, extra, and
+malformed bundle inputs. No hosted run has yet built this current portable
+Candidate, so source capability is not Candidate, qualification, or production
+evidence.
+
+The superseded single-architecture workflow was dispatched twice. Its latest
+successful run `32272457575` produced Candidate receipt
 `sha256:22d04534990598e3b004c1436cb03dc23686991eb80d79e1a6a1980d1ea1a429`
 for old product SHA `2338375f68cbca45faf3df3d303b354fe365642d` and Cloud image
 `sha256:03e8c0f6574fcf47c9852f1086b235582d0230a5bbad2fb2fc0bf6989df37d3e`.
-It is single-architecture, binds one Tencent TCR Workspace image, and does not
-represent current `main` or a dual-path portable Candidate. Historically,
+It is historical, single-architecture, binds one Tencent TCR Workspace image,
+and does not represent current `main` or a dual-path portable Candidate.
+Historically,
 eight Product Releases, `v0.1.0` through `v0.1.7`, were published between
 2026-08-13T09:50:02Z and 2026-08-15T10:49:30Z while the same Acceptance B path
 was still under development. The repository owner removed `v0.1.0` through

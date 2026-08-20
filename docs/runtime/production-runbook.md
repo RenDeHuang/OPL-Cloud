@@ -57,6 +57,16 @@ They may fail, be superseded, or be deleted without creating a formal version.
 The candidate must identify one canonical Cloud SHA and one digest-addressed
 multi-architecture image. It must be available to both qualification paths
 without creating a Git tag, GitHub Release, or versioned GHCR tag.
+Its portable bundle contains the installation assets, canonical
+`opl-cloud-candidate.json`, and `SHA256SUMS`. The manifest binds the exact
+Product repository/SHA/tree, Cloud index ref/digest/revision, both platform
+child digests, each installation asset SHA-256, and workflow provenance.
+`SHA256SUMS` covers every installation asset plus the manifest itself; it does
+not cover itself. The canonical Candidate manifest schema does not bind a
+selected Workspace image, Provider Profile, domain, or Instance fact. The
+bundle still contains the current environment template; removing its
+installation-specific defaults remains a separate
+`LOCAL-WORKSPACE-INSTALL-CONTRACT-01` obligation.
 
 The local installation owner qualifies that Candidate on a supported clean Linux
 Docker host using an explicit Local-Docker Provider Profile and immutable
@@ -80,11 +90,12 @@ workflow from Cloud `main`; the original actor and current triggering actor must
 match. Publication must promote the exact qualified image bytes and must fail
 if it would rebuild a different digest.
 
-The current workflow does not yet meet that sequence: the Candidate path is
-single-architecture and the formal manual dispatch rebuilds the OCI image before
-publication. Until a portable multi-architecture Candidate, both qualification
-receipts, and exact-byte promotion are implemented, do not publish a successor
-to `v0.1.7`.
+The current workflow does not yet meet that complete sequence: the portable
+multi-architecture Candidate source path exists, but neither qualification path
+yet returns its required receipt for the same Candidate and the formal manual
+dispatch still rebuilds the OCI image before publication. Until both receipts
+and exact-byte promotion are implemented, do not publish a successor to
+`v0.1.7`.
 
 The workflow remains create-only for ordinary publication and rejects reuse of
 an existing tag, Release, or GHCR release tag. This prevents accidental

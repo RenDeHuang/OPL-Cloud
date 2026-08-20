@@ -8,15 +8,14 @@ import YAML from "yaml";
 const workflowPath = ".github/workflows/build-opl-cloud-candidate.yml";
 const execFileAsync = promisify(execFile);
 
-test("Cloud candidate workflow builds one non-Release linux/amd64 candidate", async () => {
+test("Cloud candidate workflow builds one portable non-Release multi-architecture bundle", async () => {
   const source = await readFile(workflowPath, "utf8");
   const workflow = YAML.parse(source);
   const ownerOnly = "${{ github.ref == 'refs/heads/main' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner }}";
 
   assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
-  assert.deepEqual(Object.keys(workflow.on.workflow_dispatch.inputs).sort(), ["product_sha", "workspace_image"]);
+  assert.deepEqual(Object.keys(workflow.on.workflow_dispatch.inputs), ["product_sha"]);
   assert.equal(workflow.on.workflow_dispatch.inputs.product_sha.required, true);
-  assert.equal(workflow.on.workflow_dispatch.inputs.workspace_image.required, true);
   assert.deepEqual(Object.keys(workflow.jobs), ["candidate"]);
 
   const job = workflow.jobs.candidate;
@@ -24,7 +23,6 @@ test("Cloud candidate workflow builds one non-Release linux/amd64 candidate", as
   assert.equal(job.environment, undefined);
   assert.deepEqual(job.permissions, { contents: "read", packages: "write" });
   assert.equal(job.env.PRODUCT_SHA, "${{ inputs.product_sha }}");
-  assert.equal(job.env.WORKSPACE_IMAGE, "${{ inputs.workspace_image }}");
   assert.equal(job.env.IMAGE_REPOSITORY, "ghcr.io/${{ github.repository }}");
 
   const steps = job.steps as Array<{ name?: string; id?: string; uses?: string; run?: string; with?: Record<string, unknown> }>;
@@ -42,43 +40,67 @@ test("Cloud candidate workflow builds one non-Release linux/amd64 candidate", as
   const verify = step("Verify candidate identity").run || "";
   assert.match(verify, /git merge-base --is-ancestor/);
   assert.match(verify, /git rev-parse "\$PRODUCT_SHA\^\{tree\}"/);
-  assert.match(verify, /workspace_image must be an immutable repository@sha256 reference/);
+  assert.match(verify, /git status --porcelain=v1 --untracked-files=all/);
+  assert.match(verify, /git archive --format=tar "\$PRODUCT_SHA"/);
+  assert.match(verify, /BUILD_CONTEXT/);
+  const boundary = step("Validate portable product boundary").run || "";
+  assert.match(boundary, /git diff-index --quiet HEAD --/);
   const commands = steps.map((value) => value.run || "").join("\n");
-  const build = step("Build and publish linux amd64 candidate").run || "";
+  const build = step("Build and publish multi-architecture candidate").run || "";
   assert.match(build, /docker buildx build/);
-  assert.match(build, /--platform linux\/amd64/);
+  assert.match(build, /--platform linux\/amd64,linux\/arm64/);
   assert.match(build, /--push/);
   assert.match(build, /org\.opencontainers\.image\.revision=\$PRODUCT_SHA/);
   assert.match(build, /candidate-\$PRODUCT_SHA-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/);
+  assert.match(build, /"\$BUILD_CONTEXT"/);
+  assert.doesNotMatch(build, /\n\s*\.\s*$/m);
   assert.equal((build.match(/docker buildx build/g) || []).length, 1);
 
-  const readback = step("Read back candidate digest platform and revision").run || "";
+  const readback = step("Read back candidate index children and revisions").run || "";
   assert.match(readback, /docker buildx imagetools inspect/);
   assert.match(readback, /--format '\{\{json \.Manifest\}\}'/);
   assert.doesNotMatch(readback, /--format '\{\{\.Manifest\.Digest\}\}'/);
   assert.match(readback, /jq -r '\.digest \/\/ empty'/);
   assert.match(readback, /application\/vnd\.oci\.image\.index\.v1\+json/);
   assert.match(readback, /\.platform\.os == "linux" and \.platform\.architecture == "amd64"/);
+  assert.match(readback, /\.platform\.os == "linux" and \.platform\.architecture == "arm64"/);
   assert.match(readback, /\.platform\.os == "unknown" and \.platform\.architecture == "unknown"/);
   assert.match(readback, /vnd\.docker\.reference\.type/);
   assert.match(readback, /attestation-manifest/);
-  assert.match(readback, /IMAGE_REPOSITORY@\$platform_digest/);
+  assert.match(readback, /IMAGE_REPOSITORY@\$amd64_digest/);
+  assert.match(readback, /IMAGE_REPOSITORY@\$arm64_digest/);
   assert.match(readback, /--format '\{\{json \.Image\}\}'/);
   assert.match(readback, /org\.opencontainers\.image\.revision/);
-  assert.match(readback, /linux/);
-  assert.match(readback, /amd64/);
 
-  const receipt = step("Write and validate neutral candidate receipt").run || "";
+  const receipt = step("Create and validate portable candidate bundle").run || "";
+  assert.match(receipt, /cp "\$BUILD_CONTEXT\/compose\.yaml"/);
+  assert.match(receipt, /cp "\$BUILD_CONTEXT\/deploy\/portable\/opl-cloud\.env\.example"/);
+  assert.match(receipt, /schemaVersion: 2/);
   assert.match(receipt, /tools\/cloud-candidate-receipt\.ts validate/);
+  assert.match(receipt, /tools\/cloud-candidate-receipt\.ts validate-bundle/);
   assert.match(receipt, /tools\/cloud-candidate-receipt\.ts digest/);
-  assert.match(receipt, /candidate\.json/);
+  assert.match(receipt, /opl-cloud-candidate\.json/);
+  assert.match(receipt, /SHA256SUMS/);
+  for (const asset of [
+    "compose.yaml",
+    "compose.deployment-platform-owned.yaml",
+    "compose.deployment-managed-tke.yaml",
+    "compose.deployment-customer-owned.yaml",
+    "compose.fabric-local-docker.yaml",
+    "compose.fabric-tencent-tke.yaml",
+    "compose.local-workspace.yaml",
+    "opl-cloud.env.example"
+  ]) {
+    assert.match(receipt, new RegExp(asset.replaceAll(".", "\\.")));
+  }
   const upload = steps.find((value) => value.id === "candidate_artifact");
   assert.equal(upload?.uses, "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
-  assert.equal(upload?.with?.name, "opl-cloud-candidate-${{ inputs.product_sha }}");
+  assert.equal(upload?.with?.name, "opl-cloud-candidate-${{ inputs.product_sha }}-${{ github.run_attempt }}");
+  assert.equal(upload?.with?.path, "artifacts/candidate/");
   assert.equal(upload?.with?.["if-no-files-found"], "error");
 
   assert.doesNotMatch(commands, /gh release|git tag|refs\/tags|environment:\s*production|kubectl|tencentyun\.com|medopl\.cn/);
-  assert.doesNotMatch(source, /releaseTag|linux\/arm64|workflow_call/);
+  assert.doesNotMatch(source, /releaseTag|workspace_image|WORKSPACE_IMAGE|providerProfile|workflow_call/);
 });
 
 test("product boundary admits the candidate workflow without transferring Instance authority", async () => {

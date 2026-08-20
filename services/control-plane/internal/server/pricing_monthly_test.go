@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -70,8 +71,8 @@ func TestMonthlyPricingCatalogUsesFixedPilotUSDPrices(t *testing.T) {
 	}
 	assertPackage(0, "basic")
 	assertPackage(1, "pro")
-	storagePrice := mapField(catalog, "storagePer10GbMonthly")
-	if storagePrice["priceVersion"] != pilotPriceVersion || storagePrice["currency"] != "USD" || storagePrice["usdMicros"] != int64(2_580_000) {
+	storagePrice := mapField(catalog, "storageBlockMonthly")
+	if storagePrice["priceVersion"] != pilotPriceVersion || storagePrice["currency"] != "USD" || storagePrice["blockSizeGb"] != int64(10) || storagePrice["usdMicros"] != int64(2_580_000) {
 		t.Fatalf("default storage price = %#v", storagePrice)
 	}
 	if _, ok := storagePrice["cnyCents"]; ok {
@@ -81,6 +82,89 @@ func TestMonthlyPricingCatalogUsesFixedPilotUSDPrices(t *testing.T) {
 	statePackages, _ := newControlPlaneAppEmpty().state("", allPricingPackagesAvailable())["packages"].([]any)
 	if len(statePackages) != 2 || len(statePackages[0].(map[string]any)) != 3 || len(statePackages[1].(map[string]any)) != 3 {
 		t.Fatalf("state packages = %#v", statePackages)
+	}
+}
+
+func TestPricingCatalogLookupRequiresExactAcceptedVersion(t *testing.T) {
+	catalog, ok := pricingCatalogByVersion(pricingCatalogVersion)
+	if !ok || catalog.Version != pricingCatalogVersion {
+		t.Fatalf("current pricing catalog lookup = %#v, %v", catalog, ok)
+	}
+	for _, version := range []string{"", "unknown-price-version", " " + pricingCatalogVersion} {
+		if catalog, ok := pricingCatalogByVersion(version); ok {
+			t.Fatalf("unknown pricing catalog %q resolved to %#v", version, catalog)
+		}
+	}
+}
+
+func TestPricingPreviewUsesVersionedStorageCatalogFacts(t *testing.T) {
+	base := pricingCatalogData{
+		Version: "catalog-storage-a", Currency: pricingCurrency, WalletCurrency: pricingWalletCurrency, BillingUnit: pricingBillingUnit,
+		StorageBlockGB: 10, StorageBlockPriceUSDMicros: 2_000_000,
+		Packages: []pricingPackageData{{ID: "basic", Name: "Basic", Available: true, ChargeUSDMicros: 50_000_000}},
+	}
+	alternate := base
+	alternate.Version = "catalog-storage-b"
+	alternate.StorageBlockGB = 20
+	alternate.StorageBlockPriceUSDMicros = 7_000_000
+
+	for _, tc := range []struct {
+		catalog                pricingCatalogData
+		storagePrice, totalUSD int64
+	}{
+		{catalog: base, storagePrice: 8_000_000, totalUSD: 58_000_000},
+		{catalog: alternate, storagePrice: 14_000_000, totalUSD: 64_000_000},
+	} {
+		storage, err := pricingPreviewFromCatalog(tc.catalog, map[string]any{"resourceType": "storage", "packageId": "basic", "sizeGb": 40})
+		if err != nil || storage["priceVersion"] != tc.catalog.Version || storage["chargeUsdMicros"] != tc.storagePrice {
+			t.Fatalf("storage quote catalog=%s quote=%#v err=%v", tc.catalog.Version, storage, err)
+		}
+		workspace, err := workspacePricingPreview(tc.catalog, map[string]any{"packageId": "basic", "sizeGb": 40})
+		if err != nil || mapField(workspace, "storage")["chargeUsdMicros"] != tc.storagePrice || workspace["totalChargeUsdMicros"] != tc.totalUSD {
+			t.Fatalf("Workspace quote catalog=%s quote=%#v err=%v", tc.catalog.Version, workspace, err)
+		}
+	}
+
+	dto := pricingCatalogDTO(alternate)
+	if mapField(dto, "storageSize")["minimumGb"] != int64(20) || mapField(dto, "storageSize")["stepGb"] != int64(20) ||
+		mapField(dto, "storageBlockMonthly")["blockSizeGb"] != int64(20) || mapField(dto, "storageBlockMonthly")["usdMicros"] != int64(7_000_000) {
+		t.Fatalf("catalog DTO did not use versioned storage facts: %#v", dto)
+	}
+}
+
+func TestPricingPreviewRejectsInvalidOrOverflowingStorageCatalogFacts(t *testing.T) {
+	valid := pricingCatalogData{
+		Version: "catalog-storage-valid", Currency: pricingCurrency, WalletCurrency: pricingWalletCurrency, BillingUnit: pricingBillingUnit,
+		StorageBlockGB: 10, StorageBlockPriceUSDMicros: 2_000_000,
+		Packages: []pricingPackageData{{ID: "basic", Name: "Basic", Available: true, ChargeUSDMicros: 50_000_000}},
+	}
+	for _, tc := range []struct {
+		name    string
+		catalog pricingCatalogData
+		sizeGB  int64
+	}{
+		{name: "zero block size", catalog: func() pricingCatalogData { value := valid; value.StorageBlockGB = 0; return value }(), sizeGB: 10},
+		{name: "negative block size", catalog: func() pricingCatalogData { value := valid; value.StorageBlockGB = -10; return value }(), sizeGB: 10},
+		{name: "zero block price", catalog: func() pricingCatalogData { value := valid; value.StorageBlockPriceUSDMicros = 0; return value }(), sizeGB: 10},
+		{name: "negative block price", catalog: func() pricingCatalogData { value := valid; value.StorageBlockPriceUSDMicros = -1; return value }(), sizeGB: 10},
+		{name: "charge multiplication overflow", catalog: func() pricingCatalogData {
+			value := valid
+			value.StorageBlockGB = 1
+			value.StorageBlockPriceUSDMicros = math.MaxInt64
+			return value
+		}(), sizeGB: 2},
+		{name: "JSON size precision overflow", catalog: func() pricingCatalogData {
+			value := valid
+			value.StorageBlockGB = 1
+			value.StorageBlockPriceUSDMicros = 1
+			return value
+		}(), sizeGB: int64(maxJSONSafeInteger) + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if quote, err := pricingPreviewFromCatalog(tc.catalog, map[string]any{"resourceType": "storage", "packageId": "basic", "sizeGb": tc.sizeGB}); err == nil {
+				t.Fatalf("invalid storage catalog produced quote=%#v", quote)
+			}
+		})
 	}
 }
 
@@ -213,8 +297,20 @@ func TestMonthlyInternalPricingSnapshotUsesCanonicalAuthority(t *testing.T) {
 		snapshot["priceVersion"] != pilotPriceVersion || snapshot["currency"] != "USD" || snapshot["billingUnit"] != "calendar_month" || snapshot["chargeUsdMicros"] != int64(50_000_000) {
 		t.Fatalf("internal pricing snapshot = %#v err=%v", preview, err)
 	}
-	if preview["pricingVersion"] != pilotPriceVersion || preview["monthlyPriceCnyCents"] != int64(35_000) {
-		t.Fatalf("ledger compatibility projection = %#v", preview)
+	if preview["pricingVersion"] != pilotPriceVersion {
+		t.Fatalf("internal pricing version projection = %#v", preview)
+	}
+	for _, value := range []map[string]any{preview, snapshot} {
+		if _, ok := value["monthlyPriceCnyCents"]; ok {
+			t.Fatalf("Fabric provider cost leaked into customer pricing snapshot: %#v", value)
+		}
+	}
+	workspace, workspaceErr := pricingPreviewResponse(map[string]any{"resourceType": "workspace", "packageId": "basic", "sizeGb": 10})
+	if workspaceErr != nil {
+		t.Fatal(workspaceErr)
+	}
+	if _, ok := workspace["totalMonthlyPriceCnyCents"]; ok {
+		t.Fatalf("Fabric provider cost total leaked into customer Workspace quote: %#v", workspace)
 	}
 }
 
