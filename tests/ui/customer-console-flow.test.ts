@@ -372,9 +372,20 @@ test("Customer usage records expose authoritative Token, cost, latency, and time
   assert.doesNotMatch(requestRows, /firstTokenMs \|\||durationMs \|\|/);
 });
 
-test("Customer Console renders automatic-renewal state without inventing an enable path", async () => {
-  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
-  assert.match(pages, /自动续费/);
-  assert.match(pages, /detail\.autoRenew === true \? "开启" : detail\.autoRenew === false \? "关闭" : "-"/);
-  assert.doesNotMatch(pages, /自动续费启用路径未开放|updateWorkspaceRenewal|setAutoRenew|onChange=.*autoRenew/);
+test("Customer Console controls each Workspace renewal through the authoritative Control Plane command", async () => {
+  const [pages, controller, dtos] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/app/use-console-controller.ts"),
+    source("apps/console-ui/src/api/dtos.ts")
+  ]);
+  assert.match(dtos, /interface WorkspaceLaunchRequest[\s\S]+autoRenew:\s*boolean;/);
+  assert.match(dtos, /interface WorkspaceLaunchResponse[\s\S]+autoRenew:\s*boolean;/);
+  assert.match(controller, /const \[launchAutoRenew, setLaunchAutoRenew\] = useState\(false\)/);
+  assert.match(controller, /updateWorkspaceRenewal\(workspace\.id, \{ autoRenew \}, session\.csrfToken, intent\.idempotencyKey\)/);
+  assert.match(controller, /const workspaceRenewalIntents = useRef\(new Map/);
+  assert.match(controller, /intent && intent\.autoRenew !== autoRenew/);
+  assert.match(controller, /const readback = await findWorkspaceInPages\(workspace\.id\)/);
+  assert.match(pages, /checked=\{controller\.launchAutoRenew\}/);
+  assert.match(pages, /controller\.updateCurrentWorkspaceRenewal\(!detail\.autoRenew\)/);
+  assert.match(pages, /detail\.renewalStatus !== "not_applicable"/);
 });

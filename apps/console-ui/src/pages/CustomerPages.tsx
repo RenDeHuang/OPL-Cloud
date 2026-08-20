@@ -317,7 +317,7 @@ function WorkspaceOrderSummary({
           <dl className="workspace-order-summary__facts">
             <div><dt>可用余额</dt><dd>{wallet ? formatUsdMicros(wallet.usdMicros) : "暂不可用"}</dd></div>
             <div><dt>计费周期</dt><dd>{billingCycle}</dd></div>
-            <div><dt>续费</dt><dd>自动续费关闭</dd></div>
+            <div><dt>续费</dt><dd>{controller.customerOwned ? "不适用" : controller.launchAutoRenew ? "自动续费开启" : "自动续费关闭"}</dd></div>
           </dl>
           {controller.balanceSufficient === false ? <p className="workspace-order-summary__warning">余额不足，请联系管理员处理。</p> : null}
         </>
@@ -354,6 +354,7 @@ function WorkspaceLaunchPage({ controller }: { controller: ConsoleController }) 
               {controller.sources.catalog.error ? <div className="inline-error"><AlertCircle aria-hidden size={16} />计划与价格暂不可用<Button onClick={() => void controller.refreshCurrentPage()} size="sm" variant="ghost">重试</Button></div> : null}
               {catalog ? <RadioGroup<PlanId> aria-label="Workspace 套餐" className="workspace-plan-list" direction="col" name="workspace-plan" onChange={controller.setLaunchPlan} value={controller.launchPlan}>{catalog.packages.filter((plan) => plan.available && (plan.id === "basic" || plan.id === "pro")).map((plan) => <PlanOption controller={controller} key={plan.id} plan={plan} />)}</RadioGroup> : null}
             </fieldset>
+            {!controller.customerOwned ? <div className="launch-confirm-check"><Checkbox checked={controller.launchAutoRenew} label="自动续费" onChange={controller.setLaunchAutoRenew} /></div> : null}
           </section>
           <WorkspaceOrderSummary
             action={<Button color="primary" disabled={!controller.launchName.trim() || !controller.selectedPlan || controller.selectedPrice === null || controller.balanceSufficient !== true} type="submit">核对开通信息<ArrowRight aria-hidden size={16} /></Button>}
@@ -383,6 +384,7 @@ function WorkspaceLaunchConfirm({ controller }: { controller: ConsoleController 
           <div><dt>套餐</dt><dd>{plan.name}</dd></div>
           <div><dt>价格版本</dt><dd>{preview.priceVersion}</dd></div>
           <div><dt>计费周期</dt><dd>{billingUnitLabel(preview.billingUnit)}</dd></div>
+          <div><dt>自动续费</dt><dd>{controller.launchAutoRenew ? "开启" : "关闭"}</dd></div>
         </dl>
         <div className="launch-confirm-check"><Checkbox checked={controller.launchConfirmed} label="我确认一次性预付 Workspace 月度总额并开通" onChange={controller.setLaunchConfirmed} /></div>
         <footer><Button onClick={() => { controller.setLaunchStep("configure"); controller.setLaunchConfirmed(false); }} variant="outline">返回修改</Button></footer>
@@ -542,7 +544,7 @@ function WorkspaceDetailPage({ controller }: { controller: ConsoleController }) 
             </SourceState>
           </section>
           <WorkspaceBudgetPanel controller={controller} />
-          <section className="panel workspace-facts-panel"><div className="panel-title"><h2>套餐与条款</h2></div><dl className="data-list"><div><dt>套餐</dt><dd>{detail.packageId?.toUpperCase() || "-"}</dd></div><div><dt>CPU / 内存规格</dt><dd>-</dd></div><div><dt>持久存储</dt><dd>{detail.storageGb ? `${detail.storageGb} GB` : "-"}</dd></div><div><dt>Workspace 月度总价</dt><dd>{formatUsdMicros(detail.totalUsdMicros)}</dd></div><div><dt>价格版本</dt><dd>{detail.priceVersion || "-"}</dd></div><div><dt>创建时间</dt><dd>{formatDate(detail.createdAt, true)}</dd></div><div><dt>权益期</dt><dd>{detail.periodStart && detail.paidThrough ? `${formatDate(detail.periodStart)} 至 ${formatDate(detail.paidThrough)}` : "-"}</dd></div><div><dt>续费状态</dt><dd>{detail.renewalStatus || "-"}</dd></div><div><dt>自动续费</dt><dd>{detail.autoRenew === true ? "开启" : detail.autoRenew === false ? "关闭" : "-"}</dd></div></dl></section>
+          <section className="panel workspace-facts-panel"><div className="panel-title"><h2>套餐与条款</h2></div><dl className="data-list"><div><dt>套餐</dt><dd>{detail.packageId?.toUpperCase() || "-"}</dd></div><div><dt>CPU / 内存规格</dt><dd>-</dd></div><div><dt>持久存储</dt><dd>{detail.storageGb ? `${detail.storageGb} GB` : "-"}</dd></div><div><dt>Workspace 月度总价</dt><dd>{formatUsdMicros(detail.totalUsdMicros)}</dd></div><div><dt>价格版本</dt><dd>{detail.priceVersion || "-"}</dd></div><div><dt>创建时间</dt><dd>{formatDate(detail.createdAt, true)}</dd></div><div><dt>权益期</dt><dd>{detail.periodStart && detail.paidThrough ? `${formatDate(detail.periodStart)} 至 ${formatDate(detail.paidThrough)}` : "-"}</dd></div><div><dt>续费状态</dt><dd>{detail.renewalStatus || "-"}</dd></div><div><dt>自动续费</dt><dd>{detail.renewalStatus !== "not_applicable" && detail.renewalStatus === "active" ? <Checkbox checked={detail.autoRenew === true} disabled={controller.commandBusy} label={detail.autoRenew ? "已开启" : "已关闭"} onChange={() => void controller.updateCurrentWorkspaceRenewal(!detail.autoRenew)} /> : detail.renewalStatus === "not_applicable" ? "不适用" : detail.renewalStatus === "expired_unpaid" ? "已关闭" : "-"}</dd></div></dl></section>
         </> : null}
       </SourceState>
     </section>

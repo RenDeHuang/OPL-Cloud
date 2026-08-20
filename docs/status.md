@@ -122,6 +122,20 @@ Sub2API management origin and credentials are never exposed to the browser.
   tests plus the full local PostgreSQL/Docker gate cover this source behavior;
   this is not Instance deployment, production billing, or C2 Runtime ABI
   evidence.
+- Customer Workspace auto-renew authorization now uses the existing persisted
+  Control Plane renewal state. Launch retains the boolean intent, activation
+  preserves its owner and authorization time, and the Workspace command enables
+  or disables future periods with the existing command identity, CAS, and audit
+  boundaries. Console holds one stable intent per Workspace until an
+  authoritative command plus GET/list readback confirms the result. Focused
+  Go, Node, and contract tests, `npm run verify:local`, and the renewal
+  PostgreSQL owner tests pass. The aggregate `npm run verify:local:full` run was
+  not green: three unrelated long-running announcement/Fabric replay tests
+  failed under concurrent resource pressure, while isolated branch and fresh
+  `main` runs passed. This source evidence therefore does not claim a green full
+  repository gate, live Sub2API Debit, Provider renewal, Ledger Receipt,
+  Instance qualification, production adoption, or expired-Workspace
+  reactivation.
 - The versioned Workspace Runtime ABI contract owns the fixed internal WebUI
   protocol and port `http/3000`. Control Plane proxy routing, Fabric
   Local-Docker publish/health/readback, and Fabric Tencent/TKE

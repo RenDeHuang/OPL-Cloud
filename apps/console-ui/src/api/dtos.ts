@@ -132,6 +132,7 @@ export interface Workspace {
   totalUsdMicros?: number;
   periodStart?: string;
   paidThrough?: string;
+  nextRenewalAt?: string;
   renewalStatus?: string;
 }
 
@@ -151,7 +152,7 @@ export type PlanId = "basic" | "pro";
 export interface WorkspaceLaunchRequest {
   name: string;
   packageId: PlanId;
-  autoRenew: false;
+  autoRenew: boolean;
 }
 
 export interface WorkspaceLaunchResponse {
@@ -163,7 +164,7 @@ export interface WorkspaceLaunchResponse {
   name: string;
   packageId: PlanId;
   sizeGb: number;
-  autoRenew: false;
+  autoRenew: boolean;
   priceVersion: string;
   currency: "USD";
   totalChargeUsdMicros: number;

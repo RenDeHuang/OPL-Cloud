@@ -47,6 +47,14 @@ func workspaceLaunchActivationRow(operation workspaceLaunchReconcileOperation) (
 		return nil, errInvalidWorkspaceLaunchOperation
 	}
 	resourceBillingEnabled := operation.raw["resourceBillingEnabled"] == nil || operation.boolFact("resourceBillingEnabled")
+	autoRenew := operation.boolFact("autoRenew")
+	if autoRenew && !resourceBillingEnabled {
+		return nil, errInvalidWorkspaceLaunchOperation
+	}
+	authorizedBy, authorizedAt := "", ""
+	if autoRenew {
+		authorizedBy, authorizedAt = operation.stringFact("ownerUserId"), operation.CreatedAt
+	}
 	computePrice, storagePrice, err := workspaceLaunchAcceptedPriceComponents(operation)
 	if err != nil {
 		return nil, err
@@ -60,7 +68,7 @@ func workspaceLaunchActivationRow(operation workspaceLaunchReconcileOperation) (
 		CredentialVersion: operation.stringFact("credentialVersion"), CredentialSecretRef: operation.stringFact("credentialSecretRef"),
 	})
 	for key, value := range map[string]any{
-		"resourceBillingEnabled": resourceBillingEnabled, "autoRenew": false, "authorizedBy": "", "authorizedAt": "", "priceVersion": operation.stringFact("priceVersion"), "currency": pricingCurrency,
+		"resourceBillingEnabled": resourceBillingEnabled, "autoRenew": autoRenew, "authorizedBy": authorizedBy, "authorizedAt": authorizedAt, "priceVersion": operation.stringFact("priceVersion"), "currency": pricingCurrency,
 		"billingUnit": pricingBillingUnit, "computeUsdMicros": computePrice, "storageUsdMicros": storagePrice, "totalUsdMicros": operation.int64Fact("totalChargeUsdMicros"),
 		"periodStart": operation.stringFact("periodStart"), "paidThrough": operation.stringFact("paidThrough"), "nextRenewalAt": paidThrough.Add(-24 * time.Hour).Format(time.RFC3339Nano),
 		"billingAnchorDay": operation.intFact("billingAnchorDay"), "renewalStatus": map[bool]string{true: "active", false: workspaceBillingNotApplicable}[resourceBillingEnabled], "computeAllocationId": operation.stringFact("computeAllocationId"),
@@ -72,8 +80,14 @@ func workspaceLaunchActivationRow(operation workspaceLaunchReconcileOperation) (
 }
 
 func workspaceLaunchProjectionMatches(operation workspaceLaunchReconcileOperation, workspace map[string]any) bool {
+	autoRenew := operation.boolFact("autoRenew")
+	authorizedBy, authorizedAt := "", ""
+	if autoRenew {
+		authorizedBy, authorizedAt = operation.stringFact("ownerUserId"), operation.CreatedAt
+	}
 	return workspaceLaunchStableProjectionMatches(operation, workspace) &&
-		int64(numberField(workspace, "workspaceApiKeyId", 0)) == operation.int64Fact("workspaceApiKeyId")
+		int64(numberField(workspace, "workspaceApiKeyId", 0)) == operation.int64Fact("workspaceApiKeyId") &&
+		workspace["autoRenew"] == autoRenew && stringValue(workspace["authorizedBy"]) == authorizedBy && stringValue(workspace["authorizedAt"]) == authorizedAt
 }
 
 func workspaceLaunchStableProjectionMatches(operation workspaceLaunchReconcileOperation, workspace map[string]any) bool {
