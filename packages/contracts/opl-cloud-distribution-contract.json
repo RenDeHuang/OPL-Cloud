@@ -17,11 +17,14 @@
       "kind": "github_actions_artifact",
       "exactKeys": [
         "workflowRunId",
+        "workflowRunAttempt",
         "artifactName"
       ],
       "workflowRunIdField": "provenance.workflowRunId",
-      "artifactNameTemplate": "opl-cloud-candidate-{product.sha}",
-      "artifactNameProductShaField": "product.sha"
+      "workflowRunAttemptField": "provenance.workflowRunAttempt",
+      "artifactNameTemplate": "opl-cloud-candidate-{product.sha}-{provenance.workflowRunAttempt}",
+      "artifactNameProductShaField": "product.sha",
+      "artifactNameRunAttemptField": "provenance.workflowRunAttempt"
     },
     "formalPublication": false,
     "instanceDeployment": false

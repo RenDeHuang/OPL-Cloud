@@ -264,7 +264,7 @@ jobs:
         id: candidate_artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: opl-cloud-candidate-${{ inputs.product_sha }}
+          name: opl-cloud-candidate-${{ inputs.product_sha }}-${{ github.run_attempt }}
           path: artifacts/candidate/
           if-no-files-found: error
           compression-level: 0

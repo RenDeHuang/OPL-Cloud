@@ -82,10 +82,12 @@ test("distribution contract locates a V2 Candidate bundle without duplicating it
     registry: "ghcr.io/gaofeng21cn/one-person-lab-cloud",
     artifactLocator: {
       kind: "github_actions_artifact",
-      exactKeys: ["workflowRunId", "artifactName"],
+      exactKeys: ["workflowRunId", "workflowRunAttempt", "artifactName"],
       workflowRunIdField: "provenance.workflowRunId",
-      artifactNameTemplate: "opl-cloud-candidate-{product.sha}",
-      artifactNameProductShaField: "product.sha"
+      workflowRunAttemptField: "provenance.workflowRunAttempt",
+      artifactNameTemplate: "opl-cloud-candidate-{product.sha}-{provenance.workflowRunAttempt}",
+      artifactNameProductShaField: "product.sha",
+      artifactNameRunAttemptField: "provenance.workflowRunAttempt"
     },
     formalPublication: false,
     instanceDeployment: false
@@ -99,14 +101,23 @@ test("distribution contract locates a V2 Candidate bundle without duplicating it
     contract.instanceHandoff.contract,
     "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV2"
   );
-  const manifest = { product: { sha: "a".repeat(40) }, provenance: { workflowRunId: "12345" } };
+  const manifest = { product: { sha: "a".repeat(40) }, provenance: { workflowRunId: "12345", workflowRunAttempt: "2" } };
   const locator = contract.candidate.artifactLocator;
-  assert.deepEqual({
-    workflowRunId: manifest.provenance.workflowRunId,
-    artifactName: locator.artifactNameTemplate.replace("{product.sha}", manifest.product.sha)
-  }, {
-    workflowRunId: "12345",
-    artifactName: `opl-cloud-candidate-${"a".repeat(40)}`
+  const deriveLocator = (value: typeof manifest) => ({
+    workflowRunId: value.provenance.workflowRunId,
+    workflowRunAttempt: value.provenance.workflowRunAttempt,
+    artifactName: locator.artifactNameTemplate
+      .replace("{product.sha}", value.product.sha)
+      .replace("{provenance.workflowRunAttempt}", value.provenance.workflowRunAttempt)
   });
+  assert.deepEqual(deriveLocator(manifest), {
+    workflowRunId: manifest.provenance.workflowRunId,
+    workflowRunAttempt: "2",
+    artifactName: `opl-cloud-candidate-${"a".repeat(40)}-2`
+  });
+  assert.notEqual(
+    deriveLocator(manifest).artifactName,
+    deriveLocator({ ...manifest, provenance: { ...manifest.provenance, workflowRunAttempt: "1" } }).artifactName
+  );
   assert.equal(contract.distribution.workflow, ".github/workflows/release-opl-cloud-image.yml");
 });

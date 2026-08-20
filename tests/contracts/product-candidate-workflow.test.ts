@@ -86,7 +86,7 @@ test("Cloud candidate workflow builds one portable non-Release multi-architectur
   }
   const upload = steps.find((value) => value.id === "candidate_artifact");
   assert.equal(upload?.uses, "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
-  assert.equal(upload?.with?.name, "opl-cloud-candidate-${{ inputs.product_sha }}");
+  assert.equal(upload?.with?.name, "opl-cloud-candidate-${{ inputs.product_sha }}-${{ github.run_attempt }}");
   assert.equal(upload?.with?.path, "artifacts/candidate/");
   assert.equal(upload?.with?.["if-no-files-found"], "error");
 
