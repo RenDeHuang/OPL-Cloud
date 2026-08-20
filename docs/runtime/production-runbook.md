@@ -62,8 +62,11 @@ Its portable bundle contains the installation assets, canonical
 Product repository/SHA/tree, Cloud index ref/digest/revision, both platform
 child digests, each installation asset SHA-256, and workflow provenance.
 `SHA256SUMS` covers every installation asset plus the manifest itself; it does
-not cover itself. The Candidate does not bind a Workspace image, Provider
-Profile, domain, or Instance fact.
+not cover itself. The canonical Candidate manifest schema does not bind a
+selected Workspace image, Provider Profile, domain, or Instance fact. The
+bundle still contains the current environment template; removing its
+installation-specific defaults remains a separate
+`LOCAL-WORKSPACE-INSTALL-CONTRACT-01` obligation.
 
 The local installation owner qualifies that Candidate on a supported clean Linux
 Docker host using an explicit Local-Docker Provider Profile and immutable

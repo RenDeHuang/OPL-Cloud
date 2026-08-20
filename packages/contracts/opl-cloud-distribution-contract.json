@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "owner": "OPL Cloud",
   "purpose": "Portable product distribution and instance handoff boundary.",
   "state": "current",
@@ -11,25 +11,18 @@
   "productRepository": "gaofeng21cn/one-person-lab-cloud",
   "candidate": {
     "workflow": ".github/workflows/build-opl-cloud-candidate.yml",
-    "contract": "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV1",
+    "contract": "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV2",
     "registry": "ghcr.io/gaofeng21cn/one-person-lab-cloud",
-    "platforms": [
-      "linux/amd64",
-      "linux/arm64"
-    ],
-    "portableAssets": [
-      "compose.yaml",
-      "compose.deployment-platform-owned.yaml",
-      "compose.deployment-managed-tke.yaml",
-      "compose.deployment-customer-owned.yaml",
-      "compose.fabric-local-docker.yaml",
-      "compose.fabric-tencent-tke.yaml",
-      "compose.local-workspace.yaml",
-      "opl-cloud.env.example"
-    ],
-    "bundleManifest": "opl-cloud-candidate.json",
-    "checksumManifest": "SHA256SUMS",
-    "qualificationFactsOwner": "instance_or_installer_receipt",
+    "artifactLocator": {
+      "kind": "github_actions_artifact",
+      "exactKeys": [
+        "workflowRunId",
+        "artifactName"
+      ],
+      "workflowRunIdField": "provenance.workflowRunId",
+      "artifactNameTemplate": "opl-cloud-candidate-{product.sha}",
+      "artifactNameProductShaField": "product.sha"
+    },
     "formalPublication": false,
     "instanceDeployment": false
   },
@@ -93,9 +86,10 @@
   },
   "instanceHandoff": {
     "repository": "gaofeng21cn/opl-instance-medopl",
-    "contract": "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV1",
+    "contract": "packages/contracts/opl-cloud-candidate-receipt-contract.json#candidateReceiptV2",
+    "artifactLocatorContract": "packages/contracts/opl-cloud-distribution-contract.json#candidate.artifactLocator",
     "inputs": [
-      "candidate_receipt_b64"
+      "candidate_manifest_b64"
     ],
     "cloudRepositoryMustNotOwn": [
       "instance_domains",

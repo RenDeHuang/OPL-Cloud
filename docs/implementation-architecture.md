@@ -636,11 +636,14 @@ bundle contains the installation assets, canonical
 `opl-cloud-candidate.json`, and `SHA256SUMS`. The manifest binds the Cloud
 source/image identity and each installation asset digest; `SHA256SUMS` covers
 the installation assets and manifest without a checksum self-reference. The
-bundle validator recomputes every digest and rejects missing, extra, or
-malformed inputs. Candidate identity contains no Workspace image, Provider
-Profile, domain, or Instance fact; each qualification owner records those in
-its own later receipt. The workflow creates no Git tag, GitHub Release,
-versioned image tag, or Instance action.
+bundle validator recomputes every digest and rejects missing, extra,
+non-canonical, or malformed inputs. The canonical Candidate manifest schema
+contains no selected Workspace image, Provider Profile, domain, or Instance
+fact; each qualification owner records those in its own later receipt. The
+bundle still carries the current `opl-cloud.env.example`; removal of its
+installation-specific defaults remains owned by
+`LOCAL-WORKSPACE-INSTALL-CONTRACT-01`. The workflow creates no Git tag, GitHub
+Release, versioned image tag, or Instance action.
 
 The formal Release workflow still cannot promote those already qualified bytes.
 It builds and validates the OCI layout in a read-only job, passes one

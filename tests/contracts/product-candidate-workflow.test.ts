@@ -66,6 +66,7 @@ test("Cloud candidate workflow builds one portable non-Release multi-architectur
   assert.match(readback, /org\.opencontainers\.image\.revision/);
 
   const receipt = step("Create and validate portable candidate bundle").run || "";
+  assert.match(receipt, /schemaVersion: 2/);
   assert.match(receipt, /tools\/cloud-candidate-receipt\.ts validate/);
   assert.match(receipt, /tools\/cloud-candidate-receipt\.ts validate-bundle/);
   assert.match(receipt, /tools\/cloud-candidate-receipt\.ts digest/);
