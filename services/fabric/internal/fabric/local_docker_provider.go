@@ -306,10 +306,10 @@ func (p *LocalDockerProvider) MonthlyPreflight(ctx context.Context, input Monthl
 		if err := p.storageQuota.Preflight(p.hostStorageRoot); err != nil {
 			return MonthlyPreflight{}, err
 		}
-		if err := p.prepareStorageRoot(); err != nil {
+		if err := p.prepareStorageRoot(ctx); err != nil {
 			return MonthlyPreflight{}, err
 		}
-		if err := p.preflightStorageCapacity(input.SizeGB); err != nil {
+		if err := p.preflightStorageCapacity(ctx, input.SizeGB); err != nil {
 			return MonthlyPreflight{}, err
 		}
 		requestIDs = map[string]string{"quota": "local-host", "price": "not-applicable"}
@@ -640,7 +640,7 @@ func (p *LocalDockerProvider) CreateStorageVolume(ctx context.Context, input Sto
 			return StorageVolume{}, dispatchErr
 		}
 	}
-	if _, err := p.ensureStorageDirectories(metadata, input.SizeGB); err != nil {
+	if _, err := p.ensureStorageDirectories(ctx, metadata, input.SizeGB); err != nil {
 		readErr := fmt.Errorf("local_docker_storage_readback_mismatch: %w", err)
 		_ = attempt.complete(ctx, "", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID}, readErr)
 		return StorageVolume{}, readErr
@@ -662,7 +662,7 @@ func (p *LocalDockerProvider) ReadStorageVolume(ctx context.Context, volume Stor
 	paths, err := p.readStorageDirectories(volume)
 	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
 		volume.Status = "external_deleted"
-		return volume, fmt.Errorf("local_docker_storage_not_found")
+		return volume, fmt.Errorf("local_docker_storage_not_found: %w", err)
 	}
 	if err != nil {
 		return volume, fmt.Errorf("local_docker_storage_ownership_mismatch: %w", err)
@@ -688,7 +688,11 @@ func (p *LocalDockerProvider) ReadStorageProviderFacts(ctx context.Context, volu
 }
 
 func (p *LocalDockerProvider) ReadStorageVolumeStatus(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
-	return p.ReadStorageVolume(ctx, volume)
+	readback, err := p.ReadStorageVolume(ctx, volume)
+	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		return readback, nil
+	}
+	return readback, err
 }
 
 func (p *LocalDockerProvider) SyncStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
@@ -712,7 +716,7 @@ func (p *LocalDockerProvider) DestroyStorageVolume(ctx context.Context, volume S
 	if err := p.storageQuota.Preflight(p.hostStorageRoot); err != nil {
 		return volume, err
 	}
-	if err := p.withStorageQuotaLock(func() error {
+	if err := p.withStorageQuotaLock(ctx, func() error {
 		root, err := p.openStorageRoot()
 		if err != nil {
 			return err
@@ -811,7 +815,7 @@ func (p *LocalDockerProvider) Readiness(ctx context.Context) (map[string]any, er
 	if err := p.storageQuota.Preflight(p.hostStorageRoot); err != nil {
 		return nil, err
 	}
-	if err := p.prepareStorageRoot(); err != nil {
+	if err := p.prepareStorageRoot(ctx); err != nil {
 		return nil, err
 	}
 	output, err := p.runner.Run(ctx, nil, "info", "--format", "{{.ServerVersion}}")

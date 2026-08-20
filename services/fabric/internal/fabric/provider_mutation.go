@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 	"time"
 )
 
@@ -87,11 +88,35 @@ func (s *Service) providerReadContext(ctx context.Context, operation FabricOpera
 func (s *Service) providerOperationContext(ctx context.Context, operation FabricOperation, readOnly bool) context.Context {
 	binding, ok := decodeLaunchStageBinding(operation)
 	if !ok {
-		return ctx
+		binding, ok = directStorageProviderMutationBinding(operation)
+		if !ok {
+			return ctx
+		}
 	}
 	return context.WithValue(ctx, providerMutationJournalContextKey{}, &providerMutationJournal{
 		operations: s.operations, parent: binding, parentOperation: operation, provider: s.provider.Descriptor().Name, now: s.now, readOnly: readOnly,
 	})
+}
+
+func directStorageProviderMutationBinding(operation FabricOperation) (WorkspaceLaunchStageBinding, bool) {
+	if operation.CallerService != "control-plane" || operation.Action != "create_storage_volume" || operation.ResourceKind != "storage_volume" {
+		return WorkspaceLaunchStageBinding{}, false
+	}
+	for _, value := range []string{
+		operation.OperationID, operation.ResourceID, operation.AccountID, operation.WorkspaceID,
+		operation.IdempotencyKey, operation.RequestHash,
+	} {
+		if value == "" || value != strings.TrimSpace(value) {
+			return WorkspaceLaunchStageBinding{}, false
+		}
+	}
+	binding := WorkspaceLaunchStageBinding{
+		SchemaVersion: 1, LaunchOperationID: operation.OperationID,
+		AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
+		Stage: "storage", Action: "ensure_storage", FabricOperationID: operation.OperationID,
+		IdempotencyKey: operation.IdempotencyKey, RequestHash: operation.RequestHash,
+	}
+	return binding, validWorkspaceLaunchStageBinding(binding)
 }
 
 func providerMutationOperationID(parent WorkspaceLaunchStageBinding, action, resourceKind, resourceID, expectedBinding string) string {

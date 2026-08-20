@@ -224,29 +224,48 @@ func TestBillingReceiptDetailIsStrictLedgerSource(t *testing.T) {
 }
 
 func TestWorkspaceCreatedReceiptUsesExistingLedgerDetailSource(t *testing.T) {
-	receipt := clients.Receipt{
-		ReceiptInput: clients.ReceiptInput{
-			Type: "workspace.created", Status: "completed", Surface: "workspace", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
-			Execution: map[string]any{"providerRequestId": "provider-secret"}, OutputRefs: map[string]any{"redactedUrl": "https://internal.example/secret"},
-		},
-		ReceiptID: "receipt-workspace", CreatedAt: "2026-07-18T00:00:00Z",
-	}
-	ledger := &customerFactsLedger{receipt: receipt}
-	server := NewServer(newTestService(ledger, &fakeFabricClient{}))
-	response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, "/api/billing/receipts/receipt-workspace", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("Workspace receipt detail = %d: %s", response.Code, response.Body.String())
-	}
-	var envelope map[string]any
-	_ = json.NewDecoder(response.Body).Decode(&envelope)
-	data := mapField(envelope, "data")
-	if envelope["source"] != "ledger" || envelope["status"] != "available" || envelope["available"] != true || len(data) != 5 ||
-		data["receiptId"] != "receipt-workspace" || data["type"] != "workspace.created" || data["status"] != "completed" ||
-		data["workspaceId"] != "ws-alpha" || data["createdAt"] != "2026-07-18T00:00:00Z" {
-		t.Fatalf("Workspace receipt envelope = %#v", envelope)
-	}
-	if body := string(mustJSON(envelope)); strings.Contains(body, "provider-secret") || strings.Contains(body, "internal.example") {
-		t.Fatalf("Workspace receipt leaked internal evidence: %s", body)
+	for _, test := range []struct {
+		name       string
+		surface    string
+		wantStatus int
+	}{
+		{name: "workspace", surface: "workspace", wantStatus: http.StatusOK},
+		{name: "control plane", surface: "control_plane", wantStatus: http.StatusOK},
+		{name: "unknown", surface: "unknown", wantStatus: http.StatusBadGateway},
+		{name: "empty", surface: "", wantStatus: http.StatusBadGateway},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			receipt := clients.Receipt{
+				ReceiptInput: clients.ReceiptInput{
+					Type: "workspace.created", Status: "completed", Surface: test.surface, AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+					Execution: map[string]any{"providerRequestId": "provider-secret"}, OutputRefs: map[string]any{"redactedUrl": "https://internal.example/secret"},
+				},
+				ReceiptID: "receipt-workspace", CreatedAt: "2026-07-18T00:00:00Z",
+			}
+			ledger := &customerFactsLedger{receipt: receipt}
+			server := NewServer(newTestService(ledger, &fakeFabricClient{}))
+			response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, "/api/billing/receipts/receipt-workspace", "")
+			if response.Code != test.wantStatus {
+				t.Fatalf("Workspace receipt detail = %d: %s", response.Code, response.Body.String())
+			}
+			var envelope map[string]any
+			_ = json.NewDecoder(response.Body).Decode(&envelope)
+			if test.wantStatus != http.StatusOK {
+				if envelope["source"] != "ledger" || envelope["status"] != "unavailable" || envelope["available"] != false {
+					t.Fatalf("Rejected workspace receipt envelope = %#v", envelope)
+				}
+				return
+			}
+			data := mapField(envelope, "data")
+			if envelope["source"] != "ledger" || envelope["status"] != "available" || envelope["available"] != true || len(data) != 5 ||
+				data["receiptId"] != "receipt-workspace" || data["type"] != "workspace.created" || data["status"] != "completed" ||
+				data["workspaceId"] != "ws-alpha" || data["createdAt"] != "2026-07-18T00:00:00Z" {
+				t.Fatalf("Workspace receipt envelope = %#v", envelope)
+			}
+			if body := string(mustJSON(envelope)); strings.Contains(body, "provider-secret") || strings.Contains(body, "internal.example") {
+				t.Fatalf("Workspace receipt leaked internal evidence: %s", body)
+			}
+		})
 	}
 }
 

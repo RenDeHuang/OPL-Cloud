@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 21,
+  "schemaVersion": 23,
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
@@ -126,18 +126,68 @@
   "workspaceDeletion": {
     "owner": "services/control-plane",
     "route": "DELETE /api/workspaces/{workspaceId}",
-    "identityFields": ["accountId", "operationId", "workspaceId", "runtimeId", "keyId", "debitCode", "purchaseReceiptId", "refundReceiptId"],
-    "orderedCompletion": [
-      "purchase_and_debit_authority_read",
-      "runtime_and_gateway_secret_authoritative_absence",
-      "attachment_detached",
+    "action": "workspace.delete.v2",
+    "schemaVersion": 2,
+    "semantics": "permanently_delete_all_workspace_resources_without_automatic_refund",
+    "identityFields": [
+      "accountId",
+      "operationId",
+      "workspaceId",
+      "ownerUserId",
+      "launchOperationId",
+      "launchReceiptId",
+      "resourceType",
+      "resourceId",
+      "computeAllocationId",
+      "storageId",
+      "attachmentId",
+      "runtimeId",
+      "workspaceApiKeyId",
+      "workspaceKeyFingerprint",
+      "runtimeServiceName",
+      "gatewaySecretRef"
+    ],
+    "providerNeutralResourceIdentity": {
+      "authority": "succeeded_immutable_launch_operation_and_matching_launch_receipt_for_runtime_compute_storage_and_attachment",
+      "launchReceiptContract": "opl-cloud-evidence-ledger-contract.json#workspaceLaunchReceiptV1",
+      "providerSpecificFields": false,
+      "resources": ["runtime", "compute", "storage", "attachment"]
+    },
+    "currentGatewayIdentity": {
+      "workspaceApiKeyIdAuthority": "current_workspace_projection",
+      "unchangedLaunchKeyAuthority": "immutable_launch_workspace_key_and_gateway_secret_identity",
+      "rotatedKeyAuthority": "strict_completed_workspace_gateway_key_rotation_lineage_from_launch_key_to_current_workspace_key",
+      "preMutationReadback": "fabric_runtime_gateway_secret_observation_must_match_current_key_secret_ref_and_fingerprint",
+      "resources": ["workspace_key", "gateway_secret"]
+    },
+    "launchReceiptIdentity": {
+      "field": "launchReceiptId",
+      "source": "immutable_launch_operation_receiptId_and_matching_workspaceLaunchReceiptV1",
+      "workspaceProjectionField": false
+    },
+    "orderedStages": [
+      "claimed",
+      "runtime_secret_absent",
+      "attachment_absent",
       "storage_absent",
       "compute_absent",
-      "sub2api_key_authoritative_absence",
-      "exact_business_refund",
-      "ledger_refund_receipt",
-      "control_plane_workspace_authoritative_absence"
+      "key_absent",
+      "workspace_absent",
+      "deletion_receipt_recorded",
+      "complete"
     ],
+    "workspaceProjectionAbsence": {
+      "transaction": "workspace_absent_cursor_workspace_compute_storage_attachment",
+      "resourceIdentity": "exact_operation_resource_id_account_and_workspace_match",
+      "mismatch": "fail_closed"
+    },
+    "legacyV1HardCut": {
+      "action": "workspace.delete.v1",
+      "completedAndWorkspaceAbsent": "stable_historical_terminal_replay",
+      "nonTerminalBeforeV2Mutation": "manual_review_conflict_without_mutation",
+      "rewriteV1": false,
+      "compatibilityEngine": false
+    },
     "fabricObservation": {
       "schemaVersion": 1,
       "routes": [
@@ -151,7 +201,7 @@
     "keyAuthority": "sub2api_exact_user_and_workspace_key_id_readback",
     "keyDeleteResponseLoss": "same_operation_exact_key_GET_only_until_absent_or_manual_review",
     "forbiddenKeyCleanupOwners": ["local_docker", "fabric", "ledger", "acceptance_runner"],
-    "terminalRequirement": "all_ordered_stages_share_the_exact_identity_fields_and_no_second_workspace_key_resource_refund_or_receipt_is_created"
+    "terminalRequirement": "all_ordered_stages_share_the_exact_identity_fields_and_no_resource_key_workspace_or_deletion_receipt_mutation_is_repeated"
   },
   "identityProvisioning": {
     "onlyMutation": "POST /api/operator/accounts",

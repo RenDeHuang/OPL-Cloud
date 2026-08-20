@@ -56,7 +56,7 @@ func TestLedgerCapabilityRejectsUnscopedBearerAndAcceptsBoundRequest(t *testing.
 	const key = "ledger-capability-key-for-http-tests-32-chars"
 	store := ledger.NewMemoryStore()
 	server := NewServerWithAuth(store, "internal-secret", key)
-	body := `{"type":"workspace.created","status":"completed","surface":"workspace","accountId":"acct-alpha","workspaceId":"ws-alpha"}`
+	body := `{"type":"execution.receipt.v1","status":"completed","surface":"workspace","accountId":"acct-alpha","workspaceId":"ws-alpha"}`
 	req := testRequest(http.MethodPost, "/ledger/receipts", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer internal-secret")
 	req.Header.Set("Idempotency-Key", "ledger-capability-once")
@@ -151,10 +151,42 @@ func capabilityWorkspaceReceiptInput(receiptType string) ledger.ReceiptInput {
 		delete(cost, "postChargeBalanceUsdMicros")
 		cost["sub2apiRefundCode"], cost["refundUsdMicros"] = "opl:workspace:refund:v1", int64(52_580_000)
 	}
-	return ledger.ReceiptInput{
+	input := ledger.ReceiptInput{
 		Type: receiptType, Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
 		Cost: cost, IdempotencyKey: "capability-" + receiptType,
 	}
+	if receiptType == "billing.workspace_purchased.v1" {
+		input.RequestID = "workspace-launch-capability"
+		input.IdempotencyKey = input.RequestID + ":purchase-receipt"
+		input.Execution = map[string]any{
+			"operationId": "workspace-launch-capability", "resourceType": "workspace", "resourceId": "workspace-alpha",
+			"computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "attachmentId": "attachment-alpha", "runtimeId": "runtime-alpha",
+			"workspaceApiKeyId": int64(9), "workspaceKeyFingerprint": "sha256:alpha", "runtimeServiceName": "runtime-alpha", "gatewaySecretRef": "secret-alpha",
+		}
+		input.Owner = map[string]any{"accountId": "acct-alpha", "workspaceId": "workspace-alpha", "ownerUserId": "usr-alpha"}
+	}
+	return input
+}
+
+func workspaceLifecycleHTTPReceiptInput(receiptType string) ledger.ReceiptInput {
+	input := capabilityWorkspaceReceiptInput("billing.workspace_purchased.v1")
+	input.Type = receiptType
+	input.IdempotencyKey = ""
+	if receiptType == "workspace.created" {
+		input.Cost = nil
+		return input
+	}
+	if receiptType == "workspace.deleted.v1" {
+		input.RequestID = "workspace-delete-http"
+		input.Execution["operationId"] = input.RequestID
+		input.InputRefs = map[string]any{"launchReceiptId": "receipt-launch-http"}
+		input.OutputRefs = map[string]any{
+			"runtimeStatus": "absent", "gatewaySecretStatus": "absent", "attachmentStatus": "absent", "storageStatus": "absent",
+			"computeStatus": "absent", "workspaceKeyStatus": "absent", "workspaceStatus": "absent",
+		}
+		input.Cost = nil
+	}
+	return input
 }
 
 func testLedgerCapability(t *testing.T, key string, claims ledgerCapabilityClaims, body []byte) string {
@@ -245,7 +277,7 @@ func TestReconciliationHTTP(t *testing.T) {
 }
 
 func TestJSONBodiesRejectTrailingDataWithoutPersistence(t *testing.T) {
-	validReceipt := `{"type":"workspace.created","status":"completed","surface":"workspace","workspaceId":"workspace-trailing"}`
+	validReceipt := `{"type":"execution.receipt.v1","status":"completed","surface":"workspace","workspaceId":"workspace-trailing"}`
 	validReconciliation := `{"report":{"id":"recon-trailing","status":"ok","counts":{"billingOperations":0,"matched":0,"exceptions":0},"exceptions":[]}}`
 	for _, suffix := range []string{` {}`, ` trailing-garbage`} {
 		t.Run(strings.TrimSpace(suffix), func(t *testing.T) {
@@ -484,7 +516,7 @@ func TestWorkspaceBillingReceiptSchemaHTTP(t *testing.T) {
 
 func TestWorkspacePurchasedReceipt(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
-	body := `{"type":"billing.workspace_purchased.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","workspaceId":"workspace-alpha","cost":{"priceVersion":"pilot-usd-2026-07-v1","currency":"USD","billingUnit":"calendar_month","totalUsdMicros":52580000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:workspace-launch:charge:v1","postChargeBalanceUsdMicros":947420000,"periodStart":"2026-07-20T00:00:00Z","paidThrough":"2026-08-20T00:00:00Z","resourceType":"workspace","resourceId":"workspace-alpha","components":{"compute":{"resourceType":"compute","resourceId":"compute-alpha","chargeUsdMicros":50000000},"storage":{"resourceType":"storage","resourceId":"storage-alpha","sizeGb":10,"chargeUsdMicros":2580000}}}}`
+	body := `{"type":"billing.workspace_purchased.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","workspaceId":"workspace-alpha","requestId":"workspace-launch-alpha","execution":{"operationId":"workspace-launch-alpha","resourceType":"workspace","resourceId":"workspace-alpha","computeAllocationId":"compute-alpha","storageId":"storage-alpha","attachmentId":"attachment-alpha","runtimeId":"runtime-alpha","workspaceApiKeyId":9,"workspaceKeyFingerprint":"sha256:alpha","runtimeServiceName":"runtime-alpha","gatewaySecretRef":"secret-alpha"},"owner":{"accountId":"acct-alpha","workspaceId":"workspace-alpha","ownerUserId":"usr-alpha"},"cost":{"priceVersion":"pilot-usd-2026-07-v1","currency":"USD","billingUnit":"calendar_month","totalUsdMicros":52580000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:workspace-launch:charge:v1","postChargeBalanceUsdMicros":947420000,"periodStart":"2026-07-20T00:00:00Z","paidThrough":"2026-08-20T00:00:00Z","resourceType":"workspace","resourceId":"workspace-alpha","components":{"compute":{"resourceType":"compute","resourceId":"compute-alpha","chargeUsdMicros":50000000},"storage":{"resourceType":"storage","resourceId":"storage-alpha","sizeGb":10,"chargeUsdMicros":2580000}}}}`
 	post := func(key, payload string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(payload))
@@ -494,14 +526,86 @@ func TestWorkspacePurchasedReceipt(t *testing.T) {
 		return rec
 	}
 
-	if rec := post("workspace-purchased", body); rec.Code != http.StatusCreated {
+	if rec := post("workspace-launch-alpha:purchase-receipt", body); rec.Code != http.StatusCreated {
 		t.Fatalf("valid Workspace purchase receipt status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if rec := post("workspace-purchased-total-mismatch", strings.Replace(body, `"totalUsdMicros":52580000`, `"totalUsdMicros":52579999`, 1)); rec.Code != http.StatusBadRequest {
+	if rec := post("workspace-launch-alpha:purchase-receipt", strings.Replace(body, `"totalUsdMicros":52580000`, `"totalUsdMicros":52579999`, 1)); rec.Code != http.StatusBadRequest {
 		t.Fatalf("mismatched Workspace purchase receipt status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if rec := post("workspace-purchased-cross-workspace", strings.Replace(body, `"resourceId":"workspace-alpha"`, `"resourceId":"workspace-other"`, 1)); rec.Code != http.StatusBadRequest {
+	if rec := post("workspace-launch-alpha:purchase-receipt", strings.Replace(body, `"resourceId":"workspace-alpha"`, `"resourceId":"workspace-other"`, 1)); rec.Code != http.StatusBadRequest {
 		t.Fatalf("cross-Workspace purchase receipt status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkspaceLifecycleReceiptCanonicalIdempotencyAndCardinalityHTTP(t *testing.T) {
+	post := func(t *testing.T, server http.Handler, input ledger.ReceiptInput, key string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewReader(body))
+		req.Header.Set("Idempotency-Key", key)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for _, input := range []ledger.ReceiptInput{
+		workspaceLifecycleHTTPReceiptInput("workspace.created"),
+		workspaceLifecycleHTTPReceiptInput("workspace.deleted.v1"),
+	} {
+		t.Run(input.Type+" wrong key", func(t *testing.T) {
+			store := ledger.NewMemoryStore()
+			rec := post(t, NewServer(store, "internal-secret"), input, input.RequestID+":other-receipt")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("wrong canonical key status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			page, err := store.ListReceipts(context.Background(), ledger.ReceiptQuery{AccountID: input.AccountID})
+			if err != nil || len(page.Receipts) != 0 {
+				t.Fatalf("wrong key persisted receipts=%#v err=%v", page.Receipts, err)
+			}
+		})
+	}
+
+	t.Run("same RequestID cannot use another header key", func(t *testing.T) {
+		store := ledger.NewMemoryStore()
+		server := NewServer(store, "internal-secret")
+		input := workspaceLifecycleHTTPReceiptInput("workspace.created")
+		if rec := post(t, server, input, input.RequestID+":purchase-receipt"); rec.Code != http.StatusCreated {
+			t.Fatalf("first receipt status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if rec := post(t, server, input, input.RequestID+":second-purchase-receipt"); rec.Code != http.StatusBadRequest {
+			t.Fatalf("alternate header key status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		page, err := store.ListReceipts(context.Background(), ledger.ReceiptQuery{AccountID: input.AccountID})
+		if err != nil || len(page.Receipts) != 1 {
+			t.Fatalf("same RequestID receipts=%#v err=%v", page.Receipts, err)
+		}
+	})
+
+	for _, firstType := range []string{"billing.workspace_purchased.v1", "workspace.created"} {
+		t.Run("mixed launch variants after "+firstType, func(t *testing.T) {
+			store := ledger.NewMemoryStore()
+			server := NewServer(store, "internal-secret")
+			first := workspaceLifecycleHTTPReceiptInput(firstType)
+			secondType := "workspace.created"
+			if firstType == secondType {
+				secondType = "billing.workspace_purchased.v1"
+			}
+			second := workspaceLifecycleHTTPReceiptInput(secondType)
+			key := first.RequestID + ":purchase-receipt"
+			if rec := post(t, server, first, key); rec.Code != http.StatusCreated {
+				t.Fatalf("first launch receipt status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if rec := post(t, server, second, key); rec.Code != http.StatusConflict {
+				t.Fatalf("mixed launch receipt status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			page, err := store.ListReceipts(context.Background(), ledger.ReceiptQuery{AccountID: first.AccountID})
+			if err != nil || len(page.Receipts) != 1 {
+				t.Fatalf("mixed launch receipts=%#v err=%v", page.Receipts, err)
+			}
+		})
 	}
 }
 

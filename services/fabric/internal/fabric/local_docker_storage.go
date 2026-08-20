@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const localDockerStorageMetadataFile = ".opl-storage.json"
@@ -21,6 +23,7 @@ const localDockerRuntimeReservationDirectory = ".opl-runtime-reservations"
 const localDockerStorageMetadataSchemaVersion = 2
 const localDockerStorageDeletionSchemaVersion = 1
 const localDockerWriteAccessMode = 2
+const localDockerStorageLockRetryInterval = 10 * time.Millisecond
 
 type localDockerStorageMetadata struct {
 	SchemaVersion int    `json:"schemaVersion"`
@@ -87,8 +90,8 @@ func (p *LocalDockerProvider) openStorageRoot() (*os.Root, error) {
 	return root, nil
 }
 
-func (p *LocalDockerProvider) preflightStorageCapacity(sizeGB int) error {
-	return p.withStorageQuotaLock(func() error {
+func (p *LocalDockerProvider) preflightStorageCapacity(ctx context.Context, sizeGB int) error {
+	return p.withStorageQuotaLock(ctx, func() error {
 		root, err := p.openStorageRoot()
 		if err != nil {
 			return err
@@ -230,8 +233,8 @@ func (p *LocalDockerProvider) checkStorageReservationCapacityLocked(root *os.Roo
 	return nil
 }
 
-func (p *LocalDockerProvider) prepareStorageRoot() error {
-	return p.withStorageQuotaLock(func() error {
+func (p *LocalDockerProvider) prepareStorageRoot(ctx context.Context) error {
+	return p.withStorageQuotaLock(ctx, func() error {
 		root, err := p.openStorageRoot()
 		if err != nil {
 			return err
@@ -338,7 +341,7 @@ func localDockerNextProjectID(projectID uint32) uint32 {
 	return projectID
 }
 
-func (p *LocalDockerProvider) withStorageQuotaLock(operation func() error) error {
+func (p *LocalDockerProvider) withStorageQuotaLock(ctx context.Context, operation func() error) error {
 	root, err := p.openStorageRoot()
 	if err != nil {
 		return err
@@ -353,8 +356,24 @@ func (p *LocalDockerProvider) withStorageQuotaLock(operation func() error) error
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
 		return fmt.Errorf("local_docker_storage_quota_lock_invalid")
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("local_docker_storage_quota_lock_unavailable")
+	retry := time.NewTicker(localDockerStorageLockRetryInterval)
+	defer retry.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			return fmt.Errorf("local_docker_storage_quota_lock_unavailable")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-retry.C:
+		}
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	return operation()
@@ -784,7 +803,7 @@ func readLocalDockerStorageMetadata(root *os.Root, paths localDockerStoragePaths
 	return metadata, nil
 }
 
-func (p *LocalDockerProvider) ensureStorageDirectories(metadata localDockerStorageMetadata, sizeGB int) (localDockerStoragePaths, error) {
+func (p *LocalDockerProvider) ensureStorageDirectories(ctx context.Context, metadata localDockerStorageMetadata, sizeGB int) (localDockerStoragePaths, error) {
 	if metadata.SchemaVersion != localDockerStorageMetadataSchemaVersion || metadata.StorageID == "" || metadata.AccountID == "" || metadata.WorkspaceID == "" || metadata.SizeGB <= 0 || metadata.SizeGB != sizeGB {
 		return localDockerStoragePaths{}, fmt.Errorf("local_docker_storage_identity_invalid")
 	}
@@ -804,7 +823,7 @@ func (p *LocalDockerProvider) ensureStorageDirectories(metadata localDockerStora
 	if err != nil {
 		return localDockerStoragePaths{}, err
 	}
-	err = p.withStorageQuotaLock(func() error {
+	err = p.withStorageQuotaLock(ctx, func() error {
 		if err := p.resumePendingStorageDeletionsLocked(root); err != nil {
 			return err
 		}

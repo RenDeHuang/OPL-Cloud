@@ -163,7 +163,7 @@ func TestLocalDockerProviderFactsParityAndReadOnly(t *testing.T) {
 	}
 	storageRoot := localDockerStorageTestRoot(t)
 	provider := newLocalDockerProvider(localDockerStorageTestConfig(storageRoot), runner)
-	paths, err := provider.ensureStorageDirectories(localDockerStorageMetadata{
+	paths, err := provider.ensureStorageDirectories(context.Background(), localDockerStorageMetadata{
 		SchemaVersion: localDockerStorageMetadataSchemaVersion, StorageID: volume.ID, AccountID: volume.AccountID, WorkspaceID: volume.WorkspaceID, SizeGB: volume.SizeGB,
 	}, 10)
 	if err != nil {
@@ -208,12 +208,12 @@ func TestTencentProviderFactsOwnTencentMappingAndStayReadOnly(t *testing.T) {
 				ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4", "cpu": "2", "memoryGb": "4", "zone": "ap-guangzhou-3", "deadline": "2026-09-12T00:00:00Z"},
 			}, nil
 		case "sync_storage_volume":
-			if request.Storage.ID != "disk-tencent" || !reflect.DeepEqual(request.Tags, storageTags) {
+			if request.Storage.ID != "disk-tencent" || request.Region != "ap-guangzhou" || !reflect.DeepEqual(request.Tags, storageTags) {
 				t.Fatalf("storage provider input=%#v", request)
 			}
 			return provisionerResponse{
 				OK: true, Status: "provider_ready", CBSStatus: "ATTACHED", StorageVolumeID: "disk-tencent", ProviderRequestID: "req-storage-read",
-				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": "ap-guangzhou-3", "deadline": "2026-09-12T00:00:00Z"},
+				ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "zone": "ap-guangzhou-3", "deadline": "2026-09-12T00:00:00Z", "region": "ap-guangzhou"},
 			}, nil
 		default:
 			return provisionerResponse{}, fmt.Errorf("unexpected provisioner action %q", request.Action)
@@ -228,7 +228,7 @@ func TestTencentProviderFactsOwnTencentMappingAndStayReadOnly(t *testing.T) {
 	volume := StorageVolume{
 		ID: "storage-tencent", OperationID: "op-storage-tencent", AccountID: "acct-tencent", WorkspaceID: "workspace-tencent", Status: "ready",
 		Provider: "tencent-tke", ProviderResourceID: "disk-tencent", SizeGB: 10, DiskType: "CLOUD_BSSD", Zone: "ap-guangzhou-3", Deadline: "2026-09-12T00:00:00Z",
-		ProviderData: map[string]string{"pvName": "opl-storage-tencent-pv", "pvcName": "opl-storage-tencent-data"}, CostTags: storageTags,
+		ProviderData: map[string]string{"pvName": "opl-storage-tencent-pv", "pvcName": "opl-storage-tencent-data", "region": "ap-guangzhou"}, CostTags: storageTags,
 	}
 	computeFacts, computeErr := provider.ReadComputeProviderFacts(context.Background(), compute)
 	storageFacts, storageErr := provider.ReadStorageProviderFacts(context.Background(), volume)

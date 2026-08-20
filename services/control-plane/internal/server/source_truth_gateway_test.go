@@ -656,6 +656,24 @@ type workspaceKeyRotationStore struct {
 	casResponseLost       bool
 }
 
+func (s *workspaceKeyRotationStore) ClaimWorkspaceKeyRotation(ctx context.Context, row map[string]any) error {
+	var result map[string]any
+	_ = json.Unmarshal([]byte(stringValue(row["result"])), &result)
+	phase := stringValue(result["phase"])
+	if !s.failed && s.failPhase == phase {
+		s.failed = true
+		return errors.New("phase persist failed")
+	}
+	if err := s.memoryTableStore.ClaimWorkspaceKeyRotation(ctx, row); err != nil {
+		return err
+	}
+	if !s.persistedResponseLost && s.failPersistedPhase == phase {
+		s.persistedResponseLost = true
+		return errors.New("phase persist response lost")
+	}
+	return nil
+}
+
 func (s *workspaceKeyRotationStore) SaveRuntimeOperation(ctx context.Context, row map[string]any) error {
 	var phase string
 	if stringValue(row["action"]) == "workspace.gateway_key.rotate" && !s.failed && s.failPhase != "" {
@@ -1129,6 +1147,25 @@ func TestWorkspaceKeyRotationRejectsUnfinishedBudgetMutation(t *testing.T) {
 	response := fixture.rotate(t, "rotate-budget-blocked")
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_gateway_budget_update_in_progress") || fixture.client.createWrites != 0 {
 		t.Fatalf("rotation crossed unfinished budget operation: status=%d body=%s writes=%d", response.Code, response.Body.String(), fixture.client.createWrites)
+	}
+}
+
+func TestWorkspaceKeyRotationStopsBeforeMutationWhileDeleteIsActive(t *testing.T) {
+	fixture := newWorkspaceKeyRotationFixture(t, "")
+	workspace, found, err := fixture.store.GetWorkspace(context.Background(), "ws-alpha")
+	if err != nil || !found {
+		t.Fatalf("Workspace found=%v err=%v", found, err)
+	}
+	operation := workspaceDeleteStoreOperationForWorkspace(workspace, time.Now().UTC().Format(time.RFC3339Nano))
+	if err := fixture.store.ApplyWorkspaceDelete(context.Background(), workspaceDeleteStoreMutation{Create: true, DesiredOperation: workspaceDeleteOperationRow(operation)}); err != nil {
+		t.Fatal(err)
+	}
+	response := fixture.rotate(t, "rotate-during-delete")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errWorkspaceKeyRotationInProgress.Error()) {
+		t.Fatalf("Rotation during Delete status=%d body=%s", response.Code, response.Body.String())
+	}
+	if fixture.client.createWrites != 0 || fixture.client.updateWrites != 0 || fixture.client.deleteWrites != 0 || len(fixture.fabric.gatewaySecretInputs) != 0 || len(fixture.fabric.bindings) != 0 {
+		t.Fatalf("Rotation crossed mutation boundary create=%d update=%d delete=%d secrets=%#v bindings=%#v", fixture.client.createWrites, fixture.client.updateWrites, fixture.client.deleteWrites, fixture.fabric.gatewaySecretInputs, fixture.fabric.bindings)
 	}
 }
 

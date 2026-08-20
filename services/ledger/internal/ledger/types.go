@@ -211,10 +211,106 @@ func validateReceiptInput(input ReceiptInput) error {
 	}
 	rotationEvidenceValid := input.Type != "workspace.gateway_key_rotated.v1" || validWorkspaceGatewayKeyRotationReceipt(input)
 	walletAdjustmentValid := input.Type != "gateway.wallet_adjustment.v1" || validWalletAdjustmentReceipt(input)
-	if !allowedStatus[input.Status] || containsForbiddenReceiptKey(input) || !billingCostValid || !rotationEvidenceValid || !walletAdjustmentValid {
+	launchEvidenceValid := input.Type != "billing.workspace_purchased.v1" && input.Type != "workspace.created" || validWorkspaceLaunchReceipt(input)
+	deletionEvidenceValid := input.Type != "workspace.deleted.v1" || validWorkspaceDeletionReceipt(input)
+	if !allowedStatus[input.Status] || containsForbiddenReceiptKey(input) || !billingCostValid || !rotationEvidenceValid || !walletAdjustmentValid || !launchEvidenceValid || !deletionEvidenceValid {
 		return ErrInvalidReceiptInput
 	}
 	return nil
+}
+
+func validWorkspaceLaunchReceipt(input ReceiptInput) bool {
+	if !validCanonicalWorkspaceResourceReceiptIdentity(input) || input.IdempotencyKey != input.RequestID+":purchase-receipt" || input.SupersedesReceiptID != "" ||
+		len(input.Actor) != 0 || len(input.Plan) != 0 || len(input.Environment) != 0 || len(input.InputRefs) != 0 || len(input.OutputRefs) != 0 ||
+		len(input.ReviewerChecks) != 0 || len(input.Continuation) != 0 {
+		return false
+	}
+	if input.Type == "workspace.created" {
+		return len(input.Cost) == 0
+	}
+	return input.Type == "billing.workspace_purchased.v1"
+}
+
+func validWorkspaceDeletionReceipt(input ReceiptInput) bool {
+	if !validCanonicalWorkspaceResourceReceiptIdentity(input) || input.IdempotencyKey != input.RequestID+":deletion-receipt" || len(input.InputRefs) != 1 || len(input.OutputRefs) != 7 || len(input.Cost) != 0 || input.SupersedesReceiptID != "" ||
+		len(input.Actor) != 0 || len(input.Plan) != 0 || len(input.Environment) != 0 || len(input.ReviewerChecks) != 0 || len(input.Continuation) != 0 {
+		return false
+	}
+	launchReceiptID, launchReceiptOK := input.InputRefs["launchReceiptId"].(string)
+	if !launchReceiptOK || !isOpaqueReference(launchReceiptID) {
+		return false
+	}
+	for _, field := range []string{"runtimeStatus", "gatewaySecretStatus", "attachmentStatus", "storageStatus", "computeStatus", "workspaceKeyStatus", "workspaceStatus"} {
+		if input.OutputRefs[field] != "absent" {
+			return false
+		}
+	}
+	for _, value := range []map[string]any{input.Actor, input.Plan, input.Execution, input.Environment, input.InputRefs, input.OutputRefs, input.ReviewerChecks, input.Cost, input.Owner, input.Continuation} {
+		if containsWorkspaceDeletionFinancialField(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func validCanonicalWorkspaceResourceReceiptIdentity(input ReceiptInput) bool {
+	if input.Status != "completed" || input.Surface != "control_plane" || !isOpaqueReference(input.AccountID) || !isOpaqueReference(input.WorkspaceID) || !isOpaqueReference(input.RequestID) ||
+		input.OrganizationID != "" || input.ProjectID != "" || input.TaskID != "" || input.ApprovalID != "" || input.JobID != "" || input.ArtifactID != "" || input.ReviewID != "" || input.ContinuationID != "" ||
+		len(input.Execution) != 11 || len(input.Owner) != 3 {
+		return false
+	}
+	ownerAccountID, accountOK := input.Owner["accountId"].(string)
+	ownerWorkspaceID, workspaceOK := input.Owner["workspaceId"].(string)
+	ownerUserID, userOK := input.Owner["ownerUserId"].(string)
+	if !accountOK || ownerAccountID != input.AccountID || !workspaceOK || ownerWorkspaceID != input.WorkspaceID || !userOK || !isOpaqueReference(ownerUserID) {
+		return false
+	}
+	operationID, operationOK := input.Execution["operationId"].(string)
+	resourceType, resourceTypeOK := input.Execution["resourceType"].(string)
+	resourceID, resourceOK := input.Execution["resourceId"].(string)
+	if !operationOK || operationID != input.RequestID || !resourceTypeOK || resourceType != "workspace" || !resourceOK || resourceID != input.WorkspaceID {
+		return false
+	}
+	for _, field := range []string{"computeAllocationId", "storageId", "attachmentId", "runtimeId", "workspaceKeyFingerprint", "runtimeServiceName", "gatewaySecretRef"} {
+		value, ok := input.Execution[field].(string)
+		if !ok || !isOpaqueReference(value) {
+			return false
+		}
+	}
+	keyID, keyOK := integerValue(input.Execution["workspaceApiKeyId"])
+	return keyOK && keyID > 0
+}
+
+func containsWorkspaceDeletionFinancialField(value any) bool {
+	normalized, err := normalizedJSONValue(value)
+	if err != nil {
+		return true
+	}
+	return containsWorkspaceDeletionFinancialJSONField(normalized)
+}
+
+func containsWorkspaceDeletionFinancialJSONField(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalizedKey := strings.ToLower(key)
+			for _, prefix := range []string{"cost", "refund", "debit", "wallet", "supersedes"} {
+				if strings.HasPrefix(normalizedKey, prefix) {
+					return true
+				}
+			}
+			if containsWorkspaceDeletionFinancialJSONField(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if containsWorkspaceDeletionFinancialJSONField(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func validWalletAdjustmentReceipt(input ReceiptInput) bool {

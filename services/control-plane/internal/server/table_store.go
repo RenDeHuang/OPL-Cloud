@@ -256,6 +256,7 @@ type controlPlaneTableStore interface {
 	CountWorkspacesByAccount(ctx context.Context, accountIDs []string) (map[string]int, error)
 	SaveWorkspace(ctx context.Context, row map[string]any) error
 	CompareAndSwapWorkspaceAPIKey(ctx context.Context, workspaceID string, expectedID, newID int64) error
+	ClaimWorkspaceKeyRotation(ctx context.Context, row map[string]any) error
 	ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error
 	ClaimWorkspaceLaunchReconcile(ctx context.Context, claim workspaceLaunchReconcileClaim) error
 	PersistWorkspaceLaunchReconcile(ctx context.Context, update workspaceLaunchReconcileCAS) error

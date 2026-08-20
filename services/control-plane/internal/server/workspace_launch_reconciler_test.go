@@ -20,6 +20,18 @@ type workspaceLaunchUnitStore struct {
 	row map[string]any
 }
 
+type workspaceLaunchReceiptLedgerClient struct {
+	fakeLedgerClient
+	receipts []clients.Receipt
+}
+
+func (c workspaceLaunchReceiptLedgerClient) ListReceipts(_ context.Context, query clients.ReceiptQuery) (clients.ReceiptPage, error) {
+	if query.AccountID == "" {
+		return clients.ReceiptPage{}, errors.New("account scope required")
+	}
+	return clients.ReceiptPage{Receipts: c.receipts}, nil
+}
+
 func (s *workspaceLaunchUnitStore) GetRuntimeOperation(_ context.Context, id string) (map[string]any, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1728,6 +1740,168 @@ func workspaceLaunchCanonicalActivationOperation(t *testing.T) workspaceLaunchRe
 	}
 	operation.Version, operation.Stage, operation.Status = 8, "activation", "pending"
 	return operation
+}
+
+func TestWorkspaceLaunchReceiptInputUsesCanonicalUnionIdentity(t *testing.T) {
+	chargedOperation := workspaceLaunchCanonicalActivationOperation(t)
+	zeroCostOperation := workspaceLaunchCanonicalActivationOperation(t)
+	zeroCostOperation.raw["resourceBillingEnabled"] = json.RawMessage(`false`)
+
+	canonicalExecution := func(operation workspaceLaunchReconcileOperation) map[string]any {
+		return map[string]any{
+			"operationId": operation.ID, "resourceType": "workspace", "resourceId": operation.stringFact("workspaceId"),
+			"computeAllocationId": operation.stringFact("computeAllocationId"), "storageId": operation.stringFact("storageId"),
+			"attachmentId": operation.stringFact("attachmentId"), "runtimeId": operation.stringFact("runtimeId"),
+			"workspaceApiKeyId": operation.int64Fact("workspaceApiKeyId"), "workspaceKeyFingerprint": operation.stringFact("workspaceKeyFingerprint"),
+			"runtimeServiceName": operation.stringFact("runtimeServiceName"), "gatewaySecretRef": operation.stringFact("gatewaySecretRef"),
+		}
+	}
+	canonicalOwner := func(operation workspaceLaunchReconcileOperation) map[string]any {
+		return map[string]any{"accountId": operation.stringFact("accountId"), "workspaceId": operation.stringFact("workspaceId"), "ownerUserId": operation.stringFact("ownerUserId")}
+	}
+
+	charged, err := workspaceLaunchPurchaseReceiptInput(chargedOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCharged := clients.ReceiptInput{
+		Type: "billing.workspace_purchased.v1", Status: "completed", Surface: "control_plane",
+		AccountID: chargedOperation.stringFact("accountId"), WorkspaceID: chargedOperation.stringFact("workspaceId"), RequestID: chargedOperation.ID,
+		Execution: canonicalExecution(chargedOperation), Owner: canonicalOwner(chargedOperation),
+		Cost: map[string]any{
+			"priceVersion": chargedOperation.stringFact("priceVersion"), "currency": pricingCurrency, "billingUnit": pricingBillingUnit,
+			"totalUsdMicros": chargedOperation.int64Fact("totalChargeUsdMicros"), "sub2apiUserId": chargedOperation.int64Fact("sub2apiUserId"),
+			"sub2apiRedeemCode": chargedOperation.stringFact("sub2apiRedeemCode"), "postChargeBalanceUsdMicros": chargedOperation.int64Fact("postChargeBalanceUsdMicros"),
+			"periodStart": chargedOperation.stringFact("periodStart"), "paidThrough": chargedOperation.stringFact("paidThrough"),
+			"resourceType": "workspace", "resourceId": chargedOperation.stringFact("workspaceId"),
+			"components": map[string]any{
+				"compute": map[string]any{"resourceType": "compute", "resourceId": chargedOperation.stringFact("computeAllocationId"), "chargeUsdMicros": int64(50_000_000)},
+				"storage": map[string]any{"resourceType": "storage", "resourceId": chargedOperation.stringFact("storageId"), "sizeGb": int64(chargedOperation.intFact("sizeGb")), "chargeUsdMicros": int64(2_580_000)},
+			},
+		},
+	}
+	if !workspaceLaunchReceiptInputMatches(charged, wantCharged) {
+		t.Fatalf("charged launch receipt = %#v, want %#v", charged, wantCharged)
+	}
+
+	zeroCost, err := workspaceLaunchPurchaseReceiptInput(zeroCostOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantZeroCost := clients.ReceiptInput{
+		Type: "workspace.created", Status: "completed", Surface: "control_plane",
+		AccountID: zeroCostOperation.stringFact("accountId"), WorkspaceID: zeroCostOperation.stringFact("workspaceId"), RequestID: zeroCostOperation.ID,
+		Execution: canonicalExecution(zeroCostOperation), Owner: canonicalOwner(zeroCostOperation),
+	}
+	if !workspaceLaunchReceiptInputMatches(zeroCost, wantZeroCost) {
+		t.Fatalf("zero-cost launch receipt = %#v, want %#v", zeroCost, wantZeroCost)
+	}
+}
+
+func TestWorkspaceLaunchReceiptReadAcceptsExactCurrentOrLegacyIdentity(t *testing.T) {
+	operation := workspaceLaunchCanonicalActivationOperation(t)
+	operation.raw["resourceBillingEnabled"] = json.RawMessage(`false`)
+	current := clients.ReceiptInput{
+		Type: "workspace.created", Status: "completed", Surface: "control_plane", AccountID: operation.stringFact("accountId"),
+		WorkspaceID: operation.stringFact("workspaceId"), RequestID: operation.ID,
+		Execution: map[string]any{
+			"operationId": operation.ID, "resourceType": "workspace", "resourceId": operation.stringFact("workspaceId"),
+			"computeAllocationId": operation.stringFact("computeAllocationId"), "storageId": operation.stringFact("storageId"), "attachmentId": operation.stringFact("attachmentId"),
+			"runtimeId": operation.stringFact("runtimeId"), "workspaceApiKeyId": operation.int64Fact("workspaceApiKeyId"),
+			"workspaceKeyFingerprint": operation.stringFact("workspaceKeyFingerprint"), "runtimeServiceName": operation.stringFact("runtimeServiceName"),
+			"gatewaySecretRef": operation.stringFact("gatewaySecretRef"),
+		},
+		Owner: map[string]any{"accountId": operation.stringFact("accountId"), "workspaceId": operation.stringFact("workspaceId"), "ownerUserId": operation.stringFact("ownerUserId")},
+	}
+	legacy := clients.ReceiptInput{
+		Type: "workspace.created", Status: "completed", Surface: "workspace", AccountID: operation.stringFact("accountId"),
+		WorkspaceID: operation.stringFact("workspaceId"), RequestID: operation.ID + ":purchase-receipt",
+		Execution:  map[string]any{"operationId": operation.ID + ":purchase-receipt", "runtimeId": operation.stringFact("runtimeId")},
+		OutputRefs: map[string]any{"url": operation.stringFact("url")},
+		Owner:      map[string]any{"accountId": operation.stringFact("accountId"), "userId": operation.stringFact("ownerUserId")},
+	}
+
+	for _, test := range []struct {
+		name     string
+		receipts []clients.Receipt
+		wantErr  bool
+	}{
+		{name: "current", receipts: []clients.Receipt{{ReceiptInput: current, ReceiptID: "receipt-current"}}},
+		{name: "legacy schema v3", receipts: []clients.Receipt{{ReceiptInput: legacy, ReceiptID: "receipt-legacy"}}},
+		{name: "mixed current and legacy", receipts: []clients.Receipt{{ReceiptInput: current, ReceiptID: "receipt-current"}, {ReceiptInput: legacy, ReceiptID: "receipt-legacy"}}, wantErr: true},
+		{name: "legacy extra field", receipts: []clients.Receipt{{ReceiptInput: func() clients.ReceiptInput {
+			extra := legacy
+			extra.Execution = map[string]any{"operationId": operation.ID + ":purchase-receipt", "runtimeId": operation.stringFact("runtimeId"), "computeAllocationId": operation.stringFact("computeAllocationId")}
+			return extra
+		}(), ReceiptID: "receipt-legacy-extra"}}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ledgerClient := workspaceLaunchReceiptLedgerClient{receipts: test.receipts}
+			adapter := &controlPlaneWorkspaceLaunchStageAdapter{service: newTestService(ledgerClient, &fakeFabricClient{})}
+			observation, err := adapter.readWorkspaceLaunchReceipt(context.Background(), operation)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("observation=%#v err=%v wantErr=%v", observation, err, test.wantErr)
+			}
+			if !test.wantErr && (observation.State != workspaceLaunchStageReady || stringValue(observation.Facts["receiptId"]) != test.receipts[0].ReceiptID) {
+				t.Fatalf("receipt read did not close original launch: %#v", observation)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchChargedReceiptReadAcceptsExactCurrentOrHistoricalIdentity(t *testing.T) {
+	operation := workspaceLaunchCanonicalActivationOperation(t)
+	current, err := workspaceLaunchPurchaseReceiptInput(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historical := current
+	historical.Execution = cloneMap(current.Execution)
+	delete(historical.Execution, "operationId")
+	delete(historical.Execution, "gatewaySecretRef")
+
+	withHistoricalExecution := func(mutate func(map[string]any)) clients.ReceiptInput {
+		input := historical
+		input.Execution = cloneMap(historical.Execution)
+		mutate(input.Execution)
+		return input
+	}
+
+	for _, test := range []struct {
+		name     string
+		receipts []clients.Receipt
+		wantErr  bool
+	}{
+		{name: "current", receipts: []clients.Receipt{{ReceiptInput: current, ReceiptID: "receipt-current"}}},
+		{name: "historical charged", receipts: []clients.Receipt{{ReceiptInput: historical, ReceiptID: "receipt-historical"}}},
+		{name: "mixed current and historical", receipts: []clients.Receipt{
+			{ReceiptInput: current, ReceiptID: "receipt-current"},
+			{ReceiptInput: historical, ReceiptID: "receipt-historical"},
+		}, wantErr: true},
+		{name: "historical extra field", receipts: []clients.Receipt{{ReceiptInput: withHistoricalExecution(func(execution map[string]any) {
+			execution["operationId"] = operation.ID
+		}), ReceiptID: "receipt-historical-extra"}}, wantErr: true},
+		{name: "historical missing field", receipts: []clients.Receipt{{ReceiptInput: withHistoricalExecution(func(execution map[string]any) {
+			delete(execution, "runtimeId")
+		}), ReceiptID: "receipt-historical-missing"}}, wantErr: true},
+		{name: "historical approximate surface", receipts: []clients.Receipt{{ReceiptInput: func() clients.ReceiptInput {
+			input := historical
+			input.Surface = "workspace"
+			return input
+		}(), ReceiptID: "receipt-historical-near"}}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ledgerClient := workspaceLaunchReceiptLedgerClient{receipts: test.receipts}
+			adapter := &controlPlaneWorkspaceLaunchStageAdapter{service: newTestService(ledgerClient, &fakeFabricClient{})}
+			observation, readErr := adapter.readWorkspaceLaunchReceipt(context.Background(), operation)
+			if (readErr != nil) != test.wantErr {
+				t.Fatalf("observation=%#v err=%v wantErr=%v", observation, readErr, test.wantErr)
+			}
+			if !test.wantErr && (observation.State != workspaceLaunchStageReady || stringValue(observation.Facts["receiptId"]) != test.receipts[0].ReceiptID) {
+				t.Fatalf("receipt read did not close original charged launch: %#v", observation)
+			}
+		})
+	}
 }
 
 func TestWorkspaceLaunchActivationCanonicalOperatorAdvancesToReceipt(t *testing.T) {

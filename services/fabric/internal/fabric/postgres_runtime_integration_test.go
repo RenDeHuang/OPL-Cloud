@@ -1496,6 +1496,210 @@ func TestPostgresServiceReplaysCanonicalLaunchAttachmentFromParentAfterRestart(t
 	}
 }
 
+func TestPostgresServiceRestartsTencentComputeDestroyAfterUncertainMutation(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx := context.Background()
+	provider := NewTencentProvider()
+	var destroyCalls atomic.Int32
+	var readbackCalls atomic.Int32
+	var kubectlCalls atomic.Int32
+	var readbackState atomic.Int32
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "destroy_compute_allocation":
+			destroyCalls.Add(1)
+			present := true
+			return provisionerResponse{
+				OK: false, ErrorCode: "compute_machine_delete_unverified", Message: "DeleteClusterMachines response was lost while the machine remained visible", Retryable: true,
+				NodePoolID: request.Pool.NodePoolID, InstanceID: request.Allocation.InstanceID, NodeName: request.Allocation.NodeName,
+				MachinePresent: &present, CVMStatus: "RUNNING", TKEStatus: "RUNNING", MutationCount: 1,
+				ProviderData: map[string]string{
+					"machineType": "NativeCVM", "cvmApplicable": "true", "machinePresent": "true", "tkeStatus": "RUNNING", "cvmStatus": "RUNNING",
+					"deleteMethod": "DeleteClusterMachines", "scaleDown": "true", "deleteMode": "terminate",
+					"describeNodePoolRequestId": "req-postgres-delete-node-pool", "verifyMachineDeletedReqId": "req-postgres-delete-machine-present", "describeCvmRequestId": "req-postgres-delete-cvm-present",
+				},
+			}, nil
+		case "read_compute_destroy_status":
+			readbackCalls.Add(1)
+			if readbackState.Load() == computeDestroyReadbackPresent {
+				return computeDestroyPhasePresentReadback(request.Allocation.InstanceID), nil
+			}
+			absent := false
+			return provisionerResponse{
+				OK: true, Status: "external_deleted", NodePoolID: request.Pool.NodePoolID, InstanceID: request.Allocation.InstanceID,
+				NodeName: request.Allocation.NodeName, PrivateIP: request.Allocation.PrivateIP, CVMStatus: "NOT_FOUND", TKEStatus: "NOT_FOUND", ProviderRequestID: "req-postgres-sync-absent",
+				MachinePresent: &absent, MutationCount: 0,
+				ProviderData: map[string]string{
+					"clusterId": "cls-alpha", "region": "ap-guangzhou", "nodePoolId": request.Pool.NodePoolID,
+					"machineName": request.Allocation.MachineName, "nodeName": request.Allocation.NodeName, "privateIp": request.Allocation.PrivateIP,
+					"machineType": "NativeCVM", "cvmApplicable": "true", "machinePresent": "false",
+					"syncResult": "missing", "tkeStatus": "NOT_FOUND", "cvmStatus": "NOT_FOUND",
+					"describeClusterMachinesReq": "req-postgres-sync-machine-absent", "describeCvmRequestId": "req-postgres-sync-cvm-absent",
+				},
+			}, nil
+		default:
+			return provisionerResponse{}, fmt.Errorf("unexpected provisioner action: %s", request.Action)
+		}
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		kubectlCalls.Add(1)
+		return nil, nil
+	}
+	resource := computeDestroyPhaseResource()
+
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTencentComputeCreateOperation(t, firstStore, resource)
+	if _, _, err := firstStore.ClaimMachine(ctx, MachineOwnership{
+		ID: "owner-postgres-uncertain-delete", ResourceID: resource.ID, AccountID: resource.AccountID, WorkspaceID: resource.WorkspaceID, PackageID: resource.PackageID,
+		NodePoolID: resource.NodePoolID, MachineID: resource.MachineName, InstanceID: resource.InstanceID, NodeName: resource.NodeName, Status: "active", ClaimedAt: time.Now().UTC(),
+	}); err != nil {
+		_ = firstStore.client.Close()
+		t.Fatal(err)
+	}
+	first := NewServiceWithOperationStore(provider, firstStore)
+	if _, err := first.DestroyComputeAllocation(ctx, resource.ID); err != nil {
+		_ = firstStore.client.Close()
+		t.Fatal(err)
+	}
+	waitForComputeDestroyPhaseOperationCount(t, first, resource.ID, "failed", 1)
+	failed, ok := first.GetComputeAllocation(ctx, resource.ID)
+	if !ok || failed.ProviderData[tencentComputeDestroyPhaseKey] != tencentComputeDestroyPhaseAttempted || destroyCalls.Load() != 1 || readbackCalls.Load() != 0 || kubectlCalls.Load() != 0 {
+		_ = firstStore.client.Close()
+		t.Fatalf("first PostgreSQL destroy=%#v ok=%v destroy=%d readback=%d kubectl=%d", failed, ok, destroyCalls.Load(), readbackCalls.Load(), kubectlCalls.Load())
+	}
+	if err := firstStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+	second := NewServiceWithOperationStore(provider, secondStore)
+	restored, ok := second.GetComputeAllocation(ctx, resource.ID)
+	if !ok || restored.ProviderData[tencentComputeDestroyPhaseKey] != tencentComputeDestroyPhaseAttempted {
+		t.Fatalf("PostgreSQL restart lost uncertain destroy phase: restored=%#v ok=%v", restored, ok)
+	}
+	if _, err := second.DestroyComputeAllocation(ctx, resource.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForComputeDestroyPhaseOperationCount(t, second, resource.ID, "failed", 2)
+	stillPresent, ok := second.GetComputeAllocation(ctx, resource.ID)
+	ownership, ownershipErr := secondStore.MachineOwnership(ctx, resource.ID)
+	if !ok || stillPresent.ProviderData[tencentComputeDestroyPhaseKey] != tencentComputeDestroyPhaseAttempted || destroyCalls.Load() != 1 || readbackCalls.Load() != 1 || kubectlCalls.Load() != 0 ||
+		ownershipErr != nil || ownership.Status != "active" || ownership.ReleasedAt != nil {
+		t.Fatalf("PostgreSQL still-present recovery=%#v ok=%v destroy=%d readback=%d kubectl=%d ownership=%#v ownershipErr=%v", stillPresent, ok, destroyCalls.Load(), readbackCalls.Load(), kubectlCalls.Load(), ownership, ownershipErr)
+	}
+
+	readbackState.Store(computeDestroyReadbackAbsent)
+	if _, err := second.DestroyComputeAllocation(ctx, resource.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForComputeDestroyPhaseOperationCount(t, second, resource.ID, "succeeded", 1)
+	final, ok := second.GetComputeAllocation(ctx, resource.ID)
+	ownership, ownershipErr = secondStore.MachineOwnership(ctx, resource.ID)
+	if !ok || final.Status != "external_deleted" || final.ProviderData[tencentComputeDestroyPhaseKey] != tencentComputeDestroyPhaseAbsent || !validTencentComputeAbsenceEvidence(final) ||
+		destroyCalls.Load() != 1 || readbackCalls.Load() != 2 || kubectlCalls.Load() != 1 || ownershipErr != nil || ownership.Status != "released" || ownership.ReleasedAt == nil {
+		t.Fatalf("PostgreSQL final=%#v ok=%v destroy=%d readback=%d kubectl=%d ownership=%#v ownershipErr=%v", final, ok, destroyCalls.Load(), readbackCalls.Load(), kubectlCalls.Load(), ownership, ownershipErr)
+	}
+}
+
+func TestPostgresDestroyStorageVolumeNeverRedispatchesDispatchUncertainTencentMutationAfterStoreReopen(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx := context.Background()
+	resource := storageDestroyTestVolume("storage-postgres-uncertain-destroy")
+	resource.ProviderData["pvName"] = k8sName(resource.ID) + "-pv"
+	resource.ProviderData["pvcName"] = k8sName(resource.ID) + "-data"
+	resource.ProviderData["region"] = "ap-guangzhou"
+	provider := NewTencentProvider()
+	var destroyActions atomic.Int32
+	var readbackCalls atomic.Int32
+	var authoritativeAbsence atomic.Bool
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "destroy_storage_volume":
+			destroyActions.Add(1)
+			return provisionerResponse{}, errors.New("Tencent destroy response unavailable")
+		case "sync_storage_volume":
+			readbackCalls.Add(1)
+			if authoritativeAbsence.Load() {
+				return provisionerResponse{
+					OK: true, StorageVolumeID: resource.ProviderResourceID, CBSStatus: "NOT_FOUND", Status: "external_deleted", ProviderRequestID: "req-postgres-cbs-absent",
+					ProviderData: map[string]string{
+						"storageVolumeId": resource.ProviderResourceID, "cbsStatus": "NOT_FOUND", "status": "external_deleted", "region": "ap-guangzhou",
+						"storageDestroyPhase": "absence_confirmed", "storageDestroyMutationCount": "0", "describeCbsRequestId": "req-postgres-cbs-absent",
+					},
+				}, nil
+			}
+			return provisionerResponse{
+				OK: true, StorageVolumeID: resource.ProviderResourceID, CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-postgres-cbs-unattached",
+				ProviderData: map[string]string{"storageVolumeId": resource.ProviderResourceID, "cbsStatus": "UNATTACHED", "describeCbsRequestId": "req-postgres-cbs-unattached", "region": "ap-guangzhou"},
+			}, nil
+		default:
+			return provisionerResponse{}, fmt.Errorf("unexpected provisioner action: %s", request.Action)
+		}
+	}
+	provider.kubectl = exactTencentStorageBindingKubectl(t, resource, nil)
+	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	resource.CreatedAt = createdAt
+	create := newOperation("create_storage_volume", "storage_volume", resource.ID, resource.AccountID, resource.WorkspaceID, resource.OperationID, hashInput(resource), createdAt)
+	create.ID, create.Status, create.CreatedAt, create.FinishedAt = "fop_storage_create_postgres_replay", "succeeded", createdAt, createdAt
+	fillOperationResource(&create, resource)
+
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstStore.Append(ctx, create); err != nil {
+		_ = firstStore.client.Close()
+		t.Fatal(err)
+	}
+	first := NewServiceWithOperationStore(provider, firstStore)
+	firstResult, err := first.DestroyStorageVolume(ctx, resource.ID)
+	if err == nil || firstResult.ProviderData["storageDestroyPhase"] != storageDestroyPhaseDispatchAuthorized || firstResult.ProviderData["storageDestroyMutationCount"] != "0" || destroyActions.Load() != 1 || readbackCalls.Load() != 1 {
+		_ = firstStore.client.Close()
+		t.Fatalf("first destroy=%#v err=%v actions=%d readback=%d", firstResult, err, destroyActions.Load(), readbackCalls.Load())
+	}
+	latest, found, latestErr := firstStore.LatestResourceOperation(ctx, "storage_volume", resource.ID)
+	var persistedUncertain StorageVolume
+	if latestErr != nil || !found || latest.Action != "destroy_storage_volume" || latest.Status != "failed" || !decodeOperationResource(latest, &persistedUncertain) ||
+		persistedUncertain.ProviderData["storageDestroyPhase"] != storageDestroyPhaseDispatchAuthorized {
+		_ = firstStore.client.Close()
+		t.Fatalf("persisted uncertain destroy=%#v found=%v resource=%#v err=%v", latest, found, persistedUncertain, latestErr)
+	}
+	if err := firstStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopenedStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopenedStore.client.Close()
+	restarted := NewServiceWithOperationStore(provider, reopenedStore)
+	replayed, err := restarted.DestroyStorageVolume(ctx, resource.ID)
+	if !errors.Is(err, errStorageDestroyRecoveryUnconfirmed) || replayed.CBSStatus != "UNATTACHED" || replayed.ProviderData["storageDestroyPhase"] != storageDestroyPhaseDispatchAuthorized ||
+		destroyActions.Load() != 1 || readbackCalls.Load() != 2 {
+		t.Fatalf("reopened present readback=%#v first=%#v err=%v actions=%d readback=%d", replayed, firstResult, err, destroyActions.Load(), readbackCalls.Load())
+	}
+
+	authoritativeAbsence.Store(true)
+	replayed, err = restarted.DestroyStorageVolume(ctx, resource.ID)
+	if err != nil || replayed.Status != "external_deleted" || replayed.CBSStatus != "NOT_FOUND" || replayed.ProviderData["storageDestroyPhase"] != "absence_confirmed" ||
+		replayed.ProviderData["storageDestroyMutationCount"] != "0" || destroyActions.Load() != 1 || readbackCalls.Load() != 3 {
+		t.Fatalf("reopened absence replay=%#v first=%#v err=%v actions=%d readback=%d", replayed, firstResult, err, destroyActions.Load(), readbackCalls.Load())
+	}
+	latest, found, latestErr = reopenedStore.LatestResourceOperation(ctx, "storage_volume", resource.ID)
+	var persisted StorageVolume
+	if latestErr != nil || !found || latest.Action != "destroy_storage_volume" || latest.Status != "succeeded" || !decodeOperationResource(latest, &persisted) || !reflect.DeepEqual(persisted, replayed) {
+		t.Fatalf("latest destroy=%#v found=%v persisted=%#v err=%v", latest, found, persisted, latestErr)
+	}
+}
+
 func fabricTestDatabaseURL(t *testing.T) string {
 	t.Helper()
 	databaseURL := os.Getenv("FABRIC_TEST_DATABASE_URL")

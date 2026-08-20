@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 15,
+  "schemaVersion": 16,
   "owner": "OPL Ledger",
   "purpose": "General execution, monthly billing, reconciliation, and current control-plane lifecycle evidence receipts.",
   "state": "current",
@@ -21,6 +21,7 @@
     "billing.workspace_renewed.v1",
     "billing.workspace_expired.v1",
     "billing.workspace_refunded.v1",
+    "workspace.deleted.v1",
     "gateway.wallet_adjustment.v1",
     "workspace.gateway_key_rotated.v1",
     "execution.receipt.v1"
@@ -248,6 +249,126 @@
     ],
     "writeProtocol": "append_first_with_idempotency"
   },
+  "workspaceLaunchReceiptV1": {
+    "state": "current",
+    "authority": "unique_current_workspace_launch_receipt_union",
+    "status": "completed",
+    "surface": "control_plane",
+    "requestId": "launchOperationId",
+    "recordIdempotencyKey": "<launchOperationId>:purchase-receipt",
+    "cardinality": {
+      "perLaunchOperation": "exactly_one",
+      "allowedTypes": ["billing.workspace_purchased.v1", "workspace.created"],
+      "mixedOrDuplicate": "reject"
+    },
+    "owner": {
+      "requiredFields": ["accountId", "workspaceId", "ownerUserId"],
+      "allowedFields": ["accountId", "workspaceId", "ownerUserId"],
+      "extraFields": "reject"
+    },
+    "canonicalFulfillmentIdentity": {
+      "requiredFields": [
+        "operationId",
+        "resourceType",
+        "resourceId",
+        "computeAllocationId",
+        "storageId",
+        "attachmentId",
+        "runtimeId",
+        "workspaceApiKeyId",
+        "workspaceKeyFingerprint",
+        "runtimeServiceName",
+        "gatewaySecretRef"
+      ],
+      "allowedFields": [
+        "operationId",
+        "resourceType",
+        "resourceId",
+        "computeAllocationId",
+        "storageId",
+        "attachmentId",
+        "runtimeId",
+        "workspaceApiKeyId",
+        "workspaceKeyFingerprint",
+        "runtimeServiceName",
+        "gatewaySecretRef"
+      ],
+      "extraFields": "reject",
+      "constraints": {
+        "operationId": "equals_requestId",
+        "resourceType": "workspace",
+        "resourceId": "equals_workspaceId"
+      },
+      "providerSpecificFields": false
+    },
+    "variants": {
+      "charged": {
+        "type": "billing.workspace_purchased.v1",
+        "cost": "required_exact_workspace_monthly_billing_cost",
+        "costSchemaContract": "opl-cloud-evidence-ledger-contract.json#workspaceMonthlyBillingReceiptV1",
+        "debit": "exact_sub2api_user_redeem_code_and_total_usd_micros"
+      },
+      "zeroCost": {
+        "type": "workspace.created",
+        "cost": "must_be_empty",
+        "financialFields": "forbidden"
+      }
+    },
+    "historicalChargedReadOnlyMatcher": {
+      "type": "billing.workspace_purchased.v1",
+      "status": "completed",
+      "surface": "control_plane",
+      "topLevelIdentity": {
+        "requiredFields": ["accountId", "workspaceId"],
+        "allowedFields": ["accountId", "workspaceId"],
+        "extraFields": "reject"
+      },
+      "requestId": "launchOperationId",
+      "owner": {
+        "requiredFields": ["accountId", "workspaceId", "ownerUserId"],
+        "allowedFields": ["accountId", "workspaceId", "ownerUserId"],
+        "extraFields": "reject"
+      },
+      "cost": "required_exact_workspace_monthly_billing_cost",
+      "costSchemaContract": "opl-cloud-evidence-ledger-contract.json#workspaceMonthlyBillingReceiptV1",
+      "debit": "exact_sub2api_user_redeem_code_and_total_usd_micros",
+      "execution": {
+        "requiredFields": [
+          "resourceType",
+          "resourceId",
+          "computeAllocationId",
+          "storageId",
+          "attachmentId",
+          "runtimeId",
+          "workspaceApiKeyId",
+          "workspaceKeyFingerprint",
+          "runtimeServiceName"
+        ],
+        "allowedFields": [
+          "resourceType",
+          "resourceId",
+          "computeAllocationId",
+          "storageId",
+          "attachmentId",
+          "runtimeId",
+          "workspaceApiKeyId",
+          "workspaceKeyFingerprint",
+          "runtimeServiceName"
+        ],
+        "extraFields": "reject",
+        "constraints": {
+          "resourceType": "workspace",
+          "resourceId": "equals_workspaceId"
+        },
+        "providerSpecificFields": false
+      },
+      "currentOrHistoricalCardinality": "exactly_one",
+      "mixedOrDuplicate": "reject",
+      "existingReceiptsReadable": true,
+      "newWritesAllowed": false
+    },
+    "retry": "receipt_only_after_activation_without_repeating_key_debit_fabric_or_activation"
+  },
   "workspaceMonthlyBillingReceiptV1": {
     "types": [
       "billing.workspace_purchased.v1",
@@ -287,34 +408,16 @@
       "compute": ["resourceType", "resourceId", "chargeUsdMicros"],
       "storage": ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]
     },
-    "purchasedRequiredExecutionFields": [
-      "computeAllocationId",
-      "storageId"
-    ],
-    "purchasedOptionalExecutionFields": [
-      "attachmentId",
-      "workspaceApiKeyId",
-      "runtimeId"
-    ],
-    "purchasedTerminalIdentity": {
-      "requestId": "launchOperationId",
-      "recordIdempotencyKey": "<launchOperationId>:purchase-receipt",
-      "workspaceId": "exact_launch_workspace_id",
-      "costResourceId": "exact_launch_workspace_id",
-      "executionResourceIds": "exact_compute_storage_attachment_secret_runtime_ids_from_the_same_launch",
-      "debit": "exact_sub2api_user_id_redeem_code_total_and_component_amounts",
-      "retry": "receipt_only_without_repeating_key_debit_fabric_or_activation",
-      "cardinality": "exactly_one_terminal_purchase_receipt_for_the_launch_operation"
-    },
     "refundedTerminalIdentity": {
-      "requestId": "workspaceDeleteOperationId",
-      "recordIdempotencyKey": "<workspaceDeleteOperationId>:refund-receipt",
-      "workspaceId": "exact_deleted_workspace_id",
+      "requestId": "independentRefundOperationId",
+      "recordIdempotencyKey": "<independentRefundOperationId>:refund-receipt",
+      "workspaceId": "exact_refunded_workspace_id",
       "supersedesReceiptId": "exact_purchaseReceiptId",
       "cost": "exact_sub2api_user_debit_code_refund_code_total_and_refund_amount",
-      "execution": "exact_runtime_key_purchase_receipt_and_refund_confirmation_from_the_same_delete_operation",
-      "retry": "receipt_only_without_repeating_key_delete_fabric_cleanup_or_sub2api_refund",
-      "cardinality": "exactly_one_terminal_refund_receipt_for_the_workspace_delete_operation"
+      "execution": "exact_purchase_receipt_and_refund_confirmation_from_the_same_independent_financial_operation",
+      "retry": "receipt_only_without_repeating_sub2api_refund",
+      "cardinality": "exactly_one_terminal_refund_receipt_for_the_independent_refund_operation",
+      "workspaceDeleteCoupling": false
     },
     "customerProjectionForbiddenFields": [
       "computeReadback",
@@ -335,8 +438,85 @@
       "refunded receipts require the original debit identity, a stable refund identity, and refundUsdMicros equal to totalUsdMicros"
     ],
     "writeProtocol": "append_first_with_idempotency",
-    "launchTerminalCardinality": "exactly_one_purchased_or_refunded_workspace_receipt",
     "forbiddenContentRule": "same recursive case-insensitive exact-key rejection as general receipts"
+  },
+  "workspaceDeletionReceiptV1": {
+    "type": "workspace.deleted.v1",
+    "status": "completed",
+    "surface": "control_plane",
+    "requestId": "workspaceDeleteOperationId",
+    "recordIdempotencyKey": "<workspaceDeleteOperationId>:deletion-receipt",
+    "owner": {
+      "requiredFields": ["accountId", "workspaceId", "ownerUserId"],
+      "allowedFields": ["accountId", "workspaceId", "ownerUserId"],
+      "extraFields": "reject"
+    },
+    "inputRefs": {
+      "requiredFields": ["launchReceiptId"],
+      "allowedFields": ["launchReceiptId"],
+      "extraFields": "reject"
+    },
+    "execution": {
+      "requiredFields": [
+        "operationId",
+        "resourceType",
+        "resourceId",
+        "computeAllocationId",
+        "storageId",
+        "attachmentId",
+        "runtimeId",
+        "workspaceApiKeyId",
+        "workspaceKeyFingerprint",
+        "runtimeServiceName",
+        "gatewaySecretRef"
+      ],
+      "allowedFields": [
+        "operationId",
+        "resourceType",
+        "resourceId",
+        "computeAllocationId",
+        "storageId",
+        "attachmentId",
+        "runtimeId",
+        "workspaceApiKeyId",
+        "workspaceKeyFingerprint",
+        "runtimeServiceName",
+        "gatewaySecretRef"
+      ],
+      "extraFields": "reject",
+      "constraints": {
+        "operationId": "equals_requestId",
+        "resourceType": "workspace",
+        "resourceId": "equals_workspaceId"
+      },
+      "identity": "exact_provider_neutral_resource_identity_from_the_same_delete_operation"
+    },
+    "outputRefs": {
+      "requiredFields": [
+        "runtimeStatus",
+        "gatewaySecretStatus",
+        "attachmentStatus",
+        "storageStatus",
+        "computeStatus",
+        "workspaceKeyStatus",
+        "workspaceStatus"
+      ],
+      "allowedFields": [
+        "runtimeStatus",
+        "gatewaySecretStatus",
+        "attachmentStatus",
+        "storageStatus",
+        "computeStatus",
+        "workspaceKeyStatus",
+        "workspaceStatus"
+      ],
+      "extraFields": "reject",
+      "requiredValue": "absent"
+    },
+    "forbiddenFieldPrefixesCaseInsensitive": ["cost", "refund", "debit", "wallet", "supersedes"],
+    "forbiddenFieldRule": "reject_recursively_when_field_name_equals_or_starts_with_a_forbidden_prefix",
+    "failureRetry": "receipt_only_without_repeating_resource_key_or_workspace_deletion",
+    "cardinality": "exactly_one_terminal_deletion_receipt_for_the_workspace_delete_operation"
   },
   "reconciliationReportV1": {
     "recordApi": "POST /ledger/reconciliation",
@@ -389,40 +569,46 @@
     "forbiddenContentRule": "same recursive case-insensitive exact-field rule as receipts"
   },
   "workspaceCreateReceipt": {
-    "plan": [
-      "workspaceName",
-      "packageId",
-      "computeProfile",
-      "storageGb"
-    ],
-    "approval": "implicit_console_policy",
-    "environment": [
-      "runtimeProvider",
-      "workspaceImage"
-    ],
-    "resourceRefs": [
-      "serverId",
-      "dockerId",
-      "storageId",
-      "storageMountPath",
-      "runtimeStatus",
-      "credentialStatus"
-    ],
-    "billingRefs": [
-      "billing.workspace_purchased.v1",
-      "sub2apiRedeemCode",
-      "paidThrough"
-    ],
-    "continuation": {
-      "action": "open_workspace_url",
-      "requiredFields": [
-        "workspaceId",
-        "redactedUrl"
-      ],
-      "forbiddenContent": [
-        "workspace.access.password",
-        "full workspace.url"
-      ]
+    "state": "current_zero_cost_projection",
+    "type": "workspace.created",
+    "launchReceiptContract": "opl-cloud-evidence-ledger-contract.json#workspaceLaunchReceiptV1",
+    "variant": "zeroCost",
+    "newWrites": "must_match_workspaceLaunchReceiptV1",
+    "historicalReadOnlyMatcher": {
+      "schemaVersion": 3,
+      "type": "workspace.created",
+      "status": "completed",
+      "surface": "workspace",
+      "topLevelIdentity": {
+        "requiredFields": ["accountId", "workspaceId"],
+        "allowedFields": ["accountId", "workspaceId"],
+        "extraFields": "reject"
+      },
+      "requestId": "<launchOperationId>:purchase-receipt",
+      "execution": {
+        "requiredFields": ["operationId", "runtimeId"],
+        "allowedFields": ["operationId", "runtimeId"],
+        "extraFields": "reject",
+        "constraints": {"operationId": "equals_requestId"}
+      },
+      "outputRefs": {
+        "requiredFields": ["url"],
+        "allowedFields": ["url"],
+        "extraFields": "reject"
+      },
+      "owner": {
+        "requiredFields": ["accountId", "userId"],
+        "allowedFields": ["accountId", "userId"],
+        "extraFields": "reject",
+        "constraints": {
+          "accountId": "equals_top_level_accountId",
+          "userId": "equals_launch_ownerUserId"
+        }
+      },
+      "cost": "must_be_empty",
+      "supersedesReceiptId": "must_be_empty",
+      "existingReceiptsReadable": true,
+      "newWritesAllowed": false
     }
   },
   "nonGoals": [

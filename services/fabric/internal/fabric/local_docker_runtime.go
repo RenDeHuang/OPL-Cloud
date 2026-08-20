@@ -662,7 +662,7 @@ func (p *LocalDockerProvider) CreateWorkspaceRuntime(ctx context.Context, input 
 
 func (p *LocalDockerProvider) createWorkspaceRuntimeWithPlan(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume, plan ComputePlan) (WorkspaceRuntime, error) {
 	var result WorkspaceRuntime
-	err := p.withStorageQuotaLock(func() error {
+	err := p.withStorageQuotaLock(ctx, func() error {
 		var lockedErr error
 		result, lockedErr = p.createWorkspaceRuntimeLocked(ctx, input, compute, volume, plan)
 		return lockedErr
@@ -915,18 +915,54 @@ func (p *LocalDockerProvider) runtimeFromContainer(container dockerContainerInsp
 }
 
 func (p *LocalDockerProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
-	container, exists, err := p.inspectContainer(ctx, localRuntimeName(workspaceID))
+	var result WorkspaceRuntime
+	absent := false
+	err := p.withStorageQuotaLock(ctx, func() error {
+		container, exists, inspectErr := p.inspectContainer(ctx, localRuntimeName(workspaceID))
+		if inspectErr != nil {
+			return inspectErr
+		}
+		if !exists {
+			absent = true
+			return nil
+		}
+		root, rootErr := p.openStorageRoot()
+		if rootErr != nil {
+			return rootErr
+		}
+		reservation, reconcileErr := reconcileLocalDockerRuntimeReservation(root, container)
+		closeErr := root.Close()
+		if reconcileErr != nil || closeErr != nil {
+			if reconcileErr != nil && reconcileErr.Error() == localDockerRuntimeReservationInventoryError {
+				return fmt.Errorf("local_docker_runtime_readback_mismatch")
+			}
+			return firstNonNil(reconcileErr, closeErr)
+		}
+		limits, ok := runtimeCgroupLimitsFromReservation(reservation)
+		if !ok {
+			return fmt.Errorf("local_docker_runtime_readback_mismatch")
+		}
+		var statusErr error
+		result, statusErr = p.workspaceRuntimeStatusWithLimits(ctx, workspaceID, limits)
+		return statusErr
+	})
 	if err != nil {
 		return WorkspaceRuntime{}, err
 	}
-	if !exists {
+	if absent {
 		return WorkspaceRuntime{WorkspaceID: workspaceID}, ErrWorkspaceLaunchResourceAbsent
 	}
-	limits, limitsOK := p.runtimeCgroupLimits(container.Config.Labels[localDockerComputePackageLabel])
-	if !limitsOK {
-		return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_readback_mismatch")
+	return result, nil
+}
+
+func runtimeCgroupLimitsFromReservation(reservation localDockerRuntimeReservation) (localDockerRuntimeCgroupLimits, bool) {
+	const maxInt64 = uint64(1<<63 - 1)
+	if !validLocalDockerRuntimeReservation(reservation) || reservation.NanoCPUs > maxInt64 || reservation.MemoryBytes > maxInt64 {
+		return localDockerRuntimeCgroupLimits{}, false
 	}
-	return p.workspaceRuntimeStatusWithLimits(ctx, workspaceID, limits)
+	return localDockerRuntimeCgroupLimits{
+		NanoCPUs: int64(reservation.NanoCPUs), Memory: int64(reservation.MemoryBytes), PackageID: reservation.PackageID,
+	}, true
 }
 
 func (p *LocalDockerProvider) workspaceRuntimeStatusWithPlan(ctx context.Context, workspaceID string, plan ComputePlan) (WorkspaceRuntime, error) {
@@ -1000,7 +1036,7 @@ func (*LocalDockerProvider) WorkspaceRuntimeProviderFacts(runtime WorkspaceRunti
 
 func (p *LocalDockerProvider) DestroyWorkspaceRuntime(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
 	var result WorkspaceRuntime
-	err := p.withStorageQuotaLock(func() error {
+	err := p.withStorageQuotaLock(ctx, func() error {
 		var lockedErr error
 		result, lockedErr = p.destroyWorkspaceRuntimeLocked(ctx, workspaceID)
 		return lockedErr

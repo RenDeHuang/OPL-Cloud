@@ -168,13 +168,187 @@ func validWorkspaceBillingReceiptInput(receiptType string) ReceiptInput {
 		},
 		IdempotencyKey: "workspace-billing-schema-" + receiptType,
 	}
-	if receiptType == "billing.workspace_renewed.v1" {
+	if receiptType == "billing.workspace_purchased.v1" || receiptType == "billing.workspace_renewed.v1" {
 		input.Cost["sub2apiUserId"], input.Cost["sub2apiRedeemCode"], input.Cost["postChargeBalanceUsdMicros"] = int64(41), "opl:workspace-renewal:charge:v1", int64(47_420_000)
 	} else if receiptType == "billing.workspace_refunded.v1" {
 		input.Cost["sub2apiUserId"], input.Cost["sub2apiRedeemCode"] = int64(41), "opl:workspace-renewal:charge:v1"
 		input.Cost["sub2apiRefundCode"], input.Cost["refundUsdMicros"] = "opl:workspace-renewal:refund:v1", int64(52_580_000)
 	}
 	return input
+}
+
+func validWorkspaceLaunchReceiptInput(receiptType string) ReceiptInput {
+	input := validWorkspaceBillingReceiptInput("billing.workspace_purchased.v1")
+	input.Type = receiptType
+	input.RequestID = "workspace-launch-alpha"
+	input.Execution = map[string]any{
+		"operationId": "workspace-launch-alpha", "resourceType": "workspace", "resourceId": "workspace-alpha",
+		"computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "attachmentId": "attachment-alpha", "runtimeId": "runtime-alpha",
+		"workspaceApiKeyId": int64(9), "workspaceKeyFingerprint": "sha256:alpha", "runtimeServiceName": "runtime-alpha", "gatewaySecretRef": "secret-alpha",
+	}
+	input.Owner = map[string]any{"accountId": "acct-alpha", "workspaceId": "workspace-alpha", "ownerUserId": "usr-alpha"}
+	input.IdempotencyKey = "workspace-launch-alpha:purchase-receipt"
+	if receiptType == "workspace.created" {
+		input.Cost = nil
+	}
+	return input
+}
+
+func validWorkspaceDeletionReceiptInput() ReceiptInput {
+	return ReceiptInput{
+		Type: "workspace.deleted.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
+		RequestID: "workspace-delete-alpha", InputRefs: map[string]any{"launchReceiptId": "receipt-launch-alpha"},
+		Execution: map[string]any{
+			"operationId": "workspace-delete-alpha", "resourceType": "workspace", "resourceId": "workspace-alpha",
+			"computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "attachmentId": "attachment-alpha", "runtimeId": "runtime-alpha",
+			"workspaceApiKeyId": int64(9), "workspaceKeyFingerprint": "sha256:alpha", "runtimeServiceName": "runtime-alpha", "gatewaySecretRef": "secret-alpha",
+		},
+		OutputRefs: map[string]any{
+			"runtimeStatus": "absent", "gatewaySecretStatus": "absent", "attachmentStatus": "absent", "storageStatus": "absent",
+			"computeStatus": "absent", "workspaceKeyStatus": "absent", "workspaceStatus": "absent",
+		},
+		Owner:          map[string]any{"accountId": "acct-alpha", "workspaceId": "workspace-alpha", "ownerUserId": "usr-alpha"},
+		IdempotencyKey: "workspace-delete-alpha:deletion-receipt",
+	}
+}
+
+func TestWorkspaceLaunchReceiptSchemaMemory(t *testing.T) {
+	for _, receiptType := range []string{"billing.workspace_purchased.v1", "workspace.created"} {
+		t.Run(receiptType+" valid", func(t *testing.T) {
+			if _, err := NewMemoryStore().RecordReceipt(context.Background(), validWorkspaceLaunchReceiptInput(receiptType)); err != nil {
+				t.Fatalf("valid launch receipt: %v", err)
+			}
+		})
+		for _, test := range []struct {
+			name   string
+			mutate func(*ReceiptInput)
+		}{
+			{name: "wrong surface", mutate: func(input *ReceiptInput) { input.Surface = "workspace" }},
+			{name: "request mismatch", mutate: func(input *ReceiptInput) { input.RequestID = "workspace-launch-other" }},
+			{name: "owner extra", mutate: func(input *ReceiptInput) { input.Owner["userId"] = "usr-alpha" }},
+			{name: "owner mismatch", mutate: func(input *ReceiptInput) { input.Owner["accountId"] = "acct-other" }},
+			{name: "execution missing", mutate: func(input *ReceiptInput) { delete(input.Execution, "gatewaySecretRef") }},
+			{name: "execution extra", mutate: func(input *ReceiptInput) { input.Execution["provider"] = "local-docker" }},
+			{name: "resource mismatch", mutate: func(input *ReceiptInput) { input.Execution["resourceId"] = "workspace-other" }},
+			{name: "non-positive Key ID", mutate: func(input *ReceiptInput) { input.Execution["workspaceApiKeyId"] = int64(0) }},
+			{name: "top-level extra", mutate: func(input *ReceiptInput) { input.ProjectID = "project-alpha" }},
+		} {
+			t.Run(receiptType+" "+test.name, func(t *testing.T) {
+				input := validWorkspaceLaunchReceiptInput(receiptType)
+				test.mutate(&input)
+				input.IdempotencyKey += "-" + strings.ReplaceAll(test.name, " ", "-")
+				if _, err := NewMemoryStore().RecordReceipt(context.Background(), input); !errors.Is(err, ErrInvalidReceiptInput) {
+					t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+				}
+			})
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*ReceiptInput)
+	}{
+		{name: "cost", mutate: func(input *ReceiptInput) { input.Cost = map[string]any{"totalUsdMicros": int64(1)} }},
+		{name: "supersedes", mutate: func(input *ReceiptInput) { input.SupersedesReceiptID = "receipt-other" }},
+	} {
+		t.Run("workspace.created "+test.name, func(t *testing.T) {
+			input := validWorkspaceLaunchReceiptInput("workspace.created")
+			test.mutate(&input)
+			input.IdempotencyKey += "-" + test.name
+			if _, err := NewMemoryStore().RecordReceipt(context.Background(), input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceDeletionReceiptSchemaMemory(t *testing.T) {
+	if _, err := NewMemoryStore().RecordReceipt(context.Background(), validWorkspaceDeletionReceiptInput()); err != nil {
+		t.Fatalf("valid deletion receipt: %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*ReceiptInput)
+	}{
+		{name: "wrong status", mutate: func(input *ReceiptInput) { input.Status = "running" }},
+		{name: "wrong surface", mutate: func(input *ReceiptInput) { input.Surface = "workspace" }},
+		{name: "empty account", mutate: func(input *ReceiptInput) { input.AccountID = "" }},
+		{name: "operation mismatch", mutate: func(input *ReceiptInput) { input.Execution["operationId"] = "workspace-delete-other" }},
+		{name: "resource mismatch", mutate: func(input *ReceiptInput) { input.Execution["resourceId"] = "workspace-other" }},
+		{name: "invalid opaque identity", mutate: func(input *ReceiptInput) { input.Execution["runtimeId"] = "runtime/alpha" }},
+		{name: "fractional Key ID", mutate: func(input *ReceiptInput) { input.Execution["workspaceApiKeyId"] = 9.5 }},
+		{name: "input ref extra", mutate: func(input *ReceiptInput) { input.InputRefs["purchaseReceiptId"] = "receipt-other" }},
+		{name: "owner extra", mutate: func(input *ReceiptInput) { input.Owner["userId"] = "usr-alpha" }},
+		{name: "output not absent", mutate: func(input *ReceiptInput) { input.OutputRefs["storageStatus"] = "retained" }},
+		{name: "output missing", mutate: func(input *ReceiptInput) { delete(input.OutputRefs, "workspaceStatus") }},
+		{name: "cost", mutate: func(input *ReceiptInput) { input.Cost = map[string]any{"refundUsdMicros": int64(1)} }},
+		{name: "supersedes", mutate: func(input *ReceiptInput) { input.SupersedesReceiptID = "receipt-launch-alpha" }},
+		{name: "recursive refund field", mutate: func(input *ReceiptInput) {
+			input.Actor = map[string]any{"evidence": map[string]any{"refundTrace": "refund-alpha"}}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := validWorkspaceDeletionReceiptInput()
+			test.mutate(&input)
+			input.IdempotencyKey += "-" + strings.ReplaceAll(test.name, " ", "-")
+			if _, err := NewMemoryStore().RecordReceipt(context.Background(), input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLifecycleReceiptCanonicalIdempotencyAndCardinalityMemory(t *testing.T) {
+	ctx := context.Background()
+	for _, input := range []ReceiptInput{
+		validWorkspaceLaunchReceiptInput("billing.workspace_purchased.v1"),
+		validWorkspaceLaunchReceiptInput("workspace.created"),
+		validWorkspaceDeletionReceiptInput(),
+	} {
+		t.Run(input.Type+" wrong key", func(t *testing.T) {
+			input.IdempotencyKey = input.RequestID + ":other-receipt"
+			if _, err := NewMemoryStore().RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("wrong canonical key error=%v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+
+	t.Run("same RequestID cannot use another key", func(t *testing.T) {
+		store := NewMemoryStore()
+		input := validWorkspaceLaunchReceiptInput("workspace.created")
+		if _, err := store.RecordReceipt(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+		input.IdempotencyKey = input.RequestID + ":second-purchase-receipt"
+		if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+			t.Fatalf("alternate key error=%v, want ErrInvalidReceiptInput", err)
+		}
+		page, err := store.ListReceipts(ctx, ReceiptQuery{AccountID: input.AccountID})
+		if err != nil || len(page.Receipts) != 1 {
+			t.Fatalf("same RequestID receipts=%#v err=%v", page.Receipts, err)
+		}
+	})
+
+	for _, firstType := range []string{"billing.workspace_purchased.v1", "workspace.created"} {
+		t.Run("mixed launch variants after "+firstType, func(t *testing.T) {
+			store := NewMemoryStore()
+			first := validWorkspaceLaunchReceiptInput(firstType)
+			secondType := "workspace.created"
+			if firstType == secondType {
+				secondType = "billing.workspace_purchased.v1"
+			}
+			second := validWorkspaceLaunchReceiptInput(secondType)
+			if _, err := store.RecordReceipt(ctx, first); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.RecordReceipt(ctx, second); !errors.Is(err, ErrIdempotencyConflict) {
+				t.Fatalf("mixed launch variants error=%v, want ErrIdempotencyConflict", err)
+			}
+			page, err := store.ListReceipts(ctx, ReceiptQuery{AccountID: first.AccountID})
+			if err != nil || len(page.Receipts) != 1 {
+				t.Fatalf("mixed launch receipts=%#v err=%v", page.Receipts, err)
+			}
+		})
+	}
 }
 
 func TestWorkspaceBillingReceiptSchemaMemory(t *testing.T) {
@@ -723,10 +897,8 @@ func TestAnyContinuationRequiresFullIdentity(t *testing.T) {
 
 func TestLegacyReceiptWithoutContinuationRemainsReadable(t *testing.T) {
 	store := NewMemoryStore()
-	receipt, err := store.RecordReceipt(context.Background(), ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", WorkspaceID: "workspace-alpha", IdempotencyKey: "legacy-no-continuation"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	receipt := Receipt{ReceiptInput: ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", WorkspaceID: "workspace-alpha"}, ReceiptID: "receipt-legacy-created", CreatedAt: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)}
+	store.receipts[receipt.ReceiptID] = receipt
 	loaded, err := store.Receipt(context.Background(), receipt.ReceiptID)
 	if err != nil || loaded.ReceiptID != receipt.ReceiptID || loaded.Continuation != nil || loaded.ContinuationID != "" {
 		t.Fatalf("legacy receipt = %#v, %v", loaded, err)

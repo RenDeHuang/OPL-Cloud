@@ -53,7 +53,7 @@ test("current contracts name Sub2API as the only spendable balance", async () =>
 test("management contract hard-cuts customer identity to Sub2API and one atomic owner graph", async () => {
   const management = await readJson("opl-cloud-management-contract.json");
 
-  assert.equal(management.schemaVersion, 21);
+  assert.equal(management.schemaVersion, 23);
   assert.deepEqual(management.entities.account.requiredFields, ["id", "ownerUserId", "status", "sub2apiUserId", "workspacePurchaseEnabled", "createdAt", "updatedAt"]);
   assert.deepEqual(management.entities.user, {
     requiredFields: ["id", "email", "accountId", "role", "status", "createdAt", "updatedAt"],
@@ -181,11 +181,13 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	]);
 
 	for (const type of [
+		"workspace.created",
 		"billing.workspace_purchased.v1",
 		"billing.reconciliation.v1",
 		"billing.workspace_renewed.v1",
 		"billing.workspace_expired.v1",
-		"billing.workspace_refunded.v1"
+		"billing.workspace_refunded.v1",
+		"workspace.deleted.v1"
 	]) {
 		assert.ok(evidence.receiptTypes.includes(type), `missing receipt type ${type}`);
 	}
@@ -207,7 +209,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		responseTypePrefixViolation: "fail_closed_unavailable"
 	});
 	assert.deepEqual(evidence.workspaceMonthlyBillingReceiptV1.statuses, ["completed"]);
-	assert.equal(billing.schemaVersion, 14);
+	assert.equal(billing.schemaVersion, 15);
 	assert.equal(
 		billing.ledgerEvidencePolicy.workspaceReceiptSchemaContract,
 		"opl-cloud-evidence-ledger-contract.json#workspaceMonthlyBillingReceiptV1"
@@ -228,6 +230,107 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		compute: ["resourceType", "resourceId", "chargeUsdMicros"],
 		storage: ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]
 	});
+	const launchReceiptContract = "opl-cloud-evidence-ledger-contract.json#workspaceLaunchReceiptV1";
+	const launchFulfillmentFields = [
+		"operationId",
+		"resourceType",
+		"resourceId",
+		"computeAllocationId",
+		"storageId",
+		"attachmentId",
+		"runtimeId",
+		"workspaceApiKeyId",
+		"workspaceKeyFingerprint",
+		"runtimeServiceName",
+		"gatewaySecretRef"
+	];
+	const historicalChargedFulfillmentFields = [
+		"resourceType",
+		"resourceId",
+		"computeAllocationId",
+		"storageId",
+		"attachmentId",
+		"runtimeId",
+		"workspaceApiKeyId",
+		"workspaceKeyFingerprint",
+		"runtimeServiceName"
+	];
+	assert.deepEqual(evidence.workspaceLaunchReceiptV1, {
+		state: "current",
+		authority: "unique_current_workspace_launch_receipt_union",
+		status: "completed",
+		surface: "control_plane",
+		requestId: "launchOperationId",
+		recordIdempotencyKey: "<launchOperationId>:purchase-receipt",
+		cardinality: {
+			perLaunchOperation: "exactly_one",
+			allowedTypes: ["billing.workspace_purchased.v1", "workspace.created"],
+			mixedOrDuplicate: "reject"
+		},
+		owner: {
+			requiredFields: ["accountId", "workspaceId", "ownerUserId"],
+			allowedFields: ["accountId", "workspaceId", "ownerUserId"],
+			extraFields: "reject"
+		},
+		canonicalFulfillmentIdentity: {
+			requiredFields: launchFulfillmentFields,
+			allowedFields: launchFulfillmentFields,
+			extraFields: "reject",
+			constraints: {
+				operationId: "equals_requestId",
+				resourceType: "workspace",
+				resourceId: "equals_workspaceId"
+			},
+			providerSpecificFields: false
+		},
+		variants: {
+			charged: {
+				type: "billing.workspace_purchased.v1",
+				cost: "required_exact_workspace_monthly_billing_cost",
+				costSchemaContract: "opl-cloud-evidence-ledger-contract.json#workspaceMonthlyBillingReceiptV1",
+				debit: "exact_sub2api_user_redeem_code_and_total_usd_micros"
+			},
+			zeroCost: {
+				type: "workspace.created",
+				cost: "must_be_empty",
+				financialFields: "forbidden"
+			}
+		},
+		historicalChargedReadOnlyMatcher: {
+			type: "billing.workspace_purchased.v1",
+			status: "completed",
+			surface: "control_plane",
+			topLevelIdentity: {
+				requiredFields: ["accountId", "workspaceId"],
+				allowedFields: ["accountId", "workspaceId"],
+				extraFields: "reject"
+			},
+			requestId: "launchOperationId",
+			owner: {
+				requiredFields: ["accountId", "workspaceId", "ownerUserId"],
+				allowedFields: ["accountId", "workspaceId", "ownerUserId"],
+				extraFields: "reject"
+			},
+			cost: "required_exact_workspace_monthly_billing_cost",
+			costSchemaContract: "opl-cloud-evidence-ledger-contract.json#workspaceMonthlyBillingReceiptV1",
+			debit: "exact_sub2api_user_redeem_code_and_total_usd_micros",
+			execution: {
+				requiredFields: historicalChargedFulfillmentFields,
+				allowedFields: historicalChargedFulfillmentFields,
+				extraFields: "reject",
+				constraints: {
+					resourceType: "workspace",
+					resourceId: "equals_workspaceId"
+				},
+				providerSpecificFields: false
+			},
+			currentOrHistoricalCardinality: "exactly_one",
+			mixedOrDuplicate: "reject",
+			existingReceiptsReadable: true,
+			newWritesAllowed: false
+		},
+		retry: "receipt_only_after_activation_without_repeating_key_debit_fabric_or_activation"
+	});
 	assert.deepEqual(billing.entitlementPolicy.unpaidExpiry, {
 		workspaceAccess: "deny_immediately",
 		autoRenew: false,
@@ -242,29 +345,213 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.equal(billing.workspaceLaunchFulfillment.activationReadback.api, "Control Plane GetWorkspace(workspaceId) point read");
 	assert.match(billing.workspaceLaunchFulfillment.activationReadback.deletedFabricRoute, /returns 404/);
 	assert.equal(billing.workspaceLaunchFulfillment.ledgerFailureAfterActivation, "retry_receipt_only");
-	assert.deepEqual(billing.workspaceLaunchFulfillment.purchaseReceiptIdentity, {
-		requestId: "launchOperationId",
-		idempotencyKey: "<launchOperationId>:purchase-receipt",
-		workspaceId: "exact_launch_workspace_id",
-		debit: "exact_sub2api_user_redeem_code_and_total_usd_micros",
-		retry: "receipt_only_after_activation"
-	});
+	assert.equal(billing.workspaceLaunchFulfillment.launchReceiptContract, launchReceiptContract);
+	assert.equal(billing.workspaceLaunchFulfillment.purchaseReceiptIdentity, undefined);
+	assert.equal(billing.workspaceLaunchFulfillment.successReceiptType, undefined);
+	assert.equal(management.workspaceOwnership.independentFacts.includes("purchaseReceiptId"), true);
+	assert.equal(management.workspaceOwnership.independentFacts.includes("launchReceiptId"), false);
+	assert.equal(management.workspaceDeletion.action, "workspace.delete.v2");
+	assert.equal(management.workspaceDeletion.schemaVersion, 2);
+	assert.equal(management.workspaceDeletion.semantics, "permanently_delete_all_workspace_resources_without_automatic_refund");
 	assert.deepEqual(management.workspaceDeletion.identityFields, [
-		"accountId", "operationId", "workspaceId", "runtimeId", "keyId", "debitCode", "purchaseReceiptId", "refundReceiptId"
+		"accountId",
+		"operationId",
+		"workspaceId",
+		"ownerUserId",
+		"launchOperationId",
+		"launchReceiptId",
+		"resourceType",
+		"resourceId",
+		"computeAllocationId",
+		"storageId",
+		"attachmentId",
+		"runtimeId",
+		"workspaceApiKeyId",
+		"workspaceKeyFingerprint",
+		"runtimeServiceName",
+		"gatewaySecretRef"
 	]);
+	assert.deepEqual(management.workspaceDeletion.providerNeutralResourceIdentity, {
+		authority: "succeeded_immutable_launch_operation_and_matching_launch_receipt_for_runtime_compute_storage_and_attachment",
+		launchReceiptContract,
+		providerSpecificFields: false,
+		resources: ["runtime", "compute", "storage", "attachment"]
+	});
+	assert.deepEqual(management.workspaceDeletion.currentGatewayIdentity, {
+		workspaceApiKeyIdAuthority: "current_workspace_projection",
+		unchangedLaunchKeyAuthority: "immutable_launch_workspace_key_and_gateway_secret_identity",
+		rotatedKeyAuthority: "strict_completed_workspace_gateway_key_rotation_lineage_from_launch_key_to_current_workspace_key",
+		preMutationReadback: "fabric_runtime_gateway_secret_observation_must_match_current_key_secret_ref_and_fingerprint",
+		resources: ["workspace_key", "gateway_secret"]
+	});
+	assert.deepEqual(management.workspaceDeletion.launchReceiptIdentity, {
+		field: "launchReceiptId",
+		source: "immutable_launch_operation_receiptId_and_matching_workspaceLaunchReceiptV1",
+		workspaceProjectionField: false
+	});
+	assert.deepEqual(management.workspaceDeletion.orderedStages, [
+		"claimed",
+		"runtime_secret_absent",
+		"attachment_absent",
+		"storage_absent",
+		"compute_absent",
+		"key_absent",
+		"workspace_absent",
+		"deletion_receipt_recorded",
+		"complete"
+	]);
+	assert.deepEqual(management.workspaceDeletion.workspaceProjectionAbsence, {
+		transaction: "workspace_absent_cursor_workspace_compute_storage_attachment",
+		resourceIdentity: "exact_operation_resource_id_account_and_workspace_match",
+		mismatch: "fail_closed"
+	});
+	for (const forbidden of ["debitCode", "refundCode", "refundReceiptId", "refundUsdMicros"]) {
+		assert.equal(management.workspaceDeletion.identityFields.includes(forbidden), false, `Delete identity must not contain ${forbidden}`);
+	}
+	assert.deepEqual(management.workspaceDeletion.legacyV1HardCut, {
+		action: "workspace.delete.v1",
+		completedAndWorkspaceAbsent: "stable_historical_terminal_replay",
+		nonTerminalBeforeV2Mutation: "manual_review_conflict_without_mutation",
+		rewriteV1: false,
+		compatibilityEngine: false
+	});
 	assert.deepEqual(management.workspaceDeletion.fabricObservation.states, ["ready", "absent", "pending", "conflict", "error"]);
 	assert.equal(management.workspaceDeletion.keyAuthority, "sub2api_exact_user_and_workspace_key_id_readback");
 	assert.equal(management.workspaceDeletion.forbiddenKeyCleanupOwners.includes("local_docker"), true);
-	assert.equal(billing.workspaceDeleteRefund.operatorWalletAdjustmentSubstitute, false);
-	assert.equal(billing.workspaceDeleteRefund.responseLoss, "exact_refund_code_GET_only_without_second_refund");
-	assert.equal(billing.workspaceDeleteRefund.receipt.supersedesReceiptId, "exact_purchaseReceiptId");
-	assert.match(billing.workspaceDeleteRefund.receipt.failureRetry, /receipt_only/);
-	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.requestId, "launchOperationId");
-	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.recordIdempotencyKey, "<launchOperationId>:purchase-receipt");
-	assert.match(evidence.workspaceMonthlyBillingReceiptV1.purchasedTerminalIdentity.retry, /receipt_only/);
-	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.requestId, "workspaceDeleteOperationId");
+	assert.equal(billing.workspaceDeleteRefund, undefined);
+	assert.deepEqual(billing.workspaceDeleteNoRefund, {
+		orchestrationOwner: "services/control-plane",
+		receiptAuthority: "services/ledger",
+		deletionAction: "workspace.delete.v2",
+		semantics: "permanent_resource_deletion_without_automatic_refund",
+		launchReceiptContract,
+		launchReceiptPurpose: "resource_identity_only_never_refund_authority",
+		moneyWriteApis: [],
+		forbiddenWalletMutations: ["debit", "refund", "wallet_adjustment"],
+		walletMutationCount: 0,
+		deletionReceiptType: "workspace.deleted.v1",
+		deletionReceiptFailure: "retry_receipt_only_without_repeating_resource_key_or_workspace_deletion",
+		cancelRenewal: "independent_operation_preserves_resources_until_paidThrough",
+		refund: "independent_financial_operation"
+	});
+	for (const duplicateLaunchOwner of [
+		"purchasedRequiredExecutionFields",
+		"purchasedOptionalExecutionFields",
+		"purchasedTerminalIdentity",
+		"launchTerminalCardinality"
+	]) {
+		assert.equal(evidence.workspaceMonthlyBillingReceiptV1[duplicateLaunchOwner], undefined, `${duplicateLaunchOwner} must not duplicate workspaceLaunchReceiptV1`);
+	}
+	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.requestId, "independentRefundOperationId");
+	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.recordIdempotencyKey, "<independentRefundOperationId>:refund-receipt");
 	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.supersedesReceiptId, "exact_purchaseReceiptId");
-	assert.match(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.retry, /receipt_only/);
+	assert.equal(evidence.workspaceMonthlyBillingReceiptV1.refundedTerminalIdentity.workspaceDeleteCoupling, false);
+	assert.deepEqual(evidence.workspaceDeletionReceiptV1, {
+		type: "workspace.deleted.v1",
+		status: "completed",
+		surface: "control_plane",
+		requestId: "workspaceDeleteOperationId",
+		recordIdempotencyKey: "<workspaceDeleteOperationId>:deletion-receipt",
+		owner: {
+			requiredFields: ["accountId", "workspaceId", "ownerUserId"],
+			allowedFields: ["accountId", "workspaceId", "ownerUserId"],
+			extraFields: "reject"
+		},
+		inputRefs: {
+			requiredFields: ["launchReceiptId"],
+			allowedFields: ["launchReceiptId"],
+			extraFields: "reject"
+		},
+		execution: {
+			requiredFields: launchFulfillmentFields,
+			allowedFields: launchFulfillmentFields,
+			extraFields: "reject",
+			constraints: {
+				operationId: "equals_requestId",
+				resourceType: "workspace",
+				resourceId: "equals_workspaceId"
+			},
+			identity: "exact_provider_neutral_resource_identity_from_the_same_delete_operation"
+		},
+		outputRefs: {
+			requiredFields: [
+				"runtimeStatus",
+				"gatewaySecretStatus",
+				"attachmentStatus",
+				"storageStatus",
+				"computeStatus",
+				"workspaceKeyStatus",
+				"workspaceStatus"
+			],
+			allowedFields: [
+				"runtimeStatus",
+				"gatewaySecretStatus",
+				"attachmentStatus",
+				"storageStatus",
+				"computeStatus",
+				"workspaceKeyStatus",
+				"workspaceStatus"
+			],
+			extraFields: "reject",
+			requiredValue: "absent"
+		},
+		forbiddenFieldPrefixesCaseInsensitive: ["cost", "refund", "debit", "wallet", "supersedes"],
+		forbiddenFieldRule: "reject_recursively_when_field_name_equals_or_starts_with_a_forbidden_prefix",
+		failureRetry: "receipt_only_without_repeating_resource_key_or_workspace_deletion",
+		cardinality: "exactly_one_terminal_deletion_receipt_for_the_workspace_delete_operation"
+	});
+	const forbiddenReceiptFields = new Set(evidence.generalReceiptV1.forbiddenContent.map((field) => field.toLowerCase()));
+	for (const field of evidence.workspaceDeletionReceiptV1.execution.requiredFields) {
+		assert.equal(forbiddenReceiptFields.has(field.toLowerCase()), false, `${field} must be allowed by Ledger forbidden-content rules`);
+	}
+	for (const section of [evidence.workspaceDeletionReceiptV1.owner, evidence.workspaceDeletionReceiptV1.execution, evidence.workspaceDeletionReceiptV1.outputRefs]) {
+		assert.deepEqual(section.allowedFields, section.requiredFields);
+		assert.equal(section.extraFields, "reject");
+	}
+	assert.deepEqual(evidence.workspaceCreateReceipt, {
+		state: "current_zero_cost_projection",
+		type: "workspace.created",
+		launchReceiptContract,
+		variant: "zeroCost",
+		newWrites: "must_match_workspaceLaunchReceiptV1",
+		historicalReadOnlyMatcher: {
+			schemaVersion: 3,
+			type: "workspace.created",
+			status: "completed",
+			surface: "workspace",
+			topLevelIdentity: {
+				requiredFields: ["accountId", "workspaceId"],
+				allowedFields: ["accountId", "workspaceId"],
+				extraFields: "reject"
+			},
+			requestId: "<launchOperationId>:purchase-receipt",
+			execution: {
+				requiredFields: ["operationId", "runtimeId"],
+				allowedFields: ["operationId", "runtimeId"],
+				extraFields: "reject",
+				constraints: { operationId: "equals_requestId" }
+			},
+			outputRefs: {
+				requiredFields: ["url"],
+				allowedFields: ["url"],
+				extraFields: "reject"
+			},
+			owner: {
+				requiredFields: ["accountId", "userId"],
+				allowedFields: ["accountId", "userId"],
+				extraFields: "reject",
+				constraints: {
+					accountId: "equals_top_level_accountId",
+					userId: "equals_launch_ownerUserId"
+				}
+			},
+			cost: "must_be_empty",
+			supersedesReceiptId: "must_be_empty",
+			existingReceiptsReadable: true,
+			newWritesAllowed: false
+		}
+	});
+	assert.ok(billing.ledgerEvidencePolicy.receiptTypes.includes("workspace.deleted.v1"));
 	assert.deepEqual(billing.reconciliationPolicy, {
 		reportSchemaContract: "opl-cloud-evidence-ledger-contract.json#reconciliationReportV1",
 		exceptionOnly: true,
@@ -278,7 +565,8 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		providerFacts: ["compute_renewal", "storage_renewal"],
 		receiptType: "billing.workspace_renewed.v1"
 	});
-	assert.equal(management.schemaVersion, 21);
+	assert.equal(management.schemaVersion, 23);
+	assert.equal(evidence.schemaVersion, 16);
 	assert.equal(evidence.reconciliationReportV1.result.blockNewWorkspaces, "status_equals_mismatch");
 	assert.deepEqual(management.operatorBillingReviewProjection.included, [
 		"workspace.launch.v2_manual_review",

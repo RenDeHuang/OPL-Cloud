@@ -319,13 +319,30 @@ Sub2API management origin and credentials are never exposed to the browser.
   same durable storage-root flock. Runtime creation reads Docker host CPU and
   memory capacity, persists a Runtime reservation before dispatch, validates
   labels and cgroup HostConfig readback, and releases the reservation only after
-  container-absence readback. Storage admission sums active, staging, and
-  tombstoned SizeGB reservations against the effective filesystem capacity while
-  retaining the immediate writable-block check. Unknown inventory, malformed
+  container-absence readback. Existing Runtime inventory uses the durable
+  reservation's exact admitted CPU and memory rather than reinterpreting its
+  package through the current Provider Profile; a missing reservation is
+  recovered only from one canonical identity and complete positive live limits,
+  while an unbounded legacy Runtime fails closed. Public Local-Docker Runtime
+  status uses the same context-bounded locked reservation facts. Storage
+  admission sums active, staging, and tombstoned SizeGB reservations against the
+  effective filesystem capacity while retaining the immediate writable-block
+  check. Unknown inventory, malformed
   evidence, drift, and overflow fail closed. Focused tests cover strict capacity
-  evidence, aggregate boundaries, metadata/tombstone deduplication, stale
-  reservation recovery, and overflow; Linux project-quota enforcement remains
-  qualified through the existing Linux workflow.
+  evidence, Provider Profile drift, exact live reservation recovery, aggregate
+  boundaries, metadata/tombstone deduplication, stale reservation recovery, and
+  overflow; Linux project-quota enforcement remains qualified through the
+  existing Linux workflow.
+- The Runtime reservation reconciliation and Workspace Delete slices pass
+  focused Fabric tests, focused `-race`, `go vet`, `git diff --check`, and the
+  complete `npm run verify:local:full` gate. That gate ran every PostgreSQL,
+  Control Plane capacity, and real-Docker Local-Docker package with zero skips;
+  the final result was `Local verification passed with PostgreSQL and Docker
+  integration`. The four pre-reservation test Runtimes were retired as a
+  separately authorized local-environment operation; these source changes do
+  not migrate, archive, or delete historical resources. The green aggregate
+  replaces the earlier focused-only reruns and proves the current local source
+  candidate, not Instance or production adoption.
 - Create and Resume now enter one durable Control Plane Reconciler. Its resource
   stages call the typed Fabric HTTP contract and consume the same six-field
   request-hash vectors as Fabric. Activation readback uses the canonical
@@ -344,11 +361,35 @@ Sub2API management origin and credentials are never exposed to the browser.
   has a real caller. The real Control Plane `Service` and capability boundaries
   remain; none of these finite deletions admits an aggregate replacement facade
   or broader removal.
-- The authenticated Workspace owner can issue one durable, resumable delete
-  command. Control Plane coordinates Runtime, attachment, storage, and compute
-  cleanup through existing typed Fabric HTTP routes; partial or unknown results
-  remain unconfirmed, and success requires authoritative Workspace-list
-  readback. This is source and CI evidence, not a complete live installation.
+- The authenticated Workspace owner can issue one durable, resumable
+  `workspace.delete.v2` command. Control Plane matches the immutable succeeded
+  Launch and its exact charged or zero-cost Launch Receipt for Runtime, compute,
+  storage, and attachment identity. The current Workspace projection plus a
+  strict completed Rotation lineage supplies the current Key and Gateway Secret
+  identity, which Fabric rechecks before mutation. Delete then advances `Runtime
+  + Secret -> attachment -> storage -> compute -> Sub2API Key -> Workspace ->
+  workspace.deleted.v1 Receipt` without a Debit-history lookup, refund, or other
+  wallet mutation. Workspace, compute, storage, and attachment projection
+  absence persist in the same transaction as the `workspace_absent` cursor;
+  later Receipt and completion cursors persist independently, and a Ledger
+  failure retries only the deletion Receipt. A non-terminal historical
+  `workspace.delete.v1` row blocks v2 without migration or reinterpretation.
+  Non-terminal Delete, Renewal, and Key Rotation are durably mutually exclusive
+  before external mutation. Unpaid expiry suspends the Workspace and records
+  expiry evidence without invoking Fabric deletion.
+- Focused Fabric tests use fake Tencent SDKs to prove at-most-once CVM/CBS
+  deletion dispatch, exact immutable identity, response-loss recovery through
+  provider-authoritative readback, and permanent Machine/CVM/CBS absence. They
+  do not prove live Tencent, Instance, or production adoption. The real-Docker
+  Local-Docker integration creates Workspace A with the host's admitted CPU and
+  memory, reconstructs the Provider and Service over the same durable store and
+  storage root to simulate Fabric restart, proves A blocks same-size Workspace
+  B, deletes A's Runtime/Secret, attachment, storage, and compute, then launches
+  B with the released capacity. It reads back real Docker container/cgroup/network state,
+  the durable reservation, and the host storage directory. The macOS test quota
+  backend proves exact quota owner/apply/read/clear/reuse calls, not Linux kernel
+  quota enforcement. This is local source/runtime evidence, not a complete live
+  Console Delete or production path.
 - ContentTransfer application runtime/API/Ent schema, Archive application models,
   `ExecutionRequest` application code, and Control Plane `WorkspaceBackup` Ent
   model are retired; historical migrations, tables, and data were not dropped.

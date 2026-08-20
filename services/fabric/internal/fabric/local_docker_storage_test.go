@@ -379,6 +379,31 @@ func TestLocalDockerStorageDestroyRequiresExactIdentityAndIsIdempotent(t *testin
 	}
 }
 
+func TestLocalDockerStorageReadbackTreatsConfirmedAbsenceAsTerminal(t *testing.T) {
+	root := localDockerStorageTestRoot(t)
+	provider := newLocalDockerProvider(localDockerStorageTestConfig(root), &recordingDockerRunner{})
+	input := StorageVolumeInput{
+		ID: "storage-readback-absent", OperationID: "storage-operation", IdempotencyKey: "storage-idempotency",
+		AccountID: "acct-alpha", WorkspaceID: "ws-readback-absent", SizeGB: 10,
+	}
+	volume, err := provider.CreateStorageVolume(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DestroyStorageVolume(context.Background(), volume); err != nil {
+		t.Fatal(err)
+	}
+
+	presence, err := provider.ReadStorageVolume(context.Background(), volume)
+	if !errors.Is(err, ErrWorkspaceLaunchResourceAbsent) || presence.Status != "external_deleted" {
+		t.Fatalf("presence readback=%#v err=%v", presence, err)
+	}
+	status, err := provider.ReadStorageVolumeStatus(context.Background(), volume)
+	if err != nil || status.Status != "external_deleted" || status.Provider != "local-docker" || status.ProviderResourceID != volume.ProviderResourceID {
+		t.Fatalf("status readback=%#v err=%v", status, err)
+	}
+}
+
 func TestLocalDockerStorageDestroyConcurrentAndCrashRecoverable(t *testing.T) {
 	root := localDockerStorageTestRoot(t)
 	quota := localDockerStorageTestQuota(root).(*fakeLocalDockerProjectQuota)

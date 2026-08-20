@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-const localDockerRuntimeReservationSchemaVersion = 1
+const (
+	localDockerRuntimeReservationSchemaVersion  = 1
+	localDockerRuntimeReservationInventoryError = "local_docker_runtime_reservation_inventory_invalid"
+)
 
 type localDockerHostCapacity struct{ CPUs, MemoryBytes uint64 }
 type localDockerRuntimeReservation struct {
@@ -172,6 +175,7 @@ func (p *LocalDockerProvider) validateRuntimeReservationInventory(ctx context.Co
 		return err
 	}
 	seen := make(map[string]struct{})
+	seenResources := make(map[string]struct{})
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
@@ -187,27 +191,16 @@ func (p *LocalDockerProvider) validateRuntimeReservationInventory(ctx context.Co
 		seen[name] = struct{}{}
 		container, exists, inspectErr := p.inspectContainer(ctx, name)
 		if inspectErr != nil || !exists || container.ID != row.ID {
-			return firstNonNil(inspectErr, fmt.Errorf("local_docker_runtime_reservation_inventory_invalid"))
+			return firstNonNil(inspectErr, fmt.Errorf(localDockerRuntimeReservationInventoryError))
 		}
-		labels := container.Config.Labels
-		if labels["opl.fabric.provider"] != "local-docker" || labels["opl.fabric.kind"] != "runtime" || labels["opl.workspace.id"] == "" || labels["opl.resource.id"] == "" {
-			return fmt.Errorf("local_docker_runtime_reservation_inventory_invalid")
+		reservation, reconcileErr := reconcileLocalDockerRuntimeReservation(root, container)
+		if reconcileErr != nil {
+			return reconcileErr
 		}
-		limits, ok := p.runtimeCgroupLimits(labels[localDockerComputePackageLabel])
-		if !ok || !validRuntimeCgroupLimits(container, limits) || labels["opl.resource.id"] != localRuntimeID(labels["opl.workspace.id"]) {
-			return fmt.Errorf("local_docker_runtime_reservation_inventory_invalid")
+		if _, duplicate := seenResources[reservation.ResourceID]; duplicate {
+			return fmt.Errorf(localDockerRuntimeReservationInventoryError)
 		}
-		expected := localDockerRuntimeReservation{SchemaVersion: localDockerRuntimeReservationSchemaVersion, WorkspaceID: labels["opl.workspace.id"], ResourceID: labels["opl.resource.id"], PackageID: limits.PackageID, NanoCPUs: uint64(limits.NanoCPUs), MemoryBytes: uint64(limits.Memory)}
-		stored, readErr := readLocalDockerRuntimeReservation(root, localDockerRuntimeReservationName(expected.ResourceID))
-		if errors.Is(readErr, ErrWorkspaceLaunchResourceAbsent) {
-			if err := writeLocalDockerRuntimeReservation(root, expected); err != nil {
-				return err
-			}
-			continue
-		}
-		if readErr != nil || stored != expected {
-			return fmt.Errorf("local_docker_runtime_reservation_inventory_invalid")
-		}
+		seenResources[reservation.ResourceID] = struct{}{}
 	}
 	directory, err := root.Open(localDockerRuntimeReservationDirectory)
 	if errors.Is(err, os.ErrNotExist) {
@@ -226,11 +219,14 @@ func (p *LocalDockerProvider) validateRuntimeReservationInventory(ctx context.Co
 			return fmt.Errorf("local_docker_runtime_reservation_invalid")
 		}
 		reservation, readErr := readLocalDockerRuntimeReservation(root, localDockerRuntimeReservationDirectory+"/"+entry.Name())
-		if readErr != nil {
-			return readErr
+		if readErr != nil || entry.Name() != reservation.ResourceID+".json" {
+			return firstNonNil(readErr, fmt.Errorf(localDockerRuntimeReservationInventoryError))
 		}
 		name := localRuntimeName(reservation.WorkspaceID)
 		if _, exists := seen[name]; exists {
+			if _, resourceExists := seenResources[reservation.ResourceID]; !resourceExists {
+				return fmt.Errorf(localDockerRuntimeReservationInventoryError)
+			}
 			continue
 		}
 		container, exists, inspectErr := p.inspectContainer(ctx, name)
@@ -243,12 +239,56 @@ func (p *LocalDockerProvider) validateRuntimeReservationInventory(ctx context.Co
 			}
 			continue
 		}
-		if container.Config.Labels["opl.resource.id"] != reservation.ResourceID {
-			return fmt.Errorf("local_docker_runtime_reservation_inventory_invalid")
+		reconciled, reconcileErr := reconcileLocalDockerRuntimeReservation(root, container)
+		if reconcileErr != nil {
+			return reconcileErr
+		}
+		if reconciled != reservation {
+			return fmt.Errorf(localDockerRuntimeReservationInventoryError)
 		}
 	}
 	return nil
 }
+
+func localDockerRuntimeReservationFromContainer(container dockerContainerInspect) (localDockerRuntimeReservation, bool) {
+	labels := container.Config.Labels
+	if labels["opl.fabric.provider"] != "local-docker" || labels["opl.fabric.kind"] != "runtime" ||
+		labels["opl.workspace.id"] == "" || labels["opl.resource.id"] == "" || labels[localDockerComputePackageLabel] == "" ||
+		container.Name != localRuntimeName(labels["opl.workspace.id"]) || labels["opl.resource.id"] != localRuntimeID(labels["opl.workspace.id"]) ||
+		container.HostConfig.NanoCPUs <= 0 || container.HostConfig.Memory <= 0 || container.HostConfig.MemorySwap != container.HostConfig.Memory {
+		return localDockerRuntimeReservation{}, false
+	}
+	return localDockerRuntimeReservation{
+		SchemaVersion: localDockerRuntimeReservationSchemaVersion,
+		WorkspaceID:   labels["opl.workspace.id"],
+		ResourceID:    labels["opl.resource.id"],
+		PackageID:     labels[localDockerComputePackageLabel],
+		NanoCPUs:      uint64(container.HostConfig.NanoCPUs),
+		MemoryBytes:   uint64(container.HostConfig.Memory),
+	}, true
+}
+
+func reconcileLocalDockerRuntimeReservation(root *os.Root, container dockerContainerInspect) (localDockerRuntimeReservation, error) {
+	expected, ok := localDockerRuntimeReservationFromContainer(container)
+	if !ok {
+		return localDockerRuntimeReservation{}, fmt.Errorf(localDockerRuntimeReservationInventoryError)
+	}
+	stored, err := readLocalDockerRuntimeReservation(root, localDockerRuntimeReservationName(expected.ResourceID))
+	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
+		if err := writeLocalDockerRuntimeReservation(root, expected); err != nil {
+			return localDockerRuntimeReservation{}, err
+		}
+		return expected, nil
+	}
+	if err != nil {
+		return localDockerRuntimeReservation{}, err
+	}
+	if stored != expected {
+		return localDockerRuntimeReservation{}, fmt.Errorf(localDockerRuntimeReservationInventoryError)
+	}
+	return stored, nil
+}
+
 func localDockerRuntimeReservationFor(input WorkspaceRuntimeInput, limits localDockerRuntimeCgroupLimits) localDockerRuntimeReservation {
 	return localDockerRuntimeReservation{SchemaVersion: localDockerRuntimeReservationSchemaVersion, WorkspaceID: input.WorkspaceID, ResourceID: localRuntimeID(input.WorkspaceID), PackageID: limits.PackageID, NanoCPUs: uint64(limits.NanoCPUs), MemoryBytes: uint64(limits.Memory)}
 }

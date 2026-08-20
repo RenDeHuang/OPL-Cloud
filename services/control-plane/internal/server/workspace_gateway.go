@@ -393,10 +393,18 @@ func (app *controlPlaneServer) claimWorkspaceKeyRotation(ctx context.Context, se
 		RetiredName:     "opl-workspace-retired-" + stableID(operationID)[:12],
 		AuditEvent:      auditEvent,
 	}
-	if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
+	if err := app.tables.ClaimWorkspaceKeyRotation(ctx, workspaceKeyRotationRow(operationID, accountID, workspaceID, "started", operation)); err != nil {
 		return workspaceKeyRotationOperation{}, false, err
 	}
 	return operation, false, nil
+}
+
+func validWorkspaceKeyRotationClaim(row map[string]any) (workspaceKeyRotationOperation, bool) {
+	operation, err := decodeWorkspaceKeyRotation(row)
+	return operation, err == nil && stringValue(row["id"]) != "" && stringValue(row["id"]) == stringValue(row["operationId"]) &&
+		stringValue(row["accountId"]) != "" && stringValue(row["workspaceId"]) != "" && stringValue(row["resourceId"]) == stringValue(row["workspaceId"]) &&
+		stringValue(row["resourceKind"]) == "workspace_gateway_key" && stringValue(row["action"]) == "workspace.gateway_key.rotate" && stringValue(row["status"]) == "started" &&
+		operation.Phase == "replacement_check" && operation.NewKeyID == 0
 }
 
 func (app *controlPlaneServer) rotateWorkspaceGatewayKey(w http.ResponseWriter, r *http.Request, service *controlplane.Service) {
@@ -1076,6 +1084,10 @@ func (app *controlPlaneServer) succeededWorkspaceLaunchForAccess(ctx context.Con
 }
 
 func (app *controlPlaneServer) canonicalWorkspaceLaunchForAccess(ctx context.Context, workspace map[string]any) (workspaceLaunchReconcileOperation, bool, error) {
+	return app.canonicalWorkspaceLaunch(ctx, workspace, workspaceLaunchProjectionMatches)
+}
+
+func (app *controlPlaneServer) canonicalWorkspaceLaunch(ctx context.Context, workspace map[string]any, matches func(workspaceLaunchReconcileOperation, map[string]any) bool) (workspaceLaunchReconcileOperation, bool, error) {
 	workspaceID := stringValue(workspace["id"])
 	rows, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
 		WorkspaceID: workspaceID, Action: workspaceLaunchAction,
@@ -1092,7 +1104,7 @@ func (app *controlPlaneServer) canonicalWorkspaceLaunchForAccess(ctx context.Con
 	operation, err := decodeWorkspaceLaunchReconcileOperation(rows[0])
 	if err != nil || operation.Status != "succeeded" || operation.Stage != "succeeded" || operation.stringFact("receiptId") == "" ||
 		operation.stringFact("receiptOperationId") != operation.ID+":purchase-receipt" ||
-		!workspaceLaunchProjectionMatches(operation, workspace) {
+		!matches(operation, workspace) {
 		return workspaceLaunchReconcileOperation{}, true, errors.New("workspace_runtime_truth_unavailable")
 	}
 	return operation, true, nil

@@ -518,6 +518,31 @@ func (s *memoryTableStore) CompareAndSwapWorkspaceAPIKey(_ context.Context, work
 	return nil
 }
 
+func (s *memoryTableStore) ClaimWorkspaceKeyRotation(_ context.Context, row map[string]any) error {
+	operation, ok := validWorkspaceKeyRotationClaim(row)
+	if !ok {
+		return errWorkspaceKeyRotationState
+	}
+	workspaceID, accountID := stringValue(row["workspaceId"]), stringValue(row["accountId"])
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspaces[workspaceID]
+	currentKeyID, keyOK := positiveIntegerField(workspace, "workspaceApiKeyId")
+	if workspace == nil || firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) != accountID || !keyOK || currentKeyID != operation.OldKeyID {
+		return errWorkspaceKeyRotationInProgress
+	}
+	for _, existing := range s.runtimeOps {
+		if stringValue(existing["workspaceId"]) != workspaceID {
+			continue
+		}
+		if workspaceKeyRotationBlocksDelete(existing) || workspaceDeleteBlocksRotation(existing) {
+			return errWorkspaceKeyRotationInProgress
+		}
+	}
+	s.runtimeOps = append(s.runtimeOps, cloneMap(row))
+	return nil
+}
+
 func (s *memoryTableStore) ApplyWorkspaceRenewalIntent(_ context.Context, update workspaceRenewalIntentCAS) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -625,6 +650,11 @@ func (s *memoryTableStore) ClaimWorkspaceRenewal(_ context.Context, claim worksp
 	if workspace == nil || stringValue(workspace["accountId"]) != claim.AccountID || stringValue(workspace["paidThrough"]) != claim.ExpectedPaidThrough ||
 		!validAutoRenew || autoRenew != claim.ExpectedAutoRenew || runtimeOperationsVersion(s.runtimeOps, claim.WorkspaceID) != claim.ExpectedOperationsVersion {
 		return errWorkspaceRenewalCASConflict
+	}
+	for _, row := range s.runtimeOps {
+		if stringValue(row["workspaceId"]) == claim.WorkspaceID && workspaceDeleteBlocksRenewal(row) {
+			return errWorkspaceRenewalCASConflict
+		}
 	}
 	id := stringValue(claim.DesiredOperation["id"])
 	index := -1
@@ -773,8 +803,12 @@ func (s *memoryTableStore) ApplyWorkspaceDelete(_ context.Context, mutation work
 		if workspace != nil {
 			return errWorkspaceDeleteCASConflict
 		}
-	} else if workspace == nil || firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) != desired.AccountID ||
-		firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != desired.OwnerUserID {
+	} else if !workspaceDeleteWorkspaceProjectionMatches(desired, workspace, mutation.DeleteWorkspace) {
+		return errWorkspaceDeleteCASConflict
+	}
+	if mutation.DeleteWorkspace && (!workspaceDeleteResourceProjectionMatches(desired, "compute", s.computes[desired.ComputeID]) ||
+		!workspaceDeleteResourceProjectionMatches(desired, "storage", s.storages[desired.StorageID]) ||
+		!workspaceDeleteResourceProjectionMatches(desired, "attachment", s.attachments[desired.AttachmentID])) {
 		return errWorkspaceDeleteCASConflict
 	}
 
@@ -786,18 +820,30 @@ func (s *memoryTableStore) ApplyWorkspaceDelete(_ context.Context, mutation work
 		}
 	}
 	if mutation.Create {
+		for _, row := range s.runtimeOps {
+			if stringValue(row["workspaceId"]) == desired.WorkspaceID && (workspaceRenewalBlocksDelete(row) || workspaceKeyRotationBlocksDelete(row)) {
+				return errWorkspaceDeleteCASConflict
+			}
+		}
 		if operationIndex >= 0 {
 			return errWorkspaceDeleteCASConflict
 		}
 		s.runtimeOps = append(s.runtimeOps, cloneMap(mutation.DesiredOperation))
 	} else {
-		if operationIndex < 0 || stringValue(s.runtimeOps[operationIndex]["result"]) != mutation.ExpectedResult ||
-			!workspaceDeleteOperationIdentityMatches(s.runtimeOps[operationIndex], desired) {
+		if operationIndex < 0 {
+			return errWorkspaceDeleteCASConflict
+		}
+		current, decodeErr := decodeWorkspaceDeleteOperation(s.runtimeOps[operationIndex])
+		if decodeErr != nil || stringValue(s.runtimeOps[operationIndex]["result"]) != mutation.ExpectedResult ||
+			!workspaceDeleteOperationIdentityMatches(s.runtimeOps[operationIndex], desired) || !validWorkspaceDeleteTransition(current, desired, mutation) {
 			return errWorkspaceDeleteCASConflict
 		}
 		s.runtimeOps[operationIndex] = cloneMap(mutation.DesiredOperation)
 	}
 	if mutation.DeleteWorkspace {
+		delete(s.attachments, desired.AttachmentID)
+		delete(s.storages, desired.StorageID)
+		delete(s.computes, desired.ComputeID)
 		delete(s.workspaces, desired.WorkspaceID)
 	}
 	return nil

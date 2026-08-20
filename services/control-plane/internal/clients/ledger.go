@@ -121,7 +121,7 @@ func (c *ledgerHTTPClient) RecordReceipt(ctx context.Context, input ReceiptInput
 	if err := c.post(ctx, "/ledger/receipts", input, idempotencyKey, &result); err != nil {
 		return Receipt{}, err
 	}
-	if input.Type == "billing.workspace_purchased.v1" || input.Type == "billing.workspace_renewed.v1" || input.Type == "billing.workspace_expired.v1" || input.Type == "billing.workspace_refunded.v1" || input.Type == "workspace.gateway_key_rotated.v1" || input.Type == "gateway.wallet_adjustment.v1" {
+	if input.Type == "billing.workspace_purchased.v1" || input.Type == "billing.workspace_renewed.v1" || input.Type == "billing.workspace_expired.v1" || input.Type == "billing.workspace_refunded.v1" || input.Type == "workspace.created" || input.Type == "workspace.deleted.v1" || input.Type == "workspace.gateway_key_rotated.v1" || input.Type == "gateway.wallet_adjustment.v1" {
 		submitted, submittedErr := json.Marshal(input)
 		returned, returnedErr := json.Marshal(result.ReceiptInput)
 		if submittedErr != nil || returnedErr != nil || !bytes.Equal(submitted, returned) || result.ReceiptID == "" {

@@ -318,14 +318,23 @@ first external write. Runtime supplies the authoritative Workspace URL as
 readback/projection; URL is not a separate mutation stage.
 
 Workspace deletion is another durable Control Plane operation, not an
-acceptance-runner cleanup. It first matches the exact purchase Receipt and
-Sub2API debit, then coordinates `runtime + Secret absence -> attachment ->
-storage -> compute -> Sub2API Key absence -> exact refund -> refund Receipt ->
-Workspace absence`. Every stage preserves the same account, operation,
-Workspace, Runtime, Key, debit-code, purchase-Receipt, and refund-Receipt
-identity. Fabric owns only resource/Secret observations and mutation; Sub2API
-alone owns Key and wallet mutation; Ledger records the Receipt. Any typed
-pending, conflict, or error that cannot authoritatively converge fails closed.
+acceptance-runner cleanup. `workspace.delete.v2` first matches the immutable
+succeeded Launch and its exact Launch Receipt. Runtime, compute, storage, and
+attachment identity remain bound to that Launch; the current Workspace Key and
+Gateway Secret identity come from the current Workspace projection and a strict
+completed Rotation lineage back to the Launch Key. Delete then coordinates
+`runtime + Secret absence -> attachment absence -> storage absence -> compute
+absence -> Sub2API Key absence -> Workspace absence -> workspace.deleted.v1
+Receipt -> complete`. Workspace absence atomically removes its exact Control
+Plane compute, storage, and attachment projections. Every stage preserves the
+same account, operation, Workspace, Launch Receipt, Runtime, current Key, and
+provider-neutral resource identities. Fabric owns resource/Secret observations,
+mutation, and authoritative absence; Sub2API owns only the exact Key deletion
+in this operation and performs no wallet mutation; Ledger records the
+non-financial deletion Receipt. Delete and Key Rotation are durably mutually
+exclusive before either claim can cross an external mutation boundary. Delete,
+Cancel Renewal, and Refund are independent operations. Any typed pending,
+conflict, or error that cannot authoritatively converge fails closed.
 
 Control Plane owns only the Launch cursor, attempt and lease state, CAS,
 account/settlement coordination, and customer projection. Fabric owns compute,

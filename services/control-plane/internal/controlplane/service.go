@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"opl-cloud/services/control-plane/internal/clients"
@@ -419,15 +420,14 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 	return s.fabric.CreateStorageAttachment(ctx, clients.StorageAttachmentInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID}, idempotencyKey)
 }
 
-func (s *Service) RecordWorkspaceCreatedReceipt(ctx context.Context, workspace domain.WorkspaceProjection, idempotencyKey string) (domain.WorkspaceProjection, error) {
-	input := clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", AccountID: workspace.AccountID, WorkspaceID: workspace.ID, JobID: workspace.RuntimeID, Execution: map[string]any{"providerRequestId": workspace.RuntimeID}, OutputRefs: map[string]any{"redactedUrl": workspace.URL}}
-	return s.recordWorkspaceReceipt(ctx, workspace, input, idempotencyKey)
-}
-
-func (s *Service) recordWorkspaceReceipt(ctx context.Context, workspace domain.WorkspaceProjection, input clients.ReceiptInput, idempotencyKey string) (domain.WorkspaceProjection, error) {
+func (s *Service) RecordProviderAcceptanceReceipt(ctx context.Context, workspace domain.WorkspaceProjection, idempotencyKey string) (domain.WorkspaceProjection, error) {
+	input := clients.ReceiptInput{Type: "execution.receipt.v1", Status: "completed", Surface: "workspace", AccountID: workspace.AccountID, WorkspaceID: workspace.ID, JobID: workspace.RuntimeID, Execution: map[string]any{"providerRequestId": workspace.RuntimeID}, OutputRefs: map[string]any{"redactedUrl": workspace.URL}}
 	receipt, err := s.ledger.RecordReceipt(ctx, input, idempotencyKey+":receipt")
 	if err != nil {
 		return workspace, err
+	}
+	if receipt.ReceiptID == "" || !reflect.DeepEqual(receipt.ReceiptInput, input) {
+		return workspace, errors.New("provider_acceptance_receipt_response_invalid")
 	}
 	workspace.ReceiptID = receipt.ReceiptID
 	return workspace, nil
