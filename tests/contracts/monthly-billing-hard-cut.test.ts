@@ -138,39 +138,57 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
   assert.equal(management.identityDelivery, undefined);
 });
 
-test("pricing contract fixes exact integer monthly charges", async () => {
+test("pricing contract owns schemas and snapshot invariants without a current catalog", async () => {
   const pricing = await readJson("opl-cloud-pricing-contract.json");
 
-  assert.equal(pricing.priceVersion, "pilot-usd-2026-07-v1");
-  assert.equal(pricing.catalogVersion, undefined);
-  assert.equal(pricing.billingUnit, "calendar_month");
-  assert.equal(pricing.currency, "USD");
-  assert.equal(pricing.displayCurrency, "USD");
-  assert.equal(pricing.walletCurrency, "USD");
-  assert.equal(pricing.exchangeRateCnyPerUsd, undefined);
-  assert.deepEqual(pricing.computeMonthly, {
-    basic: { usdMicros: 50000000 },
-    pro: { usdMicros: 214280000 }
+  assert.equal(pricing.schemaVersion, 11);
+  assert.equal(pricing.runtimeCatalog.authority, "control_plane_customer_pricing_runtime");
+  assert.equal(pricing.runtimeCatalog.acceptedVersionResolution, "explicit_exact_lookup_unknown_version_fails_closed");
+  assert.equal(pricing.runtimeCatalog.currentValues, "not_stored_in_this_contract");
+  assert.deepEqual(pricing.catalogResponseSchema, {
+    requiredFields: ["priceVersion", "billingUnit", "currency", "displayCurrency", "walletCurrency", "storageSize", "storageBlockMonthly", "packages"],
+    packageFields: ["id", "name", "available"],
+    storageSizeFields: ["minimumGb", "stepGb"],
+    storagePriceFields: ["priceVersion", "currency", "displayCurrency", "blockSizeGb", "usdMicros"]
   });
-  assert.deepEqual(pricing.storagePer10GbMonthly, { usdMicros: 2580000 });
-  assert.deepEqual(pricing.storageMonthly, {
-    "10": { usdMicros: 2580000 },
-    "100": { usdMicros: 25800000 }
+  assert.deepEqual(pricing.previewSchema, {
+    commonRequiredFields: ["resourceType", "priceVersion", "packageId", "currency", "displayCurrency", "billingUnit"],
+    componentRequiredFields: ["chargeUsdMicros", "priceSnapshot"],
+    workspaceRequiredFields: ["compute", "storage", "totalChargeUsdMicros"],
+    amountEncoding: "non_negative_int64_usd_micros",
+    priceVersionMeaning: "identity_of_the_runtime_catalog_used_to_accept_the_quote"
   });
-  assert.deepEqual(pricing.workspaceMonthly, {
-    basic: { packageId: "basic", sizeGb: 10, computeUsdMicros: 50000000, storageUsdMicros: 2580000, totalUsdMicros: 52580000 },
-    pro: { packageId: "pro", sizeGb: 100, computeUsdMicros: 214280000, storageUsdMicros: 25800000, totalUsdMicros: 240080000 }
+  assert.deepEqual(pricing.acceptedWorkspacePriceSnapshot, {
+    authority: "control_plane_accepted_quote",
+    componentRequiredFields: ["resourceType", "priceVersion", "packageId", "currency", "displayCurrency", "billingUnit", "chargeUsdMicros"],
+    storageAdditionalFields: ["sizeGb"],
+    immutability: "accepted_snapshot_is_immutable_for_the_current_billing_period",
+    catalogChangeEffect: "a_new_runtime_catalog_never_rewrites_an_existing_period_snapshot"
   });
-  assert.deepEqual(pricing.internalProviderCostEvidence, {
-    currency: "CNY",
-    computeMonthlyCnyCents: { basic: 35000, pro: 150000 },
-    storageMonthlyCnyCents: { "10": 1800, "100": 18000 },
-    customerChargeDerivation: "forbidden"
+  assert.equal(pricing.workspaceCharge.customerDebitCardinalityPerPeriod, 1);
+  assert.equal(pricing.workspaceCharge.totalAuthority, "accepted_workspace_price_snapshot");
+  assert.deepEqual(pricing.providerCostEvidence, {
+    authority: "fabric",
+    visibility: "internal_reconciliation_only",
+    customerChargeDerivation: "forbidden",
+    customerDto: "forbidden"
   });
-  assert.deepEqual(pricing.storageSize, { minimumGb: 10, stepGb: 10 });
-  assert.equal(pricing.computeHourly, undefined);
-  assert.equal(pricing.storageGbMonth, undefined);
-  assert.equal(pricing.env, undefined);
+  for (const currentCatalogField of ["priceVersion", "computeMonthly", "storagePer10GbMonthly", "storageBlockMonthly", "storageMonthly", "workspaceMonthly", "internalProviderCostEvidence", "storageSize"]) {
+    assert.equal(pricing[currentCatalogField], undefined, `pricing contract must not own ${currentCatalogField}`);
+  }
+  const numericFacts = [];
+  const collectNumericFacts = (value, path = []) => {
+    if (typeof value === "number") numericFacts.push([path.join("."), value]);
+    else if (Array.isArray(value)) value.forEach((entry, index) => collectNumericFacts(entry, [...path, String(index)]));
+    else if (value && typeof value === "object") {
+      for (const [key, entry] of Object.entries(value)) collectNumericFacts(entry, [...path, key]);
+    }
+  };
+  collectNumericFacts(pricing);
+  assert.deepEqual(numericFacts, [
+    ["schemaVersion", 11],
+    ["workspaceCharge.customerDebitCardinalityPerPeriod", 1]
+  ]);
 });
 
 test("receipt contract exposes monthly product behavior only", async () => {
