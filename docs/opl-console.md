@@ -89,18 +89,19 @@ subscription behavior are separate later product decisions.
 
 ## Metering And Billing Boundary
 
-Console can meter Gateway provider usage, the managed Workspace plan, Serve
-endpoint and invocation/session usage, Cloud-hosted compute and storage, and
-explicitly managed connector usage. User-provided local, SSH, or HPC resources
-can still produce Fabric and Ledger refs without becoming Cloud-billed by
-default.
+Console can present Control Plane metering projections for Gateway provider
+usage, the managed Workspace plan, Serve endpoint and invocation/session usage,
+Cloud-hosted compute and storage, and explicitly managed connector usage.
+User-provided local, SSH, or HPC resources can still produce Fabric and Ledger
+refs without becoming Cloud-billed by default.
 
-Gateway is the only spendable-balance owner. Console owns the account-total
-billing view, pricing and settlement policy, and orchestrates one Workspace
-monthly debit against that Gateway balance. Fabric owns no wallet or balance;
-it returns resource and provider facts. Ledger records append-only charge,
-refund, resource, and reconciliation receipts without becoming a second
-spendable balance.
+Gateway is the only spendable-balance owner. Control Plane owns the versioned
+price catalog, account-total billing projection and settlement policy, and
+orchestrates one Workspace monthly debit against that Gateway balance. Console
+only presents Control Plane DTOs. Fabric owns no wallet or balance; it returns
+resource and provider facts. Ledger records append-only charge, refund,
+resource, and reconciliation receipts without becoming a second spendable
+balance.
 
 Attaching an exact package or revision ref to usage is attribution only. Console
 cannot change the owner descriptor or publication revision, carrier installed

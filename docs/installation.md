@@ -119,9 +119,11 @@ billing policy. A successful Compose health check is not evidence that any
 provider-backed Workspace delivery is ready until the selected workspace
 profile's provider health check passes.
 
-`opl-instance-medopl` is the separate private instance owner for medopl.cn. It
-selects Tencent/TKE, owns production Secrets and deployment workflows, deploys
-and qualifies an exact pre-1.0 Cloud candidate before formal publication, and
+`opl-instance-medopl` is the separate private medopl instance owner. It
+explicitly supplies the `.com` domains, Tencent/TKE Provider Profile, immutable
+Workspace image, production Secrets and deployment workflows, deploys and
+qualifies an exact pre-1.0 Cloud Candidate before formal publication, and
 records deployment/rollback receipts. The Cloud repository owner may publish a
-successor Release only by manually promoting that qualified SHA and image bytes;
-the current workflow does not yet provide this exact-byte promotion path.
+successor Release only after the same Candidate passes the supported local path
+and Instance qualification, by promoting the qualified Cloud image bytes
+without rebuild; the current workflow does not yet provide this path.

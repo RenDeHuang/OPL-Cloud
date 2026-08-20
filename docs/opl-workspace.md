@@ -34,9 +34,10 @@ Console -> Control Plane -> Workspace launcher/provider -> local Docker
 ```
 
 Core completion requires create, authoritative readback, access, and delete on
-a MacBook or single-server Docker host. Compose startup of the Cloud control
-services does not satisfy this boundary. The provider is not implemented yet;
-see [current capability](status.md) and the single [P0 gap](roadmap.md).
+a supported Linux Docker host. Compose startup of the Cloud control services
+does not satisfy this boundary. The Local-Docker provider exists, but one
+exact-current clean-host product journey remains open; see
+[current capability](status.md) and the current [P0 gaps](roadmap.md).
 
 ## Workspace Product Flow
 

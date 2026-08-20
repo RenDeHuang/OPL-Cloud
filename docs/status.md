@@ -409,6 +409,14 @@ Current delivery levels remain:
 - `pilot-ready=false`;
 - `production-proven=false`.
 
+Fresh Git/GitHub readback on 2026-08-20 found Cloud local `main` and
+`origin/main` at `3d3fe96d33a60757786eec571a26fd8aa05a568e` with zero
+ahead/behind before this documentation reconciliation. Instance local
+`main` and `origin/main` were both
+`be7dbe410d56b4fd7188e3d2e54f879272b8ef90`. Runtime and workflow evidence
+below is bound to its stated older SHA/run and is not silently promoted to the
+current Cloud revision.
+
 Focused local and required-CI evidence exists for the single Workspace Launch
 Reconciler, immutable Resume authorization, typed Fabric stage binding, real
 local-Docker Fabric stages, source envelopes, Console behavior, and the Accounting
@@ -423,20 +431,37 @@ funding, live balance/usage, or product readiness.
 The base Compose profile remains a low-authority control-services path. The
 explicit `compose.local-workspace.yaml` profile now enables the Launch worker,
 mounts a configured Docker socket only into Fabric, and requires an immutable
-Workspace image. Its real smoke reached the host Docker Engine but stopped at the
-required external Sub2API authentication boundary, so it does not prove the
-complete live Console create/readback/open/delete path, browser, renewal,
-rollback, or production path. Existing Tencent/TKE evidence applies only to
-medopl instance provenance.
+Workspace image. Separate dated live runs prove external Sub2API login, Session,
+Local-Docker create/readback/open, one platform-owned Debit and Purchase Receipt,
+repair replay, restart readback, and real Workspace model calls. This snapshot
+does not carry authoritative balance-before/after values, so it claims the live
+wallet/debit path rather than live balance proof. The runs do not form one
+exact-current clean-host journey and do not prove permanent Delete, final
+resource/Key absence, zero Delete wallet mutation, or the deletion Receipt in
+the same run.
+
+The hosted Clean Host Qualification has run three times and failed each time.
+The latest run, `32154001721`, used old product SHA
+`fb2f7ed7a0038cc8698002278ea738bfbe6c62cd` and stopped on Fabric Secret-root
+`EACCES`; it is not evidence for current `main` or the TKE Candidate. The current
+local qualification tool also still validates the retired refund-on-Delete
+behavior, while canonical `workspace.delete.v2` performs zero wallet mutation
+and writes `workspace.deleted.v1`. The clean-host gate must be reconciled to the
+current Delete contract before a successful run can qualify a Release.
 
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
-workflow, owner-only non-Release Candidate workflow, neutral Candidate receipt
+workflow, owner-only non-Release Candidate workflow, Candidate receipt
 contract/validator, and focused distribution checks exist at source level. The
 Candidate workflow verifies an exact canonical Product SHA, builds one
 run-scoped `linux/amd64` image, reads back its registry digest/platform/revision,
 and uploads the canonical receipt without a Git tag, GitHub Release, versioned
-image tag, or Instance action. It has not been dispatched, so no Candidate image
-or production qualification is claimed here. Historically,
+image tag, or Instance action. It has been dispatched twice. Latest successful
+run `32272457575` produced Candidate receipt
+`sha256:22d04534990598e3b004c1436cb03dc23686991eb80d79e1a6a1980d1ea1a429`
+for old product SHA `2338375f68cbca45faf3df3d303b354fe365642d` and Cloud image
+`sha256:03e8c0f6574fcf47c9852f1086b235582d0230a5bbad2fb2fc0bf6989df37d3e`.
+It is single-architecture, binds one Tencent TCR Workspace image, and does not
+represent current `main` or a dual-path portable Candidate. Historically,
 eight Product Releases, `v0.1.0` through `v0.1.7`, were published between
 2026-08-13T09:50:02Z and 2026-08-15T10:49:30Z while the same Acceptance B path
 was still under development. The repository owner removed `v0.1.0` through
@@ -460,15 +485,15 @@ no tag ruleset; those settings do not override the repository owner's explicit
 cleanup authority. Later canonical `main` commits must not be presented as the
 `v0.1.7` product SHA or digest.
 
-The current pre-1.0 admission decision now requires successful
-`opl-instance-medopl` deployment and product readback for an exact candidate
-SHA/digest before a formal successor Release. The non-Release Candidate source
-path now exists, but Instance consumption, protected qualification, and formal
-exact-byte promotion remain open. The formal Release workflow still rebuilds
-and publishes in one dispatch. Other open evidence includes clean-host
-installation, the complete live Console
-create/readback/open/delete path, and real external Sub2API
-authentication/balance/usage evidence.
+The current pre-1.0 admission decision requires the supported Local-Docker path
+and `opl-instance-medopl` to qualify the same multi-architecture Cloud Candidate
+before a formal successor Release. Separate live local evidence covers external
+authentication, the wallet/debit path, usage, create/readback/open, Receipt,
+repair, and model calls, but not one exact-current clean-host create/delete
+journey or an auditable balance-before/after proof in this snapshot. The old
+Tencent Candidate reached deployment and deployment verification; generic fresh
+admission is still blocked. The formal Release workflow also rebuilds and
+publishes in one dispatch, so exact-byte promotion remains open.
 
 The seven successful `v0.1.1` through `v0.1.7` workflow runs spent 1,361 to
 1,963 seconds in the multi-architecture image build while their publish jobs
@@ -615,20 +640,32 @@ fresh sealed scan of the absorbed revision. No
 production, private-network, deployment, provider mutation, or live load test
 was performed.
 
-Fresh Instance source and receipt evidence now prove a bounded first deployment,
-but not full product acceptance. Instance `main` now owns and executes the
-medopl production, acceptance, recovery, diagnostic, render, and rollout tools;
-the current workflow and manifest still do not prove the full Fabric capability
-credential set, consumption of the new neutral Candidate receipt, or promotion
-of the qualified Candidate's exact bytes as a formal Cloud Release.
+Fresh Instance source and receipt evidence proves a bounded first deployment and
+later deployment verification for an old Candidate, but not full product
+acceptance. Instance `main` now owns and executes the medopl production,
+qualification, recovery, diagnostic, render, and rollout tools. Candidate
+Preflight run `32295043795` succeeded. Deploy run `32295144378` produced a
+successful deployment mutation job and receipt for one ConfigMap and three
+Deployments, but the overall workflow conclusion was `failure` because its
+embedded health verification failed. The receipt records rollback as
+`attempted=false` / `status=not_required`; it is not evidence of an executed and
+verified rollback. Standalone Deployment Verification run `32297348461` and
+Qualification Decision run `32297479139` then succeeded for the same Candidate.
+Latest Verify workflow run `32329644443` concluded `failure`; its uploaded
+receipt is `blocked` at
+`fresh_admission_probe_customer_login_http_status:503` and contains neither
+`admission_ready` nor `workspace_verified`.
 
 The `opl-instance-medopl` repository now owns the medopl profile, production
-workflow source, instance-specific production/acceptance/recovery tools, and
+workflow source, instance-specific production/qualification/recovery tools, and
 receipts. Its checked-in first-deployment receipt records a successful TKE
 rollout and public health readback for Cloud release `v0.1.7`, while keeping the
-tracked profile `deployed_unverified`: runtime readiness is `ready=false` and
-Acceptance B remains incomplete. This is Instance-owner evidence, not a Cloud
-deployment claim; current deployment, Runtime, billing, rollback, and receipt
+tracked profile `deployed_unverified`: runtime readiness is `ready=false`.
+Acceptance B is no longer a target qualification gate. The remaining evidence
+gap is generic Candidate admission, an owner-authoritative normal Product
+purchase bound to successful admission, post-activation Runtime/provider/billing
+readback, an actually executed and verified rollback, and a `workspace_verified`
+receipt. This is Instance-owner evidence, not a Cloud deployment claim; current
 claims must still be read back from Instance for the exact candidate.
 
 Cloud GitHub no longer carries a medopl production Environment, Secret/variable

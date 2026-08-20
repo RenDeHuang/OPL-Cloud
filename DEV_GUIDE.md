@@ -7,15 +7,16 @@ Fabric, Ledger, and Workspace delivery. It publishes reusable source,
 multi-architecture images, Compose assets, and GitHub Releases; it does not
 deploy a concrete customer instance.
 
-`opl-instance-medopl` is the separate owner for the medopl.cn profile. It owns
-Tencent/TKE selection, production configuration and Secrets, deployment,
-verification, rollback, and receipts while consuming an immutable OPL Cloud
-product SHA and image digest.
+`opl-instance-medopl` is the separate owner for the medopl instance profile. It
+explicitly binds the `.com` domains, Tencent/TKE profile, immutable Workspace
+image, production configuration and Secrets, deployment, verification,
+rollback, and receipts while consuming an immutable OPL Cloud product SHA and
+image digest. Cloud source must not provide those instance defaults.
 
 Current implementation facts belong to
 [implementation-architecture.md](docs/implementation-architecture.md) and
-[status.md](docs/status.md). The only current P0 gap and its acceptance outcome
-belong to [roadmap.md](docs/roadmap.md).
+[status.md](docs/status.md). Current P0 gaps and their acceptance outcomes belong
+only to [roadmap.md](docs/roadmap.md).
 
 ## MVP Development Path
 
@@ -26,15 +27,15 @@ thin Console
   -> Control Plane Workspace orchestration
   -> local-docker Workspace provider
   -> OPL App/WebUI Workspace
-  -> Sub2API-authoritative balance, usage, debit, and refund
+  -> Sub2API-authoritative balance, usage, and debit
 ```
 
 The source contains the thin Console, the Sub2API-backed Gateway accounting
 surfaces, and Fabric's `local-docker` provider with an isolated Docker
 integration test. Closing the product Core path still requires the same-revision
-Console-to-Workspace acceptance evidence described in the roadmap. Ledger
-records the required receipts and reconciliation evidence; it never owns
-spendable balance.
+Console-to-Workspace acceptance evidence described in the roadmap. Workspace
+Delete performs no wallet or refund mutation. Ledger records the required
+receipts and reconciliation evidence; it never owns spendable balance.
 
 ## Local Console Preview
 

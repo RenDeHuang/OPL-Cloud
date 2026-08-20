@@ -111,9 +111,11 @@ npm packages, images, binaries, services, namespaces, environment variables,
 and runner labels; it is not a second repository.
 
 `opl-instance-medopl` is the only owner of the `medopl` instance's domains,
-Tencent/TKE selection, enabled plans and prices, production environment and
-Secrets, deployment workflows, image pins, rollback, and receipts. It consumes
-an immutable Cloud product SHA and image digest without copying product source.
+Tencent/TKE selection, enabled subset of Cloud-defined plans, production
+environment and Secrets, deployment workflows, image pins, rollback, and
+receipts. Cloud Control Plane owns versioned customer prices. The Instance
+consumes an immutable Cloud product SHA and image digest without copying product
+source.
 A design, contract, generated artifact, passing test, or published image does
 not prove that an instance is deployed or ready.
 
