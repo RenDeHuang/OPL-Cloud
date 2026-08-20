@@ -7,10 +7,6 @@ on:
         description: Exact 40-character Product commit already merged into Cloud main.
         required: true
         type: string
-      workspace_image:
-        description: Immutable Workspace image reference using repository@sha256.
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -30,7 +26,6 @@ jobs:
     env:
       PRODUCT_REPOSITORY: ${{ github.repository }}
       PRODUCT_SHA: ${{ inputs.product_sha }}
-      WORKSPACE_IMAGE: ${{ inputs.workspace_image }}
       IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
 
     steps:
@@ -49,6 +44,10 @@ jobs:
             echo "product_sha must be the exact checked-out lowercase Product SHA." >&2
             exit 1
           fi
+          if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+            echo "Candidate checkout must be clean before source validation." >&2
+            exit 1
+          fi
           git fetch --no-tags "https://github.com/$PRODUCT_REPOSITORY.git" main:refs/remotes/candidate-source/main
           if ! git merge-base --is-ancestor "$PRODUCT_SHA" refs/remotes/candidate-source/main; then
             echo "Product SHA is not merged into canonical main." >&2
@@ -59,14 +58,12 @@ jobs:
             echo "Product tree readback is invalid." >&2
             exit 1
           fi
-          if ! [[ "$WORKSPACE_IMAGE" =~ ^[a-z0-9.-]+(:[1-9][0-9]*)?/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]]; then
-            echo "workspace_image must be an immutable repository@sha256 reference." >&2
-            exit 1
-          fi
-          workspace_digest="${WORKSPACE_IMAGE##*@}"
+          build_context="$RUNNER_TEMP/opl-cloud-candidate-source"
+          mkdir "$build_context"
+          git archive --format=tar "$PRODUCT_SHA" | tar -xf - -C "$build_context"
           {
             printf 'PRODUCT_TREE=%s\n' "$product_tree"
-            printf 'WORKSPACE_IMAGE_DIGEST=%s\n' "$workspace_digest"
+            printf 'BUILD_CONTEXT=%s\n' "$build_context"
           } >> "$GITHUB_ENV"
 
       - name: Set up Node 24
@@ -80,6 +77,10 @@ jobs:
           set -euo pipefail
           npm ci --no-audit --no-fund
           npm run validate:product-boundary
+          if ! git diff-index --quiet HEAD --; then
+            echo "Candidate validation changed tracked source bytes." >&2
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -92,7 +93,7 @@ jobs:
           set -euo pipefail
           printf '%s' "$PACKAGES_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
 
-      - name: Build and publish linux amd64 candidate
+      - name: Build and publish multi-architecture candidate
         id: image
         shell: bash
         run: |
@@ -101,7 +102,7 @@ jobs:
           candidate_tag="$IMAGE_REPOSITORY:candidate-$PRODUCT_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           metadata="$RUNNER_TEMP/opl-cloud-candidate-metadata.json"
           docker buildx build \
-            --platform linux/amd64 \
+            --platform linux/amd64,linux/arm64 \
             --label "org.opencontainers.image.source=https://github.com/$PRODUCT_REPOSITORY" \
             --label "org.opencontainers.image.revision=$PRODUCT_SHA" \
             --cache-from "type=gha,scope=opl-cloud-candidate" \
@@ -109,10 +110,10 @@ jobs:
             --metadata-file "$metadata" \
             --tag "$candidate_tag" \
             --push \
-            .
+            "$BUILD_CONTEXT"
           digest="$(jq -r '."containerimage.digest" // empty' "$metadata")"
           if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Candidate build did not return an immutable digest." >&2
+            echo "Candidate build did not return an immutable index digest." >&2
             exit 1
           fi
           {
@@ -120,7 +121,7 @@ jobs:
             printf 'digest=%s\n' "$digest"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Read back candidate digest platform and revision
+      - name: Read back candidate index children and revisions
         shell: bash
         env:
           CANDIDATE_TAG: ${{ steps.image.outputs.candidate_tag }}
@@ -130,57 +131,116 @@ jobs:
           manifest="$(docker buildx imagetools inspect "$CANDIDATE_TAG" --format '{{json .Manifest}}')"
           observed_digest="$(jq -r '.digest // empty' <<< "$manifest")"
           if [ "$observed_digest" != "$EXPECTED_DIGEST" ]; then
-            echo "Candidate registry digest readback mismatch." >&2
+            echo "Candidate registry index digest readback mismatch." >&2
             exit 1
           fi
           jq -e '
             .mediaType == "application/vnd.oci.image.index.v1+json" and
             ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1 and
+            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length) == 1 and
             all(.manifests[];
-              (.platform.os == "linux" and .platform.architecture == "amd64") or
+              (.platform.os == "linux" and
+               (.platform.architecture == "amd64" or .platform.architecture == "arm64")) or
               (.platform.os == "unknown" and .platform.architecture == "unknown" and
                .annotations["vnd.docker.reference.type"] == "attestation-manifest")
             )
           ' <<< "$manifest" >/dev/null
-          platform_digest="$(jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' <<< "$manifest")"
-          if ! [[ "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Candidate linux/amd64 manifest digest readback failed." >&2
+          amd64_digest="$(jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' <<< "$manifest")"
+          arm64_digest="$(jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest' <<< "$manifest")"
+          if ! [[ "$amd64_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || ! [[ "$arm64_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || [ "$amd64_digest" = "$arm64_digest" ]; then
+            echo "Candidate child manifest digest readback failed." >&2
             exit 1
           fi
-          image="$(docker buildx imagetools inspect "$IMAGE_REPOSITORY@$platform_digest" --format '{{json .Image}}')"
+          amd64_image="$(docker buildx imagetools inspect "$IMAGE_REPOSITORY@$amd64_digest" --format '{{json .Image}}')"
+          arm64_image="$(docker buildx imagetools inspect "$IMAGE_REPOSITORY@$arm64_digest" --format '{{json .Image}}')"
           jq -e --arg revision "$PRODUCT_SHA" '
             .os == "linux" and .architecture == "amd64" and
             .config.Labels["org.opencontainers.image.revision"] == $revision
-          ' <<< "$image" >/dev/null
+          ' <<< "$amd64_image" >/dev/null
+          jq -e --arg revision "$PRODUCT_SHA" '
+            .os == "linux" and .architecture == "arm64" and
+            .config.Labels["org.opencontainers.image.revision"] == $revision
+          ' <<< "$arm64_image" >/dev/null
+          {
+            printf 'AMD64_DIGEST=%s\n' "$amd64_digest"
+            printf 'ARM64_DIGEST=%s\n' "$arm64_digest"
+          } >> "$GITHUB_ENV"
 
-      - name: Write and validate neutral candidate receipt
+      - name: Create and validate portable candidate bundle
         id: receipt
         shell: bash
         env:
           CLOUD_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
+          bundle="artifacts/candidate"
           raw="$RUNNER_TEMP/opl-cloud-candidate-raw.json"
-          receipt="artifacts/candidate/candidate.json"
+          receipt="$bundle/opl-cloud-candidate.json"
+          assets="$RUNNER_TEMP/opl-cloud-candidate-assets.json"
+          cp "$BUILD_CONTEXT/compose.yaml" "$bundle/compose.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.deployment-platform-owned.yaml" "$bundle/compose.deployment-platform-owned.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.deployment-managed-tke.yaml" "$bundle/compose.deployment-managed-tke.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.deployment-customer-owned.yaml" "$bundle/compose.deployment-customer-owned.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.fabric-local-docker.yaml" "$bundle/compose.fabric-local-docker.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.fabric-tencent-tke.yaml" "$bundle/compose.fabric-tencent-tke.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.local-workspace.yaml" "$bundle/compose.local-workspace.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/opl-cloud.env.example" "$bundle/opl-cloud.env.example"
+          (
+            cd "$bundle"
+            jq -n \
+              --arg compose "$(sha256sum compose.yaml | cut -d ' ' -f1)" \
+              --arg platformOwned "$(sha256sum compose.deployment-platform-owned.yaml | cut -d ' ' -f1)" \
+              --arg managedTke "$(sha256sum compose.deployment-managed-tke.yaml | cut -d ' ' -f1)" \
+              --arg customerOwned "$(sha256sum compose.deployment-customer-owned.yaml | cut -d ' ' -f1)" \
+              --arg localDocker "$(sha256sum compose.fabric-local-docker.yaml | cut -d ' ' -f1)" \
+              --arg tencentTke "$(sha256sum compose.fabric-tencent-tke.yaml | cut -d ' ' -f1)" \
+              --arg localWorkspace "$(sha256sum compose.local-workspace.yaml | cut -d ' ' -f1)" \
+              --arg environment "$(sha256sum opl-cloud.env.example | cut -d ' ' -f1)" '
+              [
+                {name:"compose.yaml",sha256:$compose},
+                {name:"compose.deployment-platform-owned.yaml",sha256:$platformOwned},
+                {name:"compose.deployment-managed-tke.yaml",sha256:$managedTke},
+                {name:"compose.deployment-customer-owned.yaml",sha256:$customerOwned},
+                {name:"compose.fabric-local-docker.yaml",sha256:$localDocker},
+                {name:"compose.fabric-tencent-tke.yaml",sha256:$tencentTke},
+                {name:"compose.local-workspace.yaml",sha256:$localWorkspace},
+                {name:"opl-cloud.env.example",sha256:$environment}
+              ]
+            ' > "$assets"
+          )
           jq -n \
             --arg productRepository "$PRODUCT_REPOSITORY" \
             --arg productSha "$PRODUCT_SHA" \
             --arg productTree "$PRODUCT_TREE" \
             --arg cloudRepository "$IMAGE_REPOSITORY" \
-            --arg cloudDigest "$CLOUD_IMAGE_DIGEST" \
-            --arg workspaceRef "$WORKSPACE_IMAGE" \
-            --arg workspaceDigest "$WORKSPACE_IMAGE_DIGEST" \
+            --arg indexDigest "$CLOUD_IMAGE_DIGEST" \
+            --arg amd64Digest "$AMD64_DIGEST" \
+            --arg arm64Digest "$ARM64_DIGEST" \
             --arg workflowSha "$GITHUB_SHA" \
             --arg workflowRunId "$GITHUB_RUN_ID" \
-            --arg workflowRunAttempt "$GITHUB_RUN_ATTEMPT" '
+            --arg workflowRunAttempt "$GITHUB_RUN_ATTEMPT" \
+            --slurpfile assets "$assets" '
             {
-              schemaVersion: 1,
+              schemaVersion: 2,
               kind: "opl_cloud_candidate",
               product: {repository: $productRepository, sha: $productSha, tree: $productTree},
-              platform: "linux/amd64",
-              cloudImage: {repository: $cloudRepository, ref: ($cloudRepository + "@" + $cloudDigest), digest: $cloudDigest, revision: $productSha},
-              workspaceImage: {ref: $workspaceRef, digest: $workspaceDigest},
-              provenance: {workflowRepository: $productRepository, workflowSha: $workflowSha, workflowRunId: $workflowRunId, workflowRunAttempt: $workflowRunAttempt}
+              cloudImage: {
+                repository: $cloudRepository,
+                indexRef: ($cloudRepository + "@" + $indexDigest),
+                indexDigest: $indexDigest,
+                revision: $productSha,
+                platforms: [
+                  {platform: "linux/amd64", digest: $amd64Digest},
+                  {platform: "linux/arm64", digest: $arm64Digest}
+                ]
+              },
+              assets: $assets[0],
+              provenance: {
+                workflowRepository: $productRepository,
+                workflowSha: $workflowSha,
+                workflowRunId: $workflowRunId,
+                workflowRunAttempt: $workflowRunAttempt
+              }
             }
           ' > "$raw"
           RAW="$raw" RECEIPT="$receipt" node --input-type=module <<'NODE'
@@ -189,22 +249,37 @@ jobs:
           await writeCandidateReceipt(process.env.RECEIPT, JSON.parse(await readFile(process.env.RAW, "utf8")));
           NODE
           node tools/cloud-candidate-receipt.ts validate --receipt "$receipt"
+          (
+            cd "$bundle"
+            sha256sum \
+              compose.yaml \
+              compose.deployment-platform-owned.yaml \
+              compose.deployment-managed-tke.yaml \
+              compose.deployment-customer-owned.yaml \
+              compose.fabric-local-docker.yaml \
+              compose.fabric-tencent-tke.yaml \
+              compose.local-workspace.yaml \
+              opl-cloud.env.example \
+              opl-cloud-candidate.json \
+              > SHA256SUMS
+          )
+          node tools/cloud-candidate-receipt.ts validate-bundle --bundle "$bundle"
           receipt_digest="$(node tools/cloud-candidate-receipt.ts digest --receipt "$receipt")"
           printf 'receipt_digest=%s\n' "$receipt_digest" >> "$GITHUB_OUTPUT"
           {
-            printf '## OPL Cloud candidate\n\n'
+            printf '## OPL Cloud Candidate\n\n'
             printf -- '- Product SHA: `%s`\n' "$PRODUCT_SHA"
-            printf -- '- Cloud image: `%s@%s`\n' "$IMAGE_REPOSITORY" "$CLOUD_IMAGE_DIGEST"
-            printf -- '- Candidate receipt: `%s`\n' "$receipt_digest"
+            printf -- '- Cloud image index: `%s@%s`\n' "$IMAGE_REPOSITORY" "$CLOUD_IMAGE_DIGEST"
+            printf -- '- Candidate manifest: `%s`\n' "$receipt_digest"
           } >> "$GITHUB_STEP_SUMMARY"
-          rm -f "$raw"
+          rm -f "$raw" "$assets"
 
-      - name: Upload neutral candidate receipt
+      - name: Upload portable candidate bundle
         id: candidate_artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: opl-cloud-candidate-${{ inputs.product_sha }}
-          path: artifacts/candidate/candidate.json
+          name: opl-cloud-candidate-${{ inputs.product_sha }}-${{ github.run_attempt }}
+          path: artifacts/candidate/
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

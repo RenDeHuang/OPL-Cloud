@@ -5,8 +5,26 @@ import YAML from "yaml";
 
 test("portable distribution is product-owned and instance-neutral", async () => {
   const contract = JSON.parse(await readFile("packages/contracts/opl-cloud-distribution-contract.json", "utf8"));
+  assert.equal(contract.schemaVersion, 2);
   assert.equal(contract.productRepository, "gaofeng21cn/one-person-lab-cloud");
   assert.equal(contract.instanceHandoff.repository, "gaofeng21cn/opl-instance-medopl");
+  assert.deepEqual(Object.keys(contract.candidate).sort(), [
+    "artifactLocator",
+    "contract",
+    "formalPublication",
+    "instanceDeployment",
+    "registry",
+    "workflow"
+  ]);
+  assert.deepEqual(contract.candidate.artifactLocator, {
+    kind: "github_actions_artifact",
+    exactKeys: ["workflowRunId", "workflowRunAttempt", "artifactName"],
+    workflowRunIdField: "provenance.workflowRunId",
+    workflowRunAttemptField: "provenance.workflowRunAttempt",
+    artifactNameTemplate: "opl-cloud-candidate-{product.sha}-{provenance.workflowRunAttempt}",
+    artifactNameProductShaField: "product.sha",
+    artifactNameRunAttemptField: "provenance.workflowRunAttempt"
+  });
   assert.deepEqual(contract.distribution.platforms, ["linux/amd64", "linux/arm64"]);
   assert.deepEqual(contract.distribution.releaseAssets, [
     "compose.yaml",
