@@ -9,15 +9,10 @@ import (
 )
 
 const (
-	pricingCatalogVersion      = "pilot-usd-2026-07-v1"
-	pricingCurrency            = "USD"
-	pricingWalletCurrency      = "USD"
-	pricingBillingUnit         = "calendar_month"
-	storageBlockGB             = int64(10)
-	storageBlockPriceCNYCents  = int64(1800)
-	storageBlockPriceUSDMicros = int64(2_580_000)
-	maxStorageBlocks           = math.MaxInt64 / storageBlockPriceUSDMicros
-	maxStorageGB               = maxStorageBlocks * storageBlockGB
+	pricingCatalogVersion = "pilot-usd-2026-07-v1"
+	pricingCurrency       = "USD"
+	pricingWalletCurrency = "USD"
+	pricingBillingUnit    = "calendar_month"
 )
 
 var (
@@ -26,29 +21,43 @@ var (
 )
 
 type pricingCatalogData struct {
-	Version        string
-	Currency       string
-	WalletCurrency string
-	BillingUnit    string
-	Packages       []pricingPackageData
+	Version                    string
+	Currency                   string
+	WalletCurrency             string
+	BillingUnit                string
+	StorageBlockGB             int64
+	StorageBlockPriceUSDMicros int64
+	Packages                   []pricingPackageData
 }
 
 type pricingPackageData struct {
-	ID                   string
-	Name                 string
-	Available            bool
-	MonthlyPriceCNYCents int64
-	ChargeUSDMicros      int64
+	ID              string
+	Name            string
+	Available       bool
+	ChargeUSDMicros int64
 }
 
 func defaultPricingCatalog() pricingCatalogData {
-	return pricingCatalogData{
-		Version: pricingCatalogVersion, Currency: pricingCurrency, WalletCurrency: pricingWalletCurrency,
-		BillingUnit: pricingBillingUnit,
-		Packages: []pricingPackageData{
-			{ID: "basic", Name: "Basic", Available: true, MonthlyPriceCNYCents: 35000, ChargeUSDMicros: 50000000},
-			{ID: "pro", Name: "Pro", Available: true, MonthlyPriceCNYCents: 150000, ChargeUSDMicros: 214280000},
-		},
+	catalog, ok := pricingCatalogByVersion(pricingCatalogVersion)
+	if !ok {
+		panic("current pricing catalog is not registered")
+	}
+	return catalog
+}
+
+func pricingCatalogByVersion(priceVersion string) (pricingCatalogData, bool) {
+	switch priceVersion {
+	case pricingCatalogVersion:
+		return pricingCatalogData{
+			Version: pricingCatalogVersion, Currency: pricingCurrency, WalletCurrency: pricingWalletCurrency,
+			BillingUnit: pricingBillingUnit, StorageBlockGB: 10, StorageBlockPriceUSDMicros: 2_580_000,
+			Packages: []pricingPackageData{
+				{ID: "basic", Name: "Basic", Available: true, ChargeUSDMicros: 50000000},
+				{ID: "pro", Name: "Pro", Available: true, ChargeUSDMicros: 214280000},
+			},
+		}, true
+	default:
+		return pricingCatalogData{}, false
 	}
 }
 
@@ -67,10 +76,10 @@ func pricingCatalogDTO(catalog pricingCatalogData) map[string]any {
 	return map[string]any{
 		"priceVersion": catalog.Version, "billingUnit": catalog.BillingUnit,
 		"displayCurrency": catalog.Currency, "walletCurrency": catalog.WalletCurrency,
-		"currency":              catalog.Currency,
-		"storageSize":           map[string]any{"minimumGb": storageBlockGB, "stepGb": storageBlockGB},
-		"storagePer10GbMonthly": map[string]any{"priceVersion": catalog.Version, "currency": catalog.Currency, "displayCurrency": catalog.Currency, "usdMicros": storageBlockPriceUSDMicros},
-		"packages":              packageRows(catalog),
+		"currency":            catalog.Currency,
+		"storageSize":         map[string]any{"minimumGb": catalog.StorageBlockGB, "stepGb": catalog.StorageBlockGB},
+		"storageBlockMonthly": map[string]any{"priceVersion": catalog.Version, "currency": catalog.Currency, "displayCurrency": catalog.Currency, "blockSizeGb": catalog.StorageBlockGB, "usdMicros": catalog.StorageBlockPriceUSDMicros},
+		"packages":            packageRows(catalog),
 	}
 }
 
@@ -157,29 +166,47 @@ func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("%w: unknown package %q", errInvalidPricingInput, packageID)
 	}
-	monthlyPriceCNYCents, chargeUSDMicros := plan.MonthlyPriceCNYCents, plan.ChargeUSDMicros
+	chargeUSDMicros := plan.ChargeUSDMicros
 	snapshot := map[string]any{
 		"priceVersion": catalog.Version, "pricingVersion": catalog.Version, "packageId": plan.ID, "currency": catalog.Currency,
 		"displayCurrency": catalog.Currency,
-		"billingUnit":     catalog.BillingUnit, "monthlyPriceCnyCents": monthlyPriceCNYCents,
+		"billingUnit":     catalog.BillingUnit,
 		"chargeUsdMicros": chargeUSDMicros, "resourceType": resourceType,
 	}
 	if resourceType == "storage" {
-		sizeGB := numberField(input, "sizeGb", numberField(input, "sizeGB", 10))
-		if sizeGB < float64(storageBlockGB) || sizeGB > float64(maxStorageGB) || sizeGB != math.Trunc(sizeGB) || int64(sizeGB)%storageBlockGB != 0 {
-			return nil, fmt.Errorf("%w: storage size must be a positive multiple of %dGB", errInvalidPricingInput, storageBlockGB)
+		maxStorageGB, validStorageCatalog := catalogStorageLimitGB(catalog)
+		if !validStorageCatalog {
+			return nil, fmt.Errorf("%w: invalid storage catalog", errInvalidPricingInput)
 		}
-		blocks := int64(sizeGB) / storageBlockGB
-		monthlyPriceCNYCents = blocks * storageBlockPriceCNYCents
-		chargeUSDMicros = blocks * storageBlockPriceUSDMicros
-		snapshot["sizeGb"], snapshot["monthlyPriceCnyCents"], snapshot["chargeUsdMicros"] = sizeGB, monthlyPriceCNYCents, chargeUSDMicros
+		sizeGB := numberField(input, "sizeGb", numberField(input, "sizeGB", float64(catalog.StorageBlockGB)))
+		if math.IsNaN(sizeGB) || math.IsInf(sizeGB, 0) || sizeGB < float64(catalog.StorageBlockGB) || sizeGB > maxJSONSafeInteger ||
+			sizeGB != math.Trunc(sizeGB) || int64(sizeGB) > maxStorageGB || int64(sizeGB)%catalog.StorageBlockGB != 0 {
+			return nil, fmt.Errorf("%w: storage size must be a positive multiple of %dGB", errInvalidPricingInput, catalog.StorageBlockGB)
+		}
+		blocks := int64(sizeGB) / catalog.StorageBlockGB
+		chargeUSDMicros = blocks * catalog.StorageBlockPriceUSDMicros
+		snapshot["sizeGb"], snapshot["chargeUsdMicros"] = sizeGB, chargeUSDMicros
 	}
 	return map[string]any{
 		"priceVersion": catalog.Version, "pricingVersion": catalog.Version, "resourceType": resourceType, "packageId": plan.ID,
 		"currency": catalog.Currency, "displayCurrency": catalog.Currency, "billingUnit": catalog.BillingUnit,
-		"monthlyPriceCnyCents": monthlyPriceCNYCents, "chargeUsdMicros": chargeUSDMicros,
-		"priceSnapshot": snapshot,
+		"chargeUsdMicros": chargeUSDMicros,
+		"priceSnapshot":   snapshot,
 	}, nil
+}
+
+func catalogStorageLimitGB(catalog pricingCatalogData) (int64, bool) {
+	if catalog.StorageBlockGB <= 0 || catalog.StorageBlockGB > int64(maxJSONSafeInteger) || catalog.StorageBlockPriceUSDMicros <= 0 {
+		return 0, false
+	}
+	maxBlocks := int64(maxJSONSafeInteger) / catalog.StorageBlockGB
+	if chargeBlocks := int64(math.MaxInt64) / catalog.StorageBlockPriceUSDMicros; chargeBlocks < maxBlocks {
+		maxBlocks = chargeBlocks
+	}
+	if maxBlocks <= 0 {
+		return 0, false
+	}
+	return maxBlocks * catalog.StorageBlockGB, true
 }
 
 func workspacePricingPreview(catalog pricingCatalogData, input map[string]any) (map[string]any, error) {
@@ -201,10 +228,6 @@ func workspacePricingPreview(catalog pricingCatalogData, input map[string]any) (
 	if err != nil {
 		return nil, err
 	}
-	cnyCents, ok := checkedAddInt64(int64(numberField(compute, "monthlyPriceCnyCents", 0)), int64(numberField(storage, "monthlyPriceCnyCents", 0)))
-	if !ok {
-		return nil, errInvalidPricingInput
-	}
 	usdMicros, ok := checkedAddInt64(int64(numberField(compute, "chargeUsdMicros", 0)), int64(numberField(storage, "chargeUsdMicros", 0)))
 	if !ok {
 		return nil, errInvalidPricingInput
@@ -213,7 +236,7 @@ func workspacePricingPreview(catalog pricingCatalogData, input map[string]any) (
 		"resourceType": "workspace", "priceVersion": catalog.Version, "pricingVersion": catalog.Version,
 		"packageId": stringValue(compute["packageId"]), "currency": catalog.Currency, "displayCurrency": catalog.Currency,
 		"billingUnit": catalog.BillingUnit, "compute": compute, "storage": storage,
-		"totalMonthlyPriceCnyCents": cnyCents, "totalChargeUsdMicros": usdMicros,
+		"totalChargeUsdMicros": usdMicros,
 	}, nil
 }
 

@@ -14,7 +14,6 @@ const tkeProductionEnv = {
   OPL_CLOUD_IMAGE: cloudImage,
   OPL_WORKSPACE_IMAGE: workspaceImage,
   OPL_AIONUI_ADMIN_PASSWORD_SEED: "workspace-secret-2026-very-long",
-  OPL_WORKSPACE_WEBUI_PORT: "3000",
   OPL_WORKSPACE_DATA_DIR: "/data",
   OPL_WORKSPACE_PROJECTS_DIR: "/projects",
   OPL_PUBLIC_URL: "https://cloud.medopl.cn",
@@ -198,11 +197,10 @@ test("productionReadiness rejects non-TKE production providers", async () => {
   assert.equal(JSON.stringify(report).includes("TENCENTCLOUD_SECRET"), false);
 });
 
-test("productionReadiness requires the one-person-lab-app WebUI runtime contract", async () => {
+test("productionReadiness requires the one-person-lab-app persistence contract", async () => {
   const report = await productionReadiness({
     env: {
       ...tkeProductionEnv,
-      OPL_WORKSPACE_WEBUI_PORT: "8080",
       OPL_WORKSPACE_DATA_DIR: "/tmp/data",
       OPL_WORKSPACE_PROJECTS_DIR: "/data/projects"
     },
@@ -214,7 +212,7 @@ test("productionReadiness requires the one-person-lab-app WebUI runtime contract
   assert.ok(report.failedChecks.includes("opl_app_contract"));
   assert.equal(
     report.checks.find((check) => check.id === "opl_app_contract").message,
-    "one-person-lab-app WebUI must expose port 3000 and persist /data plus /projects"
+    "one-person-lab-app must persist /data plus /projects"
   );
 });
 

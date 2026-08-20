@@ -19,6 +19,8 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
+const workspaceRuntimeWebUIPort = "3000"
+
 type controlPlaneServer struct {
 	mu            sync.Mutex
 	resourceLocks sync.Map
@@ -349,7 +351,7 @@ func workspaceServiceTarget(serviceName string) (*url.URL, error) {
 			return nil, errors.New("invalid_workspace_runtime_destination")
 		}
 	}
-	return url.Parse("http://" + value + ":3000")
+	return url.Parse("http://" + value + ":" + workspaceRuntimeWebUIPort)
 }
 
 func workspaceIDFromPath(path string) string {
