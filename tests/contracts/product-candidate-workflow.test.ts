@@ -40,6 +40,11 @@ test("Cloud candidate workflow builds one portable non-Release multi-architectur
   const verify = step("Verify candidate identity").run || "";
   assert.match(verify, /git merge-base --is-ancestor/);
   assert.match(verify, /git rev-parse "\$PRODUCT_SHA\^\{tree\}"/);
+  assert.match(verify, /git status --porcelain=v1 --untracked-files=all/);
+  assert.match(verify, /git archive --format=tar "\$PRODUCT_SHA"/);
+  assert.match(verify, /BUILD_CONTEXT/);
+  const boundary = step("Validate portable product boundary").run || "";
+  assert.match(boundary, /git diff-index --quiet HEAD --/);
   const commands = steps.map((value) => value.run || "").join("\n");
   const build = step("Build and publish multi-architecture candidate").run || "";
   assert.match(build, /docker buildx build/);
@@ -47,6 +52,8 @@ test("Cloud candidate workflow builds one portable non-Release multi-architectur
   assert.match(build, /--push/);
   assert.match(build, /org\.opencontainers\.image\.revision=\$PRODUCT_SHA/);
   assert.match(build, /candidate-\$PRODUCT_SHA-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/);
+  assert.match(build, /"\$BUILD_CONTEXT"/);
+  assert.doesNotMatch(build, /\n\s*\.\s*$/m);
   assert.equal((build.match(/docker buildx build/g) || []).length, 1);
 
   const readback = step("Read back candidate index children and revisions").run || "";
@@ -66,6 +73,8 @@ test("Cloud candidate workflow builds one portable non-Release multi-architectur
   assert.match(readback, /org\.opencontainers\.image\.revision/);
 
   const receipt = step("Create and validate portable candidate bundle").run || "";
+  assert.match(receipt, /cp "\$BUILD_CONTEXT\/compose\.yaml"/);
+  assert.match(receipt, /cp "\$BUILD_CONTEXT\/deploy\/portable\/opl-cloud\.env\.example"/);
   assert.match(receipt, /schemaVersion: 2/);
   assert.match(receipt, /tools\/cloud-candidate-receipt\.ts validate/);
   assert.match(receipt, /tools\/cloud-candidate-receipt\.ts validate-bundle/);

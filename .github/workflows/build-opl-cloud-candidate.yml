@@ -44,6 +44,10 @@ jobs:
             echo "product_sha must be the exact checked-out lowercase Product SHA." >&2
             exit 1
           fi
+          if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+            echo "Candidate checkout must be clean before source validation." >&2
+            exit 1
+          fi
           git fetch --no-tags "https://github.com/$PRODUCT_REPOSITORY.git" main:refs/remotes/candidate-source/main
           if ! git merge-base --is-ancestor "$PRODUCT_SHA" refs/remotes/candidate-source/main; then
             echo "Product SHA is not merged into canonical main." >&2
@@ -54,7 +58,13 @@ jobs:
             echo "Product tree readback is invalid." >&2
             exit 1
           fi
-          printf 'PRODUCT_TREE=%s\n' "$product_tree" >> "$GITHUB_ENV"
+          build_context="$RUNNER_TEMP/opl-cloud-candidate-source"
+          mkdir "$build_context"
+          git archive --format=tar "$PRODUCT_SHA" | tar -xf - -C "$build_context"
+          {
+            printf 'PRODUCT_TREE=%s\n' "$product_tree"
+            printf 'BUILD_CONTEXT=%s\n' "$build_context"
+          } >> "$GITHUB_ENV"
 
       - name: Set up Node 24
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -67,6 +77,10 @@ jobs:
           set -euo pipefail
           npm ci --no-audit --no-fund
           npm run validate:product-boundary
+          if ! git diff-index --quiet HEAD --; then
+            echo "Candidate validation changed tracked source bytes." >&2
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -96,7 +110,7 @@ jobs:
             --metadata-file "$metadata" \
             --tag "$candidate_tag" \
             --push \
-            .
+            "$BUILD_CONTEXT"
           digest="$(jq -r '."containerimage.digest" // empty' "$metadata")"
           if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Candidate build did not return an immutable index digest." >&2
@@ -163,14 +177,14 @@ jobs:
           raw="$RUNNER_TEMP/opl-cloud-candidate-raw.json"
           receipt="$bundle/opl-cloud-candidate.json"
           assets="$RUNNER_TEMP/opl-cloud-candidate-assets.json"
-          cp compose.yaml "$bundle/compose.yaml"
-          cp deploy/portable/compose.deployment-platform-owned.yaml "$bundle/compose.deployment-platform-owned.yaml"
-          cp deploy/portable/compose.deployment-managed-tke.yaml "$bundle/compose.deployment-managed-tke.yaml"
-          cp deploy/portable/compose.deployment-customer-owned.yaml "$bundle/compose.deployment-customer-owned.yaml"
-          cp deploy/portable/compose.fabric-local-docker.yaml "$bundle/compose.fabric-local-docker.yaml"
-          cp deploy/portable/compose.fabric-tencent-tke.yaml "$bundle/compose.fabric-tencent-tke.yaml"
-          cp deploy/portable/compose.local-workspace.yaml "$bundle/compose.local-workspace.yaml"
-          cp deploy/portable/opl-cloud.env.example "$bundle/opl-cloud.env.example"
+          cp "$BUILD_CONTEXT/compose.yaml" "$bundle/compose.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.deployment-platform-owned.yaml" "$bundle/compose.deployment-platform-owned.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.deployment-managed-tke.yaml" "$bundle/compose.deployment-managed-tke.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.deployment-customer-owned.yaml" "$bundle/compose.deployment-customer-owned.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.fabric-local-docker.yaml" "$bundle/compose.fabric-local-docker.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.fabric-tencent-tke.yaml" "$bundle/compose.fabric-tencent-tke.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/compose.local-workspace.yaml" "$bundle/compose.local-workspace.yaml"
+          cp "$BUILD_CONTEXT/deploy/portable/opl-cloud.env.example" "$bundle/opl-cloud.env.example"
           (
             cd "$bundle"
             jq -n \
