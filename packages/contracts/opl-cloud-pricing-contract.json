@@ -1,72 +1,55 @@
 {
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "owner": "OPL Control Plane",
-  "purpose": "Versioned fixed USD monthly prices for the paid OPL Workspace Pilot.",
+  "purpose": "Cross-module pricing schemas and invariants for OPL Workspace customer charges. Current catalog versions, packages, prices, and provider cost values belong only to the versioned Control Plane runtime catalog.",
   "state": "current",
-  "priceBasis": "fixed_pilot_usd_catalog",
-  "providerCostBasis": "internal_evidence_only_not_customer_formula",
-  "machineBoundary": "Customer charges are fixed integer USD micros. CNY provider cost evidence and exchange rates never derive, alter, or appear as a customer charge.",
   "lifecycle": {
     "type": "long_term_contract",
-    "removalCondition": "Replace only with a newer current priceVersion and matching entitlement compatibility path."
+    "removalCondition": "Remove only when pricing no longer crosses module boundaries, or replace with a newer current contract for the same pricing schema and accepted-snapshot invariants."
   },
-  "priceVersion": "pilot-usd-2026-07-v1",
-  "billingUnit": "calendar_month",
-  "currency": "USD",
-  "displayCurrency": "USD",
-  "walletCurrency": "USD",
-  "computeMonthly": {
-    "basic": { "usdMicros": 50000000 },
-    "pro": { "usdMicros": 214280000 }
+  "runtimeCatalog": {
+    "authority": "control_plane_runtime",
+    "versioning": "every_catalog_revision_has_a_non_empty_priceVersion",
+    "currentValues": "not_stored_in_this_contract"
   },
-  "storagePer10GbMonthly": {
-    "usdMicros": 2580000
+  "machineBoundary": "Customer charges use non-negative integer USD micros from the accepted Control Plane quote. Provider cost evidence and exchange rates never derive, alter, or appear as a customer charge.",
+  "catalogResponseSchema": {
+    "requiredFields": ["priceVersion", "billingUnit", "currency", "displayCurrency", "walletCurrency", "storageSize", "storagePer10GbMonthly", "packages"],
+    "packageFields": ["id", "name", "available"],
+    "storageSizeFields": ["minimumGb", "stepGb"],
+    "storagePriceFields": ["priceVersion", "currency", "displayCurrency", "usdMicros"]
   },
-  "storageMonthly": {
-    "10": { "usdMicros": 2580000 },
-    "100": { "usdMicros": 25800000 }
+  "previewSchema": {
+    "commonRequiredFields": ["resourceType", "priceVersion", "packageId", "currency", "displayCurrency", "billingUnit"],
+    "componentRequiredFields": ["chargeUsdMicros", "priceSnapshot"],
+    "workspaceRequiredFields": ["compute", "storage", "totalChargeUsdMicros"],
+    "amountEncoding": "non_negative_int64_usd_micros",
+    "priceVersionMeaning": "identity_of_the_runtime_catalog_used_to_accept_the_quote"
   },
-  "workspaceMonthly": {
-    "basic": {
-      "packageId": "basic",
-      "sizeGb": 10,
-      "computeUsdMicros": 50000000,
-      "storageUsdMicros": 2580000,
-      "totalUsdMicros": 52580000
-    },
-    "pro": {
-      "packageId": "pro",
-      "sizeGb": 100,
-      "computeUsdMicros": 214280000,
-      "storageUsdMicros": 25800000,
-      "totalUsdMicros": 240080000
-    }
+  "acceptedWorkspacePriceSnapshot": {
+    "authority": "control_plane_accepted_quote",
+    "componentRequiredFields": ["resourceType", "priceVersion", "packageId", "currency", "displayCurrency", "billingUnit", "chargeUsdMicros"],
+    "storageAdditionalFields": ["sizeGb"],
+    "immutability": "accepted_snapshot_is_immutable_for_the_current_billing_period",
+    "catalogChangeEffect": "a_new_runtime_catalog_never_rewrites_an_existing_period_snapshot"
   },
   "workspaceCharge": {
     "launchOperationAction": "workspace.launch.v2",
     "customerDebitCardinalityPerPeriod": 1,
-    "totalAuthority": "server_price_snapshot",
+    "totalAuthority": "accepted_workspace_price_snapshot",
     "components": "explanatory_fulfillment_only",
-    "catalogAvailabilityMeaning": "product_open_not_tencent_capacity",
-    "capacityAuthority": "Tencent MonthlyPreflight immediately before first debit"
+    "catalogAvailabilityMeaning": "product_open_not_provider_capacity",
+    "capacityAuthority": "live_fabric_preflight_immediately_before_first_debit"
   },
-  "internalProviderCostEvidence": {
-    "currency": "CNY",
-    "computeMonthlyCnyCents": { "basic": 35000, "pro": 150000 },
-    "storageMonthlyCnyCents": { "10": 1800, "100": 18000 },
-    "customerChargeDerivation": "forbidden"
+  "providerCostEvidence": {
+    "visibility": "internal_reconciliation_only",
+    "customerChargeDerivation": "forbidden",
+    "customerDto": "forbidden"
   },
-  "storageSize": {
-    "minimumGb": 10,
-    "stepGb": 10
-  },
-  "storageChargeRule": "Multiply the fixed 10GB USD-micros component by whole blocks; never convert a CNY amount into a customer charge.",
   "rules": [
-    "All customer charge decisions use integer USD micros and priceVersion.",
-    "Workspace launch permits only Basic with 10GB and Pro with 100GB.",
-    "Pricing preview and Workspace launch require available=true from the live Fabric catalog; unavailable packages return package_unavailable before Gateway, balance, debit, Ledger, or Tencent calls.",
-    "Unknown packages, invalid storage sizes, and cross-package storage combinations fail before external side effects.",
-    "A resource keeps its accepted price snapshot for the current period.",
+    "Pricing preview and Workspace launch require an available package from live Fabric catalog readback before Gateway, balance, debit, Ledger, or provider calls.",
+    "Unknown packages, invalid storage sizes, and unsupported package-storage combinations fail before external side effects.",
+    "All components in one accepted Workspace quote use the same priceVersion, currency, and billingUnit.",
     "Provider costs are internal reconciliation evidence and never a customer pricing formula or browser DTO."
   ]
 }
