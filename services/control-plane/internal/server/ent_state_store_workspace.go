@@ -223,9 +223,16 @@ func normalizeWorkspaceBillingState(row map[string]any, expectedComputeID, expec
 	if !validStorageGB || !validComputePrice || !validStoragePrice || !validTotal || !validAnchor || billingAnchorDay > 31 {
 		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
 	}
+	quote, err := workspacePricingPreview(defaultPricingCatalog(), map[string]any{"packageId": packageID, "sizeGb": storageGB})
+	if err != nil {
+		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
+	}
+	expectedCompute, computeOK := requiredPositiveInteger(mapField(quote, "compute"), "chargeUsdMicros")
+	expectedStorage, storageOK := requiredPositiveInteger(mapField(quote, "storage"), "chargeUsdMicros")
+	expectedTotal, totalOK := requiredPositiveInteger(quote, "totalChargeUsdMicros")
 	checkedTotal, sumOK := checkedAddInt64(computeUSDMicros, storageUSDMicros)
-	if !sumOK || totalUSDMicros != checkedTotal || strings.TrimSpace(packageID) == "" || strings.TrimSpace(priceVersion) == "" ||
-		currency != pricingCurrency || billingUnit != pricingBillingUnit {
+	if !computeOK || !storageOK || !totalOK || !sumOK || computeUSDMicros != expectedCompute || storageUSDMicros != expectedStorage || totalUSDMicros != expectedTotal || totalUSDMicros != checkedTotal ||
+		priceVersion != pricingCatalogVersion || currency != pricingCurrency || billingUnit != pricingBillingUnit {
 		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
 	}
 	periodStart, startErr := time.Parse(time.RFC3339, periodStartText)

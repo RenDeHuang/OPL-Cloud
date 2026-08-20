@@ -28,13 +28,12 @@ import (
 )
 
 const (
-	defaultNamespace                 = "opl-cloud"
-	gatewayService                   = "opl-cloud-control-plane"
-	webuiUsername                    = "opl"
-	workspaceImageRepository         = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
-	tencentProviderProfileEnv        = "OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON"
-	tencentProviderRegionEnv         = "OPL_TENCENT_REGION"
-	tencentWorkspaceRuntimeWebUIPort = 3000
+	defaultNamespace          = "opl-cloud"
+	gatewayService            = "opl-cloud-control-plane"
+	webuiUsername             = "opl"
+	workspaceImageRepository  = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
+	tencentProviderProfileEnv = "OPL_FABRIC_TENCENT_TKE_PROVIDER_PROFILE_JSON"
+	tencentProviderRegionEnv  = "OPL_TENCENT_REGION"
 )
 
 type tencentStoragePlan struct {
@@ -1092,7 +1091,7 @@ func workspaceManifestWithGatewayPlan(input WorkspaceRuntimeInput, workspaceName
 	if gatewaySecretRef != "" {
 		workspaceEnv = append(workspaceEnv, map[string]any{"name": "OPL_GATEWAY_API_KEY_FILE", "value": "/run/secrets/opl_gateway_api_key"})
 	}
-	workspaceContainer := map[string]any{"name": "workspace", "image": input.ImageID, "imagePullPolicy": "IfNotPresent", "ports": []any{map[string]any{"name": "http", "containerPort": tencentWorkspaceRuntimeWebUIPort}}, "env": workspaceEnv, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}, map[string]any{"name": "workspace-data", "mountPath": "/projects", "subPath": "projects"}, map[string]any{"name": "workspace-secrets", "mountPath": "/run/secrets", "readOnly": true}}, "resources": workspaceResources(plan), "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/healthz", "port": tencentWorkspaceRuntimeWebUIPort}, "initialDelaySeconds": 10, "periodSeconds": 10}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}}
+	workspaceContainer := map[string]any{"name": "workspace", "image": input.ImageID, "imagePullPolicy": "IfNotPresent", "ports": []any{map[string]any{"name": "http", "containerPort": 3000}}, "env": workspaceEnv, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}, map[string]any{"name": "workspace-data", "mountPath": "/projects", "subPath": "projects"}, map[string]any{"name": "workspace-secrets", "mountPath": "/run/secrets", "readOnly": true}}, "resources": workspaceResources(plan), "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/healthz", "port": 3000}, "initialDelaySeconds": 10, "periodSeconds": 10}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}}
 	secretLabels := stringAnyMap(mergeStringMaps(map[string]string{"app.kubernetes.io/name": "opl-workspace-entry", "app.kubernetes.io/instance": serviceName}, identityLabels, k8sCostLabels(tags)))
 	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": serviceName + "-env", "labels": secretLabels, "annotations": tags}, "type": "Opaque", "data": secretData}
 	secretSources := []any{map[string]any{"secret": map[string]any{"name": serviceName + "-env", "items": secretItems}}}
@@ -1107,8 +1106,8 @@ func workspaceManifestWithGatewayPlan(input WorkspaceRuntimeInput, workspaceName
 		podAnnotations["opl.medopl.cn/gateway-fingerprint"] = gateway.Fingerprint
 	}
 	deployment := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": selectorLabels}, "template": map[string]any{"metadata": map[string]any{"labels": labels, "annotations": podAnnotations}, "spec": map[string]any{"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}}, "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": map[string]any{"kubernetes.io/hostname": compute.NodeName}, "tolerations": workspaceNodeTolerations(compute.PackageID), "containers": []any{workspaceContainer}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}, secretVolume}}}}}
-	service := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"type": "ClusterIP", "selector": selectorLabels, "ports": []any{map[string]any{"name": "http", "port": tencentWorkspaceRuntimeWebUIPort, "targetPort": "http"}}}}
-	networkPolicy := map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"podSelector": map[string]any{"matchLabels": selectorLabels}, "policyTypes": []any{"Ingress", "Egress"}, "ingress": []any{map[string]any{"from": []any{map[string]any{"podSelector": map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "opl-cloud", "app.kubernetes.io/component": "control-plane"}}}}, "ports": []any{map[string]any{"protocol": "TCP", "port": tencentWorkspaceRuntimeWebUIPort}}}}, "egress": workspaceEgressRules()}}
+	service := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"type": "ClusterIP", "selector": selectorLabels, "ports": []any{map[string]any{"name": "http", "port": 3000, "targetPort": "http"}}}}
+	networkPolicy := map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"podSelector": map[string]any{"matchLabels": selectorLabels}, "policyTypes": []any{"Ingress", "Egress"}, "ingress": []any{map[string]any{"from": []any{map[string]any{"podSelector": map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "opl-cloud", "app.kubernetes.io/component": "control-plane"}}}}, "ports": []any{map[string]any{"protocol": "TCP", "port": 3000}}}}, "egress": workspaceEgressRules()}}
 	return mustJSON(map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{secret, deployment, service, networkPolicy}})
 }
 
@@ -1545,7 +1544,7 @@ func workspaceNetworkPolicyReady(policy map[string]any, deployment map[string]an
 		return false
 	}
 	port, _ := ports[0].(map[string]any)
-	return len(port) == 2 && stringValue(port["protocol"]) == "TCP" && number(port["port"]) == tencentWorkspaceRuntimeWebUIPort
+	return len(port) == 2 && stringValue(port["protocol"]) == "TCP" && number(port["port"]) == 3000
 }
 
 func workspaceNetworkPoliciesReady(policies []any, deployment map[string]any, pods []any) bool {

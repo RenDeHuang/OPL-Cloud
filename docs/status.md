@@ -112,17 +112,6 @@ Sub2API management origin and credentials are never exposed to the browser.
 
 ## Implementation Snapshot
 
-- Control Plane runtime owns the only current versioned customer price catalog;
-  the pricing machine contract retains only cross-module schemas and invariants.
-  Accepted Workspace periods keep immutable price snapshots, and activation and
-  Receipt creation resolve their exact accepted `priceVersion` without falling
-  back to the current catalog. Storage block size and price are versioned
-  together and the public catalog binds each block price to its `blockSizeGb`.
-  The versioned Workspace Runtime ABI contract owns the fixed internal WebUI port
-  `3000`; Control Plane and both Fabric adapters project it through named
-  constants, and no environment setting presents it as an Instance option.
-  Focused contract and Go tests plus the full local PostgreSQL/Docker gate pass;
-  this is source evidence, not Instance deployment or production evidence.
 - Control Plane's retained Ent persistence implementation is split inside the
   existing `server` package into identity, resource, and Workspace capability
   files. Fabric's retained Tencent provider implementation is likewise split

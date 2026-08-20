@@ -1746,7 +1746,6 @@ func TestWorkspaceLaunchReceiptInputUsesCanonicalUnionIdentity(t *testing.T) {
 	chargedOperation := workspaceLaunchCanonicalActivationOperation(t)
 	zeroCostOperation := workspaceLaunchCanonicalActivationOperation(t)
 	zeroCostOperation.raw["resourceBillingEnabled"] = json.RawMessage(`false`)
-	zeroCostOperation.raw["totalChargeUsdMicros"] = json.RawMessage(`0`)
 
 	canonicalExecution := func(operation workspaceLaunchReconcileOperation) map[string]any {
 		return map[string]any{
@@ -1799,35 +1798,9 @@ func TestWorkspaceLaunchReceiptInputUsesCanonicalUnionIdentity(t *testing.T) {
 	}
 }
 
-func TestWorkspaceLaunchActivationAndReceiptFailClosedOnUnresolvableAcceptedPricing(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		mutate func(workspaceLaunchReconcileOperation)
-	}{
-		{name: "unknown price version", mutate: func(operation workspaceLaunchReconcileOperation) {
-			operation.raw["priceVersion"] = json.RawMessage(`"unknown-price-version"`)
-		}},
-		{name: "accepted total mismatch", mutate: func(operation workspaceLaunchReconcileOperation) {
-			operation.raw["totalChargeUsdMicros"] = json.RawMessage(`52580001`)
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			operation := workspaceLaunchCanonicalActivationOperation(t)
-			tc.mutate(operation)
-			if row, err := workspaceLaunchActivationRow(operation); err == nil {
-				t.Fatalf("activation accepted unresolvable pricing row=%#v", row)
-			}
-			if receipt, err := workspaceLaunchPurchaseReceiptInput(operation); err == nil {
-				t.Fatalf("purchase receipt accepted unresolvable pricing receipt=%#v", receipt)
-			}
-		})
-	}
-}
-
 func TestWorkspaceLaunchReceiptReadAcceptsExactCurrentOrLegacyIdentity(t *testing.T) {
 	operation := workspaceLaunchCanonicalActivationOperation(t)
 	operation.raw["resourceBillingEnabled"] = json.RawMessage(`false`)
-	operation.raw["totalChargeUsdMicros"] = json.RawMessage(`0`)
 	current := clients.ReceiptInput{
 		Type: "workspace.created", Status: "completed", Surface: "control_plane", AccountID: operation.stringFact("accountId"),
 		WorkspaceID: operation.stringFact("workspaceId"), RequestID: operation.ID,
