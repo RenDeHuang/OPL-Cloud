@@ -29,6 +29,13 @@ them:
 These focused contracts are the only current machine owners for the launch and
 settlement boundary. Do not recreate an aggregate launch contract.
 
+## Workspace Runtime ABI
+
+`opl-cloud-workspace-runtime-abi-contract.json` is the single versioned owner
+of the fixed Workspace WebUI protocol and port shared by Control Plane and
+Fabric. The port is a compatibility ABI projection, not an Instance-selectable
+setting or an environment override.
+
 The Ledger contract does not make Artifact, Review, ReviewPolicy, ReviewGate, or
 Continuation a structured Ledger API. Receipt fields such as `artifactId`,
 `reviewId`, `outputRefs`, `reviewerChecks`, `continuationId`, and `continuation`

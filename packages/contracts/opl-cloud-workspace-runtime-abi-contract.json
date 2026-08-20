@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Cloud Platform Architecture",
+  "purpose": "Own the fixed Workspace WebUI network compatibility fact shared by Control Plane and Fabric without exposing an Instance-selectable port.",
+  "state": "current",
+  "machineBoundary": "Workspace WebUI protocol and port projections across Control Plane proxy routing, Fabric Local-Docker, and Fabric Tencent/TKE.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer coordinated App, Control Plane, and Fabric Runtime ABI contract."
+  },
+  "workspaceWebUI": {
+    "protocol": "http",
+    "port": 3000,
+    "portSemantics": "fixed_cross_module_compatibility_abi",
+    "configuration": {
+      "instanceSelectable": false,
+      "environmentOverride": "forbidden"
+    },
+    "projections": [
+      "control_plane_proxy_target",
+      "fabric_local_docker_container_target_and_healthcheck",
+      "fabric_tencent_tke_container_probe_service_and_network_policy"
+    ]
+  }
+}
