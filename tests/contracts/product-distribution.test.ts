@@ -18,10 +18,12 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   ]);
   assert.deepEqual(contract.candidate.artifactLocator, {
     kind: "github_actions_artifact",
-    exactKeys: ["workflowRunId", "artifactName"],
+    exactKeys: ["workflowRunId", "workflowRunAttempt", "artifactName"],
     workflowRunIdField: "provenance.workflowRunId",
-    artifactNameTemplate: "opl-cloud-candidate-{product.sha}",
-    artifactNameProductShaField: "product.sha"
+    workflowRunAttemptField: "provenance.workflowRunAttempt",
+    artifactNameTemplate: "opl-cloud-candidate-{product.sha}-{provenance.workflowRunAttempt}",
+    artifactNameProductShaField: "product.sha",
+    artifactNameRunAttemptField: "provenance.workflowRunAttempt"
   });
   assert.deepEqual(contract.distribution.platforms, ["linux/amd64", "linux/arm64"]);
   assert.deepEqual(contract.distribution.releaseAssets, [

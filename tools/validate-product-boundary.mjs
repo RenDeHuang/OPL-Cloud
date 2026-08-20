@@ -40,6 +40,10 @@ if (JSON.stringify(candidateInputs) !== JSON.stringify(["product_sha"]) ||
   throw new Error("Cloud Candidate workflow authority boundary is invalid");
 }
 const candidateCommands = (candidateJob.steps || []).map((step) => step.run || "").join("\n");
+const candidateArtifact = (candidateJob.steps || []).find((step) => step.id === "candidate_artifact");
+if (candidateArtifact?.with?.name !== "opl-cloud-candidate-${{ inputs.product_sha }}-${{ github.run_attempt }}") {
+  throw new Error("Cloud Candidate artifact locator does not include the workflow run attempt");
+}
 for (const forbidden of ["tencentyun.com", "medopl.cn", "gh release", "git tag", "kubectl", "WORKSPACE_IMAGE", "workspace_image", "releaseTag"]) {
   if (candidateCommands.includes(forbidden) || candidateInputs.includes(forbidden)) {
     throw new Error(`Cloud Candidate owns a forbidden concern: ${forbidden}`);
@@ -111,10 +115,12 @@ if (contract.schemaVersion !== 2 || contract.productRepository !== "gaofeng21cn/
       "artifactLocator", "contract", "formalPublication", "instanceDeployment", "registry", "workflow"
     ]) ||
     contract.candidate?.artifactLocator?.kind !== "github_actions_artifact" ||
-    JSON.stringify(contract.candidate?.artifactLocator?.exactKeys) !== JSON.stringify(["workflowRunId", "artifactName"]) ||
+    JSON.stringify(contract.candidate?.artifactLocator?.exactKeys) !== JSON.stringify(["workflowRunId", "workflowRunAttempt", "artifactName"]) ||
     contract.candidate?.artifactLocator?.workflowRunIdField !== "provenance.workflowRunId" ||
-    contract.candidate?.artifactLocator?.artifactNameTemplate !== "opl-cloud-candidate-{product.sha}" ||
+    contract.candidate?.artifactLocator?.workflowRunAttemptField !== "provenance.workflowRunAttempt" ||
+    contract.candidate?.artifactLocator?.artifactNameTemplate !== "opl-cloud-candidate-{product.sha}-{provenance.workflowRunAttempt}" ||
     contract.candidate?.artifactLocator?.artifactNameProductShaField !== "product.sha" ||
+    contract.candidate?.artifactLocator?.artifactNameRunAttemptField !== "provenance.workflowRunAttempt" ||
     contract.instanceHandoff?.artifactLocatorContract !== "packages/contracts/opl-cloud-distribution-contract.json#candidate.artifactLocator" ||
     JSON.stringify(contract.instanceHandoff?.inputs) !== JSON.stringify(["candidate_manifest_b64"])) {
   throw new Error("distribution owner boundary is invalid");
