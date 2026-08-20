@@ -467,17 +467,20 @@ purchase receipt uses `RequestID=launchOperationId` and
 `Idempotency-Key=<launchOperationId>:purchase-receipt`, with exact Workspace,
 debit code, user, total, component, and downstream resource identities.
 
-Workspace DELETE is a separate durable Control Plane owner operation. Before
-cleanup, it reads the exact Ledger purchase Receipt and exact Sub2API debit
-history entry. It then consumes Fabric's typed Runtime and Gateway Secret
-observations (`ready/absent/pending/conflict/error`) and advances only through
-the same-operation chain `runtime + Secret absence -> attachment -> storage ->
-compute -> Sub2API Key absence -> exact Sub2API business refund -> Ledger refund
-Receipt -> Control Plane Workspace absence`. The operation binds the same
-account, Workspace, Runtime, Key, debit code, purchase Receipt, and refund
-Receipt throughout. Refund response loss performs exact-code GET only; Receipt
-failure retries only the Receipt. No Local Docker runner, Fabric adapter, or
-operator wallet adjustment owns Key deletion or the business refund.
+Workspace DELETE is a separate durable `workspace.delete.v2` Control Plane
+owner operation. Before cleanup, it reads the immutable succeeded Launch and
+matches its exact charged or zero-cost Ledger Launch Receipt; it does not read
+Debit history or invoke a wallet mutation. It then consumes Fabric's typed
+Runtime and Gateway Secret observations (`ready/absent/pending/conflict/error`)
+and advances only through the same-operation chain `runtime + Secret absence ->
+attachment absence -> storage absence -> compute absence -> Sub2API Key absence
+-> Control Plane Workspace absence -> Ledger workspace.deleted.v1 Receipt ->
+complete`. The operation binds the same account, Workspace, Launch Receipt,
+Runtime, Key, and provider-neutral resources throughout. Fabric owns resource
+mutation and authoritative absence, including Tencent Machine/CVM/CBS readback;
+Sub2API owns exact Key deletion and performs zero Delete wallet mutations.
+Ledger Receipt failure retries only the deletion Receipt. Non-terminal legacy
+v1 Delete and concurrent Renewal fail closed before a v2 mutation.
 
 Each Workspace operation owns renewal intent and one combined monthly debit.
 Compute and storage rows are provider/compatibility facts, not independent

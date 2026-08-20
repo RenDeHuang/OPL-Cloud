@@ -118,25 +118,34 @@ schemas, workflows, and focused tests.
 
 ## Workspace Delete
 
-- Workspace deletion is one durable Control Plane operation. It preserves the
-  exact account, operation, Workspace, Runtime, Key, debit code, purchase
-  Receipt, and refund Receipt identities through every owner transition.
-- Before the first cleanup mutation, Control Plane reads and matches the exact
-  Ledger purchase Receipt and exact negative Sub2API debit history entry. The
-  ordered completion chain is `runtime + Secret absence -> attachment ->
-  storage -> compute -> Key absence -> refund -> refund Receipt -> Workspace
-  absence`.
+- Workspace deletion is one durable `workspace.delete.v2` Control Plane
+  operation. It permanently removes the Workspace and its owned resources
+  without an automatic refund. Delete, Cancel Renewal, and Refund are
+  independent product operations.
+- Before the first cleanup mutation, Control Plane reads and matches the
+  immutable succeeded Launch and its exact charged or zero-cost Launch Receipt.
+  A positive Debit, purchase amount, refund code, or wallet-history entry is not
+  Delete authority. The ordered completion chain is `runtime + Secret absence
+  -> attachment absence -> storage absence -> compute absence -> Key absence ->
+  Workspace absence -> deletion Receipt -> complete`.
 - Fabric reports Runtime and Gateway Secret owner observations as typed
   `ready/absent/pending/conflict/error` facts. Both must be authoritatively
   absent before later cleanup stages continue. Unknown, conflict, or error is
   `manual_review`, never inferred absence.
-- Sub2API alone deletes the exact Workspace Key and records the exact business
-  refund. A lost response is reconciled only through the same Key or refund-code
-  GET; an acceptance runner, Fabric adapter, or Local Docker provider cannot
-  substitute an operator wallet adjustment or private Key cleanup.
-- The refund Receipt supersedes the exact purchase Receipt and is idempotent on
-  the delete operation. Receipt failure retries only that Receipt and never
-  repeats Key deletion, Fabric cleanup, or refund.
+- Fabric advances compute or storage only after provider-authoritative permanent
+  absence. Tencent `NativeCVM` compute requires both TKE Machine and CVM absence;
+  `Native`/`CXM` requires TKE Machine absence without CVM mutation; Tencent
+  storage requires CBS absence. Missing or conflicting immutable provider
+  identity fails before mutation.
+- Sub2API alone deletes the exact Workspace Key and performs zero wallet
+  mutations for Delete. A lost Key-delete response is reconciled only through
+  the same exact Key GET; an acceptance runner, Fabric adapter, or Local Docker
+  provider cannot substitute private Key cleanup.
+- Ledger records one non-financial `workspace.deleted.v1` Receipt after
+  Workspace absence. Receipt failure retries only that Receipt and never repeats
+  Key deletion or Fabric cleanup. A non-terminal legacy `workspace.delete.v1`
+  operation blocks v2 before mutation, and Delete cannot run concurrently with
+  a non-terminal Renewal.
 
 ## Launch And Recovery
 

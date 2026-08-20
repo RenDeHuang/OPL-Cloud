@@ -318,14 +318,17 @@ first external write. Runtime supplies the authoritative Workspace URL as
 readback/projection; URL is not a separate mutation stage.
 
 Workspace deletion is another durable Control Plane operation, not an
-acceptance-runner cleanup. It first matches the exact purchase Receipt and
-Sub2API debit, then coordinates `runtime + Secret absence -> attachment ->
-storage -> compute -> Sub2API Key absence -> exact refund -> refund Receipt ->
-Workspace absence`. Every stage preserves the same account, operation,
-Workspace, Runtime, Key, debit-code, purchase-Receipt, and refund-Receipt
-identity. Fabric owns only resource/Secret observations and mutation; Sub2API
-alone owns Key and wallet mutation; Ledger records the Receipt. Any typed
-pending, conflict, or error that cannot authoritatively converge fails closed.
+acceptance-runner cleanup. `workspace.delete.v2` first matches the immutable
+succeeded Launch and its exact Launch Receipt, then coordinates `runtime +
+Secret absence -> attachment absence -> storage absence -> compute absence ->
+Sub2API Key absence -> Workspace absence -> workspace.deleted.v1 Receipt ->
+complete`. Every stage preserves the same account, operation, Workspace,
+Launch Receipt, Runtime, Key, and provider-neutral resource identities. Fabric
+owns resource/Secret observations, mutation, and authoritative absence;
+Sub2API owns only the exact Key deletion in this operation and performs no
+wallet mutation; Ledger records the non-financial deletion Receipt. Delete,
+Cancel Renewal, and Refund are independent operations. Any typed pending,
+conflict, or error that cannot authoritatively converge fails closed.
 
 Control Plane owns only the Launch cursor, attempt and lease state, CAS,
 account/settlement coordination, and customer projection. Fabric owns compute,
