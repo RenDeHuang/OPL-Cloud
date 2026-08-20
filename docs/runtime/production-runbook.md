@@ -70,14 +70,15 @@ it does not create a Product Release.
 
 ### Publication
 
-After candidate qualification succeeds, the repository owner verifies the
-unused version, exact canonical SHA, candidate digest, required checks,
-local receipt, Instance receipt, release assets, checksums, and provenance. Both
-receipts must bind the same Cloud SHA and multi-architecture index digest while
-recording their own Workspace image and Provider Profile. The owner then
-explicitly dispatches the Release workflow from Cloud `main`. Publication must
-promote the exact qualified image bytes and must fail if it would rebuild a
-different digest.
+After candidate qualification succeeds, an allowlisted Cloud Release publisher
+verifies the unused version, exact canonical SHA, candidate digest, required
+checks, local receipt, Instance receipt, release assets, checksums, and
+provenance. Both receipts must bind the same Cloud SHA and multi-architecture
+index digest while recording their own Workspace image and Provider Profile.
+The repository owner or `RenDeHuang` then explicitly dispatches the Release
+workflow from Cloud `main`; the original actor and current triggering actor must
+match. Publication must promote the exact qualified image bytes and must fail
+if it would rebuild a different digest.
 
 The current workflow does not yet meet that sequence: the Candidate path is
 single-architecture and the formal manual dispatch rebuilds the OCI image before

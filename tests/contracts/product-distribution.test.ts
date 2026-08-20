@@ -149,11 +149,11 @@ test("Cloud release publishes GHCR and GitHub Release without production deploym
   const workflow = YAML.parse(source);
   const build = workflow.jobs.build;
   const publish = workflow.jobs.publish;
-  const ownerOnlyRelease = "${{ github.ref == 'refs/heads/main' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner }}";
+  const releasePublisherGate = "${{ github.ref == 'refs/heads/main' && github.actor == github.triggering_actor && (github.actor == github.repository_owner || github.actor == 'RenDeHuang') }}";
   assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
   assert.deepEqual(Object.keys(workflow.jobs).sort(), ["build", "publish"]);
-  assert.equal(build.if, ownerOnlyRelease);
-  assert.equal(publish.if, ownerOnlyRelease);
+  assert.equal(build.if, releasePublisherGate);
+  assert.equal(publish.if, releasePublisherGate);
   assert.deepEqual(build.permissions, { contents: "read" });
   assert.equal(build.environment, undefined);
   assert.equal(build.env.GH_TOKEN, undefined);

@@ -123,12 +123,14 @@ receipt proves the required deployment and product acceptance for that exact
 SHA/digest, and the formal publication promotes the same image bytes without a
 rebuild.
 
-Only the repository owner may explicitly dispatch the manual Release workflow
-from `main`. A PR, merge, CI run, schedule, collaborator action, deployment
-retry, or failed qualification never authorizes publication. The current
-workflow still combines candidate build with formal publication; until a
-deployable candidate channel and exact-byte promotion are implemented, record
-the gap in `docs/roadmap.md` and do not publish a successor to `v0.1.7`.
+Only the repository owner and `RenDeHuang` are Cloud Release publishers and may
+explicitly dispatch the manual Release workflow from `main`. The original actor
+and current triggering actor must be the same authorized publisher. A PR,
+merge, CI run, schedule, any other collaborator action, deployment retry, or
+failed qualification never authorizes publication. The current workflow still
+combines candidate build with formal publication; until a deployable candidate
+channel and exact-byte promotion are implemented, record the gap in
+`docs/roadmap.md` and do not publish a successor to `v0.1.7`.
 
 Cloud retains reusable product and publication authority;
 `opl-instance-medopl` retains environment, Secret, provider, deployment,

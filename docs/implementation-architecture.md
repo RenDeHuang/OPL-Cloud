@@ -623,10 +623,10 @@ from one exact canonical product SHA before formal publication. The supported
 Local-Docker path and `opl-instance-medopl` must qualify the same Cloud image
 identity with their own Workspace image and Provider Profile receipts. The
 Instance owns Tencent/TKE deployment and qualification through its protected
-environment. Only after both paths succeed may the repository owner manually
-publish the same SHA and Cloud image bytes as a formal Release. Cloud does not
-dispatch or operate the Instance, and failed development or deployment attempts
-do not create a formal version.
+environment. Only after both paths succeed may an allowlisted Cloud Release
+publisher manually publish the same SHA and Cloud image bytes as a formal
+Release. Cloud does not dispatch or operate the Instance, and failed
+development or deployment attempts do not create a formal version.
 
 The owner-only `build-opl-cloud-candidate.yml` workflow implements only part of
 that path. It verifies one exact canonical Product SHA, builds and pushes one
@@ -642,10 +642,11 @@ It builds and validates the OCI layout in a read-only job, passes one
 digest-checked Actions artifact to a separate publish job, and grants
 `contents:write`, `packages:write`, `artifact-metadata:write`,
 `attestations:write`, and `id-token:write` only to that publish job under the
-protected `cloud-release` Environment. Both jobs run in one owner-only manual
-Release dispatch and rebuild the image, so exact-byte promotion from an already
-qualified Candidate remains open. Until that gap closes, no successor to
-`v0.1.7` is admitted.
+protected `cloud-release` Environment. Both jobs run in one manual dispatch
+whose original and current triggering actors must match and be either the
+repository owner or `RenDeHuang`. The workflow rebuilds the image, so exact-byte
+promotion from an already qualified Candidate remains open. Until that gap
+closes, no successor to `v0.1.7` is admitted.
 
 The build emits a SHA-256 manifest for every GitHub Release asset; the publish job
 checks those bytes, signs a GitHub OIDC-backed attestation that binds the

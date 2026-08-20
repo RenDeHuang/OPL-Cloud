@@ -551,14 +551,17 @@ Review job, and expanded monthly Dependabot coverage. PR `#261` merged as
 merge. GitHub now requires strict `validate` and `dependency-review` on `main`.
 The `cloud-release` Environment exists with protected branches as its only
 protection rule and has no Secrets or variables. The Release workflow has only
-the manual `workflow_dispatch` trigger, and both build and publish require the
-original actor and current triggering actor to equal the repository owner. It
-is create-only during ordinary publication and rejects an existing Git tag,
-GitHub Release, or GHCR release tag. PR `#334` merged this owner gate as
-`4060590fde52e9224c45968857729650806c990a`; all ten hosted checks passed and no
-new Release run was triggered. These controls prevent collaborator or
-accidental CI publication, but they do not yet provide the pre-Release candidate
-deployment path.
+the manual `workflow_dispatch` trigger. Both build and publish require the
+original actor and current triggering actor to match and be either the
+repository owner or `RenDeHuang`; GitHub collaborator readback on 2026-08-20
+reports `RenDeHuang` with the `write` role. The workflow is create-only during
+ordinary publication and rejects an existing Git tag, GitHub Release, or GHCR
+release tag. PR `#334` originally merged the repository-owner gate as
+`4060590fde52e9224c45968857729650806c990a`; the current source restores
+`RenDeHuang` to the formal Release publisher allowlist without granting
+Candidate or Instance authority. These controls prevent any other collaborator
+or accidental CI publication, but they do not yet provide the pre-Release
+candidate deployment path.
 
 Security currentness now includes the absorbed S1, Gateway, S2, S3, and narrow
 login-CSRF implementation lanes. PR `#271`

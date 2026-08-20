@@ -123,7 +123,8 @@ profile's provider health check passes.
 explicitly supplies the `.com` domains, Tencent/TKE Provider Profile, immutable
 Workspace image, production Secrets and deployment workflows, deploys and
 qualifies an exact pre-1.0 Cloud Candidate before formal publication, and
-records deployment/rollback receipts. The Cloud repository owner may publish a
-successor Release only after the same Candidate passes the supported local path
-and Instance qualification, by promoting the qualified Cloud image bytes
-without rebuild; the current workflow does not yet provide this path.
+records deployment/rollback receipts. An allowlisted Cloud Release publisher,
+either the repository owner or `RenDeHuang`, may publish a successor Release
+only after the same Candidate passes the supported local path and Instance
+qualification, by promoting the qualified Cloud image bytes without rebuild;
+the current workflow does not yet provide this path.
