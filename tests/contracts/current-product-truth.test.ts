@@ -26,10 +26,12 @@ test("pricing contract leaves current catalog values to Control Plane runtime", 
   const pricing = await json("packages/contracts/opl-cloud-pricing-contract.json");
 
   assert.deepEqual(pricing.runtimeCatalog, {
-    authority: "control_plane_runtime",
+    authority: "control_plane_customer_pricing_runtime",
     versioning: "every_catalog_revision_has_a_non_empty_priceVersion",
+    acceptedVersionResolution: "explicit_exact_lookup_unknown_version_fails_closed",
     currentValues: "not_stored_in_this_contract"
   });
+  assert.equal(pricing.providerCostEvidence.authority, "fabric");
   for (const currentCatalogField of [
     "priceVersion",
     "billingUnit",

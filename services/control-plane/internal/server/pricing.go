@@ -14,7 +14,6 @@ const (
 	pricingWalletCurrency      = "USD"
 	pricingBillingUnit         = "calendar_month"
 	storageBlockGB             = int64(10)
-	storageBlockPriceCNYCents  = int64(1800)
 	storageBlockPriceUSDMicros = int64(2_580_000)
 	maxStorageBlocks           = math.MaxInt64 / storageBlockPriceUSDMicros
 	maxStorageGB               = maxStorageBlocks * storageBlockGB
@@ -34,21 +33,33 @@ type pricingCatalogData struct {
 }
 
 type pricingPackageData struct {
-	ID                   string
-	Name                 string
-	Available            bool
-	MonthlyPriceCNYCents int64
-	ChargeUSDMicros      int64
+	ID              string
+	Name            string
+	Available       bool
+	ChargeUSDMicros int64
 }
 
 func defaultPricingCatalog() pricingCatalogData {
-	return pricingCatalogData{
-		Version: pricingCatalogVersion, Currency: pricingCurrency, WalletCurrency: pricingWalletCurrency,
-		BillingUnit: pricingBillingUnit,
-		Packages: []pricingPackageData{
-			{ID: "basic", Name: "Basic", Available: true, MonthlyPriceCNYCents: 35000, ChargeUSDMicros: 50000000},
-			{ID: "pro", Name: "Pro", Available: true, MonthlyPriceCNYCents: 150000, ChargeUSDMicros: 214280000},
-		},
+	catalog, ok := pricingCatalogByVersion(pricingCatalogVersion)
+	if !ok {
+		panic("current pricing catalog is not registered")
+	}
+	return catalog
+}
+
+func pricingCatalogByVersion(priceVersion string) (pricingCatalogData, bool) {
+	switch priceVersion {
+	case pricingCatalogVersion:
+		return pricingCatalogData{
+			Version: pricingCatalogVersion, Currency: pricingCurrency, WalletCurrency: pricingWalletCurrency,
+			BillingUnit: pricingBillingUnit,
+			Packages: []pricingPackageData{
+				{ID: "basic", Name: "Basic", Available: true, ChargeUSDMicros: 50000000},
+				{ID: "pro", Name: "Pro", Available: true, ChargeUSDMicros: 214280000},
+			},
+		}, true
+	default:
+		return pricingCatalogData{}, false
 	}
 }
 
@@ -157,11 +168,11 @@ func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("%w: unknown package %q", errInvalidPricingInput, packageID)
 	}
-	monthlyPriceCNYCents, chargeUSDMicros := plan.MonthlyPriceCNYCents, plan.ChargeUSDMicros
+	chargeUSDMicros := plan.ChargeUSDMicros
 	snapshot := map[string]any{
 		"priceVersion": catalog.Version, "pricingVersion": catalog.Version, "packageId": plan.ID, "currency": catalog.Currency,
 		"displayCurrency": catalog.Currency,
-		"billingUnit":     catalog.BillingUnit, "monthlyPriceCnyCents": monthlyPriceCNYCents,
+		"billingUnit":     catalog.BillingUnit,
 		"chargeUsdMicros": chargeUSDMicros, "resourceType": resourceType,
 	}
 	if resourceType == "storage" {
@@ -170,15 +181,14 @@ func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any)
 			return nil, fmt.Errorf("%w: storage size must be a positive multiple of %dGB", errInvalidPricingInput, storageBlockGB)
 		}
 		blocks := int64(sizeGB) / storageBlockGB
-		monthlyPriceCNYCents = blocks * storageBlockPriceCNYCents
 		chargeUSDMicros = blocks * storageBlockPriceUSDMicros
-		snapshot["sizeGb"], snapshot["monthlyPriceCnyCents"], snapshot["chargeUsdMicros"] = sizeGB, monthlyPriceCNYCents, chargeUSDMicros
+		snapshot["sizeGb"], snapshot["chargeUsdMicros"] = sizeGB, chargeUSDMicros
 	}
 	return map[string]any{
 		"priceVersion": catalog.Version, "pricingVersion": catalog.Version, "resourceType": resourceType, "packageId": plan.ID,
 		"currency": catalog.Currency, "displayCurrency": catalog.Currency, "billingUnit": catalog.BillingUnit,
-		"monthlyPriceCnyCents": monthlyPriceCNYCents, "chargeUsdMicros": chargeUSDMicros,
-		"priceSnapshot": snapshot,
+		"chargeUsdMicros": chargeUSDMicros,
+		"priceSnapshot":   snapshot,
 	}, nil
 }
 
@@ -201,10 +211,6 @@ func workspacePricingPreview(catalog pricingCatalogData, input map[string]any) (
 	if err != nil {
 		return nil, err
 	}
-	cnyCents, ok := checkedAddInt64(int64(numberField(compute, "monthlyPriceCnyCents", 0)), int64(numberField(storage, "monthlyPriceCnyCents", 0)))
-	if !ok {
-		return nil, errInvalidPricingInput
-	}
 	usdMicros, ok := checkedAddInt64(int64(numberField(compute, "chargeUsdMicros", 0)), int64(numberField(storage, "chargeUsdMicros", 0)))
 	if !ok {
 		return nil, errInvalidPricingInput
@@ -213,7 +219,7 @@ func workspacePricingPreview(catalog pricingCatalogData, input map[string]any) (
 		"resourceType": "workspace", "priceVersion": catalog.Version, "pricingVersion": catalog.Version,
 		"packageId": stringValue(compute["packageId"]), "currency": catalog.Currency, "displayCurrency": catalog.Currency,
 		"billingUnit": catalog.BillingUnit, "compute": compute, "storage": storage,
-		"totalMonthlyPriceCnyCents": cnyCents, "totalChargeUsdMicros": usdMicros,
+		"totalChargeUsdMicros": usdMicros,
 	}, nil
 }
 

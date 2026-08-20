@@ -142,7 +142,8 @@ test("pricing contract owns schemas and snapshot invariants without a current ca
   const pricing = await readJson("opl-cloud-pricing-contract.json");
 
   assert.equal(pricing.schemaVersion, 10);
-  assert.equal(pricing.runtimeCatalog.authority, "control_plane_runtime");
+  assert.equal(pricing.runtimeCatalog.authority, "control_plane_customer_pricing_runtime");
+  assert.equal(pricing.runtimeCatalog.acceptedVersionResolution, "explicit_exact_lookup_unknown_version_fails_closed");
   assert.equal(pricing.runtimeCatalog.currentValues, "not_stored_in_this_contract");
   assert.deepEqual(pricing.catalogResponseSchema, {
     requiredFields: ["priceVersion", "billingUnit", "currency", "displayCurrency", "walletCurrency", "storageSize", "storagePer10GbMonthly", "packages"],
@@ -167,6 +168,7 @@ test("pricing contract owns schemas and snapshot invariants without a current ca
   assert.equal(pricing.workspaceCharge.customerDebitCardinalityPerPeriod, 1);
   assert.equal(pricing.workspaceCharge.totalAuthority, "accepted_workspace_price_snapshot");
   assert.deepEqual(pricing.providerCostEvidence, {
+    authority: "fabric",
     visibility: "internal_reconciliation_only",
     customerChargeDerivation: "forbidden",
     customerDto: "forbidden"

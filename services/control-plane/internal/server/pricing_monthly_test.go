@@ -84,6 +84,18 @@ func TestMonthlyPricingCatalogUsesFixedPilotUSDPrices(t *testing.T) {
 	}
 }
 
+func TestPricingCatalogLookupRequiresExactAcceptedVersion(t *testing.T) {
+	catalog, ok := pricingCatalogByVersion(pricingCatalogVersion)
+	if !ok || catalog.Version != pricingCatalogVersion {
+		t.Fatalf("current pricing catalog lookup = %#v, %v", catalog, ok)
+	}
+	for _, version := range []string{"", "unknown-price-version", " " + pricingCatalogVersion} {
+		if catalog, ok := pricingCatalogByVersion(version); ok {
+			t.Fatalf("unknown pricing catalog %q resolved to %#v", version, catalog)
+		}
+	}
+}
+
 func TestMonthlyStoragePriceUsesFixedUSDComponents(t *testing.T) {
 	for _, tc := range []struct {
 		sizeGB    int
@@ -213,8 +225,20 @@ func TestMonthlyInternalPricingSnapshotUsesCanonicalAuthority(t *testing.T) {
 		snapshot["priceVersion"] != pilotPriceVersion || snapshot["currency"] != "USD" || snapshot["billingUnit"] != "calendar_month" || snapshot["chargeUsdMicros"] != int64(50_000_000) {
 		t.Fatalf("internal pricing snapshot = %#v err=%v", preview, err)
 	}
-	if preview["pricingVersion"] != pilotPriceVersion || preview["monthlyPriceCnyCents"] != int64(35_000) {
-		t.Fatalf("ledger compatibility projection = %#v", preview)
+	if preview["pricingVersion"] != pilotPriceVersion {
+		t.Fatalf("internal pricing version projection = %#v", preview)
+	}
+	for _, value := range []map[string]any{preview, snapshot} {
+		if _, ok := value["monthlyPriceCnyCents"]; ok {
+			t.Fatalf("Fabric provider cost leaked into customer pricing snapshot: %#v", value)
+		}
+	}
+	workspace, workspaceErr := pricingPreviewResponse(map[string]any{"resourceType": "workspace", "packageId": "basic", "sizeGb": 10})
+	if workspaceErr != nil {
+		t.Fatal(workspaceErr)
+	}
+	if _, ok := workspace["totalMonthlyPriceCnyCents"]; ok {
+		t.Fatalf("Fabric provider cost total leaked into customer Workspace quote: %#v", workspace)
 	}
 }
 

@@ -513,6 +513,40 @@ func TestWorkspaceRenewalStateRoundTrips(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRenewalStateReadsHistoricalImmutablePriceSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "sqlite", new: func(t *testing.T) controlPlaneTableStore {
+			return NewTestEntStateStore(t, t.TempDir()+"/workspace-historical-price.sqlite")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := tc.new(t)
+			row := canonicalWorkspaceRenewalRow(false)
+			row["priceVersion"] = "historical-usd-v0"
+			row["computeUsdMicros"], row["storageUsdMicros"], row["totalUsdMicros"] = int64(41_000_000), int64(3_000_000), int64(44_000_000)
+			if err := store.SaveWorkspace(ctx, row); err != nil {
+				t.Fatalf("save historical accepted snapshot: %v", err)
+			}
+			rows, err := store.ListWorkspaces(ctx, "acct-renewal")
+			if err != nil || len(rows) != 1 || rows[0]["priceVersion"] != "historical-usd-v0" || rows[0]["totalUsdMicros"] != int64(44_000_000) {
+				t.Fatalf("historical accepted snapshot rows=%#v err=%v", rows, err)
+			}
+
+			invalid := cloneMap(row)
+			invalid["id"] = "ws-historical-invalid"
+			invalid["totalUsdMicros"] = int64(44_000_001)
+			if err := store.SaveWorkspace(ctx, invalid); err == nil {
+				t.Fatal("historical accepted snapshot with component sum mismatch was accepted")
+			}
+		})
+	}
+}
+
 func TestWorkspaceAPIKeyIDRoundTripsAndCAS(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -649,12 +683,12 @@ func TestWorkspaceRenewalStateRejectsInvalidValues(t *testing.T) {
 		{name: "authorized by type", mutate: func(row map[string]any) { row["authorizedBy"] = 7 }},
 		{name: "authorized actor mismatch", mutate: func(row map[string]any) { row["authorizedBy"] = "usr-other" }},
 		{name: "authorized at invalid", mutate: func(row map[string]any) { row["authorizedAt"] = "yesterday" }},
-		{name: "price version", mutate: func(row map[string]any) { row["priceVersion"] = "pilot-next" }},
+		{name: "price version empty", mutate: func(row map[string]any) { row["priceVersion"] = "" }},
 		{name: "currency", mutate: func(row map[string]any) { row["currency"] = "CNY" }},
 		{name: "billing unit", mutate: func(row map[string]any) { row["billingUnit"] = "hour" }},
 		{name: "fractional compute money", mutate: func(row map[string]any) { row["computeUsdMicros"] = 50_000_000.5 }},
-		{name: "compute price", mutate: func(row map[string]any) { row["computeUsdMicros"] = int64(49_000_000) }},
-		{name: "storage price", mutate: func(row map[string]any) { row["storageUsdMicros"] = int64(2_580_001) }},
+		{name: "compute sum mismatch", mutate: func(row map[string]any) { row["computeUsdMicros"] = int64(49_000_000) }},
+		{name: "storage sum mismatch", mutate: func(row map[string]any) { row["storageUsdMicros"] = int64(2_580_001) }},
 		{name: "total mismatch", mutate: func(row map[string]any) { row["totalUsdMicros"] = int64(52_580_001) }},
 		{name: "period start invalid", mutate: func(row map[string]any) { row["periodStart"] = "2026-07-17" }},
 		{name: "period empty", mutate: func(row map[string]any) { row["paidThrough"] = row["periodStart"] }},
