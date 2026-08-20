@@ -27,7 +27,8 @@ const (
 	maxLocalDockerRuntimeSecretKeyBytes       = 16 << 10
 	maxLocalDockerRuntimeSecretMetadataBytes  = 4 << 10
 	maxLocalDockerRuntimeWebUICredentialBytes = 1 << 10
-	localDockerRuntimeHealthCommand           = `node -e 'fetch("http://127.0.0.1:3000/").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'`
+	localDockerWorkspaceRuntimeWebUIPort      = "3000"
+	localDockerRuntimeHealthCommand           = `node -e 'fetch("http://127.0.0.1:` + localDockerWorkspaceRuntimeWebUIPort + `/").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'`
 	localDockerRuntimeHealthInterval          = int64(5 * time.Second)
 	localDockerRuntimeHealthTimeout           = int64(3 * time.Second)
 	localDockerRuntimeHealthStartPeriod       = int64(10 * time.Second)
@@ -756,7 +757,7 @@ func (p *LocalDockerProvider) createWorkspaceRuntimeLocked(ctx context.Context, 
 				"--mount", "type=bind,source="+storagePaths.Projects+",target=/projects,bind-propagation=rprivate",
 				"--mount", "type=tmpfs,target=/recovery,tmpfs-mode=0700",
 				"--mount", "type=bind,source="+secretPath+",target=/run/secrets,readonly,bind-propagation=rprivate",
-				"-p", p.runtimeHost+"::3000",
+				"-p", p.runtimeHost+"::"+localDockerWorkspaceRuntimeWebUIPort,
 				"-e", "OPL_WEBUI_DEPLOYMENT_MODE=cloud", "-e", "OPL_WEBUI_AUTH_MODE=password", "-e", "OPL_WEBUI_USERNAME="+webuiUsername,
 				"-e", "OPL_WEBUI_PASSWORD_FILE=/run/secrets/"+localDockerWebUIPasswordFile,
 				"-e", "OPL_WEBUI_SESSION_SECRET_FILE=/run/secrets/"+localDockerWebUISessionSecretFile,
@@ -892,7 +893,7 @@ func (p *LocalDockerProvider) runtimeFromContainer(container dockerContainerInsp
 	if workspaceID == "" || runtimeID == "" || labels["opl.operation.id"] == "" || labels["opl.image.ref"] == "" {
 		return WorkspaceRuntime{}, fmt.Errorf("local_docker_runtime_identity_mismatch")
 	}
-	bindings := container.NetworkSettings.Ports["3000/tcp"]
+	bindings := container.NetworkSettings.Ports[localDockerWorkspaceRuntimeWebUIPort+"/tcp"]
 	url := ""
 	if len(bindings) == 1 && bindings[0].HostPort != "" {
 		host := firstNonEmpty(bindings[0].HostIP, p.runtimeHost)
