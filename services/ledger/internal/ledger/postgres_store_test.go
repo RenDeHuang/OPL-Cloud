@@ -129,6 +129,30 @@ func TestPostgresStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 func TestPostgresStoreImplementsLedgerStore(t *testing.T) {
 	var db *sql.DB
 	var _ Store = NewPostgresStore(db)
+	var _ EvidenceIndexStore = NewPostgresStore(db)
+}
+
+func TestPostgresEvidenceIndexPersistsAndReplays(t *testing.T) {
+	store, db := installedLedgerTestPostgres(t)
+	defer db.Close()
+	ctx := context.Background()
+	input := validEvidenceIndexInput()
+	entry, err := store.RecordEvidenceIndex(ctx, input)
+	if err != nil {
+		t.Fatalf("RecordEvidenceIndex() error = %v", err)
+	}
+	replay, err := store.RecordEvidenceIndex(ctx, input)
+	if err != nil || !replay.Replayed || replay.EvidenceID != entry.EvidenceID {
+		t.Fatalf("replay = %#v error=%v", replay, err)
+	}
+	page, err := store.ListEvidenceIndex(ctx, EvidenceIndexQuery{OperationID: input.OperationID, CandidateSHA: input.CandidateSHA, CandidateTree: input.CandidateTree, ImageDigest: input.ImageDigest})
+	if err != nil || len(page.Entries) != 1 || page.Entries[0].EvidenceID != entry.EvidenceID {
+		t.Fatalf("query = %#v error=%v", page, err)
+	}
+	var persisted int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM evidence_index_entries WHERE id = $1", entry.EvidenceID).Scan(&persisted); err != nil || persisted != 1 {
+		t.Fatalf("persisted index rows=%d error=%v", persisted, err)
+	}
 }
 
 func TestWalletAdjustmentReceiptPostgres(t *testing.T) {

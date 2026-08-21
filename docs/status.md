@@ -438,6 +438,16 @@ Sub2API management origin and credentials are never exposed to the browser.
 
 ## Evidence Snapshot
 
+The Ledger now owns an append-only Cloud Evidence Index projection. It stores
+only operation identity, exact Candidate SHA/tree and image digest, receipt
+identity, status, actor/time, identity digest, and an optional redacted link;
+Control Plane, Fabric, Sub2API, and Instance source state remains in the owning
+systems. Writes are idempotent, historical entries are immutable, and the
+query/export projection omits Idempotency-Key values. Focused Ledger memory,
+HTTP, contract, and schema checks cover exact Candidate filtering, replay
+conflicts, redacted export, and the separate PostgreSQL-owned table. This index
+does not authorize Workspace actions or prove Instance/production state.
+
 Current delivery levels remain:
 
 - `code-complete=false` for the repository as a whole;

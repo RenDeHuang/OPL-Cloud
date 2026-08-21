@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Ledger",
+  "purpose": "Append-only, idempotent index of Cloud operation evidence and exact Candidate identity.",
+  "state": "current",
+  "machineBoundary": "Evidence lookup and export only; source receipts and service state remain owned by their originating service.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same evidence-index boundary."
+  },
+  "nonOwnership": [
+    "Control Plane account, Workspace, or operation state",
+    "Fabric provider resources or provider state",
+    "Sub2API wallet, keys, or usage state",
+    "Instance deployment, production, or rollback authority",
+    "Receipt payload source truth"
+  ],
+  "entry": {
+    "requiredFields": [
+      "operationId",
+      "candidateSha",
+      "candidateTree",
+      "imageDigest",
+      "receiptId",
+      "receiptType",
+      "status",
+      "actor",
+      "observedAt",
+      "identityDigest",
+      "Idempotency-Key header"
+    ],
+    "optionalFields": ["redactedLink"],
+    "redactedLinkRule": "HTTP(S) URL without userinfo, query, or fragment, or an opaque locator without whitespace",
+    "immutableFields": "Every entry is append-only; corrections append a new entry with a new idempotency identity.",
+    "identity": "operationId and exact candidateSha/candidateTree/imageDigest are stored as owner-supplied opaque references.",
+    "idempotency": "Same Idempotency-Key with the same request projection replays the original entry; a different projection is a conflict.",
+    "forbidden": ["credentials", "tokens", "secrets", "raw provider responses", "raw service payloads"]
+  },
+  "api": {
+    "record": "POST /ledger/evidence-index",
+    "query": "GET /ledger/evidence-index",
+    "exportRoute": "GET /ledger/evidence-index/export",
+    "queryFilters": [
+      "operationId",
+      "candidateSha",
+      "candidateTree",
+      "imageDigest",
+      "receiptId",
+      "receiptType",
+      "status"
+    ],
+    "ordering": ["observedAt desc", "evidenceId desc"],
+    "exportSemantics": "schemaVersion 1 with stable ordering and no Idempotency-Key"
+  },
+  "storage": {
+    "owner": "services/ledger",
+    "table": "evidence_index_entries",
+    "sourceData": "not copied",
+    "crossServiceDatabaseAccess": "forbidden"
+  }
+}
