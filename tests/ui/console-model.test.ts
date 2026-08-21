@@ -72,12 +72,13 @@ test("Workspace status never invents a running state", () => {
   assert.equal(workspaceStatusLabel({}), "暂不可用");
 });
 
-test("Workspace launch requires balance strictly greater than the server quote", async () => {
+test("Workspace launch accepts balance equal to or greater than the server quote", async () => {
   const model = await import("../../apps/console-ui/src/console-model.ts") as typeof import("../../apps/console-ui/src/console-model.ts") & {
     hasSufficientWorkspaceLaunchBalance?: (balanceUsdMicros: string, quoteUsdMicros: number) => boolean;
   };
   assert.equal(typeof model.hasSufficientWorkspaceLaunchBalance, "function");
-  assert.equal(model.hasSufficientWorkspaceLaunchBalance?.("52580000", 52_580_000), false);
+  assert.equal(model.hasSufficientWorkspaceLaunchBalance?.("52579999", 52_580_000), false);
+  assert.equal(model.hasSufficientWorkspaceLaunchBalance?.("52580000", 52_580_000), true);
   assert.equal(model.hasSufficientWorkspaceLaunchBalance?.("52580001", 52_580_000), true);
 });
 

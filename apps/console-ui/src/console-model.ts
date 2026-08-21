@@ -85,7 +85,7 @@ export function hasSufficientWorkspaceLaunchBalance(balanceUsdMicros: string, qu
   return /^\d+$/.test(balanceUsdMicros)
     && Number.isSafeInteger(quoteUsdMicros)
     && quoteUsdMicros >= 0
-    && BigInt(balanceUsdMicros) > BigInt(quoteUsdMicros);
+    && BigInt(balanceUsdMicros) >= BigInt(quoteUsdMicros);
 }
 
 export function formatDate(value: unknown, includeTime = false): string {
