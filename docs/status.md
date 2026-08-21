@@ -772,4 +772,7 @@ The current Account model also carries the Control Plane-owned
 `workspacePurchaseEnabled` fact. Full Cloud provisioning enables it, explicit
 Gateway-only provisioning disables it, and operator grant/revoke is audited;
 historical migration and Instance allowlist retirement remain unclaimed until
-product-approved evidence is available.
+product-approved evidence is available. In the fresh-deployment ABC scope, the
+Control Plane Account fact is the only per-account purchase authority and the
+legacy Pilot account-list environment is no longer consumed by local
+qualification or fresh launch admission.

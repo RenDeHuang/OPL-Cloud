@@ -129,8 +129,8 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		code := ""
 		if !app.deployment.customerOwned() {
 			// The route admits renewal intent against the active billing mode;
-			// pilot admission continues to own account, package, and capacity policy.
-			code = admission.rejectNewLaunch(accountID, packageID, false)
+			// global pilot admission retains package and capacity policy.
+			code = admission.rejectNewLaunch(packageID, false)
 		}
 		acceptanceBApproved := false
 		if code == "workspace_launch_admission_disabled" {

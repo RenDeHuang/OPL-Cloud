@@ -1216,7 +1216,6 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
   const fabricSecretRoot = join(tempRoot, "fabric-secrets");
   await mkdir(fabricSecretRoot, { recursive: true, mode: 0o700 });
   const envFile = join(tempRoot, "qualification.env");
-  const liveAdmissionOverride = join(tempRoot, "qualification-live-admission.yaml");
   const publicPort = await unusedPort();
   const authorityPort = await unusedPort();
   const registryPort = await unusedPort();
@@ -1248,7 +1247,6 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
   const composePrefix = ["compose", "--project-name", project, "--env-file", envFile];
   const qualificationCompose = options.authorityMode === "fixture" ? "deploy/portable/compose.local-qualification.yaml" : "deploy/portable/compose.local-qualification-live.yaml";
   for (const file of [...baseComposeFiles, qualificationCompose]) composePrefix.push("-f", file);
-  if (options.authorityMode === "live") composePrefix.push("-f", liveAdmissionOverride);
   let composeEnvironment = process.env;
   const compose = (args, settings = {}) => runProcess("docker", [...composePrefix, ...args], { ...settings, env: composeEnvironment });
 
@@ -1312,8 +1310,6 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
       accountId = `acct-${stableID("account", adminEmail.toLowerCase()).slice(0, 18)}`;
       operationId = `workspace-launch-${stableID(accountId, launchKey).slice(0, 18)}`;
       workspaceId = `ws-${stableID("workspace-launch-v2", accountId, operationId).slice(0, 18)}`;
-      envEntries.push(["OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS", accountId]);
-      await writeFile(liveAdmissionOverride, "services:\n  control-plane:\n    environment:\n      OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS: ${OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS:?Set the task-owned qualification account}\n", { mode: 0o600 });
     }
     composeEnvironment = qualificationComposeEnvironment(process.env, envEntries);
     const envFileEntries = qualificationEnvFileEntries(envEntries, options);

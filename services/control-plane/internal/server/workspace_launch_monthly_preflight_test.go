@@ -14,6 +14,8 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
+const controlledBasicPilotAccountsEnv = "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS"
+
 type workspaceLaunchMonthlyPreflightLedger struct {
 	fakeLedgerClient
 	mu       sync.Mutex
@@ -260,18 +262,18 @@ func TestWorkspaceLaunchMissingPurchaseEligibilityFailsClosedBeforeMutation(t *t
 	}
 }
 
-func TestWorkspaceLaunchRetainsInstancePilotAllowlistUntilMigrationReadback(t *testing.T) {
+func TestWorkspaceLaunchUsesControlPlaneAccountAuthorityWithoutPilotAllowlist(t *testing.T) {
 	t.Setenv(controlledBasicPilotEnabledEnv, "1")
-	t.Setenv(controlledBasicPilotAccountsEnv, "")
+	t.Setenv("OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS", "")
 	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
 	server, _, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Pilot allowlist pending","packageId":"basic","autoRenew":false}`, "pilot-allowlist-pending")
-	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_launch_admission_invalid") {
-		t.Fatalf("pilot allowlist transition response = %d: %s", response.Code, response.Body.String())
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Account authority","packageId":"basic","autoRenew":false}`, "account-authority")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("account authority response = %d: %s", response.Code, response.Body.String())
 	}
-	if len(client.charges) != 0 || len(*events) != 0 {
-		t.Fatalf("pilot allowlist transition crossed mutation boundary: charges=%#v events=%#v", client.charges, *events)
+	if len(client.charges) != 0 || !strings.Contains(strings.Join(*events, "\n"), "fabric.workspace.preflight") {
+		t.Fatalf("account authority did not stop before debit while reaching Fabric preflight: charges=%#v events=%#v", client.charges, *events)
 	}
 }
 

@@ -728,7 +728,7 @@ test("package exposes one local Workspace qualification command", async () => {
   assert.doesNotMatch(runner, /imageInspection\((?:cloud|workspace)Tag\)/);
   assert.match(runner, /if \(options\.authorityMode === "live"\)[\s\S]*runLocalWorkspaceJ1HTTPQualification[\s\S]*\} else \{[\s\S]*stage = "console_and_login"/);
   assert.doesNotMatch(runner, /runLocalWorkspaceJ1HTTPQualification\([\s\S]{0,5000}?validateQualificationSourceIdentity\([^)]*\);\s*return;/);
-  assert.match(runner, /liveAdmissionOverride[\s\S]*OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS: \$\{OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS:/);
+  assert.doesNotMatch(runner, /OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS/);
   assert.match(runner, /cleanupLocalQualificationResources\(scope\.accountId, scope\.workspaceId, async \(\) => \{[\s\S]*compose\(\["down"/);
 });
 

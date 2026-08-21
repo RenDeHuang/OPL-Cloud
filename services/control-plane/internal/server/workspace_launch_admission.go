@@ -19,7 +19,6 @@ import (
 
 const (
 	controlledBasicPilotEnabledEnv                 = "OPL_CONTROLLED_BASIC_PILOT_ENABLED"
-	controlledBasicPilotAccountsEnv                = "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS"
 	controlledBasicPilotMaxInFlightEnv             = "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT"
 	controlledBasicPilotDefaultLimit               = 1
 	productionAcceptanceBApprovalEnv               = "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON"
@@ -152,13 +151,11 @@ type workspaceLaunchAcceptanceBResumeExistingBinding struct {
 type controlledBasicPilotAdmission struct {
 	Enabled     bool
 	Configured  bool
-	AccountIDs  map[string]struct{}
 	MaxInFlight int
 }
 
 func controlledBasicPilotAdmissionFromEnv() controlledBasicPilotAdmission {
 	admission := controlledBasicPilotAdmission{
-		AccountIDs:  map[string]struct{}{},
 		MaxInFlight: controlledBasicPilotDefaultLimit,
 	}
 	valid := true
@@ -169,17 +166,6 @@ func controlledBasicPilotAdmissionFromEnv() controlledBasicPilotAdmission {
 	default:
 		valid = false
 	}
-	for _, raw := range strings.Split(os.Getenv(controlledBasicPilotAccountsEnv), ",") {
-		accountID := strings.TrimSpace(raw)
-		if accountID == "" {
-			continue
-		}
-		if !validAccountID(accountID) {
-			valid = false
-			continue
-		}
-		admission.AccountIDs[accountID] = struct{}{}
-	}
 	if raw := strings.TrimSpace(os.Getenv(controlledBasicPilotMaxInFlightEnv)); raw != "" {
 		limit, err := strconv.Atoi(raw)
 		if err != nil || limit <= 0 {
@@ -188,11 +174,11 @@ func controlledBasicPilotAdmissionFromEnv() controlledBasicPilotAdmission {
 			admission.MaxInFlight = limit
 		}
 	}
-	admission.Configured = valid && (!admission.Enabled || len(admission.AccountIDs) > 0)
+	admission.Configured = valid
 	return admission
 }
 
-func (admission controlledBasicPilotAdmission) rejectNewLaunch(accountID, packageID string, autoRenew bool) string {
+func (admission controlledBasicPilotAdmission) rejectNewLaunch(packageID string, autoRenew bool) string {
 	if !admission.Configured {
 		return "workspace_launch_admission_invalid"
 	}
@@ -204,9 +190,6 @@ func (admission controlledBasicPilotAdmission) rejectNewLaunch(accountID, packag
 	}
 	if !admission.Enabled {
 		return "workspace_launch_admission_disabled"
-	}
-	if _, ok := admission.AccountIDs[accountID]; !ok {
-		return "workspace_launch_account_not_allowed"
 	}
 	return ""
 }
@@ -675,7 +658,7 @@ func controlledBasicPilotMetrics(ctx context.Context, store controlPlaneTableSto
 		return stringValue(alerts[i].(map[string]any)["code"]) < stringValue(alerts[j].(map[string]any)["code"])
 	})
 	return map[string]any{
-		"enabled": admission.Enabled, "configured": admission.Configured, "packageId": "basic", "accountAllowlistCount": len(admission.AccountIDs), "accountEligibilityAuthority": "control-plane-account",
+		"enabled": admission.Enabled, "configured": admission.Configured, "packageId": "basic", "accountEligibilityAuthority": "control-plane-account",
 		"maxInFlight": admission.MaxInFlight, "inFlight": inFlight, "availableCapacity": availableCapacity, "manualReview": manualReview,
 		"stages": stages, "failures": failures, "disableRequired": len(failures) > 0 || manualReview > 0 || !admission.Configured,
 		"alerts": alerts,
