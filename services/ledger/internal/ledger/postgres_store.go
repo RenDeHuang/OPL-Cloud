@@ -157,6 +157,141 @@ func (s *PostgresStore) RecordReceipt(ctx context.Context, input ReceiptInput) (
 	return receipt, nil
 }
 
+func (s *PostgresStore) RecordEvidenceIndex(ctx context.Context, input EvidenceIndexInput) (EvidenceIndexEntry, error) {
+	if err := validateEvidenceIndexInput(input); err != nil {
+		return EvidenceIndexEntry{}, err
+	}
+	hashInput := input
+	hashInput.IdempotencyKey = ""
+	requestHash, err := hashJSON(hashInput)
+	if err != nil {
+		return EvidenceIndexEntry{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return EvidenceIndexEntry{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "evidence-index:"+input.IdempotencyKey); err != nil {
+		return EvidenceIndexEntry{}, err
+	}
+	if existing, existingHash, err := evidenceIndexByIdempotencyKeyTx(ctx, tx, input.IdempotencyKey); err == nil {
+		if existingHash != requestHash {
+			return EvidenceIndexEntry{}, ErrIdempotencyConflict
+		}
+		existing.Replayed = true
+		if err := tx.Commit(); err != nil {
+			return EvidenceIndexEntry{}, err
+		}
+		return existing, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return EvidenceIndexEntry{}, err
+	}
+	now := s.now()
+	entry := EvidenceIndexEntry{EvidenceIndexInput: hashInput, EvidenceID: postgresID("evidence", now), CreatedAt: now}
+	_, err = tx.ExecContext(ctx, `INSERT INTO evidence_index_entries
+		(id, operation_id, candidate_sha, candidate_tree, image_digest, receipt_id, receipt_type, status, actor, observed_at, identity_digest, redacted_link, idempotency_key, request_hash, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+		entry.EvidenceID, entry.OperationID, entry.CandidateSHA, entry.CandidateTree, entry.ImageDigest,
+		entry.ReceiptID, entry.ReceiptType, entry.Status, entry.Actor, entry.ObservedAt, entry.IdentityDigest,
+		entry.RedactedLink, input.IdempotencyKey, requestHash, entry.CreatedAt)
+	if err != nil {
+		if ledgerent.IsConstraintError(err) {
+			if existing, existingHash, replayErr := evidenceIndexByIdempotencyKeyTx(ctx, tx, input.IdempotencyKey); replayErr == nil {
+				if existingHash != requestHash {
+					return EvidenceIndexEntry{}, ErrIdempotencyConflict
+				}
+				existing.Replayed = true
+				if commitErr := tx.Commit(); commitErr != nil {
+					return EvidenceIndexEntry{}, commitErr
+				}
+				return existing, nil
+			}
+		}
+		return EvidenceIndexEntry{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return EvidenceIndexEntry{}, err
+	}
+	return entry, nil
+}
+
+func (s *PostgresStore) ListEvidenceIndex(ctx context.Context, query EvidenceIndexQuery) (EvidenceIndexPage, error) {
+	query, cursor, err := normalizeEvidenceIndexQuery(query)
+	if err != nil {
+		return EvidenceIndexPage{}, err
+	}
+	conditions := []string{"1 = 1"}
+	args := make([]any, 0, 10)
+	add := func(column, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	add("operation_id", query.OperationID)
+	add("candidate_sha", query.CandidateSHA)
+	add("candidate_tree", query.CandidateTree)
+	add("image_digest", query.ImageDigest)
+	add("receipt_id", query.ReceiptID)
+	add("receipt_type", query.ReceiptType)
+	add("status", query.Status)
+	if !cursor.ObservedAt.IsZero() {
+		args = append(args, cursor.ObservedAt, cursor.EvidenceID)
+		conditions = append(conditions, fmt.Sprintf("(observed_at, id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+	args = append(args, query.Limit+1)
+	queryText := fmt.Sprintf(`SELECT id, operation_id, candidate_sha, candidate_tree, image_digest, receipt_id, receipt_type, status, actor, observed_at, identity_digest, redacted_link, created_at
+		FROM evidence_index_entries WHERE %s ORDER BY observed_at DESC, id DESC LIMIT $%d`, strings.Join(conditions, " AND "), len(args))
+	rows, err := s.db.QueryContext(ctx, queryText, args...)
+	if err != nil {
+		return EvidenceIndexPage{}, err
+	}
+	defer rows.Close()
+	entries := make([]EvidenceIndexEntry, 0, query.Limit+1)
+	for rows.Next() {
+		var entry EvidenceIndexEntry
+		if err := rows.Scan(&entry.EvidenceID, &entry.OperationID, &entry.CandidateSHA, &entry.CandidateTree, &entry.ImageDigest, &entry.ReceiptID, &entry.ReceiptType, &entry.Status, &entry.Actor, &entry.ObservedAt, &entry.IdentityDigest, &entry.RedactedLink, &entry.CreatedAt); err != nil {
+			return EvidenceIndexPage{}, err
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return EvidenceIndexPage{}, err
+	}
+	hasMore := len(entries) > query.Limit
+	if hasMore {
+		entries = entries[:query.Limit]
+	}
+	page := EvidenceIndexPage{Entries: entries, HasMore: hasMore}
+	if hasMore {
+		page.NextCursor = encodeEvidenceIndexCursor(entries[len(entries)-1])
+	}
+	return page, nil
+}
+
+func (s *PostgresStore) ExportEvidenceIndex(ctx context.Context, query EvidenceIndexQuery) (EvidenceIndexExport, error) {
+	query.Cursor = ""
+	query.Limit = MaxEvidenceIndexPageSize
+	entries := make([]EvidenceIndexEntry, 0)
+	for {
+		page, err := s.ListEvidenceIndex(ctx, query)
+		if err != nil {
+			return EvidenceIndexExport{}, err
+		}
+		entries = append(entries, page.Entries...)
+		if !page.HasMore {
+			break
+		}
+		if len(entries) >= MaxEvidenceIndexExportSize {
+			return EvidenceIndexExport{}, ErrEvidenceIndexExportTooLarge
+		}
+		query.Cursor = page.NextCursor
+	}
+	return EvidenceIndexExport{SchemaVersion: 1, Entries: entries}, nil
+}
+
 func (s *PostgresStore) ListReceipts(ctx context.Context, query ReceiptQuery) (ReceiptPage, error) {
 	query, cursor, err := normalizeReceiptQuery(query)
 	if err != nil {
@@ -406,6 +541,17 @@ func (s *PostgresStore) receiptByIdempotencyKey(ctx context.Context, key string)
 	}
 	receipt, err := receiptFromEnt(row)
 	return receipt, row.RequestHash, err
+}
+
+func evidenceIndexByIdempotencyKeyTx(ctx context.Context, tx *sql.Tx, key string) (EvidenceIndexEntry, string, error) {
+	var entry EvidenceIndexEntry
+	var requestHash string
+	err := tx.QueryRowContext(ctx, `SELECT id, operation_id, candidate_sha, candidate_tree, image_digest, receipt_id, receipt_type, status, actor, observed_at, identity_digest, redacted_link, request_hash, created_at
+		FROM evidence_index_entries WHERE idempotency_key = $1`, key).Scan(
+		&entry.EvidenceID, &entry.OperationID, &entry.CandidateSHA, &entry.CandidateTree, &entry.ImageDigest,
+		&entry.ReceiptID, &entry.ReceiptType, &entry.Status, &entry.Actor, &entry.ObservedAt,
+		&entry.IdentityDigest, &entry.RedactedLink, &requestHash, &entry.CreatedAt)
+	return entry, requestHash, err
 }
 
 func receiptFromEnt(row *ledgerent.EvidenceReceipt) (Receipt, error) {

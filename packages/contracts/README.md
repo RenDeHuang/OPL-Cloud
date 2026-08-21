@@ -25,6 +25,7 @@ them:
 | Launch business operation, stage decision, and recovery authorization | `opl-cloud-control-plane-launch-contract.json` |
 | Fabric stage operation, idempotency, request hash, and resource binding | `opl-cloud-fabric-launch-binding-contract.json` |
 | Receipt, opaque provenance, reconciliation, and idempotency | `opl-cloud-evidence-ledger-contract.json` |
+| Cross-surface operation/Candidate evidence lookup and export | `opl-cloud-evidence-index-contract.json` |
 
 These focused contracts are the only current machine owners for the launch and
 settlement boundary. Do not recreate an aggregate launch contract.

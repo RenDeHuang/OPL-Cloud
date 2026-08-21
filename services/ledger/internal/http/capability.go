@@ -73,6 +73,18 @@ func ledgerCapabilityScopeForRequest(r *http.Request, body []byte) (ledgerCapabi
 		report, _ := input["report"].(map[string]any)
 		scope.AccountID, scope.WorkspaceID = strings.TrimSpace(stringValue(report, "accountId")), strings.TrimSpace(stringValue(report, "workspaceId"))
 		scope.ResourceKind, scope.ResourceID, scope.Action = "reconciliation", strings.TrimSpace(stringValue(report, "id")), "record_reconciliation"
+	case r.Method == http.MethodPost && r.URL.Path == "/ledger/evidence-index":
+		scope.ResourceKind, scope.ResourceID, scope.Action = "evidence_index", value("operationId"), "record_evidence_index"
+	case r.Method == http.MethodGet && (r.URL.Path == "/ledger/evidence-index" || r.URL.Path == "/ledger/evidence-index/export"):
+		resourceID := strings.TrimSpace(r.URL.Query().Get("operationId"))
+		if resourceID == "" {
+			resourceID = strings.TrimSpace(r.URL.Query().Get("candidateSha"))
+		}
+		if resourceID == "" {
+			resourceID = requestOperationID(r)
+		}
+		scope.ResourceKind, scope.ResourceID, scope.Action = "evidence_index", resourceID, "read_evidence_index"
+		scope.OperationID = requestOperationID(r)
 	}
 	return scope, scope.ResourceKind != "" && scope.ResourceID != "" && scope.Action != "" && scope.OperationID != ""
 }
