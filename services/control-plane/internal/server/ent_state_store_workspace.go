@@ -13,6 +13,7 @@ import (
 	controlplaneent "opl-cloud/services/control-plane/ent"
 	"opl-cloud/services/control-plane/ent/account"
 	"opl-cloud/services/control-plane/ent/adminauditevent"
+	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/storageattachment"
@@ -689,11 +690,29 @@ func (s *postgresEntStateStore) ClaimWorkspaceLaunchReconcile(ctx context.Contex
 	}
 	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
-	if _, err := client.Account.Query().Where(lockRowForUpdate).Order(controlplaneent.Asc(account.FieldID)).First(ctx); err != nil {
+	if err := lockWorkspacePurchaseAdmission(ctx, client); err != nil {
 		if controlplaneent.IsNotFound(err) {
 			return errWorkspaceLaunchCASConflict
 		}
 		return err
+	}
+	if err := claimWorkspaceLaunchReconcileLocked(ctx, client, claim, desired); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func claimWorkspaceLaunchReconcileLocked(ctx context.Context, client *controlplaneent.Client, claim workspaceLaunchReconcileClaim, desired workspaceLaunchReconcileOperation) error {
+	if reconciliation, found, err := billingReconciliationFromClient(ctx, client, false); err != nil {
+		return err
+	} else if found {
+		blocked, guardErr := billingReconciliationBlockState(reconciliation)
+		if guardErr != nil {
+			return guardErr
+		}
+		if blocked {
+			return errBillingReconciliationBlocked
+		}
 	}
 	if _, err := client.Account.Query().Where(account.IDEQ(claim.AccountID), lockRowForUpdate).Only(ctx); err != nil {
 		if controlplaneent.IsNotFound(err) {
@@ -743,7 +762,111 @@ func (s *postgresEntStateStore) ClaimWorkspaceLaunchReconcile(ctx context.Contex
 		}
 		return err
 	}
+	return nil
+}
+
+func (s *postgresEntStateStore) ApplyBillingReconciliation(ctx context.Context, mutation billingReconciliationMutation) error {
+	if err := validateBillingReconciliationMutation(mutation); err != nil {
+		return err
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	if err := lockWorkspacePurchaseAdmission(ctx, client); err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errBillingReconciliationCASConflict
+		}
+		return err
+	}
+	if err := applyBillingReconciliationLocked(ctx, client, mutation); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func applyBillingReconciliationLocked(ctx context.Context, client *controlplaneent.Client, mutation billingReconciliationMutation) error {
+	resultID := stringValue(mutation.Row["id"])
+	existing, existingErr := client.BillingReconciliation.Query().Where(billingreconciliation.IDEQ(resultID), lockRowForUpdate).Only(ctx)
+	if existingErr == nil {
+		if !billingReconciliationIdentityMatches(recordFromEnt(existing, reconcileEntFields), mutation.Row) {
+			return errIdempotencyConflict
+		}
+		audit, auditErr := client.AdminAuditEvent.Query().Where(adminauditevent.IDEQ(billingReconciliationAuditID(resultID)), lockRowForUpdate).Only(ctx)
+		if auditErr != nil {
+			if controlplaneent.IsNotFound(auditErr) {
+				return errIdempotencyConflict
+			}
+			return auditErr
+		}
+		if !billingReconciliationAuditIdentityMatches(recordFromEnt(audit, auditEntFields), mutation.Row) {
+			return errIdempotencyConflict
+		}
+		return nil
+	}
+	if !controlplaneent.IsNotFound(existingErr) {
+		return existingErr
+	}
+
+	current, found, err := billingReconciliationFromClient(ctx, client, true)
+	if err != nil {
+		return err
+	}
+	currentID := ""
+	if found {
+		currentID = stringValue(current["id"])
+	}
+	if currentID != mutation.ExpectedCurrentGuardID {
+		return errBillingReconciliationCASConflict
+	}
+	if _, auditErr := client.AdminAuditEvent.Query().Where(adminauditevent.IDEQ(billingReconciliationAuditID(resultID)), lockRowForUpdate).Only(ctx); auditErr == nil {
+		return errIdempotencyConflict
+	} else if !controlplaneent.IsNotFound(auditErr) {
+		return auditErr
+	}
+
+	row := cloneMap(mutation.Row)
+	createdAt := time.Now().UTC()
+	if currentAt, ok := parseRecordTime(current); ok && !createdAt.After(currentAt) {
+		createdAt = currentAt.Add(time.Nanosecond)
+	}
+	row["createdAt"] = createdAt.Format(time.RFC3339Nano)
+	if err := saveRecord(ctx, resultID, row, client.BillingReconciliation.Create(), reconcileEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			return errIdempotencyConflict
+		}
+		return err
+	}
+	audit := controlPlaneRecord(mutation.AuditEvent)
+	if err := saveRecord(ctx, stringValue(audit["id"]), audit, client.AdminAuditEvent.Create(), auditEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			return errIdempotencyConflict
+		}
+		return err
+	}
+	return nil
+}
+
+func lockWorkspacePurchaseAdmission(ctx context.Context, client *controlplaneent.Client) error {
+	_, err := client.Account.Query().Where(lockRowForUpdate).Order(controlplaneent.Asc(account.FieldID)).First(ctx)
+	return err
+}
+
+func billingReconciliationFromClient(ctx context.Context, client *controlplaneent.Client, lock bool) (map[string]any, bool, error) {
+	query := client.BillingReconciliation.Query().Order(controlplaneent.Desc(billingreconciliation.FieldCreatedAt, billingreconciliation.FieldID))
+	if lock {
+		query.Where(lockRowForUpdate)
+	}
+	row, err := query.First(ctx)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(row, reconcileEntFields), true, nil
 }
 
 func (s *postgresEntStateStore) PersistWorkspaceLaunchReconcile(ctx context.Context, update workspaceLaunchReconcileCAS) error {

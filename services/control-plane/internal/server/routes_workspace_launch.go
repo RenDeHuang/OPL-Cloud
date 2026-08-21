@@ -111,7 +111,10 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 				return
 			}
 		}
-		if _, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
+		if _, blocked, err := app.reconciliationBlocksNewWorkspaces(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		} else if blocked {
 			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
 			return
 		}
@@ -211,6 +214,8 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		})
 		if err != nil {
 			switch {
+			case errors.Is(err, errBillingReconciliationBlocked):
+				writeError(w, http.StatusConflict, errBillingReconciliationBlocked.Error())
 			case errors.Is(err, errWorkspaceLaunchCapacityReached):
 				writeError(w, http.StatusConflict, err.Error())
 			case errors.Is(err, errWorkspaceLaunchCASConflict), errors.Is(err, errWorkspaceLaunchInProgress):

@@ -477,7 +477,7 @@ func TestBillingReconciliationMalformedLedgerResponseKeepsLastGuard(t *testing.T
 		ID: "recon-previous", Status: "mismatch", BlockNewWorkspaces: true, Reason: "operator_reconciliation",
 		Report: reconciliationReport("recon-previous", 1, 0, []billingReconciliationException{{resourceType: "compute", resourceID: "compute-alpha", code: "ledger_receipt_missing"}}),
 	})
-	mustStore(t, fixture.store.SaveBillingReconciliation(context.Background(), previous))
+	applyBillingReconciliationForTest(t, fixture.store, previous, "")
 	fixture.ledger.reconciliationErr = errors.New("invalid ledger reconciliation response")
 
 	response := requestWithMutationKeyForTest(t, fixture.server, operatorSessionForTest(t, fixture.server), http.MethodPost, "/api/billing/reconciliation", `{"confirm":true}`, "reconcile-malformed-response")
@@ -485,7 +485,7 @@ func TestBillingReconciliationMalformedLedgerResponseKeepsLastGuard(t *testing.T
 		t.Fatalf("malformed Ledger response status = %d: %s", response.Code, response.Body.String())
 	}
 	stored, ok, err := fixture.store.BillingReconciliation(context.Background())
-	if err != nil || !ok || !reflect.DeepEqual(stored, previous) {
+	if err != nil || !ok || !billingReconciliationIdentityMatches(stored, previous) {
 		t.Fatalf("last valid guard replaced: stored=%#v previous=%#v err=%v", stored, previous, err)
 	}
 }
