@@ -26,6 +26,8 @@ type memoryTableStore struct {
 	runtimeOps        []map[string]any
 	productionE2E     controlPlaneRecordSet
 	reconciliation    map[string]any
+	reconciliations   controlPlaneRecordSet
+	reconciliationErr error
 }
 
 func newMemoryTableStore() *memoryTableStore {
@@ -44,6 +46,7 @@ func newMemoryTableStore() *memoryTableStore {
 		announcementReads: controlPlaneRecordSet{},
 		support:           controlPlaneRecordSet{},
 		productionE2E:     controlPlaneRecordSet{},
+		reconciliations:   controlPlaneRecordSet{},
 	}
 }
 
@@ -588,6 +591,18 @@ func (s *memoryTableStore) ApplyWorkspaceRenewalIntent(_ context.Context, update
 func (s *memoryTableStore) ClaimWorkspaceLaunchReconcile(_ context.Context, claim workspaceLaunchReconcileClaim) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.reconciliationErr != nil {
+		return s.reconciliationErr
+	}
+	if s.reconciliation != nil {
+		blocked, err := billingReconciliationBlockState(s.reconciliation)
+		if err != nil {
+			return err
+		}
+		if blocked {
+			return errBillingReconciliationBlocked
+		}
+	}
 	desired, err := decodeWorkspaceLaunchReconcileOperation(claim.DesiredOperation)
 	if err != nil || desired.stringFact("accountId") != claim.AccountID || desired.boolFact("acceptanceBCapacitySlot") != claim.AcceptanceBCapacitySlot || s.accounts[claim.AccountID] == nil {
 		return errWorkspaceLaunchCASConflict
@@ -1065,15 +1080,57 @@ func (s *memoryTableStore) CompleteProductionE2EAttempt(_ context.Context, id, b
 func (s *memoryTableStore) BillingReconciliation(_ context.Context) (map[string]any, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.reconciliationErr != nil {
+		return nil, false, s.reconciliationErr
+	}
 	if s.reconciliation == nil {
 		return nil, false, nil
 	}
 	return cloneMap(s.reconciliation), true, nil
 }
 
-func (s *memoryTableStore) SaveBillingReconciliation(_ context.Context, row map[string]any) error {
+func (s *memoryTableStore) ApplyBillingReconciliation(_ context.Context, mutation billingReconciliationMutation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.reconciliation = cloneMap(row)
+	if s.reconciliationErr != nil {
+		return s.reconciliationErr
+	}
+	if err := validateBillingReconciliationMutation(mutation); err != nil {
+		return err
+	}
+	resultID := stringValue(mutation.Row["id"])
+	if existing := s.reconciliations[resultID]; existing != nil {
+		if !billingReconciliationIdentityMatches(existing, mutation.Row) {
+			return errIdempotencyConflict
+		}
+		for _, event := range s.auditEvents {
+			if stringValue(event["id"]) == billingReconciliationAuditID(resultID) {
+				if !billingReconciliationAuditIdentityMatches(event, mutation.Row) {
+					return errIdempotencyConflict
+				}
+				return nil
+			}
+		}
+		return errIdempotencyConflict
+	}
+	currentID := ""
+	if s.reconciliation != nil {
+		currentID = stringValue(s.reconciliation["id"])
+	}
+	if currentID != mutation.ExpectedCurrentGuardID {
+		return errBillingReconciliationCASConflict
+	}
+	for _, event := range s.auditEvents {
+		if stringValue(event["id"]) == stringValue(mutation.AuditEvent["id"]) {
+			return errIdempotencyConflict
+		}
+	}
+	row := cloneMap(mutation.Row)
+	if stringValue(row["createdAt"]) == "" {
+		row["createdAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	s.reconciliations[resultID] = row
+	s.reconciliation = row
+	s.auditEvents = append(s.auditEvents, cloneMap(mutation.AuditEvent))
 	return nil
 }

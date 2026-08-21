@@ -45,8 +45,9 @@ test("Workspace status never invents a running state", () => {
   assert.equal(workspaceStatusLabel({}), "暂不可用");
 });
 
-test("Workspace launch requires balance strictly greater than the server quote", () => {
-  assert.equal(hasSufficientWorkspaceLaunchBalance("52580000", 52_580_000), false);
+test("Workspace launch accepts balance equal to or greater than the server quote", async () => {
+  assert.equal(hasSufficientWorkspaceLaunchBalance("52579999", 52_580_000), false);
+  assert.equal(hasSufficientWorkspaceLaunchBalance("52580000", 52_580_000), true);
   assert.equal(hasSufficientWorkspaceLaunchBalance("52580001", 52_580_000), true);
 });
 

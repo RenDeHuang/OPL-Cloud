@@ -18,9 +18,9 @@ shared multi-user Workspaces, HA, and GPU are not current customer capabilities.
 
 Basic and Pro are visible Workspace packages with integer USD-micros pricing.
 Control Plane owns quotes and purchase eligibility; Sub2API owns spendable
-balance, Keys, routing, and usage. A known open inconsistency remains: controlled
-Pilot admission accepts only Basic, and Console requires balance greater than a
-quote while the server accepts equality.
+balance, Keys, routing, and usage. The current offer set is Basic and Pro, and
+Console and server admission both accept an available balance exactly equal to
+the authoritative quote.
 
 Console calls Control Plane product APIs. Control Plane, Fabric, and Ledger are
 separate processes and PostgreSQL schema owners. Fabric provides Local-Docker
@@ -51,6 +51,11 @@ is selected and configured by the medopl instance, not by the portable product.
   checksum-bound installation bundle. Candidate manifests bind source, image,
   child manifests, assets, and workflow provenance without selecting an
   installation domain, Provider Profile, or Workspace image.
+- Ledger owns the append-only Cloud Evidence Index for operation identity,
+  Candidate identity, receipt identity, status, and redacted export links.
+  Control Plane billing reconciliation uses one transaction and the same
+  purchase-admission lock as Workspace Launch; a committed mismatch blocks new
+  purchases without changing Ledger's evidence ownership.
 - The active machine contracts are Candidate identity, Distribution identity,
   Control Plane/Fabric Launch request hashing, and the Workspace Runtime ABI.
   Other current behavior is owned by source, public APIs, schemas, and focused

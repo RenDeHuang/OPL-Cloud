@@ -34,6 +34,11 @@ not become separate customer charges.
 An Instance may enable only the plans its Provider Profile can fulfill, but it
 does not redefine Cloud customer prices.
 
+Ledger's Evidence Index is an append-only cross-surface lookup projection, not a
+second authority. It stores operation, Candidate, receipt, status, and redacted
+link facts with idempotent writes; source state, wallet state, provider state,
+and Instance state remain owned by their existing services.
+
 ## 2026-08-17: Control Plane Owns Workspace Purchase Eligibility
 
 External identity, spendable balance, a Cloud Account, and permission to buy a

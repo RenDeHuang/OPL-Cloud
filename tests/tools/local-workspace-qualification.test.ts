@@ -568,11 +568,12 @@ test("READY receipt binds the exact durable and accounting evidence", () => {
     },
     deletionReceipt: {
       count: 1, id: "receipt-delete", type: "workspace.deleted.v1", accountId: "acct-admin",
-      operationId: "workspace-delete-alpha", workspaceId: "ws-alpha"
+      operationId: "workspace-delete-alpha", workspaceId: "ws-alpha", launchReceiptId: "receipt-alpha"
     },
     residuals: { containers: 0, volumes: 0, networks: 0 },
     authorityWriteCounts: { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 0 },
-    mutationCounts: { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1 },
+    mutationCounts: { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1, refundPosts: 0 },
+    refund: { count: 0 },
     usage: { source: "sub2api", status: "available", totalRequests: 0 },
     qualification: { authorityMode: "fixture", p0Ready: false },
     deferred: ["tencent-tke", "production-sub2api", "production-secrets"]

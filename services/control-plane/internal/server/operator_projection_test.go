@@ -932,7 +932,7 @@ func TestOperatorReconciliationOnlyProjectsBillingReviewFacts(t *testing.T) {
 	} {
 		mustStore(t, store.SaveRuntimeOperation(context.Background(), operation))
 	}
-	mustStore(t, store.SaveBillingReconciliation(context.Background(), map[string]any{"id": "reconcile-ok", "status": "available"}))
+	applyBillingReconciliationForTest(t, store, billingReconciliationRowForTest("reconcile-ok", "ok", "operator_reconciliation"), "")
 	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, newOperatorProjectionClient()), store)
 	if err != nil {
 		t.Fatal(err)
@@ -961,7 +961,7 @@ func TestOperatorReconciliationIgnoresHistoricalResourceBillingReviews(t *testin
 		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PaidThrough: "2026-08-19T00:00:00Z", ErrorCode: "provider_unknown",
 	}
 	mustStore(t, store.SaveRuntimeOperation(context.Background(), workspaceRenewalOperationRow(renewal)))
-	mustStore(t, store.SaveBillingReconciliation(context.Background(), map[string]any{"id": "reconcile-mismatch", "status": "mismatch", "reason": "balance_mismatch"}))
+	applyBillingReconciliationForTest(t, store, billingReconciliationRowForTest("reconcile-mismatch", "mismatch", "balance_mismatch"), "")
 	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, newOperatorProjectionClient()), store)
 	if err != nil {
 		t.Fatal(err)

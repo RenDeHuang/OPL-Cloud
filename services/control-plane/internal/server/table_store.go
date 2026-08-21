@@ -24,6 +24,8 @@ var errProductionE2EAttemptAlreadyExists = errors.New("production_e2e_attempt_al
 var errProductionE2EAttemptBindingMismatch = errors.New("production_e2e_attempt_binding_mismatch")
 var errProductionE2EAttemptNotFound = errors.New("production_e2e_attempt_not_found")
 var errWorkspaceLaunchCapacityReached = errors.New("workspace_launch_capacity_reached")
+var errBillingReconciliationCASConflict = errors.New("billing_reconciliation_cas_conflict")
+var errBillingReconciliationBlocked = errors.New("billing_reconciliation_blocked")
 
 const recoveredWorkspaceE2EAttemptReason = "recovered_workspace_e2e_model_request"
 
@@ -49,6 +51,12 @@ type announcementMutation struct {
 	RequestHash     string
 	Patch           map[string]any
 	AuditEvent      map[string]any
+}
+
+type billingReconciliationMutation struct {
+	Row                    map[string]any
+	AuditEvent             map[string]any
+	ExpectedCurrentGuardID string
 }
 
 type tablePageQuery struct {
@@ -284,7 +292,7 @@ type controlPlaneTableStore interface {
 	GetProductionE2EAttempt(ctx context.Context, id string) (map[string]any, bool, error)
 	CompleteProductionE2EAttempt(ctx context.Context, id, binding string) (map[string]any, error)
 	BillingReconciliation(ctx context.Context) (map[string]any, bool, error)
-	SaveBillingReconciliation(ctx context.Context, row map[string]any) error
+	ApplyBillingReconciliation(ctx context.Context, mutation billingReconciliationMutation) error
 }
 
 func prepareWorkspaceLaunchProjection(row, owner, existing map[string]any) (map[string]any, error) {

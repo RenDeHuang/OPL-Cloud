@@ -83,8 +83,10 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 
 func sub2APIConfigFromEnv(getenv func(string) string) (clients.Sub2APIConfig, error) {
 	mode := strings.TrimSpace(getenv("OPL_DEPLOYMENT_MODE"))
-	if mode == "" {
-		mode = "platform_owned"
+	switch mode {
+	case "platform_owned", "managed_tke", "customer_owned":
+	default:
+		return clients.Sub2APIConfig{}, errors.New("OPL_DEPLOYMENT_MODE must be platform_owned, managed_tke, or customer_owned")
 	}
 	required := []string{
 		"OPL_SUB2API_BASE_URL",

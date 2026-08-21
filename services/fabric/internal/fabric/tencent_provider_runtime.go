@@ -28,6 +28,9 @@ type tencentWorkspaceRuntimeGatewayBinding struct {
 }
 
 func (p *TencentProvider) createWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume, gateway tencentWorkspaceRuntimeGatewayBinding) (WorkspaceRuntime, error) {
+	if err := p.validateInstallationConfig(); err != nil {
+		return WorkspaceRuntime{}, err
+	}
 	if compute.ID == "" || volume.ID == "" {
 		return WorkspaceRuntime{}, fmt.Errorf("workspace_runtime_resources_required")
 	}
@@ -261,7 +264,7 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 	if runtimeID == "" || runtimeOperationID == "" || costTags["opl_workspace_id"] != workspaceID || costTags["opl_resource_id"] != runtimeID || costTags["opl_operation_id"] != runtimeOperationID || costTags["opl_account_id"] == "" {
 		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, workspaceRuntimeStatusError("readback_mismatch")
 	}
-	return WorkspaceRuntime{ID: runtimeID, OperationID: runtimeOperationID, WorkspaceID: workspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), workspaceID), Status: status, ServiceName: serviceName, ImageID: image, Access: access, Ready: ready, Checks: checks, CostTags: costTags}, nil
+	return WorkspaceRuntime{ID: runtimeID, OperationID: runtimeOperationID, WorkspaceID: workspaceID, URL: fmt.Sprintf("https://%s/w/%s/", p.workspaceDomain, workspaceID), Status: status, ServiceName: serviceName, ImageID: image, Access: access, Ready: ready, Checks: checks, CostTags: costTags}, nil
 }
 
 func (*TencentProvider) WorkspaceRuntimeProviderFacts(runtime WorkspaceRuntime) ProviderResourceFacts {
@@ -407,6 +410,14 @@ func (p *TencentProvider) Readiness(ctx context.Context) (map[string]any, error)
 	if os.Getenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION") != "1" {
 		missing = append(missing, "RUN_TENCENT_CREATE_RELEASE_EXECUTION=1")
 	}
+	if p == nil || p.installationErr != nil {
+		if p == nil {
+			missing = append(missing, "Tencent provider installation configuration")
+		} else if p.installationErr != nil {
+			missing = append(missing, p.installationErr.Error())
+		}
+		return map[string]any{"provider": "tencent-tke", "ready": false, "cloudImagesReady": false, "workspaceImagesReady": false, "immutableImagesReady": false, "missingEnv": uniqueStrings(missing), "missingTools": []string{}, "failedChecks": []any{"installation_inputs"}}, nil
+	}
 	missingTools := []string{}
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		missingTools = append(missingTools, "kubectl")
@@ -426,7 +437,12 @@ func (p *TencentProvider) Readiness(ctx context.Context) (map[string]any, error)
 		"control_plane_image_id": podImageIDsMatch(pods, "app.kubernetes.io/component", "control-plane", "control-plane", os.Getenv("OPL_CLOUD_IMAGE")),
 		"ledger_image_id":        podImageIDsMatch(pods, "app.kubernetes.io/component", "ledger", "ledger", os.Getenv("OPL_CLOUD_IMAGE")),
 		"fabric_image_id":        podImageIDsMatch(pods, "app.kubernetes.io/component", "fabric", "fabric", os.Getenv("OPL_CLOUD_IMAGE")),
-		"workspace_image_id":     podImageIDsMatch(pods, "oplcloud.cn/workspace-id", "", "workspace", os.Getenv("OPL_WORKSPACE_IMAGE")),
+		"workspace_image_id": podImageIDsMatch(pods, "oplcloud.cn/workspace-id", "", "workspace", func() string {
+			if p == nil {
+				return ""
+			}
+			return p.workspaceImage
+		}()),
 	}
 	failedChecks := []any{}
 	if podErr != nil {
@@ -481,7 +497,7 @@ func podImageIDsMatch(pods []any, labelKey, labelValue, containerName, expected 
 
 func immutableImageDigest(value string) (string, bool) {
 	repository, digest, ok := strings.Cut(strings.TrimSpace(value), "@")
-	if !ok || repository == "" || strings.Contains(digest, "@") || !strings.HasPrefix(digest, "sha256:") || len(digest) != len("sha256:")+64 {
+	if !ok || repository == "" || repository != strings.TrimSpace(repository) || strings.ContainsAny(repository, " \t\r\n<>\"") || strings.Contains(digest, "@") || !strings.HasPrefix(digest, "sha256:") || len(digest) != len("sha256:")+64 {
 		return "", false
 	}
 	_, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))

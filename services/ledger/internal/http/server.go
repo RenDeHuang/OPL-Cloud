@@ -185,7 +185,97 @@ func NewServerWithAuth(store ledger.Store, token, capabilityKey string) http.Han
 		}
 		writeJSON(w, http.StatusCreated, result)
 	})
+	if evidenceStore, ok := store.(ledger.EvidenceIndexStore); ok {
+		registerEvidenceIndexRoutes(mux, evidenceStore)
+	}
 	return authorizeLedgerRequests(mux, store, token, capabilityKey)
+}
+
+func registerEvidenceIndexRoutes(mux *http.ServeMux, store ledger.EvidenceIndexStore) {
+	mux.HandleFunc("POST /ledger/evidence-index", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		var input ledger.EvidenceIndexInput
+		if err := decodeJSONBody(r, &input); err != nil {
+			writeJSONBodyError(w, err)
+			return
+		}
+		input.IdempotencyKey = idempotencyKey
+		result, err := store.RecordEvidenceIndex(r.Context(), input)
+		switch {
+		case errors.Is(err, ledger.ErrInvalidEvidenceIndexInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ledger.ErrIdempotencyConflict):
+			writeError(w, http.StatusConflict, err.Error())
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "evidence index write failed")
+		default:
+			writeJSON(w, http.StatusCreated, result)
+		}
+	})
+	mux.HandleFunc("GET /ledger/evidence-index", func(w http.ResponseWriter, r *http.Request) {
+		query, err := evidenceIndexQueryFromRequest(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ledger.ErrInvalidEvidenceIndexQuery.Error())
+			return
+		}
+		result, err := store.ListEvidenceIndex(r.Context(), query)
+		if errors.Is(err, ledger.ErrInvalidEvidenceIndexQuery) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "evidence index query failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+	mux.HandleFunc("GET /ledger/evidence-index/export", func(w http.ResponseWriter, r *http.Request) {
+		query, err := evidenceIndexQueryFromRequest(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ledger.ErrInvalidEvidenceIndexQuery.Error())
+			return
+		}
+		result, err := store.ExportEvidenceIndex(r.Context(), query)
+		if errors.Is(err, ledger.ErrInvalidEvidenceIndexQuery) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, ledger.ErrEvidenceIndexExportTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "evidence index export failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+}
+
+func evidenceIndexQueryFromRequest(r *http.Request) (ledger.EvidenceIndexQuery, error) {
+	values := r.URL.Query()
+	query := ledger.EvidenceIndexQuery{
+		OperationID:   values.Get("operationId"),
+		CandidateSHA:  values.Get("candidateSha"),
+		CandidateTree: values.Get("candidateTree"),
+		ImageDigest:   values.Get("imageDigest"),
+		ReceiptID:     values.Get("receiptId"),
+		ReceiptType:   values.Get("receiptType"),
+		Status:        values.Get("status"),
+		Cursor:        values.Get("cursor"),
+	}
+	if rawLimit := values.Get("limit"); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil {
+			return ledger.EvidenceIndexQuery{}, err
+		}
+		query.Limit = limit
+	}
+	return query, nil
 }
 
 const maxJSONBodyBytes int64 = 1 << 20
@@ -274,6 +364,9 @@ func authorizeLedgerRequests(next http.Handler, store ledger.Store, token, capab
 }
 
 func ledgerOwnerClaimsMatch(claims ledgerCapabilityClaims, scope ledgerCapabilityScope) bool {
+	if claims.Action == "record_evidence_index" || claims.Action == "read_evidence_index" {
+		return claims.ResourceKind == scope.ResourceKind && claims.ResourceID == scope.ResourceID
+	}
 	if claims.Action == "read_receipt" {
 		return claims.AccountID != "" && claims.AccountID == scope.AccountID &&
 			(claims.WorkspaceID == "" || claims.WorkspaceID == scope.WorkspaceID)

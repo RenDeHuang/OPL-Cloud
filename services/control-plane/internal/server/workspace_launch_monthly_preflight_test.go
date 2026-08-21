@@ -14,10 +14,13 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
+const controlledBasicPilotAccountsEnv = "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS"
+
 type workspaceLaunchMonthlyPreflightLedger struct {
 	fakeLedgerClient
 	mu       sync.Mutex
 	receipts map[string]clients.Receipt
+	writes   int
 }
 
 func (l *workspaceLaunchMonthlyPreflightLedger) RecordReceipt(_ context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
@@ -28,6 +31,7 @@ func (l *workspaceLaunchMonthlyPreflightLedger) RecordReceipt(_ context.Context,
 	}
 	receipt := clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-" + stableID(key)[:16]}
 	l.receipts[key] = receipt
+	l.writes++
 	return receipt, nil
 }
 
@@ -45,6 +49,7 @@ func (l *workspaceLaunchMonthlyPreflightLedger) ListReceipts(_ context.Context, 
 
 type workspaceLaunchMonthlyPreflightFabric struct {
 	*gatewayAccountingFabric
+	packages           []clients.FabricWorkspacePackage
 	events             *[]string
 	failureMode        string
 	runtimePending     bool
@@ -52,6 +57,16 @@ type workspaceLaunchMonthlyPreflightFabric struct {
 	runtimeEnsureCalls int
 	runtimeReadCalls   int
 	runtimeReadyResult clients.WorkspaceLaunchStageResult
+	stageResults       map[string]clients.WorkspaceLaunchStageResult
+	receiptLedger      *workspaceLaunchMonthlyPreflightLedger
+}
+
+func (f *workspaceLaunchMonthlyPreflightFabric) Catalog(ctx context.Context) (clients.FabricCatalog, error) {
+	if f.packages != nil {
+		*f.events = append(*f.events, "fabric.catalog")
+		return clients.FabricCatalog{WorkspacePackages: append([]clients.FabricWorkspacePackage(nil), f.packages...)}, nil
+	}
+	return f.gatewayAccountingFabric.Catalog(ctx)
 }
 
 func (f *workspaceLaunchMonthlyPreflightFabric) PreflightWorkspaceLaunch(_ context.Context, input clients.WorkspaceLaunchPreflightInput) (clients.WorkspaceLaunchPreflight, error) {
@@ -63,7 +78,7 @@ func (f *workspaceLaunchMonthlyPreflightFabric) PreflightWorkspaceLaunch(_ conte
 		LaunchOperationID:  input.LaunchOperationID,
 		RequestHash:        input.RequestHash,
 		ProviderProfileRef: "provider-profile",
-		BindingRef:         "workspace-binding",
+		BindingRef:         "workspace-binding-" + stableID(input.LaunchOperationID)[:12],
 		SpecDigest:         strings.Repeat("a", 64),
 	}, nil
 }
@@ -89,8 +104,12 @@ func (f *workspaceLaunchMonthlyPreflightFabric) MonthlyPreflight(_ context.Conte
 func (f *workspaceLaunchMonthlyPreflightFabric) EnsureWorkspaceLaunchStage(ctx context.Context, input clients.WorkspaceLaunchStageInput) (clients.WorkspaceLaunchStageResult, error) {
 	*f.events = append(*f.events, "fabric.stage."+input.Binding.Stage)
 	result, err := f.gatewayAccountingFabric.EnsureWorkspaceLaunchStage(ctx, input)
-	if err != nil || input.Binding.Stage != "runtime" || !f.runtimePending {
+	if err != nil {
 		return result, err
+	}
+	f.stageResults[input.Binding.LaunchOperationID+":"+input.Binding.Stage] = result
+	if input.Binding.Stage != "runtime" || !f.runtimePending {
+		return result, nil
 	}
 	f.runtimeEnsureCalls++
 	f.runtimeReadyResult = result
@@ -100,7 +119,14 @@ func (f *workspaceLaunchMonthlyPreflightFabric) EnsureWorkspaceLaunchStage(ctx c
 
 func (f *workspaceLaunchMonthlyPreflightFabric) ReadWorkspaceLaunchStage(ctx context.Context, input clients.WorkspaceLaunchStageInput) (clients.WorkspaceLaunchStageResult, error) {
 	if input.Binding.Stage != "runtime" || !f.runtimePending {
-		return f.gatewayAccountingFabric.ReadWorkspaceLaunchStage(ctx, input)
+		result, ok := f.stageResults[input.Binding.LaunchOperationID+":"+input.Binding.Stage]
+		if ok {
+			return result, nil
+		}
+		return clients.WorkspaceLaunchStageResult{
+			SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion,
+			State:         workspaceLaunchStageAbsent, Reason: "no_stage_record", Binding: input.Binding, Resources: input.Resources,
+		}, nil
 	}
 	f.runtimeReadCalls++
 	if f.runtimeEnsureCalls == 0 {
@@ -153,7 +179,10 @@ func (c *workspaceLaunchMonthlyPreflightSub2API) WorkspaceUserKeysForConvergence
 func (c *workspaceLaunchMonthlyPreflightSub2API) CreateUserKey(_ context.Context, _ clients.SessionDelegatedCredential, userID int64, input clients.Sub2APICreateKeyInput, _ string) (clients.Sub2APIWorkspaceKey, error) {
 	*c.events = append(*c.events, "sub2api.workspace-key")
 	groupID := input.GroupID
-	key := clients.Sub2APIWorkspaceKey{ID: 19, UserID: userID, Name: input.Name, Key: "workspace-key-secret", GroupID: &groupID, Status: "active"}
+	key := clients.Sub2APIWorkspaceKey{
+		ID: int64(19 + len(c.keys)), UserID: userID, Name: input.Name,
+		Key: "workspace-key-secret-" + stableID(input.Name)[:12], GroupID: &groupID, Status: "active",
+	}
 	c.keys = append(c.keys, key)
 	return key, nil
 }
@@ -206,10 +235,12 @@ func newWorkspaceLaunchMonthlyPreflightFixture(t *testing.T, failureMode string)
 		gatewayAccountingFabric: newGatewayAccountingFabric(),
 		events:                  &events,
 		failureMode:             failureMode,
+		stageResults:            map[string]clients.WorkspaceLaunchStageResult{},
 	}
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	ledger := &workspaceLaunchMonthlyPreflightLedger{receipts: map[string]clients.Receipt{}}
+	fabric.receiptLedger = ledger
 	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, client), store)
 	if err != nil {
 		t.Fatal(err)
@@ -260,18 +291,119 @@ func TestWorkspaceLaunchMissingPurchaseEligibilityFailsClosedBeforeMutation(t *t
 	}
 }
 
-func TestWorkspaceLaunchRetainsInstancePilotAllowlistUntilMigrationReadback(t *testing.T) {
+func TestWorkspaceLaunchUsesControlPlaneAccountAuthorityWithoutPilotAllowlist(t *testing.T) {
 	t.Setenv(controlledBasicPilotEnabledEnv, "1")
-	t.Setenv(controlledBasicPilotAccountsEnv, "")
+	t.Setenv("OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS", "")
 	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
 	server, _, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Pilot allowlist pending","packageId":"basic","autoRenew":false}`, "pilot-allowlist-pending")
-	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_launch_admission_invalid") {
-		t.Fatalf("pilot allowlist transition response = %d: %s", response.Code, response.Body.String())
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Account authority","packageId":"basic","autoRenew":false}`, "account-authority")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("account authority response = %d: %s", response.Code, response.Body.String())
 	}
-	if len(client.charges) != 0 || len(*events) != 0 {
-		t.Fatalf("pilot allowlist transition crossed mutation boundary: charges=%#v events=%#v", client.charges, *events)
+	if len(client.charges) != 0 || !strings.Contains(strings.Join(*events, "\n"), "fabric.workspace.preflight") {
+		t.Fatalf("account authority did not stop before debit while reaching Fabric preflight: charges=%#v events=%#v", client.charges, *events)
+	}
+}
+
+func TestControlledPilotAdmissionUsesAccountAndGlobalPolicyNotPackageAllowlist(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	admission := controlledBasicPilotAdmissionFromEnv()
+	if code := admission.rejectNewLaunch(false); code != "" {
+		t.Fatalf("enabled admission rejected launch: %s", code)
+	}
+	if code := admission.rejectNewLaunch(true); code != "autoRenew_unavailable" {
+		t.Fatalf("auto-renew admission code = %q", code)
+	}
+
+	t.Setenv(controlledBasicPilotEnabledEnv, "0")
+	admission = controlledBasicPilotAdmissionFromEnv()
+	if code := admission.rejectNewLaunch(false); code != "workspace_launch_admission_disabled" {
+		t.Fatalf("stopped admission code = %q", code)
+	}
+
+	t.Setenv(controlledBasicPilotEnabledEnv, "invalid")
+	if code := controlledBasicPilotAdmissionFromEnv().rejectNewLaunch(false); code != "workspace_launch_admission_invalid" {
+		t.Fatalf("invalid admission code = %q", code)
+	}
+}
+
+func TestWorkspaceLaunchAccountAuthorityAdmitsBasicAndPro(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+
+	for _, offer := range []struct {
+		packageID string
+		quote     int64
+	}{{packageID: "basic", quote: 52_580_000}, {packageID: "pro", quote: 240_080_000}} {
+		t.Run(offer.packageID, func(t *testing.T) {
+			server, _, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+			client.mu.Lock()
+			client.balance = offer.quote
+			client.mu.Unlock()
+			session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+			response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+				`{"name":"Offer admission","packageId":"`+offer.packageID+`","autoRenew":false}`, "offer-admission-"+offer.packageID)
+			if response.Code != http.StatusAccepted || strings.Contains(response.Body.String(), "workspace_launch_basic_only") {
+				t.Fatalf("%s exact-balance admission response = %d: %s", offer.packageID, response.Code, response.Body.String())
+			}
+			if len(client.charges) != 0 || !strings.Contains(strings.Join(*events, "\n"), "fabric.workspace.preflight") {
+				t.Fatalf("%s crossed debit or missed Fabric preflight: charges=%#v events=%#v", offer.packageID, client.charges, *events)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchInsufficientBalanceFailsBeforePersistenceAndDebit(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+	server, store, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	client.mu.Lock()
+	client.balance = 52_579_999
+	client.mu.Unlock()
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+		`{"name":"Insufficient balance","packageId":"basic","autoRenew":false}`, "insufficient-balance")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errMonthlyInsufficientBalance.Error()) {
+		t.Fatalf("insufficient-balance response = %d: %s", response.Code, response.Body.String())
+	}
+	if len(client.charges) != 0 || !strings.Contains(strings.Join(*events, "\n"), "fabric.workspace.preflight") {
+		t.Fatalf("insufficient balance crossed debit or missed read-only preflight: charges=%#v events=%#v", client.charges, *events)
+	}
+	operations, err := store.ListRuntimeOperations(context.Background())
+	if err != nil || len(operations) != 0 {
+		t.Fatalf("insufficient balance persisted operation = %#v err=%v", operations, err)
+	}
+}
+
+func TestWorkspaceLaunchUnknownOrUnavailablePackageFailsBeforePreflightAndDebit(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+	for _, tc := range []struct {
+		name      string
+		packages  []clients.FabricWorkspacePackage
+		packageID string
+	}{
+		{name: "unknown", packages: []clients.FabricWorkspacePackage{{ID: "basic", SizeGB: 10, Available: true}}, packageID: "enterprise"},
+		{name: "unavailable", packages: []clients.FabricWorkspacePackage{{ID: "basic", SizeGB: 10, Available: true}, {ID: "pro", SizeGB: 100, Available: false}}, packageID: "pro"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, store, client, fabric, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+			fabric.packages = tc.packages
+			session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+			response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+				`{"name":"Unavailable offer","packageId":"`+tc.packageID+`","autoRenew":false}`, "offer-unavailable-"+tc.name)
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"package_unavailable"`) {
+				t.Fatalf("%s response = %d: %s", tc.name, response.Code, response.Body.String())
+			}
+			if len(client.charges) != 0 || len(*events) != 1 || (*events)[0] != "fabric.catalog" {
+				t.Fatalf("%s crossed admission boundary: charges=%#v events=%#v", tc.name, client.charges, *events)
+			}
+			operations, err := store.ListRuntimeOperations(context.Background())
+			if err != nil || len(operations) != 0 {
+				t.Fatalf("%s persisted operation = %#v err=%v", tc.name, operations, err)
+			}
+		})
 	}
 }
 
@@ -413,6 +545,122 @@ func TestWorkspaceLaunchMonthlyPreflightRunsBeforeDebitAndProviderStages(t *test
 	if key < 0 || monthlyCompute < 0 || monthlyStorage < 0 || debit < 0 || firstFabricStage < 0 ||
 		key >= monthlyCompute || monthlyCompute >= monthlyStorage || monthlyStorage >= debit || debit >= firstFabricStage {
 		t.Fatalf("want key < compute < storage < debit < first Fabric stage: events=%#v", *events)
+	}
+}
+
+func TestWorkspaceLaunchSameAccountSequentialPurchasesCreateIndependentWorkspaces(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv(controlledBasicPilotAccountsEnv, "acct-alpha")
+	t.Setenv("OPL_TENCENT_ZONE", "ap-guangzhou-1")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+
+	server, store, client, fabric, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	ledger := fabric.receiptLedger
+	client.balance = 2 * gatewayAccountingChargeMicros
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	handler := server.(*controlPlaneHTTPHandler)
+
+	complete := func(key, name string) workspaceLaunchReconcileOperation {
+		t.Helper()
+		response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+			`{"name":"`+name+`","packageId":"basic","autoRenew":false}`, key)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("launch %s status=%d body=%s", key, response.Code, response.Body.String())
+		}
+		if _, err := continueWorkspaceLaunchKeyForMonthlyPreflightTest(t, server, session, key); err != nil {
+			t.Fatalf("continue launch %s: %v", key, err)
+		}
+		operationID := workspaceLaunchOperationID("acct-alpha", key)
+		for range 20 {
+			if err := handler.app.runWorkspaceLaunchesOnce(context.Background(), handler.service); err != nil {
+				t.Fatalf("run launch %s: %v", key, err)
+			}
+			row, found, err := store.GetRuntimeOperation(context.Background(), operationID)
+			if err != nil || !found {
+				t.Fatalf("read launch %s found=%t err=%v", key, found, err)
+			}
+			operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if operation.Status == "succeeded" {
+				return operation
+			}
+		}
+		t.Fatalf("launch %s did not reach succeeded", key)
+		return workspaceLaunchReconcileOperation{}
+	}
+
+	first := complete("multi-workspace-first", "First Workspace")
+	second := complete("multi-workspace-second", "Second Workspace")
+	for fact, values := range map[string][2]string{
+		"operation":          {first.ID, second.ID},
+		"Workspace":          {first.stringFact("workspaceId"), second.stringFact("workspaceId")},
+		"Debit":              {first.stringFact("sub2apiRedeemCode"), second.stringFact("sub2apiRedeemCode")},
+		"preflight binding":  {first.stringFact("preflightBindingRef"), second.stringFact("preflightBindingRef")},
+		"compute":            {first.stringFact("computeAllocationId"), second.stringFact("computeAllocationId")},
+		"compute binding":    {first.stringFact("computeBindingRef"), second.stringFact("computeBindingRef")},
+		"storage":            {first.stringFact("storageId"), second.stringFact("storageId")},
+		"storage binding":    {first.stringFact("storageBindingRef"), second.stringFact("storageBindingRef")},
+		"attachment":         {first.stringFact("attachmentId"), second.stringFact("attachmentId")},
+		"attachment binding": {first.stringFact("attachmentBindingRef"), second.stringFact("attachmentBindingRef")},
+		"gateway secret":     {first.stringFact("gatewaySecretRef"), second.stringFact("gatewaySecretRef")},
+		"secret binding":     {first.stringFact("secretBindingRef"), second.stringFact("secretBindingRef")},
+		"Runtime":            {first.stringFact("runtimeId"), second.stringFact("runtimeId")},
+		"Runtime binding":    {first.stringFact("runtimeBindingRef"), second.stringFact("runtimeBindingRef")},
+		"Receipt":            {first.stringFact("receiptId"), second.stringFact("receiptId")},
+	} {
+		if values[0] == "" || values[1] == "" || values[0] == values[1] {
+			t.Fatalf("%s identity is not independent: %#v", fact, values)
+		}
+	}
+	if first.int64Fact("workspaceApiKeyId") <= 0 || second.int64Fact("workspaceApiKeyId") <= 0 ||
+		first.int64Fact("workspaceApiKeyId") == second.int64Fact("workspaceApiKeyId") {
+		t.Fatalf("Workspace Key identities are not independent: first=%d second=%d", first.int64Fact("workspaceApiKeyId"), second.int64Fact("workspaceApiKeyId"))
+	}
+	for _, operation := range []workspaceLaunchReconcileOperation{first, second} {
+		receipt, ok := ledger.receipts[operation.ID+":purchase-receipt"]
+		if !ok || receipt.ReceiptID != operation.stringFact("receiptId") || receipt.AccountID != "acct-alpha" ||
+			receipt.WorkspaceID != operation.stringFact("workspaceId") || receipt.RequestID != operation.ID ||
+			stringValue(receipt.Execution["operationId"]) != operation.ID ||
+			stringValue(receipt.Execution["resourceId"]) != operation.stringFact("workspaceId") {
+			t.Fatalf("Receipt is not bound to its operation and Workspace: operation=%#v receipt=%#v", operation, receipt)
+		}
+	}
+
+	workspaces, err := store.ListWorkspaces(context.Background(), "acct-alpha")
+	if err != nil || len(workspaces) != 2 {
+		t.Fatalf("Account Workspace readback=%#v err=%v", workspaces, err)
+	}
+	workspaceIDs := map[string]bool{}
+	for _, workspace := range workspaces {
+		workspaceIDs[stringValue(workspace["id"])] = true
+	}
+	if !workspaceIDs[first.stringFact("workspaceId")] || !workspaceIDs[second.stringFact("workspaceId")] {
+		t.Fatalf("Account readback lost a Workspace: ids=%#v", workspaceIDs)
+	}
+	if len(client.charges) != 2 || len(client.keys) != 2 || ledger.writes != 2 || len(ledger.receipts) != 2 || len(fabric.stageResults) != 10 {
+		t.Fatalf("independent writes charges=%#v keys=%#v ledgerWrites=%d receipts=%#v FabricStages=%#v events=%#v",
+			client.charges, client.keys, ledger.writes, ledger.receipts, fabric.stageResults, *events)
+	}
+
+	beforeEvents := len(*events)
+	for _, replay := range []struct {
+		key  string
+		name string
+	}{
+		{key: "multi-workspace-first", name: "First Workspace"},
+		{key: "multi-workspace-second", name: "Second Workspace"},
+	} {
+		response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+			`{"name":"`+replay.name+`","packageId":"basic","autoRenew":false}`, replay.key)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("replay %s status=%d body=%s", replay.key, response.Code, response.Body.String())
+		}
+	}
+	if len(client.charges) != 2 || len(client.keys) != 2 || ledger.writes != 2 || len(ledger.receipts) != 2 || len(fabric.stageResults) != 10 || len(*events) != beforeEvents {
+		t.Fatalf("replay added writes charges=%#v keys=%#v ledgerWrites=%d receipts=%#v FabricStages=%#v events=%#v",
+			client.charges, client.keys, ledger.writes, ledger.receipts, fabric.stageResults, *events)
 	}
 }
 

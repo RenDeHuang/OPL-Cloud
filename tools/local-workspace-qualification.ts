@@ -330,11 +330,14 @@ export function validateLocalQualificationReceipt(value) {
       value.deletion?.runtimeId !== value.identities.runtimeId || String(value.deletion?.keyId || "") !== String(value.identities.keyId)) {
       throw new Error("owner deletion evidence is invalid");
     }
-    if (value.deletionReceipt?.count !== 1 || value.deletionReceipt?.id !== value.identities.deletionReceiptId ||
-      value.deletionReceipt?.type !== "workspace.deleted.v1" || value.deletionReceipt?.accountId !== value.identities.accountId ||
-      value.deletionReceipt?.operationId !== value.identities.deleteOperationId || value.deletionReceipt?.workspaceId !== value.identities.workspaceId) {
-      throw new Error("deletion receipt binding is invalid");
-    }
+  }
+  if (live) {
+    if (value.deletionReceipt?.count !== 0) throw new Error("live qualification must not record a deletion receipt");
+  } else if (value.deletionReceipt?.count !== 1 || value.deletionReceipt?.id !== value.identities.deletionReceiptId ||
+    value.deletionReceipt?.type !== "workspace.deleted.v1" || value.deletionReceipt?.accountId !== value.identities.accountId ||
+    value.deletionReceipt?.operationId !== value.identities.deleteOperationId || value.deletionReceipt?.workspaceId !== value.identities.workspaceId ||
+    value.deletionReceipt?.launchReceiptId !== value.identities.purchaseReceiptId) {
+    throw new Error("deletion receipt binding is invalid");
   }
   if (["containers", "volumes", "networks"].some((key) => value.residuals?.[key] !== 0)) {
     throw new Error("exact-labelled residual evidence is invalid");
@@ -344,11 +347,12 @@ export function validateLocalQualificationReceipt(value) {
     throw new Error("qualification authority write counts are invalid");
   }
   const expectedMutationCounts = live
-    ? { accountProvisionPosts: 1, workspaceLaunchPosts: 1, workspaceDeleteRequests: 0 }
-    : { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1 };
+    ? { accountProvisionPosts: 1, workspaceLaunchPosts: 1, workspaceDeleteRequests: 0, refundPosts: 0 }
+    : { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1, refundPosts: 0 };
   if (Object.entries(expectedMutationCounts).some(([key, count]) => value.mutationCounts?.[key] !== count)) {
     throw new Error("qualification mutation counts are invalid");
   }
+  if (value.refund?.count !== 0) throw new Error("Workspace qualification must not refund");
   if (value.usage?.source !== "sub2api" || value.usage?.status !== "available") throw new Error("Sub2API usage readback is invalid");
   const serialized = JSON.stringify(value);
   if (/"(?:password|cookie|csrf|authorization|token|apiKey)"\s*:/i.test(serialized)) {
@@ -838,7 +842,7 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
     ]);
     onStage("pricing_preview");
     const pricing = (await http.json("/api/pricing/preview", {
-      method: "POST", body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
+      method: "POST", body: { resourceType: "workspace", packageId: "basic" }
     }, auth)).payload;
     const amountUsdMicros = String(pricing?.totalChargeUsdMicros || "");
     if (pricing?.resourceType !== "workspace" || pricing?.packageId !== "basic" || pricing?.currency !== "USD" ||
@@ -849,7 +853,7 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
     launchSubmitted = true;
     const initial = (await http.json("/api/workspace-launches", {
       method: "POST", headers: { "idempotency-key": launchKey },
-      body: { name: workspaceName, packageId: "basic", sizeGb: 10, autoRenew: false }
+      body: { name: workspaceName, packageId: "basic", autoRenew: false }
     }, auth, [202])).payload;
     if (initial?.operationId !== operationId || initial?.workspaceId !== workspaceId) throw new Error("deterministic launch identity is invalid");
     cleanupScope.workspaceId = workspaceId;
@@ -901,9 +905,11 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
       },
       restart: { performed: false },
       deletion: { performed: false, mode: "qualification_owned_cleanup" },
+      deletionReceipt: { count: 0 },
       residuals: cleanupEvidence,
       authorityWriteCounts: { keyCreates: 1, keyDeletes: 0, debits: 1, refunds: 0 },
-      mutationCounts: { accountProvisionPosts: 1, workspaceLaunchPosts: 1, workspaceDeleteRequests: 0 },
+      mutationCounts: { accountProvisionPosts: 1, workspaceLaunchPosts: 1, workspaceDeleteRequests: 0, refundPosts: 0 },
+      refund: { count: 0 },
       usage: { source: "sub2api", status: "available", totalRequests: usage.totalRequests }
     };
     onStage("receipt_validation");
@@ -1136,7 +1142,6 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
   const fabricSecretRoot = join(tempRoot, "fabric-secrets");
   await mkdir(fabricSecretRoot, { recursive: true, mode: 0o700 });
   const envFile = join(tempRoot, "qualification.env");
-  const liveAdmissionOverride = join(tempRoot, "qualification-live-admission.yaml");
   const publicPort = await unusedPort();
   const authorityPort = await unusedPort();
   const registryPort = await unusedPort();
@@ -1168,7 +1173,6 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
   const composePrefix = ["compose", "--project-name", project, "--env-file", envFile];
   const qualificationCompose = options.authorityMode === "fixture" ? "deploy/portable/compose.local-qualification.yaml" : "deploy/portable/compose.local-qualification-live.yaml";
   for (const file of [...baseComposeFiles, qualificationCompose]) composePrefix.push("-f", file);
-  if (options.authorityMode === "live") composePrefix.push("-f", liveAdmissionOverride);
   let composeEnvironment = process.env;
   const compose = (args, settings = {}) => runProcess("docker", [...composePrefix, ...args], { ...settings, env: composeEnvironment });
 
@@ -1232,8 +1236,6 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
       accountId = `acct-${stableID("account", adminEmail.toLowerCase()).slice(0, 18)}`;
       operationId = `workspace-launch-${stableID(accountId, launchKey).slice(0, 18)}`;
       workspaceId = `ws-${stableID("workspace-launch-v2", accountId, operationId).slice(0, 18)}`;
-      envEntries.push(["OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS", accountId]);
-      await writeFile(liveAdmissionOverride, "services:\n  control-plane:\n    environment:\n      OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS: ${OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS:?Set the task-owned qualification account}\n", { mode: 0o600 });
     }
     composeEnvironment = qualificationComposeEnvironment(process.env, envEntries);
     const envFileEntries = qualificationEnvFileEntries(envEntries, options);
@@ -1359,7 +1361,7 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
 
     stage = "workspace_launch";
     const pricing = (await http.json("/api/pricing/preview", {
-      method: "POST", body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
+      method: "POST", body: { resourceType: "workspace", packageId: "basic" }
     }, auth)).payload;
     const amountUsdMicros = String(pricing?.totalChargeUsdMicros || "");
     if (!/^[1-9][0-9]*$/.test(amountUsdMicros) || BigInt(beforeMicros) < BigInt(amountUsdMicros)) {
@@ -1367,7 +1369,7 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
     }
     const initial = (await http.json("/api/workspace-launches", {
       method: "POST", headers: { "idempotency-key": launchKey },
-      body: { name: `Local qualification ${suffix}`, packageId: "basic", sizeGb: 10, autoRenew: false }
+      body: { name: `Local qualification ${suffix}`, packageId: "basic", autoRenew: false }
     }, auth, [202])).payload;
     if (initial?.operationId !== operationId || initial?.workspaceId !== workspaceId) throw new Error("deterministic launch identity is invalid");
     const launch = await waitForLaunch(http, operationId, auth);
@@ -1380,16 +1382,24 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
     if (!opened.response.ok || !opened.text.includes("OPL Workspace READY")) throw new Error("Workspace Runtime open failed");
     const runtimeContainer = await runtimeImageReadback(accountId, workspaceId, workspaceImage, workspaceInspection.Id);
     const usage = sourceData((await http.json("/api/gateway/usage-summary?period=month", {}, auth)).payload, "sub2api");
+    const walletAfterCharge = sourceData((await http.json("/api/gateway/wallet", {}, auth)).payload, "sub2api");
+    const chargedMicros = String(walletAfterCharge?.usdMicros || "");
     if (!usage || typeof usage.totalRequests !== "number") throw new Error("Sub2API usage readback is invalid");
-    const authorityBeforeDelete = await authorityState(authorityPort, authorityToken);
+    const authorityBeforeDelete = options.authorityMode === "fixture" ? await authorityState(authorityPort, authorityToken) : null;
     const debits = authorityBeforeDelete?.adjustments?.filter((candidate) => candidate?.kind === "debit") || [];
-    const debit = debits.find((candidate) => candidate?.code === evidence.receipt.chargeReference);
-    const debitCount = debits.filter((candidate) => candidate?.code === evidence.receipt.chargeReference).length;
-    const afterMicros = String(authorityBeforeDelete.wallet?.usdMicros || "");
-    if (debits.length !== 1 || authorityBeforeDelete.writeCounts?.debits !== 1 || !debit || String(debit.userId) !== "41" || String(debit.amountUsdMicros) !== amountUsdMicros) {
+    const liveDebit = options.authorityMode === "live" ? await liveAuthorityAdjustmentReadback(
+      liveAuthority.baseURL, liveAuthority.adminEmail, liveAuthority.adminPassword,
+      sub2apiUserId, evidence.receipt.chargeReference, `-${amountUsdMicros}`
+    ) : null;
+    const debit = options.authorityMode === "fixture" ? debits.find((candidate) => candidate?.code === evidence.receipt.chargeReference) : {
+      code: liveDebit.code, userId: liveDebit.userId, amountUsdMicros, count: liveDebit.count
+    };
+    const debitCount = options.authorityMode === "fixture" ? debits.filter((candidate) => candidate?.code === evidence.receipt.chargeReference).length : liveDebit.count;
+    const afterMicros = options.authorityMode === "fixture" ? String(authorityBeforeDelete.wallet?.usdMicros || "") : chargedMicros;
+    if (options.authorityMode === "fixture" && (debits.length !== 1 || authorityBeforeDelete.writeCounts?.debits !== 1 || !debit || String(debit.userId) !== "41" || String(debit.amountUsdMicros) !== amountUsdMicros)) {
       throw new Error("qualification authority exact debit evidence is invalid");
     }
-    if (!/^\d+$/.test(afterMicros) || BigInt(beforeMicros) - BigInt(amountUsdMicros) !== BigInt(afterMicros)) {
+    if (!/^\d+$/.test(afterMicros) || options.authorityMode === "fixture" && BigInt(beforeMicros) - BigInt(amountUsdMicros) !== BigInt(afterMicros)) {
       throw new Error("qualification wallet debit snapshot is invalid");
     }
     const receiptsPage = sourceData((await http.json("/api/billing/receipts?limit=50", {}, auth)).payload, "ledger");
@@ -1435,15 +1445,12 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
     const runtimeAbsent = runtimeAfterDelete.response.status === 404;
     const keyAfterDelete = await http.request(`/api/gateway/keys/${encodeURIComponent(launch.workspaceApiKeyId)}`, {}, restartedAuth);
     residuals = await residualCounts(accountId, workspaceId);
-    const authorityAfterOwnerDelete = await authorityState(authorityPort, authorityToken);
-    const workspaceKeyAbsent = keyAfterDelete.response.status === 404 &&
-      !(authorityAfterOwnerDelete?.keys || []).some((candidate) => String(candidate?.id) === String(launch.workspaceApiKeyId));
+    const authorityAfterOwnerDelete = options.authorityMode === "fixture" ? await authorityState(authorityPort, authorityToken) : null;
+    const workspaceKeyAbsent = keyAfterDelete.response.status === 404 && (options.authorityMode !== "fixture" ||
+      !(authorityAfterOwnerDelete?.keys || []).some((candidate) => String(candidate?.id) === String(launch.workspaceApiKeyId)));
     const fabricSecretAbsent = deletion.secretStatus === "absent";
     if (!workspaceAbsent || !runtimeAbsent || !workspaceKeyAbsent || !fabricSecretAbsent || Object.values(residuals).some((count) => count !== 0)) {
       throw new Error("owner DELETE did not prove Workspace, Key, Runtime, and exact-labelled Docker cleanup");
-    }
-    if (authorityAfterOwnerDelete?.writeCounts?.refunds !== 0) {
-      throw new Error("Workspace deletion unexpectedly refunded the purchase");
     }
     const deletionReceipt = sourceData((await http.json(`/api/billing/receipts/${encodeURIComponent(deletion.deletionReceiptId)}`, {}, restartedAuth)).payload, "ledger");
     if (deletionReceipt?.receiptId !== deletion.deletionReceiptId || deletionReceipt?.type !== "workspace.deleted.v1" ||
@@ -1451,9 +1458,19 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
       deletionReceipt?.operationId !== expectedDeleteOperationId || deletionReceipt?.workspaceId !== workspaceId) {
       throw new Error("Ledger deletion Receipt binding is invalid");
     }
-    const afterDeleteMicros = String(authorityAfterOwnerDelete?.wallet?.usdMicros || "");
-    if (!/^\d+$/.test(afterDeleteMicros) || afterDeleteMicros !== afterMicros) {
-      throw new Error("Workspace deletion changed the charged wallet balance");
+    let afterDeleteMicros = afterMicros;
+    if (options.authorityMode === "fixture") {
+      const adjustmentsAfterDelete = authorityAfterOwnerDelete?.adjustments || [];
+      const debitAfterDelete = adjustmentsAfterDelete.filter((candidate) => candidate?.kind === "debit" && candidate?.code === debit.code);
+      const refundsAfterDelete = adjustmentsAfterDelete.filter((candidate) => candidate?.kind === "refund");
+      if (debitAfterDelete.length !== 1 || refundsAfterDelete.length !== 0 || authorityAfterOwnerDelete?.writeCounts?.debits !== 1 ||
+        authorityAfterOwnerDelete?.writeCounts?.refunds !== 0) {
+        throw new Error("qualification authority Delete accounting evidence is invalid");
+      }
+      afterDeleteMicros = String(authorityAfterOwnerDelete?.wallet?.usdMicros || "");
+      if (!/^\d+$/.test(afterDeleteMicros) || afterDeleteMicros !== afterMicros) {
+        throw new Error("qualification wallet changed during Workspace Delete");
+      }
     }
 
     validateQualificationSourceIdentity(sourceBefore, await readQualificationSourceIdentity(), options.sourceSha);
@@ -1491,13 +1508,15 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
       },
       deletionReceipt: {
         count: 1, id: deletionReceipt.receiptId, type: deletionReceipt.type,
-        accountId: deletionReceipt.accountId, operationId: deletionReceipt.operationId, workspaceId: deletionReceipt.workspaceId
+        accountId: deletionReceipt.accountId, operationId: deletionReceipt.operationId, workspaceId: deletionReceipt.workspaceId,
+        launchReceiptId: String(deletion.launchReceiptId || "")
       },
       residuals,
-      authorityWriteCounts: authorityAfterOwnerDelete?.writeCounts,
-      mutationCounts: { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1 },
+      authorityWriteCounts: options.authorityMode === "fixture" ? authorityAfterOwnerDelete?.writeCounts : { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 0 },
+      mutationCounts: { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1, refundPosts: 0 },
+      refund: { count: 0 },
       usage: { source: "sub2api", status: "available", totalRequests: usage.totalRequests },
-      qualification: { authorityMode: "fixture", p0Ready: false },
+      qualification: { authorityMode: options.authorityMode, p0Ready: false },
       deferred: [...deferredCloudGates]
     });
     }

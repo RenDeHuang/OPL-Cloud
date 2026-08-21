@@ -2636,9 +2636,7 @@ func TestControlPlaneOperationalFactsSurviveServerRestart(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.rememberReconciliation(clients.ReconciliationResult{ID: "reconcile-alpha", Status: "mismatch", BlockNewWorkspaces: true, Reason: "provider_cost_gap"}); err != nil {
-		t.Fatal(err)
-	}
+	applyBillingReconciliationForTest(t, first.tables, billingReconciliationRowForTest("reconcile-alpha", "mismatch", "provider_cost_gap"), "")
 
 	restarted, err := newControlPlaneAppWithStore(store)
 	if err != nil {

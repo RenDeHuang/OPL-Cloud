@@ -44,8 +44,11 @@ service versioning follow each owner's release cadence.
 
 The Core path is `Console -> Control Plane -> Workspace launcher/provider ->
 local Docker`. Fabric owns resource mutation and readback, Sub2API owns balance,
-Keys and usage, and Ledger owns receipts. Current capability is recorded in
-[status](status.md); remaining outcomes are in the [roadmap](roadmap.md).
+Keys and usage, and Ledger owns receipts plus the append-only Evidence Index.
+Installers select `OPL_FABRIC_PROVIDER` and immutable Workspace images
+explicitly; missing provider or image inputs fail closed. Current capability is
+recorded in [status](status.md); remaining outcomes are in the
+[roadmap](roadmap.md).
 
 ## Physical Module And Dependency Map
 

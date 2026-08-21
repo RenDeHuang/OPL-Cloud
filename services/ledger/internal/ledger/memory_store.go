@@ -18,6 +18,8 @@ type MemoryStore struct {
 	idempotency               map[string]idempotencyRecord
 	reconciliationIdempotency map[string]idempotencyRecord
 	receipts                  map[string]Receipt
+	evidenceIndex             map[string]EvidenceIndexEntry
+	evidenceIndexIdempotency  map[string]idempotencyRecord
 	nextID                    int64
 }
 
@@ -44,7 +46,103 @@ func NewMemoryStore() *MemoryStore {
 		idempotency:               map[string]idempotencyRecord{},
 		reconciliationIdempotency: map[string]idempotencyRecord{},
 		receipts:                  map[string]Receipt{},
+		evidenceIndex:             map[string]EvidenceIndexEntry{},
+		evidenceIndexIdempotency:  map[string]idempotencyRecord{},
 	}
+}
+
+func (s *MemoryStore) RecordEvidenceIndex(_ context.Context, input EvidenceIndexInput) (EvidenceIndexEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := validateEvidenceIndexInput(input); err != nil {
+		return EvidenceIndexEntry{}, err
+	}
+	hashInput := input
+	hashInput.IdempotencyKey = ""
+	payloadHash, err := hashJSON(hashInput)
+	if err != nil {
+		return EvidenceIndexEntry{}, err
+	}
+	if existing, ok := s.evidenceIndexIdempotency[input.IdempotencyKey]; ok {
+		if existing.payloadHash != payloadHash {
+			return EvidenceIndexEntry{}, ErrIdempotencyConflict
+		}
+		evidenceID, ok := existing.result.(string)
+		if !ok {
+			return EvidenceIndexEntry{}, ErrInvalidEvidenceIndexInput
+		}
+		entry, ok := s.evidenceIndex[evidenceID]
+		if !ok {
+			return EvidenceIndexEntry{}, ErrInvalidEvidenceIndexInput
+		}
+		entry = cloneMemoryValue(entry)
+		entry.Replayed = true
+		return entry, nil
+	}
+
+	entry := EvidenceIndexEntry{
+		EvidenceIndexInput: hashInput,
+		EvidenceID:         s.newID("evidence"),
+		CreatedAt:          time.Now().UTC(),
+	}
+	entry = cloneMemoryValue(entry)
+	s.evidenceIndex[entry.EvidenceID] = entry
+	s.evidenceIndexIdempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: entry.EvidenceID}
+	return cloneMemoryValue(entry), nil
+}
+
+func (s *MemoryStore) ListEvidenceIndex(_ context.Context, query EvidenceIndexQuery) (EvidenceIndexPage, error) {
+	query, cursor, err := normalizeEvidenceIndexQuery(query)
+	if err != nil {
+		return EvidenceIndexPage{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries := make([]EvidenceIndexEntry, 0, query.Limit+1)
+	for _, entry := range s.evidenceIndex {
+		if (query.OperationID != "" && entry.OperationID != query.OperationID) ||
+			(query.CandidateSHA != "" && entry.CandidateSHA != query.CandidateSHA) ||
+			(query.CandidateTree != "" && entry.CandidateTree != query.CandidateTree) ||
+			(query.ImageDigest != "" && entry.ImageDigest != query.ImageDigest) ||
+			(query.ReceiptID != "" && entry.ReceiptID != query.ReceiptID) ||
+			(query.ReceiptType != "" && entry.ReceiptType != query.ReceiptType) ||
+			(query.Status != "" && entry.Status != query.Status) ||
+			(!cursor.ObservedAt.IsZero() && (entry.ObservedAt.After(cursor.ObservedAt) || (entry.ObservedAt.Equal(cursor.ObservedAt) && entry.EvidenceID >= cursor.EvidenceID))) {
+			continue
+		}
+		entries = append(entries, cloneMemoryValue(entry))
+	}
+	sortEvidenceIndexEntries(entries)
+	hasMore := len(entries) > query.Limit
+	if hasMore {
+		entries = entries[:query.Limit]
+	}
+	page := EvidenceIndexPage{Entries: entries, HasMore: hasMore}
+	if hasMore {
+		page.NextCursor = encodeEvidenceIndexCursor(entries[len(entries)-1])
+	}
+	return page, nil
+}
+
+func (s *MemoryStore) ExportEvidenceIndex(ctx context.Context, query EvidenceIndexQuery) (EvidenceIndexExport, error) {
+	query.Cursor = ""
+	query.Limit = MaxEvidenceIndexPageSize
+	entries := make([]EvidenceIndexEntry, 0)
+	for {
+		page, err := s.ListEvidenceIndex(ctx, query)
+		if err != nil {
+			return EvidenceIndexExport{}, err
+		}
+		entries = append(entries, page.Entries...)
+		if !page.HasMore {
+			break
+		}
+		if len(entries) >= MaxEvidenceIndexExportSize {
+			return EvidenceIndexExport{}, ErrEvidenceIndexExportTooLarge
+		}
+		query.Cursor = page.NextCursor
+	}
+	return EvidenceIndexExport{SchemaVersion: 1, Entries: entries}, nil
 }
 
 func (s *MemoryStore) RecordReceipt(_ context.Context, input ReceiptInput) (Receipt, error) {

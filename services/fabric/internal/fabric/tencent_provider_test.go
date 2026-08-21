@@ -22,23 +22,30 @@ import (
 
 const testTencentProviderProfile = `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic Workspace","available":true,"compute":{"id":"pool-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"SA5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}},{"id":"pro","name":"Pro Workspace","available":true,"compute":{"id":"pool-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"SA5.2XLARGE16"},"nodePoolId":"np-pro","maxReplicas":20,"zone":"ap-guangzhou-3","storage":{"sizeGb":100,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`
 
+const workspaceImageRepository = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
+
 const testDefaultTencentProviderProfile = `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic Workspace","available":true,"compute":{"id":"pool-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"SA5.MEDIUM4"},"nodePoolId":"np-basic","maxReplicas":20,"zone":"na-siliconvalley-1","storage":{"sizeGb":10,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}},{"id":"pro","name":"Pro Workspace","available":true,"compute":{"id":"pool-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"SA5.2XLARGE16"},"nodePoolId":"np-pro","maxReplicas":20,"zone":"na-siliconvalley-1","storage":{"sizeGb":100,"diskType":"CLOUD_BSSD"},"billing":{"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}}]}`
 
 func TestMain(m *testing.M) {
 	for key, value := range map[string]string{
-		tencentProviderProfileEnv:                       testDefaultTencentProviderProfile,
-		tencentProviderRegionEnv:                        "ap-guangzhou",
-		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID":               "np-system",
-		"OPL_SYSTEM_COMPUTE_MACHINE_ID":                 "machine-system",
-		"OPL_SYSTEM_COMPUTE_NODE_NAME":                  "10.66.0.42",
-		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE":               "NativeCVM",
-		"OPL_SYSTEM_COMPUTE_CVM_ID":                     "ins-system",
-		"OPL_BASIC_COMPUTE_NODE_POOL_ID":                "np-basic",
-		"OPL_PRO_COMPUTE_NODE_POOL_ID":                  "np-pro",
-		"OPL_BASIC_COMPUTE_INSTANCE_TYPE":               "SA5.MEDIUM4",
-		"OPL_PRO_COMPUTE_INSTANCE_TYPE":                 "SA5.2XLARGE16",
-		"TENCENT_CBS_DISK_TYPE":                         "CLOUD_BSSD",
-		"OPL_FABRIC_LOCAL_DOCKER_PROVIDER_PROFILE_JSON": `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic Workspace","available":true,"compute":{"id":"local-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"local-2c4g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}},{"id":"pro","name":"Pro Workspace","available":true,"compute":{"id":"local-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"local-8c16g"},"storage":{"sizeGb":100,"quotaPolicy":"linux-project"}}]}`,
+		tencentProviderProfileEnv:                          testDefaultTencentProviderProfile,
+		tencentProviderRegionEnv:                           "ap-guangzhou",
+		"OPL_WORKSPACE_DOMAIN":                             "workspace.medopl.cn",
+		"OPL_WORKSPACE_IMAGE":                              workspaceImageRepository + "@sha256:" + strings.Repeat("a", 64),
+		"OPL_K8S_NAMESPACE":                                "opl-cloud",
+		"OPL_TENCENT_PROVISIONER_BIN":                      "/bin/true",
+		"OPL_FABRIC_LOCAL_DOCKER_TRUSTED_WORKSPACE_IMAGES": "ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:" + strings.Repeat("a", 64),
+		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID":                  "np-system",
+		"OPL_SYSTEM_COMPUTE_MACHINE_ID":                    "machine-system",
+		"OPL_SYSTEM_COMPUTE_NODE_NAME":                     "10.66.0.42",
+		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE":                  "NativeCVM",
+		"OPL_SYSTEM_COMPUTE_CVM_ID":                        "ins-system",
+		"OPL_BASIC_COMPUTE_NODE_POOL_ID":                   "np-basic",
+		"OPL_PRO_COMPUTE_NODE_POOL_ID":                     "np-pro",
+		"OPL_BASIC_COMPUTE_INSTANCE_TYPE":                  "SA5.MEDIUM4",
+		"OPL_PRO_COMPUTE_INSTANCE_TYPE":                    "SA5.2XLARGE16",
+		"TENCENT_CBS_DISK_TYPE":                            "CLOUD_BSSD",
+		"OPL_FABRIC_LOCAL_DOCKER_PROVIDER_PROFILE_JSON":    `{"schemaVersion":1,"packages":[{"id":"basic","name":"Basic Workspace","available":true,"compute":{"id":"local-basic-2c4g","server":"2c4g","cpu":2,"memoryGb":4,"diskGb":10,"instanceType":"local-2c4g"},"storage":{"sizeGb":10,"quotaPolicy":"linux-project"}},{"id":"pro","name":"Pro Workspace","available":true,"compute":{"id":"local-pro-8c16g","server":"8c16g","cpu":8,"memoryGb":16,"diskGb":100,"instanceType":"local-8c16g"},"storage":{"sizeGb":100,"quotaPolicy":"linux-project"}}]}`,
 	} {
 		_ = os.Setenv(key, value)
 	}
@@ -187,6 +194,61 @@ func TestTencentProviderRequiresProfileAndFailsClosed(t *testing.T) {
 	}
 	if _, err := provider.ResolveWorkspacePlan(context.Background(), WorkspaceLaunchPlanInput{PackageID: "basic", SizeGB: 10}); !errors.Is(err, ErrProviderPlanUnavailable) {
 		t.Fatalf("missing profile resolve err=%v", err)
+	}
+}
+
+func TestTencentProviderRequiresExplicitInstallationInputsBeforeProviderAccess(t *testing.T) {
+	for _, key := range []string{"OPL_WORKSPACE_DOMAIN", "OPL_WORKSPACE_IMAGE", "OPL_K8S_NAMESPACE", "OPL_TENCENT_PROVISIONER_BIN"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "")
+			provider := NewTencentProvider()
+			if provider.installationErr == nil {
+				t.Fatalf("missing %s did not invalidate provider configuration", key)
+			}
+			if _, err := provider.provision(context.Background(), provisionerRequest{Action: "readiness"}); err == nil {
+				t.Fatalf("missing %s reached provisioner", key)
+			}
+			if _, err := provider.callKubectl(context.Background(), []string{"apply", "-f", "-"}, []byte(`{}`), protectedresource.Target{}); err == nil {
+				t.Fatalf("missing %s reached kubectl mutation", key)
+			}
+		})
+	}
+}
+
+func TestTencentProviderUsesInstallationInputsCapturedAtConstruction(t *testing.T) {
+	initialDir := t.TempDir()
+	initialProvisioner := filepath.Join(initialDir, "provisioner")
+	if err := os.WriteFile(initialProvisioner, []byte("#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"status\":\"initial\"}'\n"), 0o700); err != nil {
+		t.Fatalf("write initial provisioner: %v", err)
+	}
+	rotatedDir := t.TempDir()
+	rotatedProvisioner := filepath.Join(rotatedDir, "provisioner")
+	if err := os.WriteFile(rotatedProvisioner, []byte("#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"status\":\"rotated\"}'\n"), 0o700); err != nil {
+		t.Fatalf("write rotated provisioner: %v", err)
+	}
+	t.Setenv("OPL_TENCENT_PROVISIONER_BIN", initialProvisioner)
+	t.Setenv("OPL_K8S_NAMESPACE", "initial-namespace")
+	provider := NewTencentProvider()
+	t.Setenv("OPL_TENCENT_PROVISIONER_BIN", rotatedProvisioner)
+	t.Setenv("OPL_K8S_NAMESPACE", "rotated-namespace")
+
+	response, err := provider.provision(context.Background(), provisionerRequest{Action: "readiness"})
+	if err != nil || response.Status != "initial" {
+		t.Fatalf("provisioner response=%#v err=%v, want initial installation input", response, err)
+	}
+
+	kubectlDir := t.TempDir()
+	kubectl := filepath.Join(kubectlDir, "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\"\n"), 0o700); err != nil {
+		t.Fatalf("write kubectl: %v", err)
+	}
+	t.Setenv("PATH", kubectlDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	output, err := provider.kubectl(context.Background(), []string{"get", "pods"}, nil)
+	if err != nil {
+		t.Fatalf("kubectl: %v", err)
+	}
+	if got := strings.TrimSpace(string(output)); !strings.Contains(got, "--namespace initial-namespace") || strings.Contains(got, "rotated-namespace") {
+		t.Fatalf("kubectl args=%q, want captured namespace", got)
 	}
 }
 
