@@ -1,11 +1,9 @@
 # OPL Cloud Implementation Architecture
 
-This repository implements the OPL Cloud product layer, which is under active
-development and has published portable product artifacts. It does not
-implement the OPL Framework Cordis Host, the `one-person-lab-app` product
-authority, OPL Package publication/lifecycle, or either GUI Shell. Browser Console calls Cloud Control Plane APIs;
-App Shells may consume Cloud-facing projections through App/Framework contracts,
-but neither path moves Cloud service or database authority into a GUI plugin.
+This repository implements the OPL Cloud product layer. Browser Console calls
+Cloud Control Plane APIs; App Shells consume Cloud-facing projections through
+App/Framework contracts. Cloud service and database authority stays in the
+owning Cloud service.
 
 ## Request Path
 
@@ -24,12 +22,10 @@ outside this repository's mutation boundary.
 
 ## Family Domains And Host/Client Integration
 
-Cloud implements authority surfaces for family capability domains; it does not
-turn those names into a second module registry. The current physical owners are
-the Console UI, Control Plane, Fabric, and Ledger service modules described
-below. A family name may span those modules and the Framework/App repositories,
-while a versioned Cloud image and typed service contracts remain the Cloud
-release artifacts.
+The physical Cloud owners are Console UI, Control Plane, Fabric, and Ledger. A
+family capability may span those modules and the Framework/App repositories;
+the integration boundary remains the versioned Cloud image and typed service
+contracts.
 
 ```text
 Cloud service/image + typed API contracts
@@ -39,46 +35,17 @@ Cloud service/image + typed API contracts
                  -> App renderer/package carrier
 ```
 
-The Framework Host is the only composition authority for this path. It may
-project an allowlisted client graph to an App renderer, but Cloud services stay
-behind typed HTTP/capability contracts. A Host-derived Client Cordis context can
-compose views, slots, actions, RPCs, and events; it cannot discover or install
-Packages, own Package currentness, create a second registry, or replace Cloud
-service, persistence, provider, wallet, Workspace, or Ledger authority.
+Framework Host projects the client graph used by App renderers and reaches Cloud
+through a Framework-owned typed adapter. Cloud API, persistence, provider,
+wallet, Workspace, and Ledger ownership remain with their modules. Package and
+service versioning follow each owner's release cadence.
 
-The AionUI mainline and the DSH-GUI-derived candidate are App renderer/package
-carriers, not Cloud products. Both must consume the same Host projection, client
-contribution descriptor, slot/action ABI, and App product profile. Cloud does not
-branch its API, image, database, policy, or currentness by renderer. The current
-Workspace image candidate still pins exact App, active-shell, and Framework
-revisions; that deployment carrier choice is an App/Workspace release concern,
-not a Cloud Cordis runtime dependency.
+## Core Path
 
-Package and service versioning remain independent where an owner has a real
-release cadence. Cloud consumes exact Package publication and carrier refs when
-needed, but does not publish a Cloud-owned Package registry, lock, resolver,
-currentness projection, or Cordis plugin for a Cloud service. Fabric provider
-adapters, Control Plane state machines, Ledger persistence, and native carriers
-remain in their owning implementation boundaries.
-
-## MVP Current Breakpoint
-
-The required Core path is
-`Console -> Control Plane -> Workspace launcher/provider -> local Docker`.
-Fabric now implements the local Docker side of that path and defaults to it;
-Tencent/TKE requires explicit instance selection. Fabric also owns typed launch
-stage mutation/readback routes with exact immutable operation bindings. The
-portable Compose profile still starts PostgreSQL, Control Plane, Fabric, and
-Ledger with Workspace launch workers disabled, so Compose health alone remains
-a control-service installation check rather than end-to-end Workspace evidence.
-
-The reusable Gateway side is further ahead: Control Plane already projects
-Sub2API balance, usage, balance history, and Workspace Key operations, and its
-purchase paths use Sub2API charge/refund authority. Ledger already owns receipts
-and reconciliation evidence. Those facts do not close the P0 until the same
-minimal path reaches a real local Docker Workspace. Mutable current capability
-is owned only by [status](status.md); remaining work and priority are owned only
-by the [roadmap](roadmap.md).
+The Core path is `Console -> Control Plane -> Workspace launcher/provider ->
+local Docker`. Fabric owns resource mutation and readback, Sub2API owns balance,
+Keys and usage, and Ledger owns receipts. Current capability is recorded in
+[status](status.md); remaining outcomes are in the [roadmap](roadmap.md).
 
 ## Physical Module And Dependency Map
 
@@ -151,26 +118,10 @@ until that shared change reaches fresh-main CI; other module lanes continue.
 
 ## Current Simplification Pressure
 
-A read-only structural audit found implemented surfaces whose current in-repo
-product demand is absent, superseded, paused, or narrower than their code shape.
-These are current implementation facts, not deletion authorization:
-
-| Cluster | Current implementation fact |
-| --- | --- |
-| Control Plane persistence | Archive, `ExecutionRequest`, and `WorkspaceBackup` application/Ent models are deleted while historical SQL/tables remain; Organization/Membership application/Ent models and runtime store APIs are deleted, while raw tables remain only as read-only historical custody for migration validation |
-| Control Plane instance extension | The normal Launch/Resume path is provider-neutral. Instance-owned Provider Acceptance consumes one provider-neutral facts batch and a narrow Runtime path; it requires canonical compute/storage provider IDs and treats legacy node-pool and persistent-volume values as optional response-only projections. Instance deployment and production acceptance remain external |
-| Fabric optional verticals | ContentTransfer and Snapshot/Restore runtime/API/provider surfaces are retired while historical migrations and data remain; Instance inventory proved no live backup row, Fabric operation, `VolumeSnapshot`, `VolumeSnapshotContent`, or restored-PVC obligation before the Snapshot/Restore cut |
-| Fabric launch residue | Recovery proof/claim Service/provider/store mutation shells, unassigned legacy `LaunchBinding` branches, and the duplicate Tencent compute-ownership implementation are retired. Typed Tencent Launch has exact stage-chain readback/replay coverage; other operation-list consumers and the remaining mixed Fabric facade still require caller-led cohesion work |
-| Ledger optional verticals | Artifact, Review, ReviewPolicy, ReviewGate, and Continuation APIs, stores, routes, and generated Ent code are retired. Receipt `artifactId`, `reviewId`, `outputRefs`, `reviewerChecks`, `continuationId`, and `continuation` remain caller-owned opaque provenance; historical `review_policies` rows and Receipt provenance columns remain without migration or deletion |
-| Machine contract ownership | Billing retains Control Plane orchestration policy but references the Ledger evidence contract as the single reconciliation-report and Workspace monthly-receipt schema owner. The completed aggregate deployment migration guard is deleted; portable distribution and Instance deployment gates remain with their focused owners |
-| Indirection and tooling | Three retained deployment tools use tool-local `node:util.parseArgs`, and Qualification reuses its stable setup and Go-test pipeline without changing job identities or zero-skip gates. Further CLI conversion is deferred where explicit native option schemas expand the surface; the large Control Plane facade and custom static-file/gzip behavior still create maintenance cost |
-| Active-tree residue | The retired staging verifier entry and its tombstone test are deleted, the unused `path-to-regexp` override is gone, and same-selector/same-responsive-scope Console declarations no longer shadow earlier generations. Cross-selector styling and dated execution or frozen QA provenance are not treated as caller-zero code |
-
-The keep, shrink, or delete candidates, priority, risk, admission evidence, and
-owner boundaries live only in the
-[Simplification Backlog](roadmap.md#simplification-backlog). Candidate admission
-must trace real callers, target obligations, persisted data, and external
-consumers before any public route or schema is removed.
+Current implementation facts and retained evidence live in [status](status.md);
+open simplification outcomes live in the [roadmap](roadmap.md). Removing a
+persisted or provider-backed path requires fresh caller, data, and external
+resource evidence.
 
 ## Repository And Instance Boundary
 
@@ -463,8 +414,7 @@ tests implement this behavior; live Sub2API and Tencent evidence remains pending
 and the repository remains `code-complete=false`.
 
 Activation readback is the Control Plane `GetWorkspace(workspaceId)` point-read
-projection matched to the original launch and Fabric bindings; the removed
-`POST /fabric/workspace-activation-truth` route is not authority. The terminal
+projection matched to the original launch and Fabric bindings. The terminal
 purchase receipt uses `RequestID=launchOperationId` and
 `Idempotency-Key=<launchOperationId>:purchase-receipt`, with exact Workspace,
 debit code, user, total, component, and downstream resource identities.
@@ -591,29 +541,16 @@ The immutable Workspace image is pinned for deployment, but a customer
 Workspace Ready-Pod `imageID` readback remains pending. No configured digest,
 placeholder, or local timestamp substitutes for that Pod evidence.
 
-This is a real exception to the Control Plane product-command boundary: it
-carries Workspace HTML, API, and WebSocket data-plane traffic. The available
-evidence does not prove an unauthenticated data disclosure; the inspected
-runtime source retains password authentication. Until the published digest and
-Ready-Pod `imageID` exist, that source finding cannot be extended to an
-exact deployed revision.
-Control Plane availability is coupled to every Workspace connection, and a
-2xx/non-empty-page check can pass on the login page without proving an
-authenticated Workspace session.
-
-Keeping the shared proxy avoids per-Workspace CLB rules and is the current
-topology for administrator-provisioned accounts. Control Plane selects the Runtime
+Control Plane carries Workspace HTML, API, and WebSocket traffic, so its
+availability is coupled to every Workspace connection. It selects the Runtime
 Service; the Runtime owns password validation, its authenticated session, and
-WebSocket access. Routing every Workspace Service directly with native TKE
-Ingress removes Control Plane from the data path, but does not replace Runtime
-authentication and adds per-Workspace rule quota, creation, deletion, retry,
-and orphan reconciliation responsibilities. Do not add those routes until live
-CLB limits justify the extra ownership.
+WebSocket access. A 2xx/non-empty-page check proves routing only; acceptance
+requires an authenticated Workspace session and the exact Ready-Pod `imageID`
+readback described above.
 
-The current decision is to retain the single shared entry and explicitly accept
-Control Plane availability coupling for the operator-provisioned Pilot. A dedicated
-Workspace Router remains a later ownership and scaling decision; no router or
-security-model change is authorized by this document.
+The operator-provisioned Pilot retains this single shared entry. Revisit a
+dedicated Workspace Router when measured connection load or CLB rule limits
+require a separate scaling owner.
 
 ## Product Release And Instance Qualification
 
@@ -634,15 +571,11 @@ child manifest digests, platforms, and OCI revision. Its portable Candidate
 bundle contains the installation assets, canonical
 `opl-cloud-candidate.json`, and `SHA256SUMS`. The manifest binds the Cloud
 source/image identity and each installation asset digest; `SHA256SUMS` covers
-the installation assets and manifest without a checksum self-reference. The
-bundle validator recomputes every digest and rejects missing, extra,
-non-canonical, or malformed inputs. The canonical Candidate manifest schema
-contains no selected Workspace image, Provider Profile, domain, or Instance
-fact; each qualification owner records those in its own later receipt. The
-bundle still carries the current `opl-cloud.env.example`; removal of its
-installation-specific defaults remains owned by
-`LOCAL-WORKSPACE-INSTALL-CONTRACT-01`. The workflow creates no Git tag, GitHub
-Release, versioned image tag, or Instance action.
+the installation assets and manifest. The bundle validator recomputes every
+digest. Installation owners bind Workspace image, Provider Profile, domain, and
+deployment evidence in their qualification receipts. The bundle still carries
+the current `opl-cloud.env.example`; removing its installation defaults is the
+`PORTABLE-INSTALL-01` roadmap gap.
 
 The formal Release workflow still cannot promote those already qualified bytes.
 It builds and validates the OCI layout in a read-only job, passes one
@@ -663,39 +596,9 @@ verifies both checksum and predicate identity. The image is identified by a
 version tag, exact product SHA, and immutable digest; mutable `latest` and
 `stable` tags are forbidden.
 
-Only `v0.1.7` remains on the current GitHub Release, Git tag, and GHCR public
-surfaces. Hosted run `31879240411` published its five assets from product SHA
-`a59bde68397528186a5220f73195fa1f3eda311b`; the multi-architecture GHCR index
-for `linux/amd64` and `linux/arm64` is
-`sha256:e64504731f8b61c0864cf59faa647a1150e8a2a5eada34b26faf3a5487d28e8f`.
-The owner removed historical `v0.1.0` through `v0.1.6` Releases, tags, and GHCR
-objects, so none is a current installation or rollback target. The `v0.1.7`
-readback proves portable publication; clean-host installation, the complete
-external Sub2API-backed Workspace flow, and Instance adoption remain separate
-evidence surfaces.
-
-Repository security automation currently uses GitHub-managed CodeQL default
-setup rather than a second workflow-owned CodeQL configuration. Pull requests
-have a dedicated read-only Dependency Review job, and Dependabot covers
-GitHub Actions, npm, all four Go modules, and the root Dockerfile on a bounded
-monthly schedule. These scanners produce evidence for triage; they do not
-change product or vulnerability status by themselves.
-
-GitHub's repository `Agents` tab is the Copilot cloud-agent task surface. No
-repository custom agent profile or automation is part of the current Cloud
-implementation. If adopted later, it remains a PR-producing development tool
-with no direct canonical, release, deployment, or production authority; OPL
-product Agents and domain agents are separate concepts.
-
-The private `opl-instance-medopl` repository owns the current medopl/TKE
-configuration, production environment, deployment workflow, rollback, canaries,
-receipts, and instance-specific tool source. Its first TKE deployment receipt
-proves the exact `v0.1.7` Cloud artifact and public health readback. A later old
-Candidate reached deployment verification and a Qualification Decision, but the
-latest generic admission remained blocked before normal purchase, so no
-`workspace_verified` receipt exists. Fresh production claims still require
-generic Instance admission and post-activation readback for the exact Cloud
-candidate SHA and image digest; formal publication must retain those same bytes.
+Current public Release, repository security, and Instance evidence is recorded
+in [status](status.md). Open Candidate qualification and exact-byte promotion
+work is recorded in the [roadmap](roadmap.md).
 
 Control Plane remains one Pod. Existing load evidence covers request concurrency
 and replay, but its historical per-resource renewal scan is not proof of the

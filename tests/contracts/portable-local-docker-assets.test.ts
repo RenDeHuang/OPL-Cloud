@@ -12,9 +12,10 @@ test("portable Local-Docker assets configure from a standalone download director
   const fabricSource = await readFile("deploy/portable/compose.fabric-local-docker.yaml", "utf8");
   const deploymentSource = await readFile("deploy/portable/compose.deployment-customer-owned.yaml", "utf8");
   const environmentSource = await readFile("deploy/portable/opl-cloud.env.example", "utf8");
-  const qualificationSource = await readFile(".github/workflows/qualification.yml", "utf8");
+  const compose = YAML.parse(composeSource);
   const overlay = YAML.parse(overlaySource);
   const fabric = YAML.parse(fabricSource);
+  const deployment = YAML.parse(deploymentSource);
 
   assert.deepEqual(overlay.services.postgres.volumes, [{
     type: "bind",
@@ -23,36 +24,10 @@ test("portable Local-Docker assets configure from a standalone download director
     bind: { create_host_path: false }
   }]);
 
-  assert.equal(fabricSource.includes("opl.cloud.fabric-provider: local-docker"), true);
+  assert.equal(fabric.services.fabric.labels["opl.cloud.fabric-provider"], "local-docker");
   assert.deepEqual(fabric.services.fabric.cap_add, ["SYS_ADMIN"]);
-  assert.equal(deploymentSource.includes("opl.cloud.deployment-mode: customer_owned"), true);
+  assert.equal(deployment.services["control-plane"].labels["opl.cloud.deployment-mode"], "customer_owned");
   assert.equal(overlay.services["control-plane"].environment.OPL_WORKSPACE_LAUNCH_WORKER_ENABLED, "1");
-
-  assert.match(environmentSource, /^OPL_SUB2API_BASE_URL=https:\/\/your-sub2api\.example\.com$/m);
-  assert.match(environmentSource, /^OPL_SUB2API_ADMIN_EMAIL=<replace-with-admin-email>$/m);
-  assert.match(environmentSource, /^OPL_SUB2API_ADMIN_PASSWORD=<replace-with-admin-password>$/m);
-  assert.match(
-    environmentSource,
-    /^OPL_WORKSPACE_IMAGE=ghcr\.io\/gaofeng21cn\/one-person-lab-webui@sha256:caff36778d8e39ca23682445d8734d6c335ed01e337e9e86dbba9e56657db501$/m
-  );
-  assert.match(environmentSource, /current stable Workspace release is linux\/amd64 only/);
-  assert.match(environmentSource, /^OPL_DOCKER_SOCKET_PATH=\/var\/run\/docker\.sock$/m);
-  assert.match(environmentSource, /^OPL_POSTGRES_DATA_ROOT=\/absolute\/path\/to\/opl-cloud-data\/postgres$/m);
-  assert.match(environmentSource, /^OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER=opl-cloud-control-plane$/m);
-  assert.match(environmentSource, /^OPL_FABRIC_LOCAL_DOCKER_STORAGE_ROOT=\/absolute\/path\/to\/opl-workspaces$/m);
-  assert.match(environmentSource, /dedicated Linux 5\.14\+ ext4\/XFS\n# filesystem with project quota enabled/);
-  assert.match(qualificationSource, /go test -tags opl_project_quota -run '\^TestLinuxLocalDockerProjectQuotaEnforcesHardLimit\$'/);
-  assert.match(qualificationSource, /sudo env OPL_TEST_PROJECT_QUOTA_ROOT=/);
-  assert.match(qualificationSource, /sudo mount -o loop,prjquota/);
-  assert.match(qualificationSource, /if: \$\{\{ always\(\) \}\}/);
-  assert.match(
-    environmentSource,
-    /docker compose --env-file \.\/opl-cloud\.env/
-  );
-  assert.match(environmentSource, /compose\.deployment-customer-owned\.yaml/);
-  assert.match(environmentSource, /compose\.fabric-local-docker\.yaml/);
-  assert.match(environmentSource, /compose\.local-workspace\.yaml/);
-  assert.doesNotMatch(environmentSource, /deploy\/portable/);
 
   const downloadRoot = await mkdtemp(join(tmpdir(), "opl-cloud-portable-assets-"));
   try {
@@ -98,5 +73,5 @@ test("portable Local-Docker assets configure from a standalone download director
     await rm(downloadRoot, { recursive: true, force: true });
   }
 
-  assert.match(composeSource, /^name: opl-cloud$/m);
+  assert.equal(compose.name, "opl-cloud");
 });

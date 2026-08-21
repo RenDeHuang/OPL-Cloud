@@ -3,9 +3,8 @@
 Owner: `one-person-lab-cloud`
 Purpose: `workspace_identity_decision`
 State: `active_decision`
-Machine boundary: Human-readable product decision and owner exclusion. It does
-not prove a Workspace implementation, account state, collaboration policy,
-runtime, or release readiness.
+Machine boundary: Human-readable product decision; implementation and runtime
+state come from the owning service and instance readback.
 
 This document records the current OPL Cloud product decision. It is a planning
 boundary, not a delivery or runtime-readiness claim.
@@ -41,37 +40,8 @@ through the active App shell. It consumes App, Framework and domain-owner
 projections. A browser renderer or transport may not own a second task,
 package, artifact or Workspace state model.
 
-## External Collaboration Repositories
+## Collaboration And Serve
 
-The following repositories are external collaboration history, not canonical
-OPL Cloud implementation repositories:
-
-| Repository | External role | OPL maintenance status |
-| --- | --- | --- |
-| `RenDeHuang/OPL-Webui` | Multi-user browser SaaS and Web control-plane experiment | Not owned, not an OPL Cloud carrier, excluded from the maintained repo set |
-| `RenDeHuang/MedOPL` | Companion commercial resource control plane for that SaaS experiment | Not owned, not an OPL Cloud owner surface, excluded from the maintained repo set |
-
-These repositories must not be used as OPL App WebUI truth, OPL Workspace
-identity truth, Cloud architecture authority, default audit scope or an OPL
-family maintenance target. Useful implementation lessons may be reintroduced
-only through an explicit, owner-reviewed intake into a current OPL-owned
-surface.
-
-Similarly named third-party or collaborator repositories are not adopted by
-name. The canonical planning owner remains
-`gaofeng21cn/one-person-lab-cloud`; App WebUI behavior remains owned by
-`gaofeng21cn/one-person-lab-app` and its active shell carrier.
-
-## Reading Older Team Language
-
-Older Cloud documents may describe one primary Workspace, organizations, teams,
-or shared resources. The one-primary-Workspace rule is superseded: the current
-identity is zero-to-many independent Workspaces per account. Organization and
-team language still describes optional policy, approval, and collaboration; it
-does not merge Workspace identity or authorize a separate multi-tenant Web
-product.
-
-This non-goal does not prohibit OPL Serve. Serve exposes an exact Agent Revision
-through a dedicated Agent Edge and optional API client templates. It does not
-turn an account Workspace into a multi-tenant SaaS workbench or reuse a
-Workspace URL as an external service endpoint.
+Organizations and teams govern policy, approval, and collaboration around
+independent Workspaces. OPL Serve publishes Agent Revisions as separate Agent
+Services through its Agent Edge.

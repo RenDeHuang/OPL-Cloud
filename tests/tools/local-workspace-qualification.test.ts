@@ -28,37 +28,14 @@ import {
   validateJ0ReadyReceipt,
   validateLocalJ1AccountingReadback,
   validateLocalQualificationReceipt,
-  validateProductMatrixReceipt,
   workspaceDeleteFailureEvidence
 } from "../../tools/local-workspace-qualification.ts";
 import { runLocalWorkspaceQualification } from "../../tools/local-workspace-qualification.ts";
-import {
-  productMatrixModuleSpecs,
-  productMatrixRequiredPackages,
-  productMatrixRequiredTests
-} from "../../tools/verify-local.ts";
 
 const sha = "a".repeat(40);
 const cloudDigest = `sha256:${"b".repeat(64)}`;
 const workspaceDigest = `sha256:${"c".repeat(64)}`;
 const workspaceReference = `ghcr.io/example/workspace@${workspaceDigest}`;
-
-function completeMatrixModules() {
-  return productMatrixModuleSpecs.map((spec) => {
-    const packages = productMatrixRequiredPackages.filter((name) => name === `opl-cloud/${spec.cwd}` || name.startsWith(`opl-cloud/${spec.cwd}/`));
-    const passedTests = productMatrixRequiredTests.filter((entry) => packages.includes(entry.package)).map((entry) => ({ ...entry }));
-    return {
-      cwd: spec.cwd,
-      command: spec.command,
-      args: [...spec.argsPrefix, ...packages],
-      packages,
-      failed: 0,
-      skipped: 0,
-      passedPackages: [...packages],
-      passedTests
-    };
-  });
-}
 
 test("owner delete continues only from exact durable compute pending evidence", async () => {
   const path = "/api/workspaces/ws-alpha";
@@ -263,7 +240,6 @@ test("local qualification accepts exact source and immutable image identities", 
     receiptPath: "/tmp/qualification.json",
     buildSourceImages: false,
     authorityMode: "fixture",
-    productMatrixReceipt: "",
     j0ReadyReceipt: "",
     sub2apiSecretFile: ""
   });
@@ -295,7 +271,7 @@ function j0ReadyReceipt(sourceSha = sha, sourceTree = "d".repeat(40)) {
   };
 }
 
-test("live arguments require one external J0 READY receipt instead of a Product matrix", () => {
+test("live arguments require one external J0 READY receipt", () => {
   const parsed = parseLocalQualificationArgs([
     "--source-sha", sha,
     "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
@@ -305,7 +281,6 @@ test("live arguments require one external J0 READY receipt instead of a Product 
     "--j0-ready-receipt", "/tmp/j0-ready.json"
   ]);
   assert.equal(parsed.j0ReadyReceipt, "/tmp/j0-ready.json");
-  assert.equal(parsed.productMatrixReceipt, "");
   assert.throws(() => parseLocalQualificationArgs([
     "--source-sha", sha,
     "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
@@ -313,15 +288,6 @@ test("live arguments require one external J0 READY receipt instead of a Product 
     "--receipt", "/tmp/qualification.json",
     "--authority-mode", "live"
   ]), /J0 READY receipt/);
-  assert.throws(() => parseLocalQualificationArgs([
-    "--source-sha", sha,
-    "--cloud-image", `ghcr.io/example/cloud@${cloudDigest}`,
-    "--workspace-image", workspaceReference,
-    "--receipt", "/tmp/qualification.json",
-    "--authority-mode", "live",
-    "--j0-ready-receipt", "/tmp/j0-ready.json",
-    "--product-matrix-receipt", "/tmp/product-matrix.json"
-  ]), /Product matrix/);
 });
 
 test("J0 READY admission binds exact clean source, authority, provider, and external 0600 file", async () => {
@@ -337,7 +303,7 @@ test("J0 READY admission binds exact clean source, authority, provider, and exte
     assert.match(loaded.digest, /^sha256:[0-9a-f]{64}$/);
     assert.deepEqual(loaded.source, value.source);
     for (const invalid of [
-      { ...value, kind: "opl.local-workspace.product-matrix.v1" },
+      { ...value, kind: "opl.local-workspace.other.v1" },
       { ...value, status: "NOT_READY" },
       { ...value, source: { ...value.source, sha: "b".repeat(40) } },
       { ...value, source: { ...value.source, tree: "c".repeat(40) } },
@@ -377,7 +343,6 @@ test("top-level live entry rejects J0 source drift before starting the J1 stack 
     receiptPath: outputPath,
     buildSourceImages: false,
     authorityMode: "live",
-    productMatrixReceipt: "",
     j0ReadyReceipt: path,
     sub2apiSecretFile: ""
   };
@@ -495,7 +460,6 @@ test("Sub2API secret file failures redact the path and values before Docker", as
       receiptPath,
       buildSourceImages: false,
       authorityMode: "live",
-      productMatrixReceipt: "",
       sub2apiSecretFile: path
     }), /sub2api_secret_file_schema_invalid/);
     const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
@@ -587,45 +551,29 @@ test("READY receipt binds the exact durable and accounting evidence", () => {
     stores: { controlPlane: "durable", fabric: "durable", ledger: "durable", ownerSeparated: true },
     identities: {
       accountId: "acct-admin", sub2apiUserId: "41", launchOperationId: "workspace-launch-alpha",
-      deleteOperationId: "workspace-delete-alpha", refundOperationId: "workspace-delete-alpha", workspaceId: "ws-alpha", runtimeId: "rt-alpha", keyId: "71",
-      debitCode: "opl:qualification-alpha", purchaseReceiptId: "receipt-alpha", refundReceiptId: "receipt-refund"
+      deleteOperationId: "workspace-delete-alpha", deletionReceiptId: "receipt-delete", workspaceId: "ws-alpha",
+      runtimeId: "rt-alpha", keyId: "71", debitCode: "opl:qualification-alpha", purchaseReceiptId: "receipt-alpha"
     },
     debit: { count: 1, accountId: "acct-admin", operationId: "workspace-launch-alpha", workspaceId: "ws-alpha", code: "opl:qualification-alpha", userId: "41", amountUsdMicros: "52580000" },
-    wallet: { beforeUsdMicros: "100000000", afterUsdMicros: "47420000", restoredUsdMicros: "100000000" },
+    wallet: { beforeUsdMicros: "100000000", afterUsdMicros: "47420000", afterDeleteUsdMicros: "47420000" },
     receipt: {
       count: 1, id: "receipt-alpha", accountId: "acct-admin", operationId: "workspace-launch-alpha", workspaceId: "ws-alpha", runtimeId: "rt-alpha",
       keyId: "71", chargeReference: "opl:qualification-alpha", amountUsdMicros: "52580000"
     },
     restart: { performed: true, operationStable: true, workspaceStable: true, runtimeStable: true, receiptStable: true },
     deletion: {
-      ownerAuthorized: true, accountId: "acct-admin", operationId: "workspace-delete-alpha", refundOperationId: "workspace-delete-alpha", workspaceId: "ws-alpha", runtimeId: "rt-alpha", keyId: "71",
+      ownerAuthorized: true, accountId: "acct-admin", operationId: "workspace-delete-alpha", deletionReceiptId: "receipt-delete",
+      workspaceId: "ws-alpha", runtimeId: "rt-alpha", keyId: "71",
       workspaceAbsent: true, runtimeAbsent: true, workspaceKeyAbsent: true, fabricSecretAbsent: true
     },
+    deletionReceipt: {
+      count: 1, id: "receipt-delete", type: "workspace.deleted.v1", accountId: "acct-admin",
+      operationId: "workspace-delete-alpha", workspaceId: "ws-alpha"
+    },
     residuals: { containers: 0, volumes: 0, networks: 0 },
-    authorityWriteCounts: { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 1 },
-    mutationCounts: { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1, refundPosts: 0 },
-    refund: {
-      count: 1, accountId: "acct-admin", operationId: "workspace-delete-alpha", workspaceId: "ws-alpha", debitCode: "opl:qualification-alpha",
-      code: "opl:qualification-refund", userId: "41", amountUsdMicros: "52580000", receiptId: "receipt-refund"
-    },
-    refundReceipt: {
-      count: 1, id: "receipt-refund", type: "billing.workspace_refunded.v1", accountId: "acct-admin", operationId: "workspace-delete-alpha",
-      workspaceId: "ws-alpha", chargeReference: "opl:qualification-alpha", refundCode: "opl:qualification-refund", amountUsdMicros: "52580000"
-    },
+    authorityWriteCounts: { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 0 },
+    mutationCounts: { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1 },
     usage: { source: "sub2api", status: "available", totalRequests: 0 },
-    productMatrix: {
-      digest: `sha256:${"e".repeat(64)}`,
-      stages: ["key", "debit", "ensure_compute_allocation", "storage", "attachment", "secret", "runtime", "activation", "receipt"],
-      packages: [...productMatrixRequiredPackages],
-      tests: productMatrixRequiredTests.map((entry) => `${entry.package}:${entry.name}`),
-      modules: completeMatrixModules().map((module) => ({
-        cwd: module.cwd, command: module.command, args: module.args,
-        packages: module.packages, failed: module.failed, skipped: module.skipped
-      })),
-      zeroSkip: true,
-      casWinnerCount: 1,
-      unknownAuthorityWriteDeltas: { controlPlane: 0, sub2api: 0, fabric: 0, ledger: 0 }
-    },
     qualification: { authorityMode: "fixture", p0Ready: false },
     deferred: ["tencent-tke", "production-sub2api", "production-secrets"]
   };
@@ -635,10 +583,9 @@ test("READY receipt binds the exact durable and accounting evidence", () => {
   assert.throws(() => validateLocalQualificationReceipt({ ...fixtureReceipt, debit: { ...fixtureReceipt.debit, count: 2 } }), /debit/);
   assert.throws(() => validateLocalQualificationReceipt({ ...fixtureReceipt, restart: { ...fixtureReceipt.restart, runtimeStable: false } }), /restart/);
   assert.throws(() => validateLocalQualificationReceipt({ ...fixtureReceipt, residuals: { ...fixtureReceipt.residuals, volumes: 1 } }), /residual/);
-  assert.throws(() => validateLocalQualificationReceipt({ ...fixtureReceipt, mutationCounts: { ...fixtureReceipt.mutationCounts, refundPosts: 1 } }), /mutation counts/);
   assert.throws(() => validateLocalQualificationReceipt({
-    ...fixtureReceipt, refundReceipt: { ...fixtureReceipt.refundReceipt, type: "gateway.wallet_adjustment.v1" }
-  }), /refund receipt/);
+    ...fixtureReceipt, deletionReceipt: { ...fixtureReceipt.deletionReceipt, type: "billing.workspace_refunded.v1" }
+  }), /deletion receipt/);
   assert.throws(() => validateLocalQualificationReceipt({
     ...fixtureReceipt, deletion: { ...fixtureReceipt.deletion, keyId: "72" }
   }), /owner deletion/);
@@ -677,63 +624,7 @@ test("qualification source identity requires one clean unchanged HEAD and tree",
   assert.throws(() => validateQualificationSourceIdentity(source, source, "f".repeat(40)), /requested source/);
 });
 
-test("Product matrix receipt admission binds exact source, nine stages, CAS, and unknown zero deltas", () => {
-  const matrix = {
-    schemaVersion: 1,
-    status: "READY",
-    source: { sha, tree: "d".repeat(40) },
-    zeroSkip: true,
-    stages: ["key", "debit", "ensure_compute_allocation", "storage", "attachment", "secret", "runtime", "activation", "receipt"]
-      .map((name) => ({ name, passed: true, skipped: 0 })),
-    cas: { winnerCount: 1, loserMutationCount: 0 },
-    unknown: { authorityWriteDeltas: { controlPlane: 0, sub2api: 0, fabric: 0, ledger: 0 } },
-    packages: productMatrixRequiredPackages.map((name) => ({ name, passed: true, skipped: 0 })),
-    tests: productMatrixRequiredTests.map((entry) => ({ ...entry, passed: true, skipped: 0 })),
-    modules: completeMatrixModules()
-  };
-  assert.equal(validateProductMatrixReceipt(matrix, sha, "d".repeat(40)), matrix);
-  assert.throws(() => validateProductMatrixReceipt({ ...matrix, modules: matrix.modules.slice(1) }, sha, "d".repeat(40)), /module/i);
-  assert.throws(() => validateProductMatrixReceipt({ ...matrix, stages: [] }, sha, "d".repeat(40)), /nine-stage/);
-  assert.throws(() => validateProductMatrixReceipt({ ...matrix, cas: { winnerCount: 2, loserMutationCount: 0 } }, sha, "d".repeat(40)), /CAS/);
-  assert.throws(() => validateProductMatrixReceipt({
-    ...matrix, unknown: { authorityWriteDeltas: { ...matrix.unknown.authorityWriteDeltas, ledger: 1 } }
-  }, sha, "d".repeat(40)), /write deltas/);
-  assert.throws(() => validateProductMatrixReceipt({ ...matrix, packages: matrix.packages.slice(1) }, sha, "d".repeat(40)), /package evidence/);
-  assert.throws(() => validateProductMatrixReceipt({ ...matrix, tests: matrix.tests.slice(1) }, sha, "d".repeat(40)), /test evidence/);
-  assert.throws(() => validateProductMatrixReceipt({
-    ...matrix, tests: [{ ...matrix.tests[0], skipped: 1 }, ...matrix.tests.slice(1)]
-  }, sha, "d".repeat(40)), /test evidence/);
-});
-
-test("package exposes one local Workspace qualification command", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
-  assert.equal(packageJson.scripts["qualify:local:workspace"], "node tools/local-workspace-qualification.ts");
-  const compose = await readFile(new URL("../../deploy/portable/compose.local-workspace.yaml", import.meta.url), "utf8");
-  const fabricCompose = await readFile(new URL("../../deploy/portable/compose.fabric-local-docker.yaml", import.meta.url), "utf8");
-  assert.match(fabricCompose, /source: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT\}/);
-  assert.match(fabricCompose, /target: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT\}/);
-  assert.match(fabricCompose, /OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT: \$\{OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT:\?Set OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT\}/);
-	assert.match(fabricCompose, /OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER: \$\{OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER:\?Set the task-owned Control Plane gateway container\}/);
-	assert.match(fabricCompose, /opl\.fabric\.local-docker\.gateway: control-plane/);
-  const envExample = await readFile(new URL("../../deploy/portable/opl-cloud.env.example", import.meta.url), "utf8");
-  assert.match(envExample, /^OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT=\/absolute\/path\/to\/opl-fabric-secrets$/m);
-  const runner = await readFile(new URL("../../tools/local-workspace-qualification.ts", import.meta.url), "utf8");
-  assert.match(runner, /\["OPL_FABRIC_LOCAL_DOCKER_SECRET_ROOT", fabricSecretRoot\]/);
-	assert.match(runner, /\["OPL_FABRIC_LOCAL_DOCKER_GATEWAY_CONTAINER", `\$\{project\}-control-plane-1`\]/);
-  assert.match(runner, /env: composeEnvironment/);
-  assert.match(runner, /exactRepoDigestFromInspection\(cloudRepository, await dockerImageInspection\(cloudTag\)\)/);
-  assert.match(runner, /exactRepoDigestFromInspection\(workspaceRepository, await dockerImageInspection\(workspaceTag\)\)/);
-  assert.match(runner, /await imageInspection\(cloudImage\)/);
-  assert.match(runner, /await imageInspection\(workspaceImage\)/);
-  assert.doesNotMatch(runner, /imageInspection\((?:cloud|workspace)Tag\)/);
-  assert.match(runner, /if \(options\.authorityMode === "live"\)[\s\S]*runLocalWorkspaceJ1HTTPQualification[\s\S]*\} else \{[\s\S]*stage = "console_and_login"/);
-  assert.doesNotMatch(runner, /runLocalWorkspaceJ1HTTPQualification\([\s\S]{0,5000}?validateQualificationSourceIdentity\([^)]*\);\s*return;/);
-  assert.match(runner, /liveAdmissionOverride[\s\S]*OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS: \$\{OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS:/);
-  assert.match(runner, /cleanupLocalQualificationResources\(scope\.accountId, scope\.workspaceId, async \(\) => \{[\s\S]*compose\(\["down"/);
-});
-
 test("sourceData and createHTTP/login preserve account mapping scope without Workspace mutation", async () => {
-  assert.equal(typeof sourceData, "function");
   const requests = [];
   let mappingPosts = 0;
   let workspacePosts = 0;
@@ -799,12 +690,6 @@ test("sourceData and createHTTP/login preserve account mapping scope without Wor
   } finally {
     await new Promise((resolvePromise) => server.close(() => resolvePromise()));
   }
-});
-
-test("sourceData export has no undefined import or default export dependency", async () => {
-  const source = await readFile(new URL("../../tools/local-workspace-qualification.ts", import.meta.url), "utf8");
-  assert.match(source, /export function sourceData\(/);
-  assert.doesNotMatch(source, /import\s+sourceData\s+from/);
 });
 
 test("canonical J1 HTTP preview covers every live stage and validates exact local cleanup", async () => {
@@ -928,7 +813,6 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
     const writtenReceipt = JSON.parse(await readFile(outputPath, "utf8"));
     assert.equal(writtenReceipt.j0Ready.digest, result.j0Ready.digest);
     assert.deepEqual(writtenReceipt.j0Ready.source, { sha, tree: "d".repeat(40), clean: true });
-    assert.equal(Object.prototype.hasOwnProperty.call(writtenReceipt, "productMatrix"), false);
     assert.deepEqual(stages, ["bootstrap_ready", "admin_login", "account_provision", "qualification_login", "wallet_usage_baseline", "pricing_preview", "workspace_launch", "terminal_readback", "workspace_open", "accounting_readback", "receipt_validation", "qualification_cleanup"]);
     assert.deepEqual(cleanupCalls, [{ accountId, workspaceId }]);
     assert.deepEqual(counts, { mappingPosts: 1, workspacePosts: 1, keyCreates: 1, debits: 1, refunds: 0, deletes: 0, restarts: 0 });

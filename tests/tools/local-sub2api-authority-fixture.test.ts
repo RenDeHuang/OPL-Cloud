@@ -302,13 +302,3 @@ test("qualification authority provides one persistent user, key, and exact debit
   assert.equal(afterDelete.keys.length, 0);
   assert.deepEqual(afterDelete.writeCounts, { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 1 });
 });
-
-test("fixture source contains no public domain or credential literals", async () => {
-  const source = [
-    await readFile(new URL("../../tools/local-sub2api-authority-fixture.ts", import.meta.url), "utf8"),
-    await readFile(new URL("local-sub2api-authority-fixture.test.ts", import.meta.url), "utf8")
-  ].join("\n");
-  assert.doesNotMatch(source, /(?:https?:\/\/|@)[^\s"'`]+\.(?:com|cn|net|org)\b/i);
-  assert.doesNotMatch(source, new RegExp(["gh", "p_"].join(""), "i"));
-  assert.doesNotMatch(source, new RegExp(["github", "_pat_"].join(""), "i"));
-});

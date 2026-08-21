@@ -3,9 +3,8 @@
 Owner: `one-person-lab-cloud`
 Purpose: `workspace_target_reference`
 State: `active_target_reference`
-Machine boundary: Human-readable target product definition. It does not prove
-a Workspace implementation, provisioned instance, package/resource state,
-release, or production readiness.
+Machine boundary: Human-readable target product reference; implementation and
+readiness come from Workspace source, tests, status, and instance readback.
 
 OPL Workspace is the cloud OPL App workbench. It should feel like the same
 project, task, artifact, review and delivery experience in an online deployment,
@@ -57,14 +56,13 @@ open the account Workspace list
 
 A Workspace can show projects, task sessions, files, storage, Agent Instances,
 job status, resource use, artifacts, review status, Ledger refs and
-continuation entries. Package state and actions are Framework aggregations of
-owner descriptors and fresh native-carrier readback; Workspace does not infer
-or store a second Package or installed-state truth.
+continuation entries. Framework supplies package state and actions from owner
+descriptors and fresh native-carrier readback.
 
 Workspace may expose a **Publish to OPL Serve** action after the package,
 entrypoint, policy and owner gates are satisfied. The action calls Serve owner
-surfaces. Workspace does not create canonical Service, Revision, Deployment,
-endpoint or traffic state.
+surfaces, which create canonical Service, Revision, Deployment, endpoint, and
+traffic state.
 
 ## Responsibility Boundary
 
@@ -80,9 +78,9 @@ endpoint or traffic state.
   artifact, review, and continuation authority.
 - Workspace presents the user experience and dispatches owner actions.
 
-A Workspace URL is a workbench access surface and cannot be reused as an Agent
-Service endpoint. Workspaces and Agent Services both have zero-to-many account
-cardinality, but remain different product identities and lifecycles.
+A Workspace URL serves workbench access; an Agent Service endpoint serves
+external consumers. Both collections have zero-to-many account cardinality and
+separate product identities and lifecycles.
 
 Package availability, resource availability and domain readiness are different
 states. Workspace must display their owner and next action rather than collapse

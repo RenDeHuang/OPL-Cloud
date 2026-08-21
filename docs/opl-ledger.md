@@ -3,9 +3,8 @@
 Owner: `one-person-lab-cloud`
 Purpose: `ledger_target_reference`
 State: `active_target_reference`
-Machine boundary: Human-readable target evidence model. It is not a receipt
-store, runtime ledger, source database, quality verdict, owner receipt, or
-production-readiness source.
+Machine boundary: Human-readable target evidence reference; runtime and
+production evidence come from Ledger source, tests, status, and owner readback.
 
 OPL Ledger is the target evidence-record capability for OPL Cloud work.
 
@@ -13,9 +12,9 @@ It records what happened, which inputs and environments were used, which outputs
 were produced, what checks ran, and how the work can be reviewed or continued
 later.
 
-Ledger records receipts and provenance. It does not replace the domain source
-of truth, domain-quality judgment, or delivery authority owned by MAS, MAG, RCA,
-BookForge, OPL App, or another domain owner.
+Ledger records receipts and provenance while MAS, MAG, RCA, BookForge, OPL App,
+and other domain owners retain source truth, quality judgment, and delivery
+authority.
 
 ## Receipt Shape
 
@@ -42,15 +41,13 @@ Ledger.
 
 For Serve flows, a receipt should connect exact package digest, service,
 revision, deployment, consumer-policy, provider-session, resource, model-usage,
-input, output, artifact, review, cost and continuation refs where applicable;
-Ledger persists these as caller-owned provenance and does not interpret them.
-Ledger does not store provider secrets or become the canonical event/session
-store.
+input, output, artifact, review, cost and continuation refs where applicable.
+Ledger persists these as caller-owned opaque provenance; provider secrets and
+event/session state remain with their owners.
 
-Gateway remains the only spendable-balance owner, and Console remains the
-account-total billing and settlement-policy surface. Ledger records immutable
-evidence about money movements and resource charges; it does not maintain a
-Fabric balance or a second mutable account balance.
+Gateway remains the spendable-balance owner, and Console remains the account-total
+billing and settlement-policy surface. Ledger records immutable evidence about
+money movements and resource charges.
 
 ## MVP Boundary
 
@@ -88,18 +85,11 @@ data and artifact storage remain with the owning storage or domain system.
 Ledger does not generate an identity, resolve a continuation, hide it on reads,
 or authorize a Workspace operation.
 
-## What Ledger Does Not Own
-
-Ledger is not the file store, database, model provider, runtime scheduler,
-connector owner, skill owner, or domain-quality authority. It records
-references, receipts, and provenance from the owning systems.
-
 ## Review And Domain Ownership
 
-Review decisions and gates stay with the domain owner that understands them.
-Ledger records only opaque `reviewId`, `reviewerChecks`, and related refs; it
-does not own review policies, evaluate gates, or turn a review result into
-Workspace authorization.
+Each domain owner defines and evaluates its review policies and turns review
+outcomes into domain actions. Ledger records only opaque `reviewId`,
+`reviewerChecks`, and related refs.
 
 Examples of domain-owned review semantics:
 

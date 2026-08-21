@@ -3,9 +3,8 @@
 Owner: `one-person-lab-cloud`
 Purpose: `gateway_target_reference`
 State: `active_target_reference`
-Machine boundary: Human-readable target product definition. It does not prove
-a Gateway implementation, model availability, provider state, usage, billing,
-release, or production readiness.
+Machine boundary: Human-readable target product reference; implementation and
+readiness come from Control Plane, Sub2API, tests, status, and owner readback.
 
 OPL Gateway is the target frontier-AI capability gateway for One Person Lab.
 
@@ -42,9 +41,8 @@ This gives Console enough information for quotas, budgets, service/package
 attribution and downstream reporting without making Gateway responsible for
 package lifecycle, service deployment or industry-specific policy.
 
-Gateway is technically a resource access capability, but it should not be
-hidden inside OPL Fabric. Users can directly configure it, use it, meter it, and
-pay for it.
+Gateway is a top-level product surface that users configure, use, meter, and
+pay for directly.
 
 ## Public Surface
 

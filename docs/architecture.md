@@ -3,9 +3,8 @@
 Owner: `one-person-lab-cloud`
 Purpose: `architecture_boundary`
 State: `active_target_reference`
-Machine boundary: Canonical human-readable target product and authority split.
-It does not prove that any listed service, contract, runtime, billing path, or
-release is implemented or ready.
+Machine boundary: Canonical human-readable target architecture; implementation
+and readiness come from lower-layer owners and readback.
 
 OPL Cloud is the target product architecture and implementation-family
 navigation surface for extending OPL work from a local App into online
@@ -249,23 +248,9 @@ client contribution descriptors, slot/action ABI, and product profile; renderer
 selection cannot create separate Cloud APIs, Package registries, currentness,
 action truth, or product policy.
 
-This Host/Client composition decision does not turn OPL Cloud services into
-Cordis plugins or move Cloud authority into either context. The integration
-boundary remains a typed public Cloud API with explicit capability, identity,
-idempotency, and owner-authoritative readback. A Framework adapter may select or
-observe client behavior inside the Framework process, but it does not own a
-Cloud service identity, database, Workspace Launch cursor, provider resource,
-spendable balance, receipt, release, or deployment. Cloud provider selection and
-mutation remain behind the Fabric provider port and the owning Instance profile.
-
-The OPL Cloud target therefore does not include a Cordis runtime dependency,
-Cordis sidecar, parallel plugin registry, installed lock, durable event log, or
-service-lifecycle owner. Fabric provider adapters remain native implementations
-inside Fabric rather than Cordis plugins. A future Cloud process may adopt
-Cordis only through a new explicit architecture decision after one real
-in-process caller proves independent lifecycle, replacement, isolation, or
-teardown benefit without weakening the existing service, persistence, security,
-release, or authority boundaries.
+Cloud integration uses typed public APIs with explicit capability, identity,
+idempotency, and owner-authoritative readback. Fabric owns provider selection and
+mutation behind its provider port; the owning Instance supplies the profile.
 
 ## Core And Extension Boundary
 
@@ -443,9 +428,8 @@ policy still govern each creation. Projects, tasks, files, artifacts, and
 continuation entries remain inside their selected Workspace and do not become
 Workspace identity.
 
-The OPL App active shell provides the browser carrier. External multi-user SaaS
-experiments are not Cloud implementation owners or maintenance targets. The
-full decision and excluded repositories are recorded in
+The OPL App active shell provides the browser carrier. The complete identity
+decision is recorded in
 [Workspace Identity And External SaaS Boundary](workspace-identity-and-external-saas-boundary.md).
 
 Agent Services do not change this identity. Workspaces and Services can both be

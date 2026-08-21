@@ -1,332 +1,131 @@
 # OPL Cloud Durable Invariants
 
-This document owns long-lived safety, integrity, authority, and evidence rules.
-It does not own current delivery status, workflow steps, source layout, visual
-direction, rollout candidates, or open work. Current facts belong to
-`docs/status.md`, open gaps to `docs/roadmap.md`, and executable detail to source,
-schemas, workflows, and focused tests.
+This document contains only facts that must survive implementation changes.
+Exact routes, DTO fields, stage names, retry counts, schemas, compatibility
+decoders, and workflow steps belong to source, focused contracts, tests, or
+current implementation documentation.
 
-## Authority And Change Direction
+## Authority
 
-- `one-person-lab-cloud` is the single product and reusable implementation
-  repository for Console, Control Plane, Fabric, Ledger, and Workspace delivery.
-  `opl-cloud` is an internal artifact and service identifier, not a second owner.
-- Product concept and target architecture govern lower layers. A target change
-  must reconcile affected implementation docs, module docs, contracts, status,
-  and roadmap without creating a second current truth.
-- A document or machine contract cannot prove implementation, deployment, or
-  production state. Claims must be supported by the corresponding source,
-  schema, tests, runtime, or production readback.
-- Machine contracts protect deterministic cross-module, public-interface,
-  security, integrity, permission, and irreversible-side-effect boundaries.
-  They do not own UI taste, internal tuning, file layout, workflow command
-  sequences, current progress, or pending evidence.
+- Control Plane owns customer sessions, account policy, Workspace business
+  operations, settlement coordination, and customer-facing DTOs.
+- Fabric owns provider-neutral compute, storage, attachment, Secret binding,
+  Runtime facts, provider operations, and provider-authoritative readback.
+- Ledger owns append-only receipts, evidence, retention, reconciliation, and
+  caller-supplied opaque provenance.
+- Sub2API owns customer identity credentials, API Keys, Usage, and the spendable
+  wallet balance.
+- An instance repository owns its domains, provider profile, production
+  environment, Secrets, deployment, rollback, acceptance, and receipts.
+- Each authoritative fact has one writer. Other modules consume it through a
+  typed public contract or an owner readback.
 
-## Module And Data Ownership
+## Physical Ownership
 
-- Console calls only Control Plane product APIs. It owns presentation and
-  interaction, never persistence, provider mutation, billing authority, or
-  downstream service truth.
-- Control Plane physically owns Sessions, account policy, Workspace entitlement,
-  the Launch business-stage cursor, attempt/lease/CAS state, account and
-  settlement coordination, and customer-safe projections. It owns no provider
-  operation store, resource reducer, provider mutation, or resource readback.
-- Fabric physically owns compute, storage, attachment, Secret binding, Runtime,
-  its operation store, provider/Kubernetes mutation, and authoritative resource
-  readback. Provider-specific behavior stays behind a Fabric provider adapter.
-- Ledger owns append-only receipts, reconciliation, idempotency, and
-  caller-owned opaque provenance. Artifact, review, and continuation refs are
-  persisted and returned without Ledger interpretation; they never authorize or
-  advance a Workspace Launch. Control Plane's typed continuation authorization
-  remains separate from Ledger provenance.
-- Sub2API is the only authority for customer identity credentials, spendable USD
-  balance, API keys, model routing, and request usage. Cloud must not create a
-  second wallet, Key store, Usage store, or Gateway service.
-- Control Plane, Fabric, and Ledger remain separate Go modules, processes, and
-  PostgreSQL schema owners. Cross-service integration uses typed public HTTP
-  contracts; no service imports another service's implementation or `internal`
-  package, reads another service's tables, or shares a domain package.
-- `packages/contracts` contains narrow, independently owned cross-module hard
-  boundaries only. It cannot become an aggregate product model, universal
-  launch contract, shared domain package, or second implementation/status owner.
-- Workspace file bodies live only on their owned storage volume. Platform
-  PostgreSQL and Ledger may store identity, operation, reference, and evidence
-  facts, but never Workspace file contents.
+- Control Plane, Fabric, and Ledger remain separate processes, Go modules, and
+  PostgreSQL schema owners.
+- Cross-service integration uses typed HTTP APIs. A service reads and writes
+  only its own tables.
+- Console calls Control Plane product APIs. Provider, wallet, and Ledger access
+  stays behind the owning server boundary.
+- Shared infrastructure remains policy-free and serves at least two current
+  owners.
 
-## Identity And Tenant Isolation
+## Identity And Secrets
 
-- One Console User maps to one OPL Account and one Sub2API User/Wallet. The
-  signed-in Session determines the account scope; browser-supplied account or
-  downstream user identifiers cannot override it.
-- One Account may own zero or more independent Workspaces. Every Workspace has
-  its own stable identity, resources, credentials, entitlement period, and
-  receipts. There is no account-singleton Workspace invariant or fixed product
-  count limit.
-- Operator metadata access does not grant owner access to another account's API
-  Key, Runtime password, Workspace credential, or private resource details.
-- Account/User is the runtime owner and authorization graph. Organization and
-  Membership tables are historical read-only custody only: their rows and IDs
-  are preserved for migration validation, while runtime provisioning, auth,
-  reconciliation, and customer routes do not read or write them.
-- Missing, ambiguous, inconsistent, or unavailable owner identity readback
-  fails closed for protected access or mutation. It must never be replaced by a
-  stale local projection.
+- Customer access is authorized from the current session, Account, User, and
+  downstream identity mapping. Operator visibility does not grant customer
+  ownership.
+- Protected reads and mutations require an unambiguous owner match from the
+  authoritative source.
+- Passwords, raw Keys, tokens, provider credentials, approval payloads, and raw
+  downstream responses stay out of URLs, logs, audit payloads, Ledger, browser
+  storage, and non-secret artifacts.
+- Secret reveal is an explicit owner-authorized, private, no-store interaction.
+  Ordinary status projections remain redacted.
+- A Workspace Gateway Key is persisted only by the selected Fabric secret
+  owner. Control Plane and Ledger retain references, not the raw Key.
 
-## Secrets And Browser Boundary
+## Money
 
-- Passwords, raw API keys, tokens, provider credentials, approval payloads, and
-  raw downstream responses never enter URLs, logs, audit payloads, Ledger,
-  browser storage, or non-secret artifacts.
-- Runtime passwords and owned API Keys are masked by default, revealed only to
-  the authorized owner, returned with `private, no-store`, and kept only for the
-  bounded interaction that requested them.
-- Fabric's selected secret owner is the only authorized persistence point for a
-  Workspace Gateway Key: Tencent/TKE uses the Workspace-scoped Kubernetes
-  Secret, while `local-docker` uses its protected host-owned immutable-version
-  store and a read-only Runtime bind. Runtime receives only the scoped Secret
-  reference/version; Control Plane, Ledger, and the browser never persist the
-  raw Key.
-- `OPL_SUB2API_BASE_URL` and Sub2API management credentials remain server-only.
-  The browser never calls, embeds, redirects to, or scrapes the management
-  surface. The public `/v1` model endpoint may be presented according to the
-  current Console UX without weakening that management boundary.
-- Every customer-facing downstream projection uses an explicit allowlist and
-  excludes raw admin DTOs, credentials, prompts, response bodies, and provider
-  secrets.
+- Customer prices and wallet mutations use integer USD micros. Provider costs
+  are reconciliation evidence, not a customer pricing formula.
+- A Workspace purchase or renewal confirms at most one customer debit for the
+  accepted period price. Compute and storage are fulfillment of that purchase.
+- Operations that can change money use stable idempotency identities and retain
+  enough evidence to distinguish confirmed, absent, and unknown outcomes.
+- A confirmed absence of all billable fulfillment after a debit may authorize
+  one idempotent refund. Partial, conflicting, or unknown evidence requires
+  review before another monetary mutation.
+- Receipt failure retries the receipt only; it does not repeat an already
+  confirmed debit, refund, provider operation, activation, or renewal.
 
-## Money And Settlement
+## Workspace Lifecycle
 
-- Customer prices and balance mutations use exact integer USD micros. Provider
-  costs do not derive customer charges.
-- Each Workspace purchase or renewal has at most one confirmed customer debit
-  for the total period price. Compute and storage are fulfillment, never
-  separate customer charges.
-- Debit, refund, provider mutation, claim, activation, renewal, Secret write,
-  and receipt use stable operation-scoped idempotency identities.
-- A confirmed provider result proving that no billable resource exists after a
-  debit permits exactly one idempotent refund. A partial, conflicting, or
-  unknown provider result enters manual review without refund or a second
-  purchase.
-- A receipt failure after activation retries only the receipt. It never repeats
-  debit, refund, provider purchase, Secret write, activation, or renewal.
-- Concurrent legitimate model Usage may change the live wallet. A confirmed
-  debit is proved by the unique matching Sub2API mutation history, not by
-  assuming an exact before/after balance delta.
-- Wallet writes remain serialized by the Control Plane's owning boundary. A
-  second lock service or multi-replica wallet writer requires an explicit
-  architecture and contract change.
+- Launch, renewal, Key rotation, Runtime repair, and deletion are durable
+  Control Plane operations over one Workspace identity.
+- Recovery continues the original operation and original resource identities.
+  It cannot create a second purchase or silently replace an already confirmed
+  resource.
+- Before an external write, the owning operation persists its identity and
+  idempotency binding. An uncertain result converges through owner-authoritative
+  readback before another write is considered.
+- Workspace deletion removes owned Runtime, Secret, attachment, storage,
+  compute, and Key state through their respective owners before removing the
+  Workspace projection. Delete is independent from refund and performs no
+  automatic wallet mutation.
+- Operations that can mutate the same Workspace-owned resource serialize on the
+  owning durable state.
+- Historical rows needed for current reads or migration validation remain
+  readable until their real consumers and data obligations are retired.
 
-## Workspace Delete
+## Provider Resources
 
-- Workspace deletion is one durable `workspace.delete.v2` Control Plane
-  operation. It permanently removes the Workspace and its owned resources
-  without an automatic refund. Delete, Cancel Renewal, and Refund are
-  independent product operations.
-- Before the first cleanup mutation, Control Plane reads and matches the
-  immutable succeeded Launch and its exact charged or zero-cost Launch Receipt
-  for Runtime, compute, storage, and attachment identity. The current Workspace
-  projection and one strict completed Key Rotation lineage back to the Launch
-  Key own the current Workspace Key and Gateway Secret identity. A positive
-  Debit, purchase amount, refund code, or wallet-history entry is not Delete
-  authority. The ordered completion chain is `runtime + Secret absence ->
-  attachment absence -> storage absence -> compute absence -> Key absence ->
-  Workspace absence -> deletion Receipt -> complete`.
-- Fabric reports Runtime and Gateway Secret owner observations as typed
-  `ready/absent/pending/conflict/error` facts. Both must be authoritatively
-  absent before later cleanup stages continue. Unknown, conflict, or error is
-  `manual_review`, never inferred absence.
-- Fabric advances compute or storage only after provider-authoritative permanent
-  absence. Tencent `NativeCVM` compute requires both TKE Machine and CVM absence;
-  `Native`/`CXM` requires TKE Machine absence without CVM mutation; Tencent
-  storage requires CBS absence. Missing or conflicting immutable provider
-  identity fails before mutation.
-- Sub2API alone deletes the exact Workspace Key and performs zero wallet
-  mutations for Delete. A lost Key-delete response is reconciled only through
-  the same exact Key GET; an acceptance runner, Fabric adapter, or Local Docker
-  provider cannot substitute private Key cleanup.
-- Ledger records one non-financial `workspace.deleted.v1` Receipt after
-  Workspace absence. Receipt failure retries only that Receipt and never repeats
-  Key deletion or Fabric cleanup. A non-terminal legacy `workspace.delete.v1`
-  operation blocks v2 before mutation. Delete cannot run concurrently with a
-  non-terminal Renewal or Key Rotation; Delete and Rotation claims use the same
-  durable Workspace lock before either operation can cross an external mutation
-  boundary. Workspace absence removes the exact matching Control Plane compute,
-  storage, attachment, and Workspace projections in the same transaction as the
-  `workspace_absent` cursor; any identity mismatch rolls back the whole step.
+- Provider selection and concrete resource policy come from the active instance
+  profile. Provider-specific behavior stays inside the Fabric adapter.
+- Customer and verification compute/storage procurement uses the approved
+  prepaid monthly policy. Capacity and price checks are read-only.
+- Provider mutations bind the authorized caller, exact target, operation,
+  allowed action, request integrity, and expiry.
+- Provider absence, ownership, and completion come from the provider authority.
+  Ambiguous or conflicting facts require review before another mutation.
+- Instance-designated system resources remain outside customer allocation and
+  cleanup.
 
-## Launch And Recovery
+## Console
 
-- Read-only identity, availability, capacity, price, and balance preflight
-  is the admission gate and completes before the first external write. A failed
-  preflight has zero customer charge and zero provider mutation.
-- A Workspace Launch is one durable, resumable Control Plane operation and
-  business state machine. Create and Resume enter the same Reconciler. A single
-  Reconciler does not authorize a single file, module, process, schema, or shared
-  implementation owner.
-- The durable stage order is `key -> debit -> ensure compute allocation ->
-  storage -> attachment -> secret -> runtime -> activation -> receipt ->
-  succeeded`. A Workspace URL is Runtime-authoritative readback/projection, not
-  an independent mutation authority or stage.
-- Replay continues the original launch, account, Workspace, customer, billing,
-  Key, provider/resource, idempotency, and attempt-budget identities. It never
-  creates a second launch, debit, Key, resource, Runtime, or receipt.
-- External writes are reserved before execution. A reserved or unknown result
-  is reconciled through authoritative readback and is never blindly reissued.
-- The exact first owner read after a fresh stage mutation is mandatory. If and
-  only if it returns typed `pending`, Control Plane may atomically persist a
-  system continuation authorization in the same operation CAS. It binds the
-  account, Launch, Workspace, stage, original idempotency key, attempt, and
-  operation version; has zero mutation and replay budget; and authorizes only a
-  finite number of additional owner reads. Each read slot is claimed by CAS
-  before the owner GET, so a concurrent loser performs no GET and a crashed
-  claim is consumed rather than refunded or replayed. The mandatory post-write
-  read is count one; two additional claims bound post-write owner reads at
-  three. An expired crash claim must be marked consumed before a distinct
-  remaining slot is claimed and can never be reissued under its old ordinal.
-- Each stage keeps `Max=1`; recovery never resets `Attempted` or raises `Max`.
-  A separately persisted idempotent replay authorization may reuse only the
-  original stage key after fresh owner-authoritative `absent` evidence. An
-  operator continuation-read authorization may consume only typed owner
-  `pending` evidence and remains distinct from the fresh system authorization.
-  Neither path is an unbounded poll or provider-failure heuristic.
-  Exhaustion becomes `unknown/manual_review`; it never proves absence or permits
-  another mutation.
-- Recovery is an authorization path for the original Launch, not a second
-  business state machine. It may only save and consume an immutable Resume
-  authorization. The authorization binds the launch ID, current CAS version,
-  current stage, independent mutation/replay/read budgets, the server-bound
-  readback baseline, reviewer, timestamp, and reason; it is persisted by Control
-  Plane CAS before the same Reconciler can continue. It never impersonates or
-  widens the fresh system authorization. Legacy schema-v3 rows that lack the
-  explicit fresh or operator authorization fields receive zero budget and no
-  invented owner fact.
-- Recovery owns no business stage, reducer, provider/resource identity, or
-  Fabric/provider mutation. Console, workflow, review, and Ledger input cannot
-  provide or rewrite a resource ID, reset a budget, create a successor Launch,
-  or authorize a downstream write.
-- Fulfillment Repair is a separate operator command under Workspace Launch, not
-  a Recovery budget or a second Launch. It is eligible only for a resource-paid
-  `manual_review/runtime` operation with confirmed Key, Debit, Compute,
-  Storage, Attachment, and Secret, one consumed unknown Runtime attempt, and no
-  Activation or Receipt attempt. The operator may provide only the exact Launch
-  version, reason, immutable replacement image digest, and idempotency identity.
-  Control Plane binds the authenticated operator user and server timestamp into
-  the persisted repair authorization. A replay from another operator conflicts
-  instead of creating another repair.
-- Fabric must prove the persisted original Runtime operation and exact retained
-  Compute, Storage, Attachment, and Secret bindings before repair mutation. An
-  opted-in provider may replace only Runtime; it must preserve those resources
-  and the Secret. READY advances the original Launch to its single Activation
-  and Purchase Receipt. Exact replay performs no second Runtime replacement,
-  and unsupported providers fail closed.
-- Only a quiesced `manual_review` legacy Launch is migration-eligible.
-  Migration performs owner-authoritative GET-only fact collection,
-  deterministic mapping, exact-row/result CAS, and Control Plane post-write
-  readback. It preserves the original launch, account, Workspace, customer,
-  debit, Key, provider/resource IDs, billing period, all idempotency identities,
-  and consumed, unknown, and remaining attempt budgets.
-- A missing, conflicting, unknown, or non-preservable legacy fact leaves the row
-  in `manual_review` with zero provider and wallet mutation. A format or version
-  identifier alone is not target-state proof, and migrated rows still require
-  the immutable Resume authorization.
-- Fenced leases and compare-and-swap persistence ensure one winner. A stale
-  worker cannot finalize after losing its lease.
+- Console presents current owner-backed account, wallet, Workspace, Usage,
+  receipt, and failure facts.
+- Independent sources load independently. A failed source does not erase valid
+  facts from another source.
+- `empty` represents a successful authoritative read with no rows;
+  `unavailable` represents a failed authoritative read and carries no invented
+  zero value.
+- Sensitive values are masked by default and revealed only through the owning
+  command.
+- Accessibility and clear responsive interaction are product requirements;
+  visual details remain implementation choices.
 
-## Provider And Resource Safety
+## Release And Production
 
-- Customer and verification CVM/CBS procurement uses `PREPAID`, one month, and
-  `NOTIFY_AND_MANUAL_RENEW`. `POSTPAID_BY_HOUR` is forbidden.
-- Provider capacity and price checks are read-only. They do not buy, reserve,
-  renew, or delete resources.
-- Real provider mutation requires an explicit production authorization bound to
-  the exact release, caller identity, target, allowed writes, and expiry.
-- Provider and Kubernetes mutations use authoritative identity readback and
-  exact mutation bounds. Ambiguous identity, ownership conflict, permission
-  failure, or unknown result fails closed before another write.
-- Every Control Plane-to-Fabric stage call carries an explicit, immutable,
-  provider-neutral operation binding covering the Launch operation, account and
-  Workspace, stage/action, stable stage operation/idempotency identity, request
-  hash, and expected resource binding. Fabric persists it before the provider
-  write and returns it in authoritative readback.
-- The Fabric adapter maps that binding to provider identities. Control Plane has
-  no Machine, CVM, Node, CBS, provider SDK, Kubernetes, providerData, or cost-tag
-  implementation knowledge and cannot infer ownership from `:compute` suffixes,
-  unscoped operation listings, or provider tags.
-- Owner-authoritative readback proving that the exact original stage resource is
-  absent may authorize one logical transport replay only when that adapter owns
-  a deterministic identity and idempotency contract. Fabric first persists a
-  same-operation child CAS claim, reads the owner again, and only if the second
-  read is still `absent` reuses the original idempotency key. `ready` converges
-  without provider mutation; typed `pending` consumes only the authorized read
-  budget; conflict, error, and unknown fail closed. Recovery never creates a
-  replacement or successor resource and never increases a business attempt.
-- System resources designated by the deployed instance are protected from
-  customer allocation, provider mutation, Kubernetes mutation, and cleanup.
-  Their identifiers belong to deployment/instance authority, not this document.
-- A launch claims only resources created or authoritatively bound to that
-  Workspace. It cannot reuse an old, idle, orphaned, unregistered, or
-  differently owned machine or volume.
-- Once the original storage identity is confirmed, replacement storage creation
-  is forbidden. Recovery converges the original identity or remains in manual
-  review.
-- Unpaid expiry denies Workspace access and performs zero Fabric or provider
-  resource mutation. Provider expiry policy owns eventual reclamation.
-
-## Console Experience Outcomes
-
-- Public and login entry remains immediately usable; session checks may enrich
-  or redirect but do not block the first interactive screen.
-- The authenticated Console presents authoritative account, wallet, Workspace,
-  usage, receipt, and actionable failure facts without fabricating unavailable
-  values or copying downstream truth.
-- Independent data sources load and fail independently. One unavailable source
-  cannot erase valid facts from another or hold the entire Console indefinitely.
-- `empty` means a successful authoritative read with zero rows;
-  `unavailable` means authority could not be read and contains no invented
-  fallback data.
-- The Console must be professional, understandable, responsive, keyboard
-  accessible, and safe for sensitive information. Colors, gradients, exact
-  dimensions, navigation count, component library, framework, model choice, and
-  asset hashes are implementation decisions, not invariants.
-
-## Deployment And Release Safety
-
-- Pull-request and build jobs default to read-only repository permissions.
-  Publication credentials exist only in the smallest publish boundary after
-  the exact source and artifacts have passed independent validation.
-- Third-party Actions are pinned to immutable commit SHAs. Dependency and code
-  scanner output is triaged against the supported boundary before it is called
-  a vulnerability, false positive, or fix.
-- A container digest proves immutable bytes, not an authorized publisher.
-  Provider execution accepts only both an immutable digest and an approved
-  image identity or release-manifest binding.
-- Production mutation runs only through approved GitHub Actions environments and
-  authorized runners. Local development cannot directly access production
-  private endpoints, clusters, databases, or services.
-- Production source and images are immutable and bound to exact merged commits
-  and digest readback. Branch names, mutable image tags, placeholders, and local
-  timestamps are not release evidence.
-- Secrets remain in approved secret stores and temporary protected files. They
-  never appear in manifests, command arguments, logs, caches, or artifacts.
-- Ordinary rollout is read-only with respect to customer billing and provider
-  resources. A real customer or provider mutation requires a separate explicit
-  approval and exact mutation budget.
-- Deployment captures authoritative diagnostics before rollback. Rollback
-  restores the prior approved images and configuration without inventing a new
-  product or billing state.
-- A coding agent may propose changes only through a task branch and pull
-  request. It cannot bypass branch protection, approve its own authority,
-  publish a release, deploy an instance, or become a product/domain owner.
+- Cloud publishes portable product artifacts. The instance owner deploys and
+  qualifies an immutable Cloud candidate in its own protected environment.
+- Publication and deployment bind exact source commits, image digests, caller
+  authority, and owner readback. A build or test result proves only its own
+  layer.
+- Production credentials are available only inside the smallest authorized
+  publish or instance-mutation boundary.
+- Local development does not connect directly to production-private services.
+- Ordinary verification is read-only with respect to customer billing and
+  provider resources. Real mutations require separate explicit authorization.
 
 ## Evidence Levels
 
-- `code-complete` requires the current implementation revision and its complete
-  local machine-enforced gates, including required database suites and zero
-  skipped tests.
-- `pilot-ready` additionally requires separately approved real Gateway,
-  Runtime, provider, billing, and browser evidence for that exact revision.
+- `code-complete` means the exact source revision passed its required local
+  source, build, persistence, and integration gates with no required skips.
+- `pilot-ready` additionally requires approved real Gateway, Runtime, provider,
+  billing, and browser evidence for that revision.
 - `production-proven` additionally requires the same immutable revision to be
-  deployed and read back with the required production evidence.
-- A lower evidence level never implies a higher one. Documentation, contracts,
-  fake tests, screenshots, CI, or a rendered artifact prove only their own
-  layer.
+  deployed and read back by the production owner.
+- Evidence is reported at the layer actually observed; lower-layer evidence
+  does not imply a higher layer.

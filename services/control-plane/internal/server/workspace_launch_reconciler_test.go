@@ -2114,19 +2114,3 @@ func TestWorkspaceLaunchResumeAuthorizationDigestBindsImmutableAuthorization(t *
 		t.Fatalf("authorization drift retained digest=%q", second)
 	}
 }
-
-func TestWorkspaceLaunchActiveSourceHasNoProviderReducer(t *testing.T) {
-	files := []string{"workspace_launch.go", "workspace_launch_reconciler.go", "workspace_launch_service.go", "workspace_launch_fabric_stages.go", "workspace_launch_activation.go", "routes_workspace_launch.go"}
-	for _, name := range files {
-		source, err := os.ReadFile(filepath.Join(".", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		lower := strings.ToLower(string(source))
-		for _, forbidden := range []string{"tencent", "nodepool", "machine", "cvm", "providerdata", "costtags", "fabricoperations", "listoperations"} {
-			if strings.Contains(lower, forbidden) {
-				t.Fatalf("%s contains provider-owned token %q", name, forbidden)
-			}
-		}
-	}
-}

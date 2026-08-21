@@ -9,12 +9,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseDocument } from "yaml";
 
 import {
-  productMatrixRequiredPackages,
-  productMatrixRequiredTests,
-  productMatrixStages,
-  validateProductMatrixModules
-} from "./verify-local.ts";
-import {
   collectLocalJ1RecoveryAuthority,
   createLocalJ1RecoveryArtifact,
   createLocalJ1RecoveryReadbackPendingArtifact,
@@ -67,7 +61,7 @@ function optionValues(args) {
       buildSourceImages = true;
       continue;
     }
-    if (!["--source-sha", "--cloud-image", "--workspace-image", "--receipt", "--authority-mode", "--product-matrix-receipt", "--j0-ready-receipt", "--sub2api-secret-file"].includes(token)) {
+    if (!["--source-sha", "--cloud-image", "--workspace-image", "--receipt", "--authority-mode", "--j0-ready-receipt", "--sub2api-secret-file"].includes(token)) {
       throw new Error(`unknown local qualification argument: ${token}`);
     }
     const value = args[index + 1];
@@ -87,7 +81,6 @@ export function parseLocalQualificationArgs(args = process.argv.slice(2)) {
   const workspaceImage = String(values.get("--workspace-image") || "").trim();
   const receiptPath = String(values.get("--receipt") || "").trim();
   const authorityMode = String(values.get("--authority-mode") || "fixture").trim();
-  const productMatrixReceipt = String(values.get("--product-matrix-receipt") || "").trim();
   const j0ReadyReceipt = String(values.get("--j0-ready-receipt") || "").trim();
   const sub2apiSecretFile = String(values.get("--sub2api-secret-file") || "").trim();
   if (!shaPattern.test(sourceSha)) throw new Error("source SHA must be an exact 40-character lowercase commit");
@@ -99,12 +92,11 @@ export function parseLocalQualificationArgs(args = process.argv.slice(2)) {
   }
   if (authorityMode !== "fixture" && authorityMode !== "live") throw new Error("authority mode must be fixture or live");
   if (authorityMode === "live" && !j0ReadyReceipt) throw new Error("live qualification requires a J0 READY receipt");
-  if (authorityMode === "live" && productMatrixReceipt) throw new Error("live qualification does not accept a Product matrix receipt");
   if (j0ReadyReceipt && !isAbsolute(j0ReadyReceipt)) throw new Error("J0 READY receipt path must be absolute");
   if (j0ReadyReceipt && authorityMode !== "live") throw new Error("J0 READY receipt requires live authority mode");
   if (sub2apiSecretFile && authorityMode !== "live") throw new Error("Sub2API secret file requires live authority mode");
   if (sub2apiSecretFile && !isAbsolute(sub2apiSecretFile)) throw new Error("Sub2API secret file path must be absolute");
-  return { sourceSha, cloudImage, workspaceImage, receiptPath, buildSourceImages, authorityMode, productMatrixReceipt, j0ReadyReceipt, sub2apiSecretFile };
+  return { sourceSha, cloudImage, workspaceImage, receiptPath, buildSourceImages, authorityMode, j0ReadyReceipt, sub2apiSecretFile };
 }
 
 function sub2apiSecretFileError(code) {
@@ -209,37 +201,6 @@ export function validateQualificationSourceIdentity(before, after, requestedSour
   return after;
 }
 
-export function validateProductMatrixReceipt(value, sourceSha, sourceTree) {
-  if (!value || value.schemaVersion !== 1 || value.status !== "READY" || value.zeroSkip !== true ||
-    value.source?.sha !== sourceSha || value.source?.tree !== sourceTree) {
-    throw new Error("Product matrix receipt source or status is invalid");
-  }
-  if (!Array.isArray(value.stages) || value.stages.length !== productMatrixStages.length ||
-    value.stages.some((stage, index) => stage?.name !== productMatrixStages[index] || stage?.passed !== true || stage?.skipped !== 0)) {
-    throw new Error("Product matrix receipt must prove the exact nine-stage zero-skip set");
-  }
-  if (value.cas?.winnerCount !== 1 || value.cas?.loserMutationCount !== 0) {
-    throw new Error("Product matrix receipt CAS proof is invalid");
-  }
-  const deltas = value.unknown?.authorityWriteDeltas;
-  if (!deltas || ["controlPlane", "sub2api", "fabric", "ledger"].some((name) => deltas[name] !== 0)) {
-    throw new Error("Product matrix receipt unknown write deltas are invalid");
-  }
-  const packageNames = Array.isArray(value.packages) ? value.packages.map((entry) => entry?.name) : [];
-  if (packageNames.length === 0 || new Set(packageNames).size !== packageNames.length ||
-    value.packages.some((entry) => !String(entry?.name || "").trim() || entry?.passed !== true || entry?.skipped !== 0) ||
-    productMatrixRequiredPackages.some((name) => !packageNames.includes(name))) {
-    throw new Error("Product matrix receipt package evidence is invalid");
-  }
-  if (!Array.isArray(value.tests) || value.tests.length !== productMatrixRequiredTests.length ||
-    value.tests.some((entry, index) => entry?.package !== productMatrixRequiredTests[index].package ||
-      entry?.name !== productMatrixRequiredTests[index].name || entry?.passed !== true || entry?.skipped !== 0)) {
-    throw new Error("Product matrix receipt test evidence is invalid");
-  }
-  validateProductMatrixModules(value.modules);
-  return value;
-}
-
 function j0ReadyReceiptError() {
   const error = new Error("j0_ready_receipt_invalid");
   error.code = "j0_ready_receipt_invalid";
@@ -297,26 +258,6 @@ export async function loadJ0ReadyReceipt(path, sourceSha, sourceTree, { currentU
   }
 }
 
-async function loadProductMatrixReceipt(path, sourceSha, sourceTree) {
-  if (!path) return null;
-  const raw = await readFile(resolve(path));
-  const value = validateProductMatrixReceipt(JSON.parse(raw.toString("utf8")), sourceSha, sourceTree);
-  return {
-    digest: `sha256:${createHash("sha256").update(raw).digest("hex")}`,
-    source: { sha: value.source.sha, tree: value.source.tree },
-    stages: [...productMatrixStages],
-    packages: value.packages.map((entry) => entry.name),
-    tests: value.tests.map((entry) => `${entry.package}:${entry.name}`),
-    modules: value.modules.map((module) => ({
-      cwd: module.cwd, command: module.command, args: [...module.args], packages: [...module.packages],
-      failed: module.failed, skipped: module.skipped
-    })),
-    zeroSkip: true,
-    casWinnerCount: 1,
-    unknownAuthorityWriteDeltas: { ...value.unknown.authorityWriteDeltas }
-  };
-}
-
 export function validateLocalQualificationReceipt(value) {
   if (!value || value.schemaVersion !== 1 || value.status !== "READY") throw new Error("READY receipt is required");
   if (!shaPattern.test(String(value.source?.sha || "")) || !shaPattern.test(String(value.source?.tree || ""))) {
@@ -348,12 +289,9 @@ export function validateLocalQualificationReceipt(value) {
   }
   const live = value.qualification.authorityMode === "live";
   const identityKeys = ["accountId", "sub2apiUserId", "launchOperationId", "workspaceId", "runtimeId", "keyId", "debitCode", "purchaseReceiptId"];
-  if (!live) identityKeys.push("deleteOperationId", "refundOperationId", "refundReceiptId");
+  if (!live) identityKeys.push("deleteOperationId", "deletionReceiptId");
   for (const key of identityKeys) {
     requireString(value.identities?.[key], `identity ${key}`);
-  }
-  if (!live && value.identities.refundOperationId !== value.identities.deleteOperationId) {
-    throw new Error("refund operation must reuse the owner DELETE operation identity");
   }
   if (value.debit?.count !== 1 || !String(value.debit?.code || "").startsWith("opl:") ||
     value.debit?.accountId !== value.identities.accountId || value.debit?.code !== value.identities.debitCode || value.debit?.operationId !== value.identities.launchOperationId ||
@@ -361,14 +299,14 @@ export function validateLocalQualificationReceipt(value) {
     String(value.debit?.userId || "") !== String(value.identities.sub2apiUserId) || !/^[1-9][0-9]*$/.test(String(value.debit?.amountUsdMicros || ""))) {
     throw new Error("exact debit evidence is invalid");
   }
-  const walletKeys = live ? ["beforeUsdMicros", "afterUsdMicros"] : ["beforeUsdMicros", "afterUsdMicros", "restoredUsdMicros"];
+  const walletKeys = live ? ["beforeUsdMicros", "afterUsdMicros"] : ["beforeUsdMicros", "afterUsdMicros", "afterDeleteUsdMicros"];
   if (!walletKeys.every((key) => /^\d+$/.test(String(value.wallet?.[key] || "")))) {
     throw new Error("wallet readback is invalid");
   }
   if (value.qualification.authorityMode === "fixture" &&
     (BigInt(value.wallet.beforeUsdMicros) - BigInt(value.debit.amountUsdMicros) !== BigInt(value.wallet.afterUsdMicros) ||
-      value.wallet.restoredUsdMicros !== value.wallet.beforeUsdMicros)) {
-    throw new Error("isolated fixture wallet readback does not equal the exact debit and refund");
+      value.wallet.afterDeleteUsdMicros !== value.wallet.afterUsdMicros)) {
+    throw new Error("isolated fixture wallet readback does not equal the exact debit or changed during deletion");
   }
   if (value.receipt?.count !== 1 || value.receipt?.id !== value.identities.purchaseReceiptId ||
     value.receipt?.accountId !== value.identities.accountId || value.receipt?.operationId !== value.identities.launchOperationId ||
@@ -388,40 +326,28 @@ export function validateLocalQualificationReceipt(value) {
     if (value.deletion?.ownerAuthorized !== true || value.deletion?.workspaceAbsent !== true || value.deletion?.runtimeAbsent !== true ||
       value.deletion?.workspaceKeyAbsent !== true || value.deletion?.fabricSecretAbsent !== true ||
       value.deletion?.accountId !== value.identities.accountId || value.deletion?.operationId !== value.identities.deleteOperationId ||
-      value.deletion?.refundOperationId !== value.identities.refundOperationId || value.deletion?.workspaceId !== value.identities.workspaceId ||
+      value.deletion?.deletionReceiptId !== value.identities.deletionReceiptId || value.deletion?.workspaceId !== value.identities.workspaceId ||
       value.deletion?.runtimeId !== value.identities.runtimeId || String(value.deletion?.keyId || "") !== String(value.identities.keyId)) {
       throw new Error("owner deletion evidence is invalid");
+    }
+    if (value.deletionReceipt?.count !== 1 || value.deletionReceipt?.id !== value.identities.deletionReceiptId ||
+      value.deletionReceipt?.type !== "workspace.deleted.v1" || value.deletionReceipt?.accountId !== value.identities.accountId ||
+      value.deletionReceipt?.operationId !== value.identities.deleteOperationId || value.deletionReceipt?.workspaceId !== value.identities.workspaceId) {
+      throw new Error("deletion receipt binding is invalid");
     }
   }
   if (["containers", "volumes", "networks"].some((key) => value.residuals?.[key] !== 0)) {
     throw new Error("exact-labelled residual evidence is invalid");
   }
-  const expectedAuthorityWrites = live ? { keyCreates: 1, keyDeletes: 0, debits: 1, refunds: 0 } : { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 1 };
+  const expectedAuthorityWrites = live ? { keyCreates: 1, keyDeletes: 0, debits: 1, refunds: 0 } : { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 0 };
   if (Object.entries(expectedAuthorityWrites).some(([key, count]) => value.authorityWriteCounts?.[key] !== count)) {
     throw new Error("qualification authority write counts are invalid");
   }
   const expectedMutationCounts = live
-    ? { accountProvisionPosts: 1, workspaceLaunchPosts: 1, workspaceDeleteRequests: 0, refundPosts: 0 }
-    : { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1, refundPosts: 0 };
+    ? { accountProvisionPosts: 1, workspaceLaunchPosts: 1, workspaceDeleteRequests: 0 }
+    : { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1 };
   if (Object.entries(expectedMutationCounts).some(([key, count]) => value.mutationCounts?.[key] !== count)) {
     throw new Error("qualification mutation counts are invalid");
-  }
-  if (live) {
-    if (value.refund?.count !== 0 || value.refundReceipt?.count !== 0) throw new Error("live qualification must not refund");
-  } else if (value.refund?.count !== 1 || !String(value.refund?.code || "").trim() ||
-    value.refund?.accountId !== value.identities.accountId || value.refund?.operationId !== value.identities.refundOperationId || value.refund?.workspaceId !== value.identities.workspaceId ||
-    value.refund?.debitCode !== value.identities.debitCode ||
-    String(value.refund?.userId || "") !== String(value.identities.sub2apiUserId) ||
-    String(value.refund?.amountUsdMicros || "") !== String(value.debit.amountUsdMicros) ||
-    value.refund?.receiptId !== value.identities.refundReceiptId) {
-    throw new Error("exact refund evidence is invalid");
-  }
-  if (!live && (value.refundReceipt?.count !== 1 || value.refundReceipt?.id !== value.identities.refundReceiptId ||
-    value.refundReceipt?.type !== "billing.workspace_refunded.v1" ||
-    value.refundReceipt?.accountId !== value.identities.accountId || value.refundReceipt?.operationId !== value.identities.refundOperationId || value.refundReceipt?.workspaceId !== value.identities.workspaceId ||
-    value.refundReceipt?.chargeReference !== value.identities.debitCode || value.refundReceipt?.refundCode !== value.refund.code ||
-    String(value.refundReceipt?.amountUsdMicros || "") !== String(value.debit.amountUsdMicros))) {
-    throw new Error("refund receipt binding is invalid");
   }
   if (value.usage?.source !== "sub2api" || value.usage?.status !== "available") throw new Error("Sub2API usage readback is invalid");
   const serialized = JSON.stringify(value);
@@ -977,9 +903,7 @@ export async function runLocalWorkspaceJ1HTTPQualification(input) {
       deletion: { performed: false, mode: "qualification_owned_cleanup" },
       residuals: cleanupEvidence,
       authorityWriteCounts: { keyCreates: 1, keyDeletes: 0, debits: 1, refunds: 0 },
-      mutationCounts: { accountProvisionPosts: 1, workspaceLaunchPosts: 1, workspaceDeleteRequests: 0, refundPosts: 0 },
-      refund: { count: 0 },
-      refundReceipt: { count: 0 },
+      mutationCounts: { accountProvisionPosts: 1, workspaceLaunchPosts: 1, workspaceDeleteRequests: 0 },
       usage: { source: "sub2api", status: "available", totalRequests: usage.totalRequests }
     };
     onStage("receipt_validation");
@@ -1141,9 +1065,8 @@ function receiptCommand(options) {
   const imageArgs = options.buildSourceImages
     ? "--build-source-images"
     : `--cloud-image ${options.cloudImage} --workspace-image ${options.workspaceImage}`;
-  const matrixArg = options.productMatrixReceipt ? ` --product-matrix-receipt ${options.productMatrixReceipt}` : "";
   const j0Arg = options.j0ReadyReceipt ? ` --j0-ready-receipt ${options.j0ReadyReceipt}` : "";
-  return `npm run qualify:local:workspace -- --source-sha ${options.sourceSha} ${imageArgs} --authority-mode ${options.authorityMode}${matrixArg}${j0Arg} --receipt ${options.receiptPath}`;
+  return `npm run qualify:local:workspace -- --source-sha ${options.sourceSha} ${imageArgs} --authority-mode ${options.authorityMode}${j0Arg} --receipt ${options.receiptPath}`;
 }
 
 async function writeEarlyNotReady(options, stage, errorCode, error) {
@@ -1190,17 +1113,14 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
   const sourceBefore = await readSourceIdentity();
   validateQualificationSourceIdentity(sourceBefore, sourceBefore, options.sourceSha);
   const sourceTree = sourceBefore.tree;
-  let productMatrix = null;
   let j0Ready = null;
-  try {
-    if (options.authorityMode === "live") {
+  if (options.authorityMode === "live") {
+    try {
       j0Ready = await loadJ0ReadyReceipt(options.j0ReadyReceipt, options.sourceSha, sourceTree);
-    } else {
-      productMatrix = await loadProductMatrixReceipt(options.productMatrixReceipt, options.sourceSha, sourceTree);
+    } catch (error) {
+      await writeEarlyNotReady(options, "j0_ready_preflight", "j0_ready_receipt_invalid", error);
+      throw error;
     }
-  } catch (error) {
-    await writeEarlyNotReady(options, options.authorityMode === "live" ? "j0_ready_preflight" : "product_matrix_preflight", options.authorityMode === "live" ? "j0_ready_receipt_invalid" : "product_matrix_receipt_invalid", error);
-    throw error;
   }
   if (options.authorityMode === "live" && dependencies.runLiveJ1) {
     const result = await dependencies.runLiveJ1({ options, liveAuthority, source: sourceBefore, j0Ready });
@@ -1460,24 +1380,16 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
     if (!opened.response.ok || !opened.text.includes("OPL Workspace READY")) throw new Error("Workspace Runtime open failed");
     const runtimeContainer = await runtimeImageReadback(accountId, workspaceId, workspaceImage, workspaceInspection.Id);
     const usage = sourceData((await http.json("/api/gateway/usage-summary?period=month", {}, auth)).payload, "sub2api");
-    const walletAfterCharge = sourceData((await http.json("/api/gateway/wallet", {}, auth)).payload, "sub2api");
-    const chargedMicros = String(walletAfterCharge?.usdMicros || "");
     if (!usage || typeof usage.totalRequests !== "number") throw new Error("Sub2API usage readback is invalid");
-    const authorityBeforeDelete = options.authorityMode === "fixture" ? await authorityState(authorityPort, authorityToken) : null;
+    const authorityBeforeDelete = await authorityState(authorityPort, authorityToken);
     const debits = authorityBeforeDelete?.adjustments?.filter((candidate) => candidate?.kind === "debit") || [];
-    const liveDebit = options.authorityMode === "live" ? await liveAuthorityAdjustmentReadback(
-      liveAuthority.baseURL, liveAuthority.adminEmail, liveAuthority.adminPassword,
-      sub2apiUserId, evidence.receipt.chargeReference, `-${amountUsdMicros}`
-    ) : null;
-    const debit = options.authorityMode === "fixture" ? debits.find((candidate) => candidate?.code === evidence.receipt.chargeReference) : {
-      code: liveDebit.code, userId: liveDebit.userId, amountUsdMicros, count: liveDebit.count
-    };
-	const debitCount = options.authorityMode === "fixture" ? debits.filter((candidate) => candidate?.code === evidence.receipt.chargeReference).length : liveDebit.count;
-    const afterMicros = options.authorityMode === "fixture" ? String(authorityBeforeDelete.wallet?.usdMicros || "") : chargedMicros;
-    if (options.authorityMode === "fixture" && (debits.length !== 1 || authorityBeforeDelete.writeCounts?.debits !== 1 || !debit || String(debit.userId) !== "41" || String(debit.amountUsdMicros) !== amountUsdMicros)) {
+    const debit = debits.find((candidate) => candidate?.code === evidence.receipt.chargeReference);
+    const debitCount = debits.filter((candidate) => candidate?.code === evidence.receipt.chargeReference).length;
+    const afterMicros = String(authorityBeforeDelete.wallet?.usdMicros || "");
+    if (debits.length !== 1 || authorityBeforeDelete.writeCounts?.debits !== 1 || !debit || String(debit.userId) !== "41" || String(debit.amountUsdMicros) !== amountUsdMicros) {
       throw new Error("qualification authority exact debit evidence is invalid");
     }
-    if (!/^\d+$/.test(afterMicros) || options.authorityMode === "fixture" && BigInt(beforeMicros) - BigInt(amountUsdMicros) !== BigInt(afterMicros)) {
+    if (!/^\d+$/.test(afterMicros) || BigInt(beforeMicros) - BigInt(amountUsdMicros) !== BigInt(afterMicros)) {
       throw new Error("qualification wallet debit snapshot is invalid");
     }
     const receiptsPage = sourceData((await http.json("/api/billing/receipts?limit=50", {}, auth)).payload, "ledger");
@@ -1503,7 +1415,7 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
     if (Object.values(restart).some((value) => value !== true)) throw new Error("restart continuity changed an exact identity");
 
     stage = "owner_delete";
-    const expectedDeleteOperationId = `workspace-delete-${stableID("workspace.delete.v1", workspaceId).slice(0, 18)}`;
+    const expectedDeleteOperationId = `workspace-delete-${stableID("workspace.delete.v2", workspaceId).slice(0, 18)}`;
     const deletion = await continueWorkspaceDelete(http, `/api/workspaces/${encodeURIComponent(workspaceId)}`, {
       method: "DELETE", headers: { "idempotency-key": `local-qualification-delete:${workspaceId}` }, body: {}
     }, restartedAuth, {
@@ -1511,11 +1423,10 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
       onPending: (pending) => { ownerDeletePending = pending; }
     });
     if (deletion?.status !== "deleted" || deletion?.accountId !== accountId || String(deletion?.sub2apiUserId) !== String(sub2apiUserId) ||
-      deletion?.launchOperationId !== operationId || deletion?.operationId !== expectedDeleteOperationId || deletion?.refundOperationId !== expectedDeleteOperationId ||
+      deletion?.launchOperationId !== operationId || deletion?.operationId !== expectedDeleteOperationId || deletion?.launchReceiptId !== receiptId ||
       deletion?.workspaceId !== workspaceId || deletion?.runtimeId !== evidence.runtime.runtimeId || String(deletion?.workspaceApiKeyId) !== String(launch.workspaceApiKeyId) ||
-      deletion?.debitCode !== debit.code || deletion?.purchaseReceiptId !== receiptId || !String(deletion?.refundCode || "").startsWith("opl:") ||
-      !String(deletion?.refundReceiptId || "").trim() || String(deletion?.totalUsdMicros) !== amountUsdMicros ||
-      deletion?.runtimeStatus !== "absent" || deletion?.secretStatus !== "absent" || deletion?.keyStatus !== "absent" || deletion?.refundStatus !== "used") {
+      !String(deletion?.deletionReceiptId || "").trim() || deletion?.runtimeStatus !== "absent" ||
+      deletion?.secretStatus !== "absent" || deletion?.keyStatus !== "absent") {
       throw new Error("owner-authorized Workspace DELETE terminal evidence is invalid");
     }
     const afterDeletePage = sourceData((await http.json("/api/workspaces?page=1&pageSize=20", {}, restartedAuth)).payload, "control-plane");
@@ -1524,39 +1435,25 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
     const runtimeAbsent = runtimeAfterDelete.response.status === 404;
     const keyAfterDelete = await http.request(`/api/gateway/keys/${encodeURIComponent(launch.workspaceApiKeyId)}`, {}, restartedAuth);
     residuals = await residualCounts(accountId, workspaceId);
-    const authorityAfterOwnerDelete = options.authorityMode === "fixture" ? await authorityState(authorityPort, authorityToken) : null;
-    const workspaceKeyAbsent = keyAfterDelete.response.status === 404 && (options.authorityMode !== "fixture" ||
-      !(authorityAfterOwnerDelete?.keys || []).some((candidate) => String(candidate?.id) === String(launch.workspaceApiKeyId)));
+    const authorityAfterOwnerDelete = await authorityState(authorityPort, authorityToken);
+    const workspaceKeyAbsent = keyAfterDelete.response.status === 404 &&
+      !(authorityAfterOwnerDelete?.keys || []).some((candidate) => String(candidate?.id) === String(launch.workspaceApiKeyId));
     const fabricSecretAbsent = deletion.secretStatus === "absent";
     if (!workspaceAbsent || !runtimeAbsent || !workspaceKeyAbsent || !fabricSecretAbsent || Object.values(residuals).some((count) => count !== 0)) {
       throw new Error("owner DELETE did not prove Workspace, Key, Runtime, and exact-labelled Docker cleanup");
     }
-    const fixtureRefunds = authorityAfterOwnerDelete?.adjustments?.filter((candidate) => candidate?.kind === "refund" && candidate?.code === deletion.refundCode) || [];
-    const liveRefund = options.authorityMode === "live" ? await liveAuthorityAdjustmentReadback(
-      liveAuthority.baseURL, liveAuthority.adminEmail, liveAuthority.adminPassword,
-      sub2apiUserId, deletion.refundCode, amountUsdMicros
-    ) : null;
-    const refund = options.authorityMode === "fixture" ? fixtureRefunds[0] : {
-      code: liveRefund.code, userId: liveRefund.userId, amountUsdMicros, status: liveRefund.status
-    };
-    const refundCount = options.authorityMode === "fixture" ? fixtureRefunds.length : liveRefund.count;
-    if (refundCount !== 1 || !refund || refund.code !== deletion.refundCode || String(refund.userId) !== String(sub2apiUserId) ||
-      String(refund.amountUsdMicros) !== amountUsdMicros || refund.status !== "used" ||
-      options.authorityMode === "fixture" && authorityAfterOwnerDelete?.writeCounts?.refunds !== 1) {
-      throw new Error("qualification authority exact refund evidence is invalid");
+    if (authorityAfterOwnerDelete?.writeCounts?.refunds !== 0) {
+      throw new Error("Workspace deletion unexpectedly refunded the purchase");
     }
-    const refundReceipt = sourceData((await http.json(`/api/billing/receipts/${encodeURIComponent(deletion.refundReceiptId)}`, {}, restartedAuth)).payload, "ledger");
-    if (refundReceipt?.receiptId !== deletion.refundReceiptId || refundReceipt?.type !== "billing.workspace_refunded.v1" || refundReceipt?.status !== "completed" ||
-      refundReceipt?.accountId !== accountId || refundReceipt?.operationId !== expectedDeleteOperationId || refundReceipt?.workspaceId !== workspaceId ||
-      refundReceipt?.chargeReference !== debit.code || refundReceipt?.refundCode !== deletion.refundCode ||
-      String(refundReceipt?.refundUsdMicros) !== amountUsdMicros || String(refundReceipt?.totalUsdMicros) !== amountUsdMicros) {
-      throw new Error("Ledger refund Receipt exact binding is invalid");
+    const deletionReceipt = sourceData((await http.json(`/api/billing/receipts/${encodeURIComponent(deletion.deletionReceiptId)}`, {}, restartedAuth)).payload, "ledger");
+    if (deletionReceipt?.receiptId !== deletion.deletionReceiptId || deletionReceipt?.type !== "workspace.deleted.v1" ||
+      deletionReceipt?.status !== "completed" || deletionReceipt?.accountId !== accountId ||
+      deletionReceipt?.operationId !== expectedDeleteOperationId || deletionReceipt?.workspaceId !== workspaceId) {
+      throw new Error("Ledger deletion Receipt binding is invalid");
     }
-    const walletAfterDelete = options.authorityMode === "fixture" ? authorityAfterOwnerDelete?.wallet :
-      sourceData((await http.json("/api/gateway/wallet", {}, restartedAuth)).payload, "sub2api");
-    const restoredMicros = String(walletAfterDelete?.usdMicros || "");
-    if (!/^\d+$/.test(restoredMicros) || options.authorityMode === "fixture" && restoredMicros !== beforeMicros) {
-      throw new Error("qualification wallet refund snapshot is invalid");
+    const afterDeleteMicros = String(authorityAfterOwnerDelete?.wallet?.usdMicros || "");
+    if (!/^\d+$/.test(afterDeleteMicros) || afterDeleteMicros !== afterMicros) {
+      throw new Error("Workspace deletion changed the charged wallet balance");
     }
 
     validateQualificationSourceIdentity(sourceBefore, await readQualificationSourceIdentity(), options.sourceSha);
@@ -1575,12 +1472,12 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
       stores,
       identities: {
         accountId, sub2apiUserId, launchOperationId: operationId, deleteOperationId: String(deletion.operationId || ""),
-        refundOperationId: String(deletion.refundOperationId || ""), workspaceId,
+        deletionReceiptId: String(deletion.deletionReceiptId || ""), workspaceId,
         runtimeId: evidence.runtime.runtimeId, keyId: String(launch.workspaceApiKeyId), debitCode: debit.code,
-        purchaseReceiptId: receiptId, refundReceiptId: String(deletion.refundReceiptId || "")
+        purchaseReceiptId: receiptId
       },
       debit: { count: debitCount, accountId, operationId, workspaceId, code: debit.code, userId: String(debit.userId), amountUsdMicros },
-      wallet: { beforeUsdMicros: beforeMicros, afterUsdMicros: afterMicros, restoredUsdMicros: restoredMicros },
+      wallet: { beforeUsdMicros: beforeMicros, afterUsdMicros: afterMicros, afterDeleteUsdMicros: afterDeleteMicros },
       receipt: {
         count: 1, id: receipt.receiptId, accountId, operationId, workspaceId: receipt.workspaceId,
         runtimeId: receipt.fulfillment.runtimeId, keyId: String(receipt.fulfillment.workspaceApiKeyId),
@@ -1588,26 +1485,19 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
       },
       restart,
       deletion: {
-        ownerAuthorized: true, accountId, operationId: String(deletion.operationId || ""), refundOperationId: String(deletion.refundOperationId || ""), workspaceId,
+        ownerAuthorized: true, accountId, operationId: String(deletion.operationId || ""), deletionReceiptId: String(deletion.deletionReceiptId || ""), workspaceId,
         runtimeId: evidence.runtime.runtimeId, keyId: String(launch.workspaceApiKeyId),
         workspaceAbsent, runtimeAbsent, workspaceKeyAbsent, fabricSecretAbsent
       },
+      deletionReceipt: {
+        count: 1, id: deletionReceipt.receiptId, type: deletionReceipt.type,
+        accountId: deletionReceipt.accountId, operationId: deletionReceipt.operationId, workspaceId: deletionReceipt.workspaceId
+      },
       residuals,
       authorityWriteCounts: authorityAfterOwnerDelete?.writeCounts,
-      mutationCounts: { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1, refundPosts: 0 },
-      refund: {
-        count: refundCount, accountId, operationId: deletion.refundOperationId, workspaceId, debitCode: debit.code,
-        code: refund.code, userId: String(refund.userId), amountUsdMicros,
-        receiptId: deletion.refundReceiptId
-      },
-      refundReceipt: {
-        count: 1, id: refundReceipt.receiptId, type: refundReceipt.type,
-        accountId: refundReceipt.accountId, operationId: refundReceipt.operationId, workspaceId: refundReceipt.workspaceId,
-        chargeReference: refundReceipt.chargeReference, refundCode: refundReceipt.refundCode, amountUsdMicros: String(refundReceipt.refundUsdMicros)
-      },
+      mutationCounts: { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1 },
       usage: { source: "sub2api", status: "available", totalRequests: usage.totalRequests },
-      productMatrix,
-      qualification: { authorityMode: options.authorityMode, p0Ready: options.authorityMode === "live" && productMatrix?.zeroSkip === true },
+      qualification: { authorityMode: "fixture", p0Ready: false },
       deferred: [...deferredCloudGates]
     });
     }

@@ -12,7 +12,7 @@
     "staging:readiness": "node tools/staging-readiness.ts",
     "start": "cd services/control-plane && go run ./cmd/control-plane",
     "test": "npm run test:source",
-    "test:source": "node --test \"tests/contracts/*.test.ts\" \"tests/tools/*.test.ts\" tests/ui/console-model.test.ts tests/ui/console-source-adapters.test.ts tests/ui/pricing-preview.test.ts tests/ui/react-ui-primitives.test.ts",
+    "test:source": "node --test \"tests/contracts/*.test.ts\" \"tests/tools/*.test.ts\" tests/ui/console-model.test.ts tests/ui/console-source-adapters.test.ts tests/ui/pricing-preview.test.ts",
     "test:qualification": "node --test \"tests/**/*.test.ts\"",
     "typecheck": "tsc -p apps/console-ui/tsconfig.json --noEmit",
     "lint": "tsc -p apps/console-ui/tsconfig.json --noEmit --noUnusedLocals --noUnusedParameters",

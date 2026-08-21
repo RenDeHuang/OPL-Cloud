@@ -1472,10 +1472,6 @@ func TestOperatorAccountProvisionUsesCanonicalRouteAndTerminology(t *testing.T) 
 	if err != nil || len(events) != 1 || events[0]["action"] != "account.provision" {
 		t.Fatalf("account provision audit=%#v err=%v", events, err)
 	}
-	legacy := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/operator/accounts/invitations", `{"email":"legacy@example.com","password":"CorrectHorseBatteryStaple!"}`, "legacy-invite")
-	if legacy.Code != http.StatusNotFound {
-		t.Fatalf("legacy invitation route status=%d body=%s", legacy.Code, legacy.Body.String())
-	}
 }
 
 func TestOperatorGatewayOnlyProvisionDisablesWorkspacePurchase(t *testing.T) {

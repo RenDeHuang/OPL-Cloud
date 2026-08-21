@@ -42,5 +42,5 @@ Current authority and product language are owned by
 
 The current minimum receipt and review shapes live in
 [the Ledger target](../opl-ledger.md) and
-[receipt planning schema](../contracts/ledger-receipt-schema.md), not in this
+historic receipt planning schema retained in Git history, not in this
 historical reference.

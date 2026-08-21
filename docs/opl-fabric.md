@@ -3,18 +3,14 @@
 Owner: `one-person-lab-cloud`
 Purpose: `fabric_target_reference`
 State: `active_target_reference`
-Machine boundary: Human-readable target platform definition. It does not prove
-resource availability, adapter implementation, binding success, runtime state,
-billing, or production readiness.
+Machine boundary: Human-readable target platform reference; implementation and
+readiness come from Fabric source, tests, status, and provider readback.
 
 OPL Fabric is the target resource and connector substrate for OPL App, OPL
 Workspace, Cloud-managed jobs, and approved domain-agent actions. The target
 connects work and Serve invocations to compute, storage, software environments,
 and external systems through a shared plan, approval, execution, collection,
 and receipt pattern.
-
-Fabric is not a package registry or package lifecycle owner.
-Fabric also owns no customer wallet, balance, or charge ledger.
 
 ```text
 OPL Fabric
@@ -36,12 +32,10 @@ state.
 
 ## OPL Connect
 
-Connect owns stable connector access, normalized source refs, credentials,
-error semantics, retries and rate limits. It does not own OPL Package identity,
-publication, discovery or carrier lifecycle. A connector implementation may be
-distributed in an owner Package and installed by its configured native carrier;
-Framework supplies the aggregated installed/callable ref before Fabric binds it
-to a run.
+Connect owns stable connector access, normalized source refs, credentials, error
+semantics, retries and rate limits. Package owners supply identity and
+publication; configured carriers install the bytes; Framework supplies the
+aggregated installed/callable ref before Fabric binds it to a run.
 
 Domain-specific retrieval strategy, evidence judgment, synthesis and quality
 remain with the domain adapter and domain Agent.
@@ -88,10 +82,10 @@ Current facts belong to [status](status.md), and the remaining end-to-end gap
 belongs to the [roadmap](roadmap.md).
 
 Control Plane owns one durable Workspace Launch business state machine; Create
-and Resume enter its same Reconciler. Fabric does not own that cursor or a second
-Recovery state machine. It owns the resource-stage implementation, durable
-operation store, provider/Kubernetes mutation, and authoritative readback for
-compute, storage, attachment, Secret binding, and Runtime.
+and Resume enter its same Reconciler. Fabric owns the resource-stage
+implementation, durable operation store, provider/Kubernetes mutation, and
+authoritative readback for compute, storage, attachment, Secret binding, and
+Runtime.
 
 Every stage request arrives through a typed public Fabric HTTP contract with an
 explicit, immutable, provider-neutral binding for the Launch operation, account
@@ -135,11 +129,10 @@ Fabric may project package requirements for resource planning:
 - environment and connector requirements;
 - review gates and runtime policy refs.
 
-Fabric can report `binding_available`, `binding_blocked` or equivalent resource
-status. It cannot publish, install, update, remove or repair Package bytes, or
-choose a revision. A missing publication routes to the Package owner; missing
-physical bytes route to the configured carrier through Framework aggregation;
-a missing resource routes to Fabric or Console policy as applicable.
+Fabric reports `binding_available`, `binding_blocked`, or equivalent resource
+status for the selected owner revision. Publication issues route to the Package
+owner, physical-byte issues to the configured carrier through Framework, and
+resource issues to Fabric or Console policy as applicable.
 
 ## Resource Catalog
 

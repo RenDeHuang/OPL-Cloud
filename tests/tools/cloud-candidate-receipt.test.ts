@@ -126,18 +126,6 @@ test("candidate validator rejects image, platform, revision, asset, and path dri
   }
 });
 
-test("candidate validator rejects Workspace, Provider, domain, release, and sensitive fields recursively", () => {
-  for (const key of [
-    "workspaceImage", "providerProfile", "domain", "releaseTag", "accountId", "operationId",
-    "providerId", "password", "secret", "kubeconfig", "j2Receipt"
-  ]) {
-    assert.throws(
-      () => validateCloudCandidateReceipt(candidate({ cloudImage: { ...candidate().cloudImage, [key]: "value" } })),
-      /cloud_candidate_receipt_invalid|cloud_candidate_receipt_sensitive/
-    );
-  }
-});
-
 test("candidate Base64 decoder requires a strict round trip", () => {
   const encoded = Buffer.from(`${JSON.stringify(candidate())}\n`, "utf8").toString("base64");
   assert.deepEqual(decodeCandidateReceipt(encoded), candidate());

@@ -96,11 +96,6 @@ func TestAuthMeUsesOnlySessionIdentityAndLiveSub2APIUser(t *testing.T) {
 		t.Fatalf("auth me fetchedAt = %#v", envelope["fetchedAt"])
 	}
 
-	legacy := requestWithSession(t, server, session, http.MethodGet, "/api/me", "")
-	if legacy.Code != http.StatusNotFound {
-		t.Fatalf("legacy /api/me = %d: %s", legacy.Code, legacy.Body.String())
-	}
-
 	client.users[41] = clients.Sub2APIIdentity{ID: 41, Email: "mismatch@example.com", Status: "active"}
 	mismatch := requestWithSession(t, server, session, http.MethodGet, "/api/auth/me", "")
 	assertUnavailableIdentityEnvelope(t, mismatch, http.StatusBadGateway, "sub2api")

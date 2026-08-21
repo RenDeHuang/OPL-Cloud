@@ -80,33 +80,40 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	return &controlPlaneHTTPHandler{app: app, next: mux, service: service}, nil
 }
 
+var retiredConsoleExactPaths = map[string]struct{}{
+	"/api/me": {}, "/api/overview": {}, "/api/gateway/summary": {}, "/api/billing/summary": {},
+	"/api/gateway/usage": {}, "/api/gateway/usage/stats": {}, "/api/gateway/keys/opl-workspace/reveal": {},
+	"/api/workspaces/runtime-status": {}, "/api/operator/summary": {}, "/api/operator/accounts/invitations": {},
+	"/api/operator/archive-terminal-resources": {},
+}
+
+var retiredConsolePrefixes = []string{
+	"/api/projects", "/api/execution-requests", "/api/workspace-backups", "/api/payment", "/api/orders",
+	"/api/api-keys", "/api/keys", "/api/users", "/api/compute-allocations", "/api/storage-volumes",
+	"/api/storage-attachments", "/api/compute-pools", "/api/operator/billing-reviews/compute",
+	"/api/operator/billing-reviews/storage",
+}
+
+func pathEqualsOrChild(path, prefix string) bool {
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
+}
+
 func retiredConsoleAPI(method, path string) bool {
 	if method == http.MethodPost && path == "/api/workspaces" {
 		return true
 	}
-	switch path {
-	case "/api/me", "/api/overview", "/api/gateway/summary", "/api/billing/summary",
-		"/api/gateway/usage", "/api/gateway/usage/stats", "/api/gateway/keys/opl-workspace/reveal",
-		"/api/workspaces/runtime-status", "/api/operator/summary", "/api/operator/accounts/invitations":
+	if _, ok := retiredConsoleExactPaths[path]; ok {
 		return true
 	}
-	if path == "/api/projects" || strings.HasPrefix(path, "/api/projects/") ||
-		path == "/api/execution-requests" || strings.HasPrefix(path, "/api/execution-requests/") ||
-		path == "/api/operator/archive-terminal-resources" ||
-		path == "/api/workspace-backups" || strings.HasPrefix(path, "/api/workspace-backups/") || strings.HasPrefix(path, "/api/payment") || strings.HasPrefix(path, "/api/orders") ||
-		strings.HasPrefix(path, "/api/api-keys") || strings.HasPrefix(path, "/api/keys") ||
-		strings.HasPrefix(path, "/api/users") || strings.HasPrefix(path, "/api/compute-allocations") ||
-		strings.HasPrefix(path, "/api/storage-volumes") || strings.HasPrefix(path, "/api/storage-attachments") ||
-		strings.HasPrefix(path, "/api/compute-pools") {
-		return true
+	for _, prefix := range retiredConsolePrefixes {
+		if pathEqualsOrChild(path, prefix) {
+			return true
+		}
 	}
 	if strings.HasPrefix(path, "/api/workspaces/") && strings.HasSuffix(path, "/gateway-secret/rotate") {
 		return true
 	}
-	if strings.HasPrefix(path, "/api/operator/billing-reviews/compute/") || strings.HasPrefix(path, "/api/operator/billing-reviews/storage/") {
-		return true
-	}
-	if strings.HasPrefix(path, "/api/gateway/keys/") && path != "/api/gateway/keys/opl-workspace/reveal" && !currentGatewayKeyAPI(method, path) {
+	if strings.HasPrefix(path, "/api/gateway/keys/") && !currentGatewayKeyAPI(method, path) {
 		return true
 	}
 	if !strings.HasPrefix(path, "/api/workspaces/") {

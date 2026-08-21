@@ -16,10 +16,10 @@ current routes and presentation live in `apps/console-ui`.
 
 - [`docs/invariants.md`](../invariants.md)
 - [`console-workspace-v1.md`](../product/console-workspace-v1.md)
-- [`opl-cloud-launch-freeze-contract.json`](../../packages/contracts/opl-cloud-launch-freeze-contract.json)
-- [`opl-cloud-console-source-truth-contract.json`](../../packages/contracts/opl-cloud-console-source-truth-contract.json)
-- [`opl-cloud-business-object-contract.json`](../../packages/contracts/opl-cloud-business-object-contract.json)
-- [`opl-cloud-pricing-contract.json`](../../packages/contracts/opl-cloud-pricing-contract.json)
+- `opl-cloud-launch-freeze-contract.json` (retired; recoverable from Git history)
+- `opl-cloud-console-source-truth-contract.json` (retired; recoverable from Git history)
+- `opl-cloud-business-object-contract.json` (retired; recoverable from Git history)
+- `opl-cloud-pricing-contract.json` (retired; recoverable from Git history)
 
 ## 1. 固定的信息架构
 

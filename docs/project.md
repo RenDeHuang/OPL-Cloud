@@ -11,13 +11,11 @@ It follows the development framework from `one-person-lab`. The short
   Workspace state machines, purchase recovery, support, and product projections.
 - Fabric resource catalog, provider-neutral resource operations, attachments,
   runtime operations, provider evidence, and provider adapters, including the
-  default local-Docker and explicit Tencent/TKE paths. ContentTransfer
-  and Snapshot/Restore application runtime/API/provider surfaces are retired
-  while historical migrations and data remain.
+  default local-Docker and explicit Tencent/TKE paths. Historical migrations
+  and data preserve ContentTransfer and Snapshot/Restore custody.
 - Ledger receipts, reconciliation evidence, idempotency, retention, and
-  caller-owned opaque provenance required by Core. Structured Artifact, Review,
-  ReviewPolicy, ReviewGate, and Continuation APIs are retired; historical rows
-  and receipt provenance columns remain retained without new writers.
+  caller-owned opaque provenance required by Core, including custody of
+  historical rows and receipt provenance columns.
 - Portable image, Compose installation assets, product release, readiness, and
   reusable provider-verification mechanisms.
 
@@ -41,15 +39,3 @@ automatic instance deployment writer.
 - `one-person-lab-app`: Workspace WebUI image and behavior.
 - `one-person-lab`: framework and CLI behavior.
 - Tencent Cloud: current medopl provider resources and internal cost.
-
-## Explicit Non-Goals
-
-- a second Gateway, wallet, Key store, Usage store, or billing-fact database;
-- direct browser access or links to `OPL_SUB2API_BASE_URL`;
-- identity mirroring beyond the one authoritative external-account mapping;
-- generic downstream proxy routes in Control Plane;
-- organization resource pools beyond account ownership and shared Workspace URLs;
-- compatibility code for the deleted commercial model;
-- speculative route, catalog, or business-object entries in current product contracts.
-- a second current Console, Fabric, or Ledger implementation repository.
-- a second OPL Cloud product, documentation, planning, or implementation repository.

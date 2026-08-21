@@ -281,19 +281,6 @@ func TestConsoleStaticDelivery(t *testing.T) {
 	})
 }
 
-func TestUncontractedAdminDiagnosticsAPIRouteDoesNotReturnFakeEvidence(t *testing.T) {
-	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/diagnostics", nil)
-	addSessionCookies(req, operatorSessionForTest(t, server))
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 for uncontracted fake diagnostics route: %s", rec.Code, rec.Body.String())
-	}
-}
-
 type failingAuditStore struct{ *memoryTableStore }
 
 func (s *failingAuditStore) SaveAuditEvent(context.Context, map[string]any) error {
@@ -672,22 +659,6 @@ func TestWorkspaceRuntimeStatusDoesNotPromoteSuspendedProjection(t *testing.T) {
 	}
 }
 
-func TestWorkspaceURLTokenRoutesDoNotExist(t *testing.T) {
-	store := newMemoryTableStore()
-	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "ws-alpha", "accountId": "acct-alpha", "state": "running"}))
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
-	if err != nil {
-		t.Fatalf("create server: %v", err)
-	}
-	session := tenantAdminSessionForTest(t, server)
-	for _, path := range []string{"/api/workspaces/reset-token", "/api/workspaces/delete-token"} {
-		response := requestWithSession(t, server, session, http.MethodPost, path, `{"workspaceId":"ws-alpha"}`)
-		if response.Code != http.StatusNotFound {
-			t.Fatalf("%s status = %d, want 404: %s", path, response.Code, response.Body.String())
-		}
-	}
-}
-
 func TestWorkspaceRuntimeStatusDoesNotReadSecretForUnknownProjection(t *testing.T) {
 	calls := []string{}
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
@@ -789,11 +760,6 @@ func TestCustomerOwnerCannotSelectAnotherAccount(t *testing.T) {
 	server.ServeHTTP(readOtherRec, readOther)
 	if readOtherRec.Code != http.StatusOK || strings.Contains(readOtherRec.Body.String(), "acct-beta") {
 		t.Fatalf("cross-account workspace list was not bound to the session account: status=%d body=%s", readOtherRec.Code, readOtherRec.Body.String())
-	}
-
-	retiredWrite := requestWithSession(t, server, alpha, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-beta","packageId":"basic"}`)
-	if retiredWrite.Code != http.StatusNotFound {
-		t.Fatalf("retired cross-account compute create status = %d, want 404: %s", retiredWrite.Code, retiredWrite.Body.String())
 	}
 
 	mapOtherTicket := requestWithSession(t, server, alpha, http.MethodPost, "/api/support/tickets", `{"accountId":"acct-beta","externalTicketId":"ZAM-403","title":"wrong account"}`)
@@ -1566,29 +1532,6 @@ func TestReconciliationGuardBlocksNewResourceProvisioning(t *testing.T) {
 	}
 }
 
-func TestOverviewHTTPIsRetired(t *testing.T) {
-	server := NewServer(newTestService(nil, nil))
-	req := httptest.NewRequest(http.MethodGet, "/api/overview", nil)
-	addSessionCookies(req, tenantAdminSessionForTest(t, server))
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
-	}
-}
-
-func TestOperatorLoginRouteDoesNotCreateAUserSession(t *testing.T) {
-	server := NewServer(newTestService(nil, nil))
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/operator-login", bytes.NewBufferString(`{}`))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound || rec.Header().Get("Set-Cookie") != "" {
-		t.Fatalf("operator login status = %d cookie=%q", rec.Code, rec.Header().Get("Set-Cookie"))
-	}
-}
-
 func TestProtectedWriteRejectsOversizedJSONBody(t *testing.T) {
 	for _, contentType := range []string{"application/json", "application/octet-stream"} {
 		t.Run(contentType, func(t *testing.T) {
@@ -1649,6 +1592,76 @@ func TestReadinessRoutesArePublicButAdminRoutesStayProtected(t *testing.T) {
 	}
 }
 
+func TestUnknownAPIRequiresWorkspaceRoutingContext(t *testing.T) {
+	t.Setenv("OPL_WORKSPACE_DOMAIN", "workspace.medopl.cn")
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	cases := []struct {
+		name   string
+		host   string
+		cookie string
+	}{
+		{name: "console host", host: "console.medopl.cn"},
+		{name: "workspace host without context", host: "workspace.medopl.cn"},
+		{name: "unknown workspace context", host: "workspace.medopl.cn", cookie: "missing-workspace"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/not-a-current-route", nil)
+			req.Host = tc.host
+			if tc.cookie != "" {
+				req.AddCookie(&http.Cookie{Name: "opl_ws_active", Value: tc.cookie})
+			}
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestRetiredConsoleRoutesDoNotEnterWorkspaceProxy(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/overview"},
+		{http.MethodPost, "/api/projects"},
+		{http.MethodGet, "/api/workspaces/ws-alpha/backups"},
+		{http.MethodGet, "/api/gateway/keys/legacy/revoke"},
+		{http.MethodPost, "/api/workspaces"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			called := false
+			handler := &controlPlaneHTTPHandler{next: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			})}
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req.Host = "workspace.medopl.cn"
+			req.AddCookie(&http.Cookie{Name: "opl_ws_active", Value: "ws-alpha"})
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound || called {
+				t.Fatalf("retired route status=%d called=%v body=%s", rec.Code, called, rec.Body.String())
+			}
+		})
+	}
+
+	called := false
+	handler := &controlPlaneHTTPHandler{next: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	req := httptest.NewRequest(http.MethodGet, "/api/gateway/keys/9/usage", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || !called {
+		t.Fatalf("current gateway route status=%d called=%v", rec.Code, called)
+	}
+}
+
 func TestProductionReadinessReturnsOnlyCustomerSafeImmutableImageFacts(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &internalReadinessFabricClient{}))
 	req := httptest.NewRequest(http.MethodGet, "/api/production/readiness", nil)
@@ -1704,21 +1717,6 @@ func TestProtectedAPIRoutesRequireSessionCSRFAndAdminRole(t *testing.T) {
 	allowed := requestWithSession(t, server, admin, http.MethodPost, "/api/pricing/preview", `{"resourceType":"workspace","packageId":"basic"}`)
 	if allowed.Code != http.StatusOK {
 		t.Fatalf("admin csrf request did not reach protected route: status=%d body=%s", allowed.Code, allowed.Body.String())
-	}
-}
-
-func TestPerResourceAutoRenewRouteIsRemoved(t *testing.T) {
-	calls := []string{}
-	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
-	session := tenantAdminSessionForTest(t, server)
-	for _, resourceID := range []string{"compute-alpha", "storage-alpha"} {
-		response := requestWithSession(t, server, session, http.MethodPost, "/api/resources/"+resourceID+"/auto-renew", `{"autoRenew":true}`)
-		if response.Code != http.StatusNotFound {
-			t.Fatalf("per-resource auto-renew status=%d body=%s", response.Code, response.Body.String())
-		}
-	}
-	if len(calls) != 0 {
-		t.Fatalf("removed per-resource auto-renew touched Fabric: %#v", calls)
 	}
 }
 
