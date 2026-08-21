@@ -178,12 +178,9 @@ func controlledBasicPilotAdmissionFromEnv() controlledBasicPilotAdmission {
 	return admission
 }
 
-func (admission controlledBasicPilotAdmission) rejectNewLaunch(packageID string, autoRenew bool) string {
+func (admission controlledBasicPilotAdmission) rejectNewLaunch(autoRenew bool) string {
 	if !admission.Configured {
 		return "workspace_launch_admission_invalid"
-	}
-	if packageID != "basic" {
-		return "workspace_launch_basic_only"
 	}
 	if autoRenew {
 		return "autoRenew_unavailable"
@@ -658,7 +655,7 @@ func controlledBasicPilotMetrics(ctx context.Context, store controlPlaneTableSto
 		return stringValue(alerts[i].(map[string]any)["code"]) < stringValue(alerts[j].(map[string]any)["code"])
 	})
 	return map[string]any{
-		"enabled": admission.Enabled, "configured": admission.Configured, "packageId": "basic", "accountEligibilityAuthority": "control-plane-account",
+		"enabled": admission.Enabled, "configured": admission.Configured, "accountEligibilityAuthority": "control-plane-account",
 		"maxInFlight": admission.MaxInFlight, "inFlight": inFlight, "availableCapacity": availableCapacity, "manualReview": manualReview,
 		"stages": stages, "failures": failures, "disableRequired": len(failures) > 0 || manualReview > 0 || !admission.Configured,
 		"alerts": alerts,

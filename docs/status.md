@@ -776,3 +776,13 @@ product-approved evidence is available. In the fresh-deployment ABC scope, the
 Control Plane Account fact is the only per-account purchase authority and the
 legacy Pilot account-list environment is no longer consumed by local
 qualification or fresh launch admission.
+
+The fresh Workspace purchase path now treats the available Basic and Pro rows
+from the provider catalog as the admitted offer set. The global Control Plane
+switch and capacity policy no longer introduce a Basic-only package rule;
+unknown or unavailable packages still fail before Launch persistence, debit or
+provider mutation. Console affordability uses the same
+`available balance >= authoritative quote` boundary as the server, including
+the exact-balance case. This is source and focused-test evidence for offer and
+admission consistency only; it is not a Candidate, deployment, real debit or
+Workspace activation receipt.

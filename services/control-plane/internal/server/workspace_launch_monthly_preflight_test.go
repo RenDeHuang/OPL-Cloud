@@ -47,6 +47,7 @@ func (l *workspaceLaunchMonthlyPreflightLedger) ListReceipts(_ context.Context, 
 
 type workspaceLaunchMonthlyPreflightFabric struct {
 	*gatewayAccountingFabric
+	packages           []clients.FabricWorkspacePackage
 	events             *[]string
 	failureMode        string
 	runtimePending     bool
@@ -54,6 +55,14 @@ type workspaceLaunchMonthlyPreflightFabric struct {
 	runtimeEnsureCalls int
 	runtimeReadCalls   int
 	runtimeReadyResult clients.WorkspaceLaunchStageResult
+}
+
+func (f *workspaceLaunchMonthlyPreflightFabric) Catalog(ctx context.Context) (clients.FabricCatalog, error) {
+	if f.packages != nil {
+		*f.events = append(*f.events, "fabric.catalog")
+		return clients.FabricCatalog{WorkspacePackages: append([]clients.FabricWorkspacePackage(nil), f.packages...)}, nil
+	}
+	return f.gatewayAccountingFabric.Catalog(ctx)
 }
 
 func (f *workspaceLaunchMonthlyPreflightFabric) PreflightWorkspaceLaunch(_ context.Context, input clients.WorkspaceLaunchPreflightInput) (clients.WorkspaceLaunchPreflight, error) {
@@ -274,6 +283,107 @@ func TestWorkspaceLaunchUsesControlPlaneAccountAuthorityWithoutPilotAllowlist(t 
 	}
 	if len(client.charges) != 0 || !strings.Contains(strings.Join(*events, "\n"), "fabric.workspace.preflight") {
 		t.Fatalf("account authority did not stop before debit while reaching Fabric preflight: charges=%#v events=%#v", client.charges, *events)
+	}
+}
+
+func TestControlledPilotAdmissionUsesAccountAndGlobalPolicyNotPackageAllowlist(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	admission := controlledBasicPilotAdmissionFromEnv()
+	if code := admission.rejectNewLaunch(false); code != "" {
+		t.Fatalf("enabled admission rejected launch: %s", code)
+	}
+	if code := admission.rejectNewLaunch(true); code != "autoRenew_unavailable" {
+		t.Fatalf("auto-renew admission code = %q", code)
+	}
+
+	t.Setenv(controlledBasicPilotEnabledEnv, "0")
+	admission = controlledBasicPilotAdmissionFromEnv()
+	if code := admission.rejectNewLaunch(false); code != "workspace_launch_admission_disabled" {
+		t.Fatalf("stopped admission code = %q", code)
+	}
+
+	t.Setenv(controlledBasicPilotEnabledEnv, "invalid")
+	if code := controlledBasicPilotAdmissionFromEnv().rejectNewLaunch(false); code != "workspace_launch_admission_invalid" {
+		t.Fatalf("invalid admission code = %q", code)
+	}
+}
+
+func TestWorkspaceLaunchAccountAuthorityAdmitsBasicAndPro(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+
+	for _, offer := range []struct {
+		packageID string
+		quote     int64
+	}{{packageID: "basic", quote: 52_580_000}, {packageID: "pro", quote: 240_080_000}} {
+		t.Run(offer.packageID, func(t *testing.T) {
+			server, _, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+			client.mu.Lock()
+			client.balance = offer.quote
+			client.mu.Unlock()
+			session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+			response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+				`{"name":"Offer admission","packageId":"`+offer.packageID+`","autoRenew":false}`, "offer-admission-"+offer.packageID)
+			if response.Code != http.StatusAccepted || strings.Contains(response.Body.String(), "workspace_launch_basic_only") {
+				t.Fatalf("%s exact-balance admission response = %d: %s", offer.packageID, response.Code, response.Body.String())
+			}
+			if len(client.charges) != 0 || !strings.Contains(strings.Join(*events, "\n"), "fabric.workspace.preflight") {
+				t.Fatalf("%s crossed debit or missed Fabric preflight: charges=%#v events=%#v", offer.packageID, client.charges, *events)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchInsufficientBalanceFailsBeforePersistenceAndDebit(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+	server, store, client, _, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+	client.mu.Lock()
+	client.balance = 52_579_999
+	client.mu.Unlock()
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+		`{"name":"Insufficient balance","packageId":"basic","autoRenew":false}`, "insufficient-balance")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errMonthlyInsufficientBalance.Error()) {
+		t.Fatalf("insufficient-balance response = %d: %s", response.Code, response.Body.String())
+	}
+	if len(client.charges) != 0 || !strings.Contains(strings.Join(*events, "\n"), "fabric.workspace.preflight") {
+		t.Fatalf("insufficient balance crossed debit or missed read-only preflight: charges=%#v events=%#v", client.charges, *events)
+	}
+	operations, err := store.ListRuntimeOperations(context.Background())
+	if err != nil || len(operations) != 0 {
+		t.Fatalf("insufficient balance persisted operation = %#v err=%v", operations, err)
+	}
+}
+
+func TestWorkspaceLaunchUnknownOrUnavailablePackageFailsBeforePreflightAndDebit(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "0")
+	for _, tc := range []struct {
+		name      string
+		packages  []clients.FabricWorkspacePackage
+		packageID string
+	}{
+		{name: "unknown", packages: []clients.FabricWorkspacePackage{{ID: "basic", SizeGB: 10, Available: true}}, packageID: "enterprise"},
+		{name: "unavailable", packages: []clients.FabricWorkspacePackage{{ID: "basic", SizeGB: 10, Available: true}, {ID: "pro", SizeGB: 100, Available: false}}, packageID: "pro"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, store, client, fabric, events := newWorkspaceLaunchMonthlyPreflightFixture(t, "")
+			fabric.packages = tc.packages
+			session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+			response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches",
+				`{"name":"Unavailable offer","packageId":"`+tc.packageID+`","autoRenew":false}`, "offer-unavailable-"+tc.name)
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"package_unavailable"`) {
+				t.Fatalf("%s response = %d: %s", tc.name, response.Code, response.Body.String())
+			}
+			if len(client.charges) != 0 || len(*events) != 1 || (*events)[0] != "fabric.catalog" {
+				t.Fatalf("%s crossed admission boundary: charges=%#v events=%#v", tc.name, client.charges, *events)
+			}
+			operations, err := store.ListRuntimeOperations(context.Background())
+			if err != nil || len(operations) != 0 {
+				t.Fatalf("%s persisted operation = %#v err=%v", tc.name, operations, err)
+			}
+		})
 	}
 }
 
