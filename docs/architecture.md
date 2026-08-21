@@ -577,7 +577,8 @@ does not grant new-purchase permission. Operator provisioning explicitly selects
 `full_cloud_customer` or `gateway_only`, and grant/revoke actions are audited.
 The launch route reads this Control Plane fact before any billing or Fabric
 mutation. Revocation affects only future purchases. Historical account migration
-and removal of the Instance per-account pilot allowlist require a separate,
-product-approved inventory and authoritative readback.
+and removal of the Instance per-account pilot allowlist are separate,
+product-approved compatibility work; a fresh deployment does not use that
+per-account environment variable for launch admission.
 Contract presence, documentation, a successful build or an empty queue does not
 prove Cloud, package, domain or production readiness.
