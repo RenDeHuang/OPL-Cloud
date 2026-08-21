@@ -3297,7 +3297,12 @@ type fakeNativeCbsAPI struct {
 	quotaDiskType                   string
 	quotaZone                       string
 	priceDiscount                   float64
+	priceDiscountSet                bool
 	omitPrice                       bool
+	omitPriceResponse               bool
+	priceResponse                   *cbs2017.InquiryPriceCreateDisksResponse
+	priceErr                        error
+	priceRequestID                  string
 	diskID                          string
 	diskName                        string
 	diskUsage                       string
@@ -3702,15 +3707,25 @@ func (api *fakeNativeCbsAPI) DescribeDiskConfigQuota(request *cbs2017.DescribeDi
 
 func (api *fakeNativeCbsAPI) InquiryPriceCreateDisks(request *cbs2017.InquiryPriceCreateDisksRequest) (*cbs2017.InquiryPriceCreateDisksResponse, error) {
 	api.inquiryPriceCreateDisksRequests = append(api.inquiryPriceCreateDisksRequests, request)
+	if api.priceErr != nil {
+		return nil, api.priceErr
+	}
+	if api.priceResponse != nil {
+		return api.priceResponse, nil
+	}
+	if api.omitPriceResponse {
+		return nil, nil
+	}
 	var price *cbs2017.Price
 	if !api.omitPrice {
 		discount := api.priceDiscount
-		if discount == 0 {
+		if discount == 0 && !api.priceDiscountSet {
 			discount = 7.5
 		}
 		price = &cbs2017.Price{DiscountPrice: common.Float64Ptr(discount), OriginalPrice: common.Float64Ptr(10)}
 	}
-	return &cbs2017.InquiryPriceCreateDisksResponse{Response: &cbs2017.InquiryPriceCreateDisksResponseParams{DiskPrice: price, RequestId: common.StringPtr("req-cbs-price")}}, nil
+	requestID := firstNonEmpty(api.priceRequestID, "req-cbs-price")
+	return &cbs2017.InquiryPriceCreateDisksResponse{Response: &cbs2017.InquiryPriceCreateDisksResponseParams{DiskPrice: price, RequestId: common.StringPtr(requestID)}}, nil
 }
 
 func destroyStorageRequest() Request {
@@ -3892,6 +3907,94 @@ func TestTencentSDKStoragePreflightRejectsUnavailableQuotaOrPriceWithoutMutation
 			t.Fatalf("failed preflight mutated or succeeded: response=%#v api=%#v", response, api)
 		}
 	}
+}
+
+func TestTencentSDKStoragePreflightClassifiesCBSPriceFailures(t *testing.T) {
+	request := Request{PackageId: "basic", Storage: StorageInput{SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD"}}
+	positivePrice := &cbs2017.Price{DiscountPrice: common.Float64Ptr(7.5), OriginalPrice: common.Float64Ptr(10)}
+	tests := []struct {
+		name          string
+		api           *fakeNativeCbsAPI
+		wantCode      string
+		wantClass     string
+		wantProvider  string
+		wantRequestID string
+	}{
+		{
+			name:          "sdk error preserves sanitized provider code",
+			api:           &fakeNativeCbsAPI{priceErr: tcerrors.NewTencentCloudSDKError("AuthFailure.InvalidCredential", "secret-id=must-not-leak", "request-must-not-leak")},
+			wantCode:      "tencent_storage_price_sdk_error",
+			wantClass:     "sdk_error",
+			wantProvider:  "AuthFailure.InvalidCredential",
+			wantRequestID: "",
+		},
+		{
+			name:      "nil response",
+			api:       &fakeNativeCbsAPI{omitPriceResponse: true},
+			wantCode:  "tencent_storage_price_response_invalid",
+			wantClass: "invalid_response",
+		},
+		{
+			name: "missing request id",
+			api: &fakeNativeCbsAPI{priceResponse: &cbs2017.InquiryPriceCreateDisksResponse{Response: &cbs2017.InquiryPriceCreateDisksResponseParams{
+				DiskPrice: positivePrice,
+			}}},
+			wantCode:  "tencent_storage_price_request_id_missing",
+			wantClass: "missing_request_id",
+		},
+		{
+			name: "missing price",
+			api: &fakeNativeCbsAPI{priceResponse: &cbs2017.InquiryPriceCreateDisksResponse{Response: &cbs2017.InquiryPriceCreateDisksResponseParams{
+				RequestId: common.StringPtr("req-cbs-price"),
+			}}},
+			wantCode:  "tencent_storage_price_missing",
+			wantClass: "missing_price",
+		},
+		{
+			name:      "non-positive price",
+			api:       &fakeNativeCbsAPI{priceDiscountSet: true, priceDiscount: 0},
+			wantCode:  "tencent_storage_price_non_positive",
+			wantClass: "non_positive_price",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := (&tencentSDKClient{region: "ap-guangzhou", nativeCbsClient: test.api}).StoragePreflight(request, nil)
+			if response.Ok || response.ErrorCode != test.wantCode || len(test.api.createDisksRequests) != 0 || len(test.api.renewDiskRequests) != 0 {
+				t.Fatalf("unexpected classified failure: response=%#v api=%#v", response, test.api)
+			}
+			var priceStage *PreflightStage
+			for index := range response.PreflightStages {
+				if response.PreflightStages[index].Stage == "cbs_price" {
+					priceStage = &response.PreflightStages[index]
+					break
+				}
+			}
+			if priceStage == nil || priceStage.ErrorCode != test.wantCode || priceStage.SafeFacts["providerErrorClass"] != test.wantClass {
+				t.Fatalf("price stage classification=%#v", priceStage)
+			}
+			if got := stringValueFromAny(priceStage.SafeFacts["providerErrorCode"]); got != test.wantProvider {
+				t.Fatalf("provider code=%q want=%q", got, test.wantProvider)
+			}
+			if got := stringValueFromAny(priceStage.SafeFacts["providerRequestId"]); got != test.wantRequestID {
+				t.Fatalf("provider request id=%q want=%q", got, test.wantRequestID)
+			}
+			if _, leaked := priceStage.SafeFacts["providerErrorMessage"]; leaked {
+				t.Fatalf("raw provider error message must not enter safe facts: %#v", priceStage.SafeFacts)
+			}
+		})
+	}
+}
+
+func stringValueFromAny(value any) string {
+	if value == nil {
+		return ""
+	}
+	result, ok := value.(string)
+	if !ok {
+		return fmt.Sprint(value)
+	}
+	return result
 }
 
 func TestTencentSDKCreateStorageVolumeUsesOneMonthPrepaidCBSAndStableToken(t *testing.T) {
