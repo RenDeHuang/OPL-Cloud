@@ -1,50 +1,15 @@
 # Test Lifecycle
 
-Tests in this repository are not automatically permanent.
+Long-term tests protect current public behavior and hard boundaries: ownership,
+authorization, money, Secrets, persistence, provider resources, runtime
+readback, accessibility, and consumed cross-module interfaces.
 
-## Long-Term Contract Tests
+Migration and cleanup tests are temporary. Remove them with the retired route,
+fixture, compatibility path, or data transition they protect.
 
-Long-term contract tests protect:
+Prefer exercising a real consumer or public behavior. Prose wording, source
+layout, file absence, UI copy, and a repetition of contract JSON are not useful
+regression surfaces by themselves.
 
-- Workspace URL access.
-- ComputePool and user-owned ComputeAllocation separation.
-- StorageVolume independence from compute.
-- StorageAttachment handoff from storage to one dedicated CVM runtime.
-- User auth, role, disabled status, and tenant ownership.
-- Sub2API sole-wallet projections, deterministic Workspace-total debit/refund
-  confirmation, audited operator wallet adjustments, Ledger receipts, Fabric
-  operation facts, and reconciliation.
-- PostgreSQL persistence for commercial data objects.
-- Runtime readiness and production manifest secret safety.
-- Ledger receipt and evidence boundaries.
-- Route/API contracts from `packages/contracts`.
-
-## Temporary Tests
-
-Temporary tests must have a removal condition.
-
-Examples:
-
-- migration guards;
-- cleanup guards while deleting old routes;
-- short-lived structure checks during a large split.
-
-## Tests To Avoid
-
-Avoid long-term tests that assert:
-
-- prose wording;
-- UI copy by reading component files instead of exercising rendered behavior or route contracts;
-- file length thresholds;
-- exact workflow text when a structured contract can express the rule;
-- old compatibility routes after active callers move.
-
-## Verification
-
-Branch completion requires:
-
-```bash
-npm test
-npm run build
-git diff --check
-```
+Run focused checks first, then `npm run verify:local` or
+`npm run verify:local:full` according to the changed boundary.

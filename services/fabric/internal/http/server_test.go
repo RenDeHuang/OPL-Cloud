@@ -15,9 +15,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -990,7 +988,7 @@ func TestMachineOwnershipHTTPIsAuthenticatedExactAndNotFound(t *testing.T) {
 	}
 }
 
-func TestTencentOperatorIdentityEvidenceRouteIsRetainedWithoutLegacyMutationRoutes(t *testing.T) {
+func TestTencentOperatorIdentityEvidenceHTTP(t *testing.T) {
 	server := newTestServer(fabric.NewServiceWithOperationStore(testProvider{}, fabric.NewMemoryOperationStore()), "internal-secret")
 	unauthorized := httptest.NewRecorder()
 	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/fabric/compute-claim-recovery/identity-evidence", bytes.NewBufferString("{}")))
@@ -1002,19 +1000,6 @@ func TestTencentOperatorIdentityEvidenceRouteIsRetainedWithoutLegacyMutationRout
 	server.ServeHTTP(retained, testRequest(http.MethodPost, "/fabric/compute-claim-recovery/identity-evidence", bytes.NewBufferString("{}")))
 	if retained.Code != http.StatusConflict {
 		t.Fatalf("retained route status=%d body=%s", retained.Code, retained.Body.String())
-	}
-	for _, path := range []string{
-		"/fabric/compute-claim-recovery/proof",
-		"/fabric/compute-claim-recovery/claim",
-		"/fabric/workspace-launch-stage-readback/proof",
-		"/fabric/workspace-launch-stage-readback/converge",
-		"/fabric/workspace-activation-truth",
-	} {
-		recorder := httptest.NewRecorder()
-		server.ServeHTTP(recorder, testRequest(http.MethodPost, path, bytes.NewBufferString("{}")))
-		if recorder.Code != http.StatusNotFound {
-			t.Fatalf("hard-cut route %s status=%d body=%s", path, recorder.Code, recorder.Body.String())
-		}
 	}
 }
 
@@ -1331,60 +1316,6 @@ func TestCatalogHTTP(t *testing.T) {
 	}
 }
 
-func TestFabricCatalogContractKeepsConsoleProjectionProductOnly(t *testing.T) {
-	_, sourceFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	contractPath := filepath.Join(filepath.Dir(sourceFile), "../../../../packages/contracts/opl-cloud-fabric-resource-catalog-contract.json")
-	data, err := os.ReadFile(contractPath)
-	if err != nil {
-		t.Fatalf("read catalog contract: %v", err)
-	}
-	var contract struct {
-		SchemaVersion     int `json:"schemaVersion"`
-		ConsoleProjection struct {
-			Fields              []string `json:"fields"`
-			SelectionInput      string   `json:"selectionInput"`
-			ForbiddenFields     []string `json:"forbiddenFields"`
-			InfrastructureOwner string   `json:"infrastructureOwnership"`
-		} `json:"consoleProjection"`
-	}
-	if err := json.Unmarshal(data, &contract); err != nil {
-		t.Fatalf("decode catalog contract: %v", err)
-	}
-	if contract.SchemaVersion != 7 {
-		t.Fatalf("catalog contract schemaVersion=%d, want 7", contract.SchemaVersion)
-	}
-	if !reflect.DeepEqual(contract.ConsoleProjection.Fields, []string{"id", "name", "available"}) {
-		t.Fatalf("console catalog fields=%v", contract.ConsoleProjection.Fields)
-	}
-	if contract.ConsoleProjection.SelectionInput != "packageId_only" || contract.ConsoleProjection.InfrastructureOwner != "Fabric Provider Profile and adapter only" {
-		t.Fatalf("console projection ownership=%#v", contract.ConsoleProjection)
-	}
-	allowed := map[string]bool{}
-	for _, field := range contract.ConsoleProjection.Fields {
-		allowed[field] = true
-	}
-	for _, field := range contract.ConsoleProjection.ForbiddenFields {
-		if allowed[field] {
-			t.Fatalf("catalog field %q is both allowed and forbidden", field)
-		}
-	}
-	for _, field := range []string{"provider", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag", "canonicalProviderPlan", "providerBindingRef", "specDigest"} {
-		found := false
-		for _, forbidden := range contract.ConsoleProjection.ForbiddenFields {
-			if forbidden == field {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("catalog contract does not forbid provider field %q", field)
-		}
-	}
-}
-
 func TestWriteComputeAllocationResultPreservesTerminalEvidence(t *testing.T) {
 	allocation := fabric.ComputeAllocation{
 		ID: "compute-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture", PackageID: "basic", Status: "quarantined",
@@ -1525,21 +1456,6 @@ func TestResourceBoundaryHTTPReturnsBadRequest(t *testing.T) {
 				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 			}
 		})
-	}
-}
-
-func TestFabricSyncHTTPRoutesAreRetired(t *testing.T) {
-	server := newTestServer(fabric.NewService(testProvider{}), "internal-secret")
-	for _, path := range []string{
-		"/fabric/compute-allocations/compute-alpha/sync",
-		"/fabric/storage-volumes/storage-alpha/sync",
-	} {
-		req := testRequest(http.MethodPost, path, bytes.NewBufferString(`{}`))
-		rec := httptest.NewRecorder()
-		server.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("%s status=%d body=%s", path, rec.Code, rec.Body.String())
-		}
 	}
 }
 

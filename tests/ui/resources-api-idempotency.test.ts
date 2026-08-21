@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { afterEach, test } from "node:test";
 
 import * as workspaceApi from "../../apps/console-ui/src/api/workspaces-api.ts";
 
 const originalFetch = globalThis.fetch;
-const controllerSource = () => readFile(new URL("../../apps/console-ui/src/app/use-console-controller.ts", import.meta.url), "utf8");
 
 afterEach(() => { globalThis.fetch = originalFetch; });
 
@@ -85,26 +83,6 @@ test("Workspace launch recovery lists the current account operations", async () 
   const launches = await workspaceApi.getWorkspaceLaunches();
   assert.equal(url, "/api/workspace-launches");
   assert.equal(launches[0]?.operationId, "launch-alpha");
-});
-
-test("Workspace launch keeps one submission intent and exposes bounded polling recovery", async () => {
-  const controller = await controllerSource();
-  assert.match(controller, /const workspaceLaunchIntent = useRef</);
-  assert.match(controller, /launchWorkspace\(input, session\.csrfToken, workspaceLaunchIntent\.current\.idempotencyKey\)/);
-  assert.match(controller, /getWorkspaceLaunches\(\)/);
-  assert.match(controller, /const workspaceLaunchPollIntervalMs = 10_000/);
-  assert.match(controller, /const workspaceLaunchPollAttempts = 30/);
-  assert.match(controller, /pollWorkspaceLaunch/);
-  assert.match(controller, /if \(!unknown\) workspaceLaunchIntent\.current = null/);
-  assert.match(controller, /workspaceLaunchIntent\.current && !sameLaunchRequest\(workspaceLaunchIntent\.current\.input, input\)/);
-  assert.match(controller, /上次 Workspace 开通结果待确认，请按原配置重试/);
-});
-
-test("Workspace credential rotation reuses its intent key until a confirmed success", async () => {
-  const controller = await controllerSource();
-  assert.match(controller, /const runtimeRotationIntent = useRef</);
-  assert.match(controller, /rotateWorkspaceCredentials\(workspace\.id, session\.csrfToken, runtimeRotationIntent\.current\.idempotencyKey\)/);
-  assert.match(controller, /runtimeRotationIntent\.current = null;[\s\S]+activeGeneration !== secretRequestGeneration\.current/);
 });
 
 test("Workspace credential and renewal commands use explicit routes and mutation keys", async () => {

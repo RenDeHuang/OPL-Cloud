@@ -20,10 +20,6 @@ async function filesUnder(directory, include) {
   return files;
 }
 
-function serviceReferences(source) {
-  return [...source.matchAll(/opl-cloud\/services\/[A-Za-z0-9_./-]+/g)].map((match) => match[0]);
-}
-
 function goImports(source) {
   const imports = [...source.matchAll(/^\s*import\s+(?:[._\w]+\s+)?["`]([^"`]+)["`]/gm)].map((match) => match[1]);
   for (const block of source.matchAll(/\bimport\s*\(([\s\S]*?)\)/g)) {
@@ -32,40 +28,32 @@ function goImports(source) {
   return imports;
 }
 
+function goModulePath(source) {
+  const match = source.match(/^module\s+(\S+)$/m);
+  assert.ok(match, "missing Go module declaration");
+  return match[1];
+}
+
 test("Go services remain physically isolated behind typed HTTP contracts", async () => {
-  const contract = JSON.parse(await text("packages/contracts/opl-cloud-service-boundary-contract.json"));
-  const physical = contract.physicalBoundaries;
-
-  assert.equal(physical.crossServiceTransport, "typed_public_http_contracts_only");
-  assert.equal(physical.crossServiceSourceImports, "forbidden");
-  assert.equal(physical.crossServiceDatabaseAccess, "forbidden");
-  assert.equal(physical.sourceGate, "tests/contracts/module-physical-boundaries.test.ts");
-  assert.equal(physical.cloudSdkOwner, "services/fabric");
-  assert.deepEqual(physical.cloudSdkImportPrefixes, ["github.com/tencentcloud/", "k8s.io/"]);
-  assert.equal(physical.ciEntry, "npm test");
-
-  const allowedShared = new Set(physical.allowedSharedGoModules);
-  for (const [service, modulePath] of Object.entries(physical.serviceGoModules)) {
-    const directory = contract.services[service].path;
+  const sharedModulePath = goModulePath(await text("services/internal/postgresmigrate/go.mod"));
+  const cloudSDKImportPrefixes = ["github.com/tencentcloud/", "k8s.io/"];
+  for (const service of ["control-plane", "fabric", "ledger"]) {
+    const directory = `services/${service}`;
     const moduleFile = await text(`${directory}/go.mod`);
-    assert.match(moduleFile, new RegExp(`^module ${modulePath.replaceAll("/", "\\/")}$`, "m"), `${directory} module owner`);
+    const modulePath = goModulePath(moduleFile);
+    assert.equal(modulePath, `opl-cloud/services/${service}`, `${directory} module owner`);
 
-    const files = await filesUnder(directory, (path) => path.endsWith(".go") || path.endsWith("go.mod"));
+    const files = await filesUnder(directory, (path) => path.endsWith(".go"));
     for (const file of files) {
       const source = await text(file);
-      for (const reference of serviceReferences(source)) {
-        const owned = reference === modulePath || reference.startsWith(`${modulePath}/`);
-        const shared = [...allowedShared].some((allowed) => reference === allowed || reference.startsWith(`${allowed}/`));
-        assert.equal(owned || shared, true, `${file} crosses into ${reference}`);
-      }
-      if (service !== "fabric") {
-        for (const prefix of physical.cloudSdkImportPrefixes) {
-          assert.equal(source.includes(prefix), false, `${file} references cloud SDK ${prefix} outside Fabric`);
+      for (const imported of goImports(source)) {
+        if (imported.startsWith("opl-cloud/services/")) {
+          const owned = imported === modulePath || imported.startsWith(`${modulePath}/`);
+          const shared = imported === sharedModulePath || imported.startsWith(`${sharedModulePath}/`);
+          assert.equal(owned || shared, true, `${file} crosses into ${imported}`);
         }
-        if (file.endsWith(".go")) {
-          for (const imported of goImports(source)) {
-            assert.equal(physical.cloudSdkImportPrefixes.some((prefix) => imported.startsWith(prefix)), false, `${file} imports cloud SDK ${imported} outside Fabric`);
-          }
+        if (service !== "fabric") {
+          assert.equal(cloudSDKImportPrefixes.some((prefix) => imported.startsWith(prefix)), false, `${file} imports cloud SDK ${imported} outside Fabric`);
         }
       }
     }
@@ -77,10 +65,7 @@ test("Go services remain physically isolated behind typed HTTP contracts", async
 });
 
 test("Console UI reaches services only through the same-origin Control Plane API adapter", async () => {
-  const contract = JSON.parse(await text("packages/contracts/opl-cloud-service-boundary-contract.json"));
-  const physical = contract.physicalBoundaries;
-  assert.equal(physical.consoleNetworkOwner, "apps/console-ui/src/api");
-  assert.equal(physical.consoleAllowedNetworkPrefix, "/api/");
+  const networkOwner = "apps/console-ui/src/api";
 
   assert.equal(controlPlaneApiPath("/api/workspaces?page=1"), "/api/workspaces?page=1");
   for (const invalid of [
@@ -104,10 +89,10 @@ test("Console UI reaches services only through the same-origin Control Plane API
 
     const networkMarkers = ["fetch(", "WebSocket(", "EventSource(", "XMLHttpRequest(", "sendBeacon("];
     if (networkMarkers.some((marker) => source.includes(marker))) {
-      assert.equal(file.startsWith(`${physical.consoleNetworkOwner}/`), true, `${file} performs network access outside the API adapter`);
+      assert.equal(file.startsWith(`${networkOwner}/`), true, `${file} performs network access outside the API adapter`);
     }
     for (const match of source.matchAll(/\bfetch\(\s*(["'`])([^"'`]+)\1/g)) {
-      assert.equal(match[2].startsWith(physical.consoleAllowedNetworkPrefix), true, `${file} calls a non-Control-Plane URL: ${match[2]}`);
+      assert.equal(match[2].startsWith("/api/"), true, `${file} calls a non-Control-Plane URL: ${match[2]}`);
     }
   }
 

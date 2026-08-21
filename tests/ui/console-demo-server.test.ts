@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { connect } from "node:net";
 import test from "node:test";
@@ -59,11 +58,6 @@ async function listen(server: ReturnType<typeof createHttpServer>) {
 async function closeHttpServer(server: ReturnType<typeof createHttpServer>) {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 }
-
-test("package exposes an explicit localhost-only Console demo command", async () => {
-  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
-  assert.equal(packageJson.scripts.demo, "node tools/start-console-demo.ts");
-});
 
 test("Console demo isolates customer, Admin, and anonymous sessions", async () => {
   const demo = await startConsoleDemoServer({ port: 0, log: false });

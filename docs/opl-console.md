@@ -3,32 +3,27 @@
 Owner: `one-person-lab-cloud`
 Purpose: `console_target_reference`
 State: `active_target_reference`
-Machine boundary: Human-readable target product definition. It does not prove
-a Console implementation, account state, policy decision, metering, billing,
-release, or production readiness.
+Machine boundary: Human-readable target product reference; implementation and
+readiness come from Console source, tests, status, and owner readback.
 
 OPL Console is the user and administrator management surface for OPL Cloud. It
 manages account onboarding, the account's Workspace collection, plans, balance
 and charge projections, quotas, budgets, approvals, and policy for Cloud-hosted
 or explicitly managed resources and Agent Services.
 
-This Cloud product is distinct from the Framework `Console` brand contribution.
-The Framework contribution only projects runtime/read-model facts inside the
-single Framework Cordis Host. It may provide typed client contributions for an
-App Shell to render, but it does not own Cloud accounts, policy, quotas,
-Workspace lifecycle, billing, Control Plane APIs, databases, or this product's
-release. `opl-aion-shell` and `opl-studio` are App GUI carriers, not Console
-authorities.
-
-Console is not the package manager, Serve service-state owner, resource
-executor, connector runtime, Ledger truth, or domain authority.
+The Framework `Console` contribution projects runtime/read-model facts inside
+the single Framework Cordis Host and may provide typed client contributions for
+an App Shell. OPL Cloud Console presents Cloud accounts, policy, quotas,
+Workspace lifecycle, and billing through Control Plane. Control Plane owns the
+product APIs and databases; the Cloud repository owns product release. The
+`opl-aion-shell` and `opl-studio` projects carry the App GUI.
 
 ## MVP Boundary
 
-Core Console is deliberately thin: it exposes only the Workspace collection and
-the balance and usage facts needed to create and manage one local Docker
-Workspace path through Control Plane. It consumes authoritative Sub2API and
-Ledger projections and owns no wallet, usage store, or receipt truth.
+Core Console is deliberately thin: it exposes the Workspace collection and the
+balance and usage facts needed to create and manage one local Docker Workspace
+path through Control Plane. Control Plane owns the product DTOs; Sub2API owns
+balance and usage, and Ledger supplies receipt projections.
 
 Self-service signup, customer payment/top-up, detailed visual refinement,
 managed-resource policy, and Serve administration are later or extension
@@ -98,14 +93,13 @@ refs without becoming Cloud-billed by default.
 Gateway is the only spendable-balance owner. Control Plane owns the versioned
 price catalog, account-total billing projection and settlement policy, and
 orchestrates one Workspace monthly debit against that Gateway balance. Console
-only presents Control Plane DTOs. Fabric owns no wallet or balance; it returns
-resource and provider facts. Ledger records append-only charge, refund,
-resource, and reconciliation receipts without becoming a second spendable
-balance.
+presents Control Plane DTOs. Fabric returns resource and provider facts, while
+Ledger records append-only charge, refund, resource, and reconciliation
+receipts.
 
-Attaching an exact package or revision ref to usage is attribution only. Console
-cannot change the owner descriptor or publication revision, carrier installed
-state, service runtime state, or domain readiness.
+An exact package or revision ref attached to usage is attribution metadata.
+Package owners, carriers, Serve, and domain owners supply the descriptor,
+installed state, service state, and readiness facts that Console presents.
 
 ## Product Boundary
 

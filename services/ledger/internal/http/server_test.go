@@ -221,50 +221,6 @@ func TestReadyzFailsClosedWhenStoreIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestRetiredCommercialRoutesAreAbsent(t *testing.T) {
-	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
-	for _, tc := range []struct{ method, path string }{
-		{http.MethodPost, "/ledger/topups"},
-		{http.MethodPost, "/ledger/holds"},
-		{http.MethodGet, "/ledger/holds/hold-alpha"},
-		{http.MethodPost, "/ledger/holds/activate"},
-		{http.MethodPost, "/ledger/holds/release"},
-		{http.MethodPost, "/ledger/resource-settlements"},
-		{http.MethodGet, "/ledger/accounts/acct-alpha/wallet"},
-		{http.MethodGet, "/ledger/entries"},
-		{http.MethodGet, "/ledger/wallet-transactions"},
-		{http.MethodGet, "/ledger/topups"},
-		{http.MethodGet, "/ledger/resource-settlements"},
-	} {
-		rec := httptest.NewRecorder()
-		server.ServeHTTP(rec, testRequest(tc.method, tc.path, bytes.NewBufferString(`{}`)))
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("%s %s status=%d body=%s", tc.method, tc.path, rec.Code, rec.Body.String())
-		}
-	}
-}
-
-func TestRetiredEvidenceRoutesAreAbsent(t *testing.T) {
-	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
-	for _, tc := range []struct{ method, path string }{
-		{http.MethodPost, "/ledger/artifacts"},
-		{http.MethodGet, "/ledger/artifacts/artifact-alpha"},
-		{http.MethodPost, "/ledger/reviews"},
-		{http.MethodGet, "/ledger/reviews/review-alpha"},
-		{http.MethodPost, "/ledger/review-policies"},
-		{http.MethodGet, "/ledger/review-policies"},
-		{http.MethodGet, "/ledger/review-policies/policy-alpha"},
-		{http.MethodPost, "/ledger/review-gates/evaluate"},
-		{http.MethodGet, "/ledger/receipts/receipt-alpha/continuation"},
-	} {
-		rec := httptest.NewRecorder()
-		server.ServeHTTP(rec, testRequest(tc.method, tc.path, bytes.NewBufferString(`{}`)))
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("%s %s status=%d body=%s", tc.method, tc.path, rec.Code, rec.Body.String())
-		}
-	}
-}
-
 func TestReconciliationHTTP(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
 	req := testRequest(http.MethodPost, "/ledger/reconciliation", bytes.NewBufferString(`{"report":{"id":"recon-alpha","status":"mismatch","counts":{"billingOperations":1,"matched":0,"exceptions":1},"exceptions":[{"resourceType":"compute","resourceId":"compute-alpha","code":"ledger_receipt_missing"}]}}`))

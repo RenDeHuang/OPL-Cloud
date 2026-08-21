@@ -2,14 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  adminMenu,
-  apiMenu,
   apiPage,
-  customerMenu,
-  defaultAuthenticatedRoute,
   formatAvailableBalance,
   formatCount,
   formatUsdMicros,
+  hasSufficientWorkspaceLaunchBalance,
   needsSession,
   readinessRows,
   workspaceIdFromPath,
@@ -17,19 +14,7 @@ import {
   workspaceStatusLabel
 } from "../../apps/console-ui/src/console-model.ts";
 
-test("customer navigation exposes the five pilot surfaces", () => {
-  assert.deepEqual(customerMenu.map(({ label, path }) => ({ label, path })), [
-    { label: "概览", path: "/console/overview" },
-    { label: "Workspace", path: "/console/workspaces" },
-    { label: "API 服务", path: "/console/api" },
-    { label: "账单", path: "/console/billing" },
-    { label: "公告", path: "/console/announcements" }
-  ]);
-  assert.deepEqual(apiMenu.map(({ label, path }) => ({ label, path })), [
-    { label: "概览", path: "/console/api" },
-    { label: "使用记录", path: "/console/api/usage" },
-    { label: "API Key", path: "/console/api/keys" }
-  ]);
+test("API routes select the current view", () => {
   assert.equal(apiPage("/console/api"), "overview");
   assert.equal(apiPage("/console/api/usage"), "usage");
   assert.equal(apiPage("/console/api/keys"), "keys");
@@ -47,18 +32,6 @@ test("Workspace routes separate list, launch, and refreshable detail views", () 
   assert.equal(workspacePage("/console/workspace"), null);
 });
 
-test("operator navigation has the five frozen operations surfaces", () => {
-  assert.deepEqual(adminMenu.map(({ label, path }) => ({ label, path })), [
-    { label: "运维概览", path: "/admin/overview" },
-    { label: "客户与计费账户", path: "/admin/accounts" },
-    { label: "计费复核", path: "/admin/billing" },
-    { label: "资源状态", path: "/admin/resources" },
-    { label: "系统状态", path: "/admin/system" }
-  ]);
-  assert.equal(defaultAuthenticatedRoute(false), "/console/overview");
-  assert.equal(defaultAuthenticatedRoute(true), "/console/overview");
-});
-
 test("public and login routes render without session recovery", () => {
   assert.equal(needsSession("/"), false);
   assert.equal(needsSession("/login"), false);
@@ -73,13 +46,9 @@ test("Workspace status never invents a running state", () => {
 });
 
 test("Workspace launch accepts balance equal to or greater than the server quote", async () => {
-  const model = await import("../../apps/console-ui/src/console-model.ts") as typeof import("../../apps/console-ui/src/console-model.ts") & {
-    hasSufficientWorkspaceLaunchBalance?: (balanceUsdMicros: string, quoteUsdMicros: number) => boolean;
-  };
-  assert.equal(typeof model.hasSufficientWorkspaceLaunchBalance, "function");
-  assert.equal(model.hasSufficientWorkspaceLaunchBalance?.("52579999", 52_580_000), false);
-  assert.equal(model.hasSufficientWorkspaceLaunchBalance?.("52580000", 52_580_000), true);
-  assert.equal(model.hasSufficientWorkspaceLaunchBalance?.("52580001", 52_580_000), true);
+  assert.equal(hasSufficientWorkspaceLaunchBalance("52579999", 52_580_000), false);
+  assert.equal(hasSufficientWorkspaceLaunchBalance("52580000", 52_580_000), true);
+  assert.equal(hasSufficientWorkspaceLaunchBalance("52580001", 52_580_000), true);
 });
 
 test("unavailable and zero are distinct source facts", () => {

@@ -69,23 +69,18 @@ or
     output, review and continuation refs as opaque provenance without becoming
     package, service, continuation-authority, or domain truth.
 
+## Readiness Evidence
+
+Package and carrier state, account policy, resource execution, service
+publication, and domain quality are separate owner facts. A readiness statement
+combines the relevant owner readbacks; no single package, policy, execution, or
+receipt result substitutes for the others.
+
 ## Failure And Repair
 
-Publication or descriptor failures route to the Package owner. Download,
-install, update, remove and repair failures route to the configured native
-carrier through its Framework adapter. A failed Fabric binding is a resource
-failure; a denied Console policy is an account-policy result; neither is
-permission to rewrite Package identity or carrier state. A failed provider
-session routes through Runway; a failed deployment routes through Serve.
-Neither may be repaired by changing an immutable Revision in place.
-
-## Authority Boundary
-
-- Package identity present, carrier callable or resource binding successful
-  does not mean the domain Agent is ready or its output is professionally
-  valid.
-- Console policy approval does not approve package bytes or domain quality.
-- Service publication or endpoint allocation does not prove a deployable or
-  production-ready Agent Service.
-- Fabric execution success does not produce an owner verdict.
-- Ledger receipt presence does not replace package, resource or domain truth.
+Package owners handle publication and descriptor failures. Configured carriers
+handle physical byte operations through their Framework adapter. Fabric reports
+resource binding failures, Console reports policy decisions, Runway reports
+provider session failures, and Serve reports deployment failures. Immutable
+Revision repair creates a successor revision through the owning publication
+path.

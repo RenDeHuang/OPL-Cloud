@@ -249,9 +249,9 @@ export function createConsoleFixtureState({ faultInjection = true, seedDemoData 
     operatorDisableWrites: new Set(),
     gatewayMutationWrites: new Set(), gatewayActions: [], revealCalls: new Map(), emptyGatewayReadbacks: 0,
     runtimeReads: new Map(), workspaceSecretReads: new Map(), workspacePageReads: [],
-    customerRoutes: new Set(), loginSubmissions: 0,
-    operatorPageReads: [], operatorAccountViewports: new Set(), unavailablePlanKeyboardViewports: new Set(),
-    unexpectedApi: [], externalRequests: 0, pageErrors: [], consoleErrors: [], expectedNetworkConsoleErrors: [], expectedConsole404s: new Set(), dialogMessages: [], screenshots: []
+    customerRoutes: new Set(),
+    operatorPageReads: [],
+    unexpectedApi: [], externalRequests: 0, pageErrors: [], consoleErrors: [], expectedNetworkConsoleErrors: [], expectedConsole404s: new Set(), dialogMessages: []
   };
 }
 
@@ -307,7 +307,6 @@ export async function apiFixture(route, state, session = state) {
       return fulfillJson(route, { error: "invalid_credentials" }, 401);
     }
     authenticateFixtureSession(session, role);
-    state.loginSubmissions += 1;
     const operator = role === "operator";
     return fulfillJson(route, {
       user: {
@@ -427,6 +426,28 @@ export async function apiFixture(route, state, session = state) {
       credentialVersion: String(state.workspaceCredentialVersions.get(workspaceId) || 1)
     }
     }, "fabric"));
+  }
+  const gatewayBudgetMatch = path.match(/^\/api\/workspaces\/([^/]+)\/gateway-budget$/);
+  if (gatewayBudgetMatch && method === "GET") {
+    const workspaceId = gatewayBudgetMatch[1];
+    const currentWorkspace = state.workspaces.find((item) => item.id === workspaceId && item.ownerAccountId === session.accountId);
+    const key = currentWorkspace && state.workspaceKeys.find((item) => item.id === currentWorkspace.workspaceApiKeyId && item.ownerAccountId === session.accountId);
+    if (!currentWorkspace || !key) return fulfillJson(route, { error: "workspace_not_found" }, 404);
+    return fulfillJson(route, source({
+      workspaceId,
+      keyId: key.id,
+      status: key.status,
+      quotaUsdMicros: String(key.quotaUsdMicros),
+      quotaUsedUsdMicros: String(key.quotaUsedUsdMicros),
+      rateLimit5hUsdMicros: String(key.rateLimit5hUsdMicros),
+      rateLimit1dUsdMicros: String(key.rateLimit1dUsdMicros),
+      rateLimit7dUsdMicros: String(key.rateLimit7dUsdMicros),
+      usage5hUsdMicros: String(key.usage5hUsdMicros),
+      usage1dUsdMicros: String(key.usage1dUsdMicros),
+      usage7dUsdMicros: String(key.usage7dUsdMicros),
+      enabled: key.status === "active",
+      updatedAt: key.updatedAt
+    }, "sub2api"));
   }
   const credentialMatch = path.match(/^\/api\/workspaces\/([^/]+)\/runtime-credentials\/reveal$/);
   if (credentialMatch && method === "POST") {
@@ -933,13 +954,13 @@ async function assertWorkspaceLaunchLayout(page, viewportName) {
   }
 }
 
-async function assertWorkspacePlanRadios(page) {
+async function assertWorkspacePlanRadios(page, expectedCount) {
   const radios = await page.locator(".workspace-plan-option [role='radio']").evaluateAll((elements) => elements.map((element) => {
     const rect = element.getBoundingClientRect();
     const style = getComputedStyle(element);
     return { width: Math.round(rect.width), height: Math.round(rect.height), borderRadius: Math.round(Number.parseFloat(style.borderRadius)), opacity: style.opacity, visibility: style.visibility };
   }));
-  if (radios.length !== 2 || radios.some((radio) => radio.width < 16 || radio.height < 16 || radio.borderRadius < 8 || radio.opacity === "0" || radio.visibility !== "visible")) {
+  if (radios.length !== expectedCount || radios.some((radio) => radio.width < 16 || radio.height < 16 || radio.borderRadius < 8 || radio.opacity === "0" || radio.visibility !== "visible")) {
     throw new Error(`console_browser_workspace_plan_radio_missing:${JSON.stringify(radios)}`);
   }
 }
@@ -966,12 +987,11 @@ async function assertWorkspaceLaunchConfirmation(page, viewportName) {
   }
 }
 
-async function captureFixtureScreenshot(page, state, screenshotDir, screen, viewportName) {
+async function captureFixtureScreenshot(page, screenshotDir, screen, viewportName) {
   if (!screenshotDir) return;
   await mkdir(screenshotDir, { recursive: true });
   const screenshotPath = join(screenshotDir, `fixture-${screen}-${viewportName}.png`);
   await page.screenshot({ path: screenshotPath });
-  state.screenshots.push(screenshotPath);
 }
 
 function assertOperatorPageReads(state, start, expected) {
@@ -1062,7 +1082,7 @@ async function exerciseWalletAdjustment(page, state, screenshotDir, viewportName
   if (footerDiagnostic.actions.some((action) => action.left < footerDiagnostic.left - 1 || action.right > footerDiagnostic.right + 1)) {
     throw new Error(`console_browser_modal_footer_overflow:${JSON.stringify(footerDiagnostic)}`);
   }
-  await captureFixtureScreenshot(page, state, screenshotDir, "admin-balance-operation", viewportName);
+  await captureFixtureScreenshot(page, screenshotDir, "admin-balance-operation", viewportName);
   if (!submit) {
     await dialog.getByRole("button", { name: "关闭", exact: true }).last().click();
     return;
@@ -1304,30 +1324,30 @@ export async function runConsoleBrowserQa({
       state.customerRoutes.add("/console/overview");
 
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "console-overview", name);
+      await captureFixtureScreenshot(page, screenshotDir, "console-overview", name);
       await page.goto(`${server.origin}/console/workspaces?viewport=${name}`, { waitUntil: "networkidle" });
       await waitForText(page, "Pilot Workspace");
       await waitForText(page, "Second Workspace");
       state.customerRoutes.add("/console/workspaces");
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "workspace-list", name);
+      await captureFixtureScreenshot(page, screenshotDir, "workspace-list", name);
       await page.getByRole("button", { name: "新建 Workspace", exact: true }).click();
       await page.waitForURL(/\/console\/workspaces\/new$/);
       await waitForText(page, "核对开通信息");
-      await waitForText(page, name === "mobile" ? "暂不可用" : "$52.58");
+      if (name === "desktop") await waitForText(page, "$52.58");
       await waitForText(page, "$240.08");
       await waitForText(page, "按自然月计费");
       state.customerRoutes.add("/console/workspaces/new");
       await assertWorkspaceLaunchLayout(page, name);
-      await assertWorkspacePlanRadios(page);
+      await assertWorkspacePlanRadios(page, name === "mobile" ? 1 : 2);
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "workspace-new", name);
+      await captureFixtureScreenshot(page, screenshotDir, "workspace-new", name);
       const workspaceName = page.getByLabel("Workspace 名称");
       await workspaceName.fill("Fixture review Workspace");
       if (name === "mobile") {
         const basicPlan = page.getByRole("radio", { name: /Basic/ });
         const proPlan = page.getByRole("radio", { name: /Pro/ });
-        if (!await basicPlan.isDisabled()) throw new Error("console_browser_unavailable_basic_enabled");
+        if (await basicPlan.count() !== 0) throw new Error("console_browser_unavailable_basic_visible");
         await workspaceName.focus();
         await page.keyboard.press("Tab");
         if (!await proPlan.evaluate((element) => document.activeElement === element)) {
@@ -1337,9 +1357,8 @@ export async function runConsoleBrowserQa({
         if (!await proPlan.isChecked()) {
           throw new Error("console_browser_unavailable_plan_keyboard_selection_failed");
         }
-        state.unavailablePlanKeyboardViewports.add(name);
       }
-      await captureFixtureScreenshot(page, state, screenshotDir, "workspace-new-ready", name);
+      await captureFixtureScreenshot(page, screenshotDir, "workspace-new-ready", name);
       await page.getByRole("button", { name: "核对开通信息", exact: true }).click();
       await page.getByRole("heading", { name: "确认开通信息", exact: true }).waitFor({ state: "visible" });
       await assertWorkspaceLaunchLayout(page, name);
@@ -1349,7 +1368,7 @@ export async function runConsoleBrowserQa({
       if (await launchConfirmation.getAttribute("data-state") !== "checked") throw new Error("console_browser_workspace_confirmation_not_checked");
       if (!await page.getByRole("button", { name: "确认预付并开通", exact: true }).isEnabled()) throw new Error("console_browser_workspace_confirmation_submit_disabled");
       await page.waitForTimeout(250);
-      await captureFixtureScreenshot(page, state, screenshotDir, "workspace-confirm", name);
+      await captureFixtureScreenshot(page, screenshotDir, "workspace-confirm", name);
       state.launches = [pendingWorkspaceLaunch()];
       await page.goto(`${server.origin}/console/workspaces/new?progress=${name}`, { waitUntil: "networkidle" });
       await waitForText(page, "当前处理阶段");
@@ -1357,7 +1376,7 @@ export async function runConsoleBrowserQa({
       if (await page.locator(".workspace-progress").count()) throw new Error("console_browser_inferred_workspace_progress_present");
       await assertWorkspaceLaunchLayout(page, name);
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "workspace-operation", name);
+      await captureFixtureScreenshot(page, screenshotDir, "workspace-operation", name);
       state.launches = [];
       await page.goto(`${server.origin}/console/workspaces?after-progress=${name}`, { waitUntil: "networkidle" });
       await openWorkspaceFromList(page, "Pilot Workspace");
@@ -1365,7 +1384,7 @@ export async function runConsoleBrowserQa({
       await page.goto(`${server.origin}/console/workspaces/ws-1?direct=${name}`, { waitUntil: "networkidle" });
       await waitForText(page, "https://workspace.example.invalid/w/ws-1/");
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "workspace-detail", name);
+      await captureFixtureScreenshot(page, screenshotDir, "workspace-detail", name);
       if (name === "desktop") {
         const passwordRow = page.locator("dt", { hasText: "密码" }).locator("..");
         await passwordRow.getByRole("button", { name: "显示" }).click();
@@ -1402,14 +1421,14 @@ export async function runConsoleBrowserQa({
       await waitForText(page, "余额历史");
       state.customerRoutes.add("/console/api");
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "api-overview", name);
+      await captureFixtureScreenshot(page, screenshotDir, "api-overview", name);
 
       state.keys = [gatewayKey()];
       await page.goto(`${server.origin}/console/api/usage?viewport=${name}`, { waitUntil: "networkidle" });
       await assertUsageRecordFields(page, name);
       state.customerRoutes.add("/console/api/usage");
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "api-usage", name);
+      await captureFixtureScreenshot(page, screenshotDir, "api-usage", name);
 
       state.keys = [gatewayKey()];
       await page.goto(`${server.origin}/console/api/keys?viewport=${name}`, { waitUntil: "networkidle" });
@@ -1432,11 +1451,11 @@ export async function runConsoleBrowserQa({
       }
       await assertNoViewportOverflow(page);
       if (name === "mobile") await page.locator(".mobile-key-card").scrollIntoViewIfNeeded();
-      await captureFixtureScreenshot(page, state, screenshotDir, "api-keys", name);
+      await captureFixtureScreenshot(page, screenshotDir, "api-keys", name);
       await page.getByRole("button", { name: "创建 Key" }).click();
       await page.getByRole("dialog", { name: "创建 API Key" }).waitFor({ state: "visible" });
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "api-key-create", name);
+      await captureFixtureScreenshot(page, screenshotDir, "api-key-create", name);
       await page.getByRole("dialog", { name: "创建 API Key" }).getByRole("button", { name: "关闭" }).click();
       state.keys = [];
       await page.goto(`${server.origin}/console/api/keys?empty=${name}`, { waitUntil: "networkidle" });
@@ -1464,13 +1483,13 @@ export async function runConsoleBrowserQa({
       await page.getByRole("heading", { name: "收据详情", exact: true }).waitFor({ state: "visible" });
       await waitForText(page, "pilot-usd-2026-07-v1");
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "billing", name);
+      await captureFixtureScreenshot(page, screenshotDir, "billing", name);
 
       await page.goto(`${server.origin}/console/announcements?viewport=${name}`, { waitUntil: "networkidle" });
       await waitForText(page, "暂无公告");
       state.customerRoutes.add("/console/announcements");
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "announcements", name);
+      await captureFixtureScreenshot(page, screenshotDir, "announcements", name);
 
       for (const sourceState of ["empty", "unavailable", "error"]) {
         state.sourceState = sourceState;
@@ -1487,7 +1506,7 @@ export async function runConsoleBrowserQa({
       await waitForText(page.locator(".main-column"), "运维概览");
       assertOperatorPageReads(state, operatorReadStart, ["/api/operator/overview", "/api/operator/announcements"]);
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "admin-overview", name);
+      await captureFixtureScreenshot(page, screenshotDir, "admin-overview", name);
       operatorReadStart = state.operatorPageReads.length;
       await page.goto(`${server.origin}/admin/billing?viewport=${name}`, { waitUntil: "networkidle" });
       await page.getByRole("button", { name: "查看证据", exact: true }).click();
@@ -1497,14 +1516,14 @@ export async function runConsoleBrowserQa({
       await reviewDialog.getByRole("button", { name: "关闭", exact: true }).last().click();
       assertOperatorPageReads(state, operatorReadStart, ["/api/operator/reconciliation"]);
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "admin-reconciliation", name);
+      await captureFixtureScreenshot(page, screenshotDir, "admin-reconciliation", name);
       operatorReadStart = state.operatorPageReads.length;
       await page.goto(`${server.origin}/admin/system?viewport=${name}`, { waitUntil: "networkidle" });
       await waitForText(page, "系统状态");
       await waitForText(page, "服务健康");
       assertOperatorPageReads(state, operatorReadStart, ["/api/operator/health"]);
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "admin-system", name);
+      await captureFixtureScreenshot(page, screenshotDir, "admin-system", name);
       operatorReadStart = state.operatorPageReads.length;
       await page.goto(`${server.origin}/admin/announcements?viewport=${name}`, { waitUntil: "networkidle" });
       await waitForText(page, "暂无公告");
@@ -1524,7 +1543,7 @@ export async function runConsoleBrowserQa({
           element.scrollLeft = 0;
         });
       });
-      await captureFixtureScreenshot(page, state, screenshotDir, "admin-resources", name);
+      await captureFixtureScreenshot(page, screenshotDir, "admin-resources", name);
       if (name === "mobile") {
         state.operatorAccounts = [operatorAccount("acct-1", "active"), operatorAccount("acct-2", "disabled")];
       }
@@ -1549,8 +1568,7 @@ export async function runConsoleBrowserQa({
         throw new Error("console_browser_archive_semantics_present");
       }
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "admin-accounts", name);
-      state.operatorAccountViewports.add(name);
+      await captureFixtureScreenshot(page, screenshotDir, "admin-accounts", name);
       if (name === "desktop") {
         operatorReadStart = state.operatorPageReads.length;
         await activeAccountRow.getByRole("button", { name: "停用", exact: true }).click();
@@ -1561,7 +1579,7 @@ export async function runConsoleBrowserQa({
         if (!state.dialogMessages.includes("确认停用该客户？账号会立即停用；历史账单、收据和审计记录会保留。")) {
           throw new Error(`console_browser_disable_confirmation_missing:${JSON.stringify(state.dialogMessages)}`);
         }
-        await captureFixtureScreenshot(page, state, screenshotDir, "admin-account-disabled", name);
+        await captureFixtureScreenshot(page, screenshotDir, "admin-account-disabled", name);
         operatorReadStart = state.operatorPageReads.length;
         await exerciseWalletAdjustment(page, state, screenshotDir, name, { submit: true });
         assertOperatorPageReads(state, operatorReadStart, ["/api/operator/accounts"]);
@@ -1600,33 +1618,20 @@ export async function runConsoleBrowserQa({
     if (state.externalRequests !== 0) throw new Error(`console_browser_external_request:${state.externalRequests}`);
     return {
       ok: true,
-      evidenceLevel: "code-complete",
       network: "fake-only",
       viewports: Object.keys(VIEWPORTS),
       roles: ["customer", "operator"],
       sourceStates: ["available", "empty", "unavailable", "error"],
       repeatedWrites: { gatewayKey: state.gatewayWrites.size, walletAdjustment: state.walletWrites.size },
       ...highRiskEvidence,
-      operatorAccountDisableWrites: state.operatorDisableWrites.size,
-      operatorAccountStatuses: Object.fromEntries(state.operatorAccounts.map((account) => [account.accountId, account.status])),
-      operatorAccountViewports: [...state.operatorAccountViewports],
-      unavailablePlanKeyboardViewports: [...state.unavailablePlanKeyboardViewports],
       workspaceNavigation: state.runtimeReads.has("ws-1") && state.runtimeReads.has("ws-2"),
       workspacePagination: state.workspacePageReads.some(({ page, pageSize }) => page === 1 && pageSize === 10)
         && state.workspacePageReads.some(({ page, pageSize }) => page === 1 && pageSize === 1),
       directDetailRefresh: (state.runtimeReads.get("ws-1") || 0) > 1,
-      requestRecordFields: ["modelEndpoint", "tokens", "actualCost", "latency", "time", "requestId"],
       billingViews: true,
-      loginSubmissions: state.loginSubmissions,
-      customerRoutes: CUSTOMER_ROUTES.filter((route) => state.customerRoutes.has(route)),
-      screenshots: state.screenshots,
-      workspaceSecretReads: Object.fromEntries(state.workspaceSecretReads),
-      keyInteractions: state.gatewayActions,
       secretCleanup: true,
-      operatorRouteLazyReads: true,
       externalRequests: state.externalRequests,
-      consoleErrors: state.consoleErrors,
-      expectedNetworkConsoleErrors: state.expectedNetworkConsoleErrors.length
+      consoleErrors: state.consoleErrors
     };
   } finally {
     if (browser) await browser.close();

@@ -1,216 +1,178 @@
 # OPL Cloud Development Rules
 
-This is the single `one-person-lab-cloud` product repository. It owns the OPL
-Cloud public architecture, whitepaper, roadmap, Console, Control Plane, Fabric,
-Ledger, Workspace delivery, contracts and reusable release mechanisms.
+`one-person-lab-cloud` is the product repository for OPL Cloud architecture,
+Console, Control Plane, Fabric, Ledger, contracts, portable distribution, and
+reusable release mechanisms.
 
-- `docs/README.md` owns the documentation hierarchy and topic-to-owner map.
-- `docs/architecture.md` owns the target product and authority boundaries.
-- `docs/implementation-architecture.md`, source, schemas, tests and runtime
-  readback describe the current implementation at their respective layers.
-- `docs/status.md` owns the current evidence snapshot; `docs/roadmap.md` owns
-  gaps, priorities and acceptance outcomes only.
-- `opl-cloud` remains the internal package, image, service, namespace and runner
-  identifier; it is not a second repository owner.
-- `opl-instance-medopl` is the only medopl instance owner. It owns domains,
-  provider selection, production environments and Secrets, deployment,
-  verification, rollback, and receipts while consuming an immutable Cloud
-  release.
-- This repository must not contain an instance deployment workflow or require a
-  production environment for product release. It publishes portable GHCR images,
-  GitHub Releases, installation assets, and reusable provider adapters only.
-- The archived documentation repository is provenance only and must never
-  become a parallel current writer.
+## Canonical Owners
 
-## SSOT Reconciliation
+- `docs/README.md` maps documentation topics to their canonical owners.
+- `docs/architecture.md` and `docs/decisions.md` own target architecture and
+  durable decisions.
+- `docs/implementation-architecture.md`, source, schemas, and focused tests own
+  current implementation facts.
+- `docs/status.md` owns current evidence. `docs/roadmap.md` owns open gaps,
+  priority, and acceptance outcomes.
+- `packages/contracts` owns only machine-readable facts that have a current
+  cross-module, public-interface, security, integrity, or irreversible-side-
+  effect consumer.
+- `opl-instance-medopl` owns the medopl domains, provider profile, production
+  environment and Secrets, deployment, rollback, acceptance, and receipts.
 
-Before implementation, name the objective, the primary module owner, the
-canonical contract or document owner, and the evidence needed for completion.
-The latest direct user decision controls product intent; it does not by itself
-prove implementation, deployment, or production state.
+`opl-cloud` is an internal package, image, service, namespace, and runner name.
+The archived documentation repository and Git history are provenance, not
+current writers.
 
-When current documents, contracts, source, tests, PRs, or runtime evidence
-conflict:
+## Reconcile Before Editing
 
-1. Do not select the newest timestamp or the easiest statement to implement.
-2. Trace how the conflict arose with fresh Git history, PR context, real
-   callers, the canonical topic owner, and authoritative runtime readback where
-   applicable.
-3. Classify each statement as target, current implementation, runtime evidence,
-   production evidence, historical provenance, derived, stale, or unknown.
-4. Reconcile the decision in the canonical owner and remove or redirect the
-   duplicate writer in the same change. Do not leave two current truths.
-5. If the conflict changes an irreversible production action or cannot be
-   resolved from owner evidence, stop before mutation and request the missing
-   decision.
+Before implementation, name the objective, primary module owner, canonical
+contract or document owner, real callers, exact write set, and completion
+evidence.
 
-Issues, PR descriptions, comments, generated docs, and archived repositories
-are inputs or provenance, never independent SSOT owners.
+The latest direct user decision sets product intent. Source, tests, documents,
+Candidates, Releases, and runtime readback prove different layers; none of them
+silently upgrades a lower-layer result into a production claim.
 
-## Documentation Layers
+When current sources disagree:
 
-Follow the hierarchy in `docs/README.md`. A lower layer may refine or report an
-upper-layer decision, but it must not redefine it. When an upper-layer product
-or architecture decision changes, update every affected lower-layer projection
-in the same change or mark the unresolved projection as an explicit roadmap
-gap. Do not leave two current truths.
+1. Trace the relevant Git history, callers, contracts, and runtime readback.
+2. Classify each statement as target, current implementation, runtime evidence,
+   production evidence, history, derived, stale, or unknown.
+3. Reconcile the decision in its canonical owner and remove the duplicate
+   current writer in the same change.
+4. Stop only when unresolved authority would change an irreversible production
+   action or the requested terminal outcome.
 
-Machine contracts are admission gates only for facts that need deterministic
-cross-module or safety enforcement. They must not freeze colors, dimensions,
-page counts, component libraries, model choices, query strategies, worker
-intervals, current progress, or other ordinary implementation decisions. Keep
-those in the current implementation, an evolvable guide, performance tests, or
-`docs/status.md` as appropriate.
+Issues, PRs, comments, agent sessions, generated docs, and old plans are inputs.
+They do not override the current owner.
 
-## Module Ownership And Physical Boundaries
+## Documentation
 
-Assign every feature to one primary module before editing:
+Follow the hierarchy in `docs/README.md`. Lower layers may implement or report
+an upper-layer decision; they do not redefine it.
 
-| Module | Owns | Must not own |
-| --- | --- | --- |
-| `apps/console-ui` | Presentation and calls to the Control Plane product API | Persistence, provider calls, billing decisions, Fabric/Ledger/Sub2API calls |
-| `services/control-plane` | Sessions, account policy, Workspace orchestration, billing coordination, customer DTOs | Spendable wallet, provider resources, Fabric/Ledger tables |
-| `services/fabric` | Provider-neutral compute, storage, attachment, runtime facts, and provider adapters | Customer balance, Console policy, Ledger evidence truth |
-| `services/ledger` | Receipts, evidence, review, reconciliation, and continuation refs | Balance mutation, provider resources, Workspace orchestration |
-| `packages/contracts` | Machine-readable cross-module contracts | Runtime behavior or duplicated implementation state |
-| `services/internal` | Semantics-free infrastructure shared by at least two real services | Product orchestration, DTOs, state machines, provider logic |
+Keep active documentation limited to current truth, open gaps, and reusable
+operations. Completed plans, freezes, task checklists, shell transcripts, and
+closeout notes belong in Git history or `docs/history/**` when provenance is
+still useful.
 
-- Keep Control Plane, Fabric, and Ledger as separate Go modules, processes, and
-  PostgreSQL schema owners. Cross-service integration uses typed public HTTP
-  contracts; never import another service's `internal`, `ent`, `cmd`, or source
-  packages and never read or write another service's tables.
-- Console UI calls only Control Plane product APIs. It must not deep-import
-  service source, contracts, provider SDKs, or infrastructure helpers.
-- Put provider-specific behavior behind the owning Fabric adapter. When
-  touching an existing Tencent leak outside that adapter, do not spread it;
-  either move it behind the port or record the unresolved boundary in the
-  roadmap owner.
-- Do not copy DTOs, reducers, state machines, authority facts, or retry logic
-  across modules. Establish one owner and use a thin typed client or adapter.
-- No circular dependencies, path traversal into sibling modules, or generic
-  `shared` package created for one caller. A shared module requires at least two
-  current callers and must remain policy-free.
-- A cross-module change must name the owning contract and update both sides and
-  focused contract tests atomically. Keep orchestration in the module that owns
-  the user-visible operation, not in a downstream resource or evidence module.
+Machine contracts contain stable inter-owner facts, not implementation layout,
+query strategy, worker tuning, presentation details, current progress, or a
+catalog of retired alternatives. Tests exercise the owning behavior or current
+consumer instead of restating contract JSON or proving retired files remain
+absent.
 
-`gaofeng21cn` and `RenDeHuang` may independently develop and merge ordinary PRs
-after required CI passes and review conversations are resolved. Module owners
-route review when it adds value; the repository does not automatically request
-a reviewer for every PR or require an approving review. Production mutation
-authorization remains separate in the owning instance repository and is
-governed by protected GitHub Actions environments, exact inputs, and
-authoritative readback.
+## Module Ownership
 
-Development follows `parallel_work_serialized_integration`. Multiple roadmap
-`next` lanes may proceed at once when they have distinct owners and write sets.
-Serialize only changes to the same files, one shared contract revision,
-canonical `main`, or a real production mutation. Production qualification and
-Instance receipts apply to the exact candidate being considered for
-publication; they must not become prerequisites for unrelated local
-development, CI, or preview work. Reusable deployment code and instance-specific
-application may progress in parallel and converge only for candidate
-deployment, qualification, and publication readback.
+| Module | Owns |
+| --- | --- |
+| `apps/console-ui` | Presentation and calls to Control Plane product APIs |
+| `services/control-plane` | Sessions, account policy, Workspace orchestration, settlement coordination, customer DTOs |
+| `services/fabric` | Provider-neutral compute, storage, attachment, Secret binding, Runtime facts, provider adapters |
+| `services/ledger` | Receipts, evidence, retention, reconciliation, opaque provenance |
+| `services/internal` | Policy-free infrastructure shared by at least two current services |
 
-## Product Release Admission
+- Control Plane, Fabric, and Ledger remain separate Go modules, processes, and
+  PostgreSQL schema owners. Integration uses typed public HTTP contracts.
+- Console reaches service data through Control Plane APIs.
+- Provider-specific behavior stays behind the owning Fabric adapter.
+- Console does not own persistence, provider calls, billing decisions, or
+  Fabric/Ledger/Sub2API state. Control Plane does not own the wallet, provider
+  resources, or another service's tables. Fabric does not own customer balance
+  or Ledger evidence. Ledger does not own provider mutation or Workspace
+  orchestration.
+- DTOs, reducers, state machines, retry policy, and authority facts have one
+  owner. Other modules use a thin typed client or adapter.
+- A shared module requires at least two current callers and remains policy-free.
+- Cross-module changes update the owning contract, both consumers, and focused
+  boundary tests together.
 
-During the current pre-1.0 phase, do not dispatch a formal Product Release as a
-development checkpoint or to obtain deployment evidence. First build a
-replaceable candidate from an exact canonical Cloud SHA and image digest, then
-have `opl-instance-medopl` deploy and qualify that candidate through its own
-protected workflow. A successor Release is admitted only after the Instance
-receipt proves the required deployment and product acceptance for that exact
-SHA/digest, and the formal publication promotes the same image bytes without a
-rebuild.
+Development with distinct owners and write sets may proceed in parallel. Changes
+to the same file, one shared contract revision, canonical `main`, or production
+state are serialized.
 
-Only the repository owner and `RenDeHuang` are Cloud Release publishers and may
-explicitly dispatch the manual Release workflow from `main`. The original actor
-and current triggering actor must be the same authorized publisher. A PR,
-merge, CI run, schedule, any other collaborator action, deployment retry, or
-failed qualification never authorizes publication. The current workflow still
-combines candidate build with formal publication; until a deployable candidate
-channel and exact-byte promotion are implemented, record the gap in
-`docs/roadmap.md` and do not publish a successor to `v0.1.7`.
+Cross-service coordination remains typed HTTP plus owner readback. Do not add a
+new framework, service, shared policy layer, durable workflow engine, or global
+event bus unless a current caller and observed missing capability justify it;
+the current architecture does not adopt Spring Modulith, Dapr, Temporal, or a
+second Cordis runtime.
 
-Cloud retains reusable product and publication authority;
-`opl-instance-medopl` retains environment, Secret, provider, deployment,
-rollback, acceptance, and receipt authority. Using its receipt as a release
-gate does not authorize Cloud to operate the Instance. The create-only workflow
-prevents accidental version reuse but does not override an explicit repository
-owner cleanup decision. Documentation-only, test-only, CI-performance, and
-Instance-only changes do not independently justify a Product Release.
+## Implementation
 
-## Architecture Adoption And Cohesion
+- Reproduce or trace the real path before fixing a bug. Once the deepest
+  breakpoint and owner are known, repair that owner before expanding tests or
+  process.
+- Prefer the direct path inside the current owner. A new file, abstraction,
+  dependency, state, fallback, compatibility path, workflow, or gate needs a
+  current caller, contract, observed failure, or concrete reachable risk.
+- Improve cohesion inside the existing module before adding a framework or
+  service. Adopt a new runtime or architectural dependency only when a measured
+  missing capability and a focused replacement path justify it.
+- Refactor one live capability at a time, preserve its public behavior and
+  persisted data obligations, switch real callers, then remove the retired path.
+- Keep source, tests, `docs/status.md`, and `docs/roadmap.md` aligned at their
+  respective evidence layers.
 
-The default architecture is the current Go/TypeScript service system, not a
-placeholder awaiting a larger framework. Control Plane, Fabric, and Ledger keep
-their separate process, module, schema, and authority boundaries; Console keeps
-its typed Control Plane API boundary. `docs/decisions.md` owns current adoption
-decisions. These rules govern how an Agent may propose or implement a change.
+## Release And Instance Boundary
 
-- Adopt a new framework, runtime, shared infrastructure layer, or architectural
-  dependency only when a current caller and observed failure prove a specific
-  missing capability. The proposal must name the affected authority, the
-  smallest replacement path, migration and rollback obligations, focused
-  acceptance evidence, and a measurable benefit over improving the owning
-  module. Popularity, maturity, ecosystem size, or architectural uniformity are
-  not sufficient evidence.
-- Improve cohesion inside the existing owner first. Split a mixed facade or
-  large implementation file along real capabilities, callers, transactions,
-  and provider boundaries while preserving receivers, public HTTP contracts,
-  schemas, persistence semantics, and behavior. File length alone does not
-  justify a new service, shared package, domain layer, plugin system, or event
-  bus.
-- Under the current decision, do not introduce Spring Modulith, a Cloud Cordis
-  runtime or sidecar, Dapr, Temporal, a second plugin registry, or a global
-  event bus. Reconsider one only through a new explicit architecture decision
-  backed by the evidence above. Framework-owned Cordis integration stops at a
-  typed Cloud client/API adapter; it must not acquire Cloud service authority.
-- Keep cross-service coordination explicit through typed public HTTP contracts
-  and owner readback. In-process events may organize code inside one owner but
-  must not become cross-service truth. Add durable workflow machinery only for
-  a demonstrated restart/recovery problem that the current owner cannot safely
-  solve with its existing persisted state and idempotent operations.
-- Refactor by moving one coherent capability at a time, preserving the real
-  caller path and testing behavior before and after the move. Do not use a
-  rewrite, compatibility layer, permanent dual path, or speculative abstraction
-  to make a structural change appear safer.
-- Use `npm run verify:local` as the repeatable source gate for ordinary changes.
-  Use `npm run verify:local:full` for persistence or schema work, retained
-  Control Plane/Fabric/Ledger behavior, cross-module contracts, and structural
-  changes whose risk includes PostgreSQL, capacity, or local-Docker behavior.
-  Run focused checks first, then the applicable aggregate gate before canonical
-  integration. Neither local gate proves production or Instance adoption.
+Cloud publishes portable GHCR images, GitHub Releases, installation assets, and
+reusable provider adapters. It does not own an instance deployment workflow or
+require a production environment to build the product.
 
-Before changing billing, Fabric, Workspace, Gateway, Ledger, deployment, or E2E:
+During pre-1.0, build a replaceable candidate from an exact canonical Cloud SHA
+and image digest. The instance owner deploys and qualifies that candidate in its
+protected environment. A formal Product Release promotes the same qualified
+bytes without a rebuild.
 
-1. Read the relevant target, architecture and invariant sections identified by
-   `docs/README.md`.
-2. Read only the current machine contract owned by the affected boundary and
-   its real callers. `opl-cloud-launch-freeze-contract.json` is a migration
-   source, not a universal development prerequisite.
-3. Preserve hard safety and authority boundaries. Record implementation and
-   readiness changes in source/tests and `docs/status.md`; record remaining
-   work in `docs/roadmap.md`.
+Candidate construction and local development do not authorize a formal
+publication or an Instance deployment. The current combined Release workflow
+still has an exact-byte promotion gap recorded in `docs/roadmap.md`; do not
+publish a successor until the required Instance receipt closes it.
 
-Hard prohibitions:
+Only the repository owner and `RenDeHuang` may dispatch the manual Cloud Release
+workflow from `main`, and the original publisher must remain the triggering
+actor. Development, CI, qualification retries, and instance-only work do not
+authorize publication.
 
-- The local development machine cannot access the production private network.
-  Never attempt local direct access to production-internal endpoints, clusters,
-  databases, or services. Medopl production deployment and private-network
-  verification run only through `opl-instance-medopl` workflows using its
-  protected `production` environment and authorized runner. This repository may
-  publish product releases but must not dispatch instance deployment.
-- Do not add a second wallet or Gateway service; Sub2API is the Gateway backend and spendable-balance owner.
-- Do not introduce `POSTPAID_BY_HOUR` for customer or verification CVM/CBS resources.
-- Do not buy or delete Tencent CVM/CBS resources during an ordinary CI, release, or E2E run.
-- Do not charge a real monthly product fee during verification.
-- Do not add a public test billing mode or clean up customer resources from verification code.
+## Verification
+
+- Run focused checks first.
+- Use `npm run verify:local` for ordinary source changes.
+- Use `npm run verify:local:full` for persistence, schema, retained service
+  behavior, cross-module contracts, or structural changes involving PostgreSQL,
+  capacity, or Local-Docker behavior.
+- Tests and builds prove their own layer. Instance adoption and production state
+  require owner-authoritative deployment and runtime readback.
+- Before changing billing, Workspace, Fabric, Ledger, Gateway, deployment, or
+  E2E, read the owning architecture/invariant sections and current machine
+  contract, then update the source owner and its evidence projection together.
+
+## High-Consequence Boundaries
+
+- Production-private endpoints, clusters, databases, and services are accessed
+  only through `opl-instance-medopl` protected workflows and authorized runners.
+- The local development machine must never access the production private
+  network directly; this repository must not dispatch Instance deployment.
+- Sub2API remains the spendable-wallet and Gateway backend authority.
+- Do not create a second wallet, Gateway, package registry, lock, or domain
+  authority in Cloud.
+- Customer and verification compute/storage procurement uses the approved
+  prepaid monthly policy.
+- Never use `POSTPAID_BY_HOUR` for customer or verification CVM/CBS resources.
+- Ordinary CI, release, and E2E are read-only for real customer money and
+  provider resources. Real charges, purchases, renewals, or deletion require a
+  separate explicit authorization and bounded owner workflow.
+- Ordinary CI, release, or E2E must not buy or delete Tencent CVM/CBS resources,
+  charge a real monthly product fee, add a public test-billing mode, or clean up
+  customer resources from verification code.
+- Secrets remain in their approved secret stores and authorized runtime
+  boundaries.
 
 <!-- CODEGRAPH_START -->
 ## CodeGraph
 
-- This repository uses a local `.codegraph/` index; never commit that directory.
-- Prefer CodeGraph for definitions, callers, impact, and code paths; use `rg` for literal text.
+- This repository uses a local `.codegraph/` index; do not commit it.
+- Use CodeGraph for definitions, callers, impact, and paths; use `rg` for literal
+  text.
 - Run `codegraph init .` or `codegraph sync .` when the index is missing or stale.
 <!-- CODEGRAPH_END -->

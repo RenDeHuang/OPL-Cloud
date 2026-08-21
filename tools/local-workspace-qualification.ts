@@ -9,12 +9,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseDocument } from "yaml";
 
 import {
-  productMatrixRequiredPackages,
-  productMatrixRequiredTests,
-  productMatrixStages,
-  validateProductMatrixModules
-} from "./verify-local.ts";
-import {
   collectLocalJ1RecoveryAuthority,
   createLocalJ1RecoveryArtifact,
   createLocalJ1RecoveryReadbackPendingArtifact,
@@ -67,7 +61,7 @@ function optionValues(args) {
       buildSourceImages = true;
       continue;
     }
-    if (!["--source-sha", "--cloud-image", "--workspace-image", "--receipt", "--authority-mode", "--product-matrix-receipt", "--j0-ready-receipt", "--sub2api-secret-file"].includes(token)) {
+    if (!["--source-sha", "--cloud-image", "--workspace-image", "--receipt", "--authority-mode", "--j0-ready-receipt", "--sub2api-secret-file"].includes(token)) {
       throw new Error(`unknown local qualification argument: ${token}`);
     }
     const value = args[index + 1];
@@ -87,7 +81,6 @@ export function parseLocalQualificationArgs(args = process.argv.slice(2)) {
   const workspaceImage = String(values.get("--workspace-image") || "").trim();
   const receiptPath = String(values.get("--receipt") || "").trim();
   const authorityMode = String(values.get("--authority-mode") || "fixture").trim();
-  const productMatrixReceipt = String(values.get("--product-matrix-receipt") || "").trim();
   const j0ReadyReceipt = String(values.get("--j0-ready-receipt") || "").trim();
   const sub2apiSecretFile = String(values.get("--sub2api-secret-file") || "").trim();
   if (!shaPattern.test(sourceSha)) throw new Error("source SHA must be an exact 40-character lowercase commit");
@@ -99,12 +92,11 @@ export function parseLocalQualificationArgs(args = process.argv.slice(2)) {
   }
   if (authorityMode !== "fixture" && authorityMode !== "live") throw new Error("authority mode must be fixture or live");
   if (authorityMode === "live" && !j0ReadyReceipt) throw new Error("live qualification requires a J0 READY receipt");
-  if (authorityMode === "live" && productMatrixReceipt) throw new Error("live qualification does not accept a Product matrix receipt");
   if (j0ReadyReceipt && !isAbsolute(j0ReadyReceipt)) throw new Error("J0 READY receipt path must be absolute");
   if (j0ReadyReceipt && authorityMode !== "live") throw new Error("J0 READY receipt requires live authority mode");
   if (sub2apiSecretFile && authorityMode !== "live") throw new Error("Sub2API secret file requires live authority mode");
   if (sub2apiSecretFile && !isAbsolute(sub2apiSecretFile)) throw new Error("Sub2API secret file path must be absolute");
-  return { sourceSha, cloudImage, workspaceImage, receiptPath, buildSourceImages, authorityMode, productMatrixReceipt, j0ReadyReceipt, sub2apiSecretFile };
+  return { sourceSha, cloudImage, workspaceImage, receiptPath, buildSourceImages, authorityMode, j0ReadyReceipt, sub2apiSecretFile };
 }
 
 function sub2apiSecretFileError(code) {
@@ -209,37 +201,6 @@ export function validateQualificationSourceIdentity(before, after, requestedSour
   return after;
 }
 
-export function validateProductMatrixReceipt(value, sourceSha, sourceTree) {
-  if (!value || value.schemaVersion !== 1 || value.status !== "READY" || value.zeroSkip !== true ||
-    value.source?.sha !== sourceSha || value.source?.tree !== sourceTree) {
-    throw new Error("Product matrix receipt source or status is invalid");
-  }
-  if (!Array.isArray(value.stages) || value.stages.length !== productMatrixStages.length ||
-    value.stages.some((stage, index) => stage?.name !== productMatrixStages[index] || stage?.passed !== true || stage?.skipped !== 0)) {
-    throw new Error("Product matrix receipt must prove the exact nine-stage zero-skip set");
-  }
-  if (value.cas?.winnerCount !== 1 || value.cas?.loserMutationCount !== 0) {
-    throw new Error("Product matrix receipt CAS proof is invalid");
-  }
-  const deltas = value.unknown?.authorityWriteDeltas;
-  if (!deltas || ["controlPlane", "sub2api", "fabric", "ledger"].some((name) => deltas[name] !== 0)) {
-    throw new Error("Product matrix receipt unknown write deltas are invalid");
-  }
-  const packageNames = Array.isArray(value.packages) ? value.packages.map((entry) => entry?.name) : [];
-  if (packageNames.length === 0 || new Set(packageNames).size !== packageNames.length ||
-    value.packages.some((entry) => !String(entry?.name || "").trim() || entry?.passed !== true || entry?.skipped !== 0) ||
-    productMatrixRequiredPackages.some((name) => !packageNames.includes(name))) {
-    throw new Error("Product matrix receipt package evidence is invalid");
-  }
-  if (!Array.isArray(value.tests) || value.tests.length !== productMatrixRequiredTests.length ||
-    value.tests.some((entry, index) => entry?.package !== productMatrixRequiredTests[index].package ||
-      entry?.name !== productMatrixRequiredTests[index].name || entry?.passed !== true || entry?.skipped !== 0)) {
-    throw new Error("Product matrix receipt test evidence is invalid");
-  }
-  validateProductMatrixModules(value.modules);
-  return value;
-}
-
 function j0ReadyReceiptError() {
   const error = new Error("j0_ready_receipt_invalid");
   error.code = "j0_ready_receipt_invalid";
@@ -297,26 +258,6 @@ export async function loadJ0ReadyReceipt(path, sourceSha, sourceTree, { currentU
   }
 }
 
-async function loadProductMatrixReceipt(path, sourceSha, sourceTree) {
-  if (!path) return null;
-  const raw = await readFile(resolve(path));
-  const value = validateProductMatrixReceipt(JSON.parse(raw.toString("utf8")), sourceSha, sourceTree);
-  return {
-    digest: `sha256:${createHash("sha256").update(raw).digest("hex")}`,
-    source: { sha: value.source.sha, tree: value.source.tree },
-    stages: [...productMatrixStages],
-    packages: value.packages.map((entry) => entry.name),
-    tests: value.tests.map((entry) => `${entry.package}:${entry.name}`),
-    modules: value.modules.map((module) => ({
-      cwd: module.cwd, command: module.command, args: [...module.args], packages: [...module.packages],
-      failed: module.failed, skipped: module.skipped
-    })),
-    zeroSkip: true,
-    casWinnerCount: 1,
-    unknownAuthorityWriteDeltas: { ...value.unknown.authorityWriteDeltas }
-  };
-}
-
 export function validateLocalQualificationReceipt(value) {
   if (!value || value.schemaVersion !== 1 || value.status !== "READY") throw new Error("READY receipt is required");
   if (!shaPattern.test(String(value.source?.sha || "")) || !shaPattern.test(String(value.source?.tree || ""))) {
@@ -365,7 +306,7 @@ export function validateLocalQualificationReceipt(value) {
   if (value.qualification.authorityMode === "fixture" &&
     (BigInt(value.wallet.beforeUsdMicros) - BigInt(value.debit.amountUsdMicros) !== BigInt(value.wallet.afterUsdMicros) ||
       value.wallet.afterDeleteUsdMicros !== value.wallet.afterUsdMicros)) {
-    throw new Error("isolated fixture wallet readback does not preserve the exact post-debit balance through Delete");
+    throw new Error("isolated fixture wallet readback does not equal the exact debit or changed during deletion");
   }
   if (value.receipt?.count !== 1 || value.receipt?.id !== value.identities.purchaseReceiptId ||
     value.receipt?.accountId !== value.identities.accountId || value.receipt?.operationId !== value.identities.launchOperationId ||
@@ -1130,9 +1071,8 @@ function receiptCommand(options) {
   const imageArgs = options.buildSourceImages
     ? "--build-source-images"
     : `--cloud-image ${options.cloudImage} --workspace-image ${options.workspaceImage}`;
-  const matrixArg = options.productMatrixReceipt ? ` --product-matrix-receipt ${options.productMatrixReceipt}` : "";
   const j0Arg = options.j0ReadyReceipt ? ` --j0-ready-receipt ${options.j0ReadyReceipt}` : "";
-  return `npm run qualify:local:workspace -- --source-sha ${options.sourceSha} ${imageArgs} --authority-mode ${options.authorityMode}${matrixArg}${j0Arg} --receipt ${options.receiptPath}`;
+  return `npm run qualify:local:workspace -- --source-sha ${options.sourceSha} ${imageArgs} --authority-mode ${options.authorityMode}${j0Arg} --receipt ${options.receiptPath}`;
 }
 
 async function writeEarlyNotReady(options, stage, errorCode, error) {
@@ -1179,17 +1119,14 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
   const sourceBefore = await readSourceIdentity();
   validateQualificationSourceIdentity(sourceBefore, sourceBefore, options.sourceSha);
   const sourceTree = sourceBefore.tree;
-  let productMatrix = null;
   let j0Ready = null;
-  try {
-    if (options.authorityMode === "live") {
+  if (options.authorityMode === "live") {
+    try {
       j0Ready = await loadJ0ReadyReceipt(options.j0ReadyReceipt, options.sourceSha, sourceTree);
-    } else {
-      productMatrix = await loadProductMatrixReceipt(options.productMatrixReceipt, options.sourceSha, sourceTree);
+    } catch (error) {
+      await writeEarlyNotReady(options, "j0_ready_preflight", "j0_ready_receipt_invalid", error);
+      throw error;
     }
-  } catch (error) {
-    await writeEarlyNotReady(options, options.authorityMode === "live" ? "j0_ready_preflight" : "product_matrix_preflight", options.authorityMode === "live" ? "j0_ready_receipt_invalid" : "product_matrix_receipt_invalid", error);
-    throw error;
   }
   if (options.authorityMode === "live" && dependencies.runLiveJ1) {
     const result = await dependencies.runLiveJ1({ options, liveAuthority, source: sourceBefore, j0Ready });
@@ -1457,7 +1394,7 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
     const debit = options.authorityMode === "fixture" ? debits.find((candidate) => candidate?.code === evidence.receipt.chargeReference) : {
       code: liveDebit.code, userId: liveDebit.userId, amountUsdMicros, count: liveDebit.count
     };
-	const debitCount = options.authorityMode === "fixture" ? debits.filter((candidate) => candidate?.code === evidence.receipt.chargeReference).length : liveDebit.count;
+    const debitCount = options.authorityMode === "fixture" ? debits.filter((candidate) => candidate?.code === evidence.receipt.chargeReference).length : liveDebit.count;
     const afterMicros = options.authorityMode === "fixture" ? String(authorityBeforeDelete.wallet?.usdMicros || "") : chargedMicros;
     if (options.authorityMode === "fixture" && (debits.length !== 1 || authorityBeforeDelete.writeCounts?.debits !== 1 || !debit || String(debit.userId) !== "41" || String(debit.amountUsdMicros) !== amountUsdMicros)) {
       throw new Error("qualification authority exact debit evidence is invalid");
@@ -1496,9 +1433,10 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
       onPending: (pending) => { ownerDeletePending = pending; }
     });
     if (deletion?.status !== "deleted" || deletion?.accountId !== accountId || String(deletion?.sub2apiUserId) !== String(sub2apiUserId) ||
-      deletion?.launchOperationId !== operationId || deletion?.launchReceiptId !== receiptId || deletion?.operationId !== expectedDeleteOperationId ||
+      deletion?.launchOperationId !== operationId || deletion?.operationId !== expectedDeleteOperationId || deletion?.launchReceiptId !== receiptId ||
       deletion?.workspaceId !== workspaceId || deletion?.runtimeId !== evidence.runtime.runtimeId || String(deletion?.workspaceApiKeyId) !== String(launch.workspaceApiKeyId) ||
-      !String(deletion?.deletionReceiptId || "").trim() || deletion?.runtimeStatus !== "absent" || deletion?.secretStatus !== "absent" || deletion?.keyStatus !== "absent") {
+      !String(deletion?.deletionReceiptId || "").trim() || deletion?.runtimeStatus !== "absent" ||
+      deletion?.secretStatus !== "absent" || deletion?.keyStatus !== "absent") {
       throw new Error("owner-authorized Workspace DELETE terminal evidence is invalid");
     }
     const afterDeletePage = sourceData((await http.json("/api/workspaces?page=1&pageSize=20", {}, restartedAuth)).payload, "control-plane");
@@ -1514,16 +1452,25 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
     if (!workspaceAbsent || !runtimeAbsent || !workspaceKeyAbsent || !fabricSecretAbsent || Object.values(residuals).some((count) => count !== 0)) {
       throw new Error("owner DELETE did not prove Workspace, Key, Runtime, and exact-labelled Docker cleanup");
     }
-    const adjustmentsAfterDelete = authorityAfterOwnerDelete?.adjustments || [];
-    const debitAfterDelete = adjustmentsAfterDelete.filter((candidate) => candidate?.kind === "debit" && candidate?.code === debit.code);
-    const refundsAfterDelete = adjustmentsAfterDelete.filter((candidate) => candidate?.kind === "refund");
-    if (debitAfterDelete.length !== 1 || refundsAfterDelete.length !== 0 || authorityAfterOwnerDelete?.writeCounts?.debits !== 1 ||
-      authorityAfterOwnerDelete?.writeCounts?.refunds !== 0) {
-      throw new Error("qualification authority Delete accounting evidence is invalid");
+    const deletionReceipt = sourceData((await http.json(`/api/billing/receipts/${encodeURIComponent(deletion.deletionReceiptId)}`, {}, restartedAuth)).payload, "ledger");
+    if (deletionReceipt?.receiptId !== deletion.deletionReceiptId || deletionReceipt?.type !== "workspace.deleted.v1" ||
+      deletionReceipt?.status !== "completed" || deletionReceipt?.accountId !== accountId ||
+      deletionReceipt?.operationId !== expectedDeleteOperationId || deletionReceipt?.workspaceId !== workspaceId) {
+      throw new Error("Ledger deletion Receipt binding is invalid");
     }
-    const afterDeleteMicros = String(authorityAfterOwnerDelete?.wallet?.usdMicros || "");
-    if (!/^\d+$/.test(afterDeleteMicros) || afterDeleteMicros !== afterMicros) {
-      throw new Error("qualification wallet changed during Workspace Delete");
+    let afterDeleteMicros = afterMicros;
+    if (options.authorityMode === "fixture") {
+      const adjustmentsAfterDelete = authorityAfterOwnerDelete?.adjustments || [];
+      const debitAfterDelete = adjustmentsAfterDelete.filter((candidate) => candidate?.kind === "debit" && candidate?.code === debit.code);
+      const refundsAfterDelete = adjustmentsAfterDelete.filter((candidate) => candidate?.kind === "refund");
+      if (debitAfterDelete.length !== 1 || refundsAfterDelete.length !== 0 || authorityAfterOwnerDelete?.writeCounts?.debits !== 1 ||
+        authorityAfterOwnerDelete?.writeCounts?.refunds !== 0) {
+        throw new Error("qualification authority Delete accounting evidence is invalid");
+      }
+      afterDeleteMicros = String(authorityAfterOwnerDelete?.wallet?.usdMicros || "");
+      if (!/^\d+$/.test(afterDeleteMicros) || afterDeleteMicros !== afterMicros) {
+        throw new Error("qualification wallet changed during Workspace Delete");
+      }
     }
 
     validateQualificationSourceIdentity(sourceBefore, await readQualificationSourceIdentity(), options.sourceSha);
@@ -1560,16 +1507,16 @@ export async function runLocalWorkspaceQualification(options, dependencies = {})
         workspaceAbsent, runtimeAbsent, workspaceKeyAbsent, fabricSecretAbsent
       },
       deletionReceipt: {
-        count: 1, id: String(deletion.deletionReceiptId || ""), type: "workspace.deleted.v1", accountId,
-        operationId: String(deletion.operationId || ""), workspaceId, launchReceiptId: String(deletion.launchReceiptId || "")
+        count: 1, id: deletionReceipt.receiptId, type: deletionReceipt.type,
+        accountId: deletionReceipt.accountId, operationId: deletionReceipt.operationId, workspaceId: deletionReceipt.workspaceId,
+        launchReceiptId: String(deletion.launchReceiptId || "")
       },
       residuals,
-      authorityWriteCounts: authorityAfterOwnerDelete?.writeCounts,
+      authorityWriteCounts: options.authorityMode === "fixture" ? authorityAfterOwnerDelete?.writeCounts : { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 0 },
       mutationCounts: { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1, refundPosts: 0 },
       refund: { count: 0 },
       usage: { source: "sub2api", status: "available", totalRequests: usage.totalRequests },
-      productMatrix,
-      qualification: { authorityMode: options.authorityMode, p0Ready: options.authorityMode === "live" && productMatrix?.zeroSkip === true },
+      qualification: { authorityMode: options.authorityMode, p0Ready: false },
       deferred: [...deferredCloudGates]
     });
     }

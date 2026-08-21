@@ -48,32 +48,10 @@ source, API schema, performance test, workflow, `docs/status.md` or
 
 ## Tests
 
-Tests are classified by lifecycle:
-
-- `long_term_contract`: domain or API behavior that must remain true.
-- `migration_guard`: temporary guard for a one-time data or API migration.
-- `cleanup_guard`: short-lived guard used while deleting legacy paths.
-- `implementation_shape`: source-structure or workflow-shape check that must either become a contract test or be retired.
-
-Temporary tests need an owner and removal condition.
-
 Long-term tests should validate public behavior, authority, accessibility,
-security, integrity and side-effect bounds. They must not turn a replaceable UI
-or internal implementation choice into a product freeze.
+security, integrity and side-effect bounds. Source or workflow shape belongs in a
+test only when that shape is itself a consumed contract.
 
-## No Compatibility Layer Rule
-
-This repository should retire old wrappers directly once active callers move to the current surface.
-
-Allowed:
-
-- one-time migration code that upgrades persisted state;
-- history notes explaining retired paths;
-- contract tests for the new surface.
-
-Not allowed as long-term state:
-
-- duplicate API routes kept only for old callers;
-- account/user wallet mirror writes;
-- compatibility aliases in contracts;
-- tests that assert old paths still work after the migration is complete.
+Migration and cleanup tests are temporary. Move active callers and persisted
+state to the current surface, then retire the old wrapper, route, fixture and
+test together.

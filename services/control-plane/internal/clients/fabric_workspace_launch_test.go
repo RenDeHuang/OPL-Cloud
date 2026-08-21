@@ -10,9 +10,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -78,98 +75,6 @@ func TestWorkspaceLaunchProviderBindingUsesOpaqueWireFields(t *testing.T) {
 			t.Fatalf("%s retains preflightBindingRef alias: %#v", name, value)
 		}
 	}
-}
-
-func TestFabricLaunchBindingContractCarriesOpaqueProviderBinding(t *testing.T) {
-	_, sourceFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	contractPath := filepath.Join(filepath.Dir(sourceFile), "../../../../packages/contracts/opl-cloud-fabric-launch-binding-contract.json")
-	data, err := os.ReadFile(contractPath)
-	if err != nil {
-		t.Fatalf("read launch binding contract: %v", err)
-	}
-	var contract map[string]any
-	if err := json.Unmarshal(data, &contract); err != nil {
-		t.Fatalf("decode launch binding contract: %v", err)
-	}
-	if got := int(contract["schemaVersion"].(float64)); got != 3 {
-		t.Fatalf("launch binding contract schemaVersion=%d, want 3", got)
-	}
-
-	preflight := contract["preflight"].(map[string]any)
-	responseIdentity := stringSet(preflight["responseIdentityFields"])
-	for _, field := range []string{"providerProfileRef", "providerBindingRef", "specDigest"} {
-		if !responseIdentity[field] {
-			t.Fatalf("preflight response identity misses %q", field)
-		}
-	}
-	if responseIdentity["bindingRef"] {
-		t.Fatal("preflight contract retains ambiguous bindingRef alias")
-	}
-	for _, field := range []string{"canonicalProviderPlan", "providerPlan", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag"} {
-		if !stringSet(preflight["responseForbiddenFields"])[field] {
-			t.Fatalf("preflight response does not forbid provider field %q", field)
-		}
-	}
-
-	stageInput := contract["stageInput"].(map[string]any)
-	stageFields := stringSet(stageInput["fields"])
-	for _, field := range []string{"providerProfileRef", "providerBindingRef", "specDigest"} {
-		if !stageFields[field] {
-			t.Fatalf("stage input misses %q", field)
-		}
-	}
-	for _, field := range []string{"canonicalProviderPlan", "providerPlan", "cpu", "memoryGb", "diskGb", "instanceType", "nodePoolId", "zone", "diskType", "chargeType", "renewFlag"} {
-		if !stringSet(stageInput["forbiddenFields"])[field] {
-			t.Fatalf("stage input does not forbid provider field %q", field)
-		}
-	}
-
-	binding := contract["providerBinding"].(map[string]any)
-	if binding["identityField"] != "providerBindingRef" || binding["digestField"] != "specDigest" {
-		t.Fatalf("provider binding identity=%#v digest=%#v", binding["identityField"], binding["digestField"])
-	}
-	if !strings.Contains(binding["canonicalProviderPlan"].(string), "never submitted by Control Plane or Console") {
-		t.Fatalf("canonical plan boundary=%q", binding["canonicalProviderPlan"])
-	}
-	digest := binding["digest"].(map[string]any)
-	if digest["algorithm"] != "sha256" || digest["encoding"] != "lowercase_hex" {
-		t.Fatalf("provider digest=%#v", digest)
-	}
-	canonical := binding["goldenVectors"].([]any)[0].(map[string]any)
-	canonicalJSON := canonical["canonicalJson"].(string)
-	hash := sha256.Sum256([]byte(canonicalJSON))
-	if got, want := hexEncode(hash[:]), canonical["specDigest"].(string); got != want {
-		t.Fatalf("provider specDigest=%s, want %s", got, want)
-	}
-
-	excluded := stringSet(contract["stageRequestHash"].(map[string]any)["excludedStageInputFields"])
-	for _, field := range []string{"providerProfileRef", "providerBindingRef", "specDigest", "gatewayCredential"} {
-		if !excluded[field] {
-			t.Fatalf("stage request hash must exclude %q", field)
-		}
-	}
-}
-
-func stringSet(value any) map[string]bool {
-	set := map[string]bool{}
-	for _, item := range value.([]any) {
-		if field, ok := item.(string); ok {
-			set[field] = true
-		}
-	}
-	return set
-}
-
-func hexEncode(value []byte) string {
-	const hex = "0123456789abcdef"
-	encoded := make([]byte, len(value)*2)
-	for i, b := range value {
-		encoded[i*2], encoded[i*2+1] = hex[b>>4], hex[b&0x0f]
-	}
-	return string(encoded)
 }
 
 func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T) {

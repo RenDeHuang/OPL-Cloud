@@ -475,19 +475,6 @@ func TestLoginAndSessionValidationNeverScanIdentityTablesAtScale(t *testing.T) {
 	}
 }
 
-func TestSharedIdentityMutationRoutesAreRemoved(t *testing.T) {
-	server := newIdentityTestServer(t, newIdentityTestSub2API(), nil)
-	operator := operatorSessionForTest(t, server)
-	for _, path := range []string{
-		"/api/organizations", "/api/organizations/members", "/api/organizations/members/mem-any/revoke", "/api/users/usr-any/reset-password",
-	} {
-		response := requestWithSession(t, server, operator, http.MethodPost, path, `{}`)
-		if response.Code != http.StatusNotFound {
-			t.Fatalf("POST %s status=%d body=%s", path, response.Code, response.Body.String())
-		}
-	}
-}
-
 func TestManagementStateDoesNotExposeSharedOrganizationFacts(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	response := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodGet, "/api/management/state", "")

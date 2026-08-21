@@ -3,17 +3,11 @@
 Owner: `one-person-lab-cloud`
 Purpose: `serve_target_reference`
 State: `active_target_reference`
-Machine boundary: Human-readable target product definition. It does not prove
-a Serve implementation, endpoint, deployment, traffic, security, billing,
-release, or production readiness.
+Machine boundary: Human-readable target product definition.
 
 OPL Serve is the planned OPL Cloud product for publishing a validated OPL Agent
 as an externally usable service. It gives Agent builders a stable API and, when
-needed, an OPL-hosted user interface without turning the Agent package, sandbox,
-or Workspace into a public Web server.
-
-This document defines target positioning and ownership. It is not a delivery,
-availability, pricing, security, or production-readiness claim.
+needed, an OPL-hosted user interface through a managed Agent Edge.
 
 ## Product Promise
 
@@ -51,10 +45,6 @@ primarily see the publisher's Agent name and brand. A secondary `Hosted on OPL
 Cloud` attribution may be shown. Model-provider attribution remains optional and
 must follow that provider's branding rules.
 
-`OPL Runtime`, `OPL Deploy`, and `OPL Agents` are not alternative public names:
-runtime is an implementation concern, deploy is one lifecycle action, and Agents
-would collide with Agent Package and Agent Instance language.
-
 ## Publication Flow
 
 ```text
@@ -70,9 +60,8 @@ Agent design / domain source
 -> Ledger receipt refs
 ```
 
-OPL Serve does not copy Package identity, publication currentness or carrier
-installed state. It references the exact owner publication revision and owns
-only service publication state; local carrier installation is a separate axis.
+OPL Serve references the exact Package owner publication revision and owns the
+service publication state. The native carrier owns installed state.
 
 ## Serving Architecture
 
@@ -106,8 +95,8 @@ Initial Hosted UI templates should cover repeatable Agent interaction patterns:
 
 Templates consume the public Serve API and service entrypoint schemas. They may
 project publisher name, logo, theme, domain, authentication mode, inputs,
-outputs, events, artifacts, and support links. They do not become a generic site
-builder, own service state, or bypass public authentication and quota behavior.
+outputs, events, artifacts, and support links. Public authentication and quota
+policy apply to every template.
 
 Browser clients use short-lived consumer credentials. A publisher's server-side
 service key or provider credential must never be shipped to a browser template
@@ -128,24 +117,15 @@ or embed component.
 | External data and tool access | OPL Connect |
 | Invocation, deployment, policy, output and cost receipt refs | OPL Ledger |
 
-Console can request Serve lifecycle actions and project their result, but it does
-not become service runtime truth. Fabric can prepare a sandbox or worker, but it
-does not own Service or Revision identity. Ledger records refs without becoming
-the output, package, service, or professional source of truth.
-
 ## Provider Model
 
-OPL Serve is provider-neutral. Runway should expose one execution-provider port
-with at least two justified adapters:
+OPL Serve is provider-neutral. Runway exposes one execution-provider port. The
+initial path uses Runway orchestration and Fabric-managed execution; another
+adapter is added only for a current provider requirement.
 
-- the OPL-native path using Runway orchestration and Fabric-managed execution;
-- an external managed-Agent provider when its data, security, lifecycle, and
-  commercial constraints are acceptable.
-
-External provider Agent, Environment, Session, or Event identifiers are provider
-refs. They cannot replace OPL Service, Revision, Deployment, Invocation, Session,
-or Ledger identity. A provider's scheduled deployment object also cannot be
-treated as OPL traffic-deployment truth.
+OPL Service, Revision, Deployment, Invocation, Session, and Ledger identifiers
+remain canonical across providers. External Agent, Environment, Session, Event,
+and scheduled-deployment identifiers are provider refs.
 
 ## Data And Security Boundary
 
@@ -161,18 +141,10 @@ approved execution path even when another provider offers a managed sandbox.
 
 ## Commercial Boundary
 
-The first commercial boundary should bill the publisher account for service,
-model, execution, storage, and managed connector usage. Publisher-managed
-end-customer charging can remain outside OPL initially.
-
-Marketplace discovery, merchant-of-record payment, tax, refunds, KYC, revenue
-sharing, and end-customer subscription management are later product decisions.
-They are not required to prove that OPL Serve can publish and operate an Agent
-Service.
+The first commercial boundary bills the publisher account for service, model,
+execution, storage, and managed connector usage.
 
 ## Currentness
 
-This target design does not establish a live OPL Serve endpoint. Delivered
-capability requires an owning implementation contract, exact package revision,
-runtime and security readback, billing evidence, isolation tests, provider soak,
-rollback proof, and user-visible invocation receipts.
+Current implementation evidence belongs in [status](status.md); an accepted
+Serve implementation outcome belongs in the [roadmap](roadmap.md).

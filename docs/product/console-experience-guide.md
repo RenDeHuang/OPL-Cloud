@@ -62,19 +62,10 @@ copy their field lists.
 
 ## Design Freedom
 
-No long-term product rule fixes:
-
-- a green, blue or other palette;
-- gradients, shadows or a particular card treatment;
-- sidebar width, summary width, grid ratio or breakpoint;
-- page, tab, route, slide or column count;
-- React, a component library, an icon set or a design-assistance model;
-- an immutable screenshot or image hash.
-
-Those choices should be made against the current content, brand, accessibility,
-device and user workflow. The owning implementation may evolve them without a
-contract revision. A product-level update is needed only when the user outcome,
-authority boundary or durable experience principle changes.
+Visual design and implementation choices belong to `apps/console-ui` and evolve
+with current content, brand, accessibility, devices, and user workflows. A
+product-level update is needed only when the user outcome, authority boundary,
+or durable experience principle changes.
 
 ## Capability And Currentness
 

@@ -3,7 +3,7 @@
   "owner": "OPL Cloud",
   "purpose": "Portable product distribution and instance handoff boundary.",
   "state": "current",
-  "machineBoundary": "Cloud publishes portable immutable product artifacts without deploying an instance; concrete provider selection and deployment belong to an instance owner.",
+  "machineBoundary": "Cloud publishes portable immutable product artifacts; the instance owner selects the provider and performs deployment.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same distribution and instance-handoff boundary."
@@ -33,10 +33,6 @@
     "workflow": ".github/workflows/release-opl-cloud-image.yml",
     "registry": "ghcr.io/gaofeng21cn/one-person-lab-cloud",
     "releaseTagFormat": "v0.x.y",
-    "mutableTagsForbidden": [
-      "latest",
-      "stable"
-    ],
     "platforms": [
       "linux/amd64",
       "linux/arm64"
@@ -79,13 +75,7 @@
     "persistence": "postgresql",
     "providerSelection": "instance_or_installer_owned",
     "workspaceProviderRequired": true,
-    "composeScope": "cloud_control_services_only",
-    "composeDoesNotProve": [
-      "workspace_create",
-      "workspace_readback",
-      "workspace_access",
-      "workspace_delete"
-    ]
+    "composeScope": "cloud_control_services_only"
   },
   "instanceHandoff": {
     "repository": "gaofeng21cn/opl-instance-medopl",
@@ -93,15 +83,6 @@
     "artifactLocatorContract": "packages/contracts/opl-cloud-distribution-contract.json#candidate.artifactLocator",
     "inputs": [
       "candidate_manifest_b64"
-    ],
-    "cloudRepositoryMustNotOwn": [
-      "instance_domains",
-      "production_environment",
-      "production_secrets",
-      "deployment_dispatch",
-      "instance_canary",
-      "instance_rollback",
-      "production_receipts"
     ]
   },
   "evidenceOwners": {

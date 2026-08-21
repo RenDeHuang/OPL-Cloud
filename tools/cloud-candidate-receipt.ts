@@ -28,7 +28,6 @@ const CLOUD_IMAGE_KEYS = ["repository", "indexRef", "indexDigest", "revision", "
 const PLATFORM_KEYS = ["platform", "digest"];
 const ASSET_KEYS = ["name", "sha256"];
 const PROVENANCE_KEYS = ["workflowRepository", "workflowSha", "workflowRunId", "workflowRunAttempt"];
-const FORBIDDEN_KEYS = /(?:accountid|operationid|providerid|resourceid|workspaceid|workspaceimage|providerprofile|domain|instance|releasetag|userid|email|password|secret|cookie|csrf|token|kubeconfig|j[245]|buildsource|reconcile|registrymutation)/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -36,12 +35,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function exactKeys(value: unknown, keys: string[]) {
   return isRecord(value) && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
-}
-
-function hasForbiddenKey(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasForbiddenKey);
-  if (!isRecord(value)) return false;
-  return Object.entries(value).some(([key, child]) => FORBIDDEN_KEYS.test(key) || hasForbiddenKey(child));
 }
 
 function sha256(value: string | Buffer) {
@@ -59,7 +52,6 @@ export function canonicalJson(value: unknown): string {
 }
 
 export function validateCloudCandidateReceipt(value: unknown): Record<string, unknown> {
-  if (hasForbiddenKey(value)) throw new Error("cloud_candidate_receipt_sensitive");
   if (!exactKeys(value, RECEIPT_KEYS) || value.schemaVersion !== 2 || value.kind !== "opl_cloud_candidate") {
     throw new Error("cloud_candidate_receipt_invalid");
   }

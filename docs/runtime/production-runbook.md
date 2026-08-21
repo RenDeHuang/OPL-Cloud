@@ -65,8 +65,7 @@ child digests, each installation asset SHA-256, and workflow provenance.
 not cover itself. The canonical Candidate manifest schema does not bind a
 selected Workspace image, Provider Profile, domain, or Instance fact. The
 bundle still contains the current environment template; removing its
-installation-specific defaults remains a separate
-`LOCAL-WORKSPACE-INSTALL-CONTRACT-01` obligation.
+installation-specific defaults remains the `PORTABLE-INSTALL-01` roadmap gap.
 
 The local installation owner qualifies that Candidate on a supported clean Linux
 Docker host using an explicit Local-Docker Provider Profile and immutable
