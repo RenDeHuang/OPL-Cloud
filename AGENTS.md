@@ -175,18 +175,12 @@ decisions. These rules govern how an Agent may propose or implement a change.
   caller path and testing behavior before and after the move. Do not use a
   rewrite, compatibility layer, permanent dual path, or speculative abstraction
   to make a structural change appear safer.
-- Use focused checks as the first gate for every implementation lane, then use
-  `npm run verify:local` once before that lane's checkpoint or PR. When a lane
-  touches persistence, schema, retained service behavior, a cross-module
-  contract, capacity, or Local-Docker, run the smallest applicable PostgreSQL
-  or provider integration tests for that lane; do not repeat the repository-wide
-  aggregate for every child slice. Run `npm run verify:local:full` at the owning
-  Epic convergence point on fresh canonical `main`, after its child write sets
-  have been integrated and before the Epic is marked complete or its Candidate
-  is admitted. The integrator may pull this aggregate earlier only when the
-  exact child change cannot be safely validated by a focused owner test. The
-  final A/B/C Candidate still receives one full ABC qualification. Neither
-  local gate proves production or Instance adoption.
+- Use `npm run verify:local` as the repeatable source gate for ordinary changes.
+  Use `npm run verify:local:full` for persistence or schema work, retained
+  Control Plane/Fabric/Ledger behavior, cross-module contracts, and structural
+  changes whose risk includes PostgreSQL, capacity, or local-Docker behavior.
+  Run focused checks first, then the applicable aggregate gate before canonical
+  integration. Neither local gate proves production or Instance adoption.
 
 Before changing billing, Fabric, Workspace, Gateway, Ledger, deployment, or E2E:
 
