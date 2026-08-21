@@ -1622,16 +1622,34 @@ func (client *tencentSDKClient) StoragePreflight(request Request, env map[string
 	price, err := client.nativeCbsClient.InquiryPriceCreateDisks(priceRequest)
 	providerPriceCNY := 0.0
 	priceRequestID := ""
-	if err == nil && price != nil && price.Response != nil && price.Response.DiskPrice != nil && price.Response.DiskPrice.DiscountPrice != nil {
+	priceFacts := map[string]any{"zone": storage.Zone, "diskType": storage.DiskType, "sizeGb": storage.SizeGB, "providerPriceCny": providerPriceCNY}
+	priceStatus, priceCode := "passed", ""
+	switch {
+	case err != nil:
+		priceStatus, priceCode = "failed", "tencent_storage_price_sdk_error"
+		priceFacts["providerErrorClass"] = "sdk_error"
+		if providerCode := safeTencentProviderErrorCode(err); providerCode != "" {
+			priceFacts["providerErrorCode"] = providerCode
+		}
+	case price == nil || price.Response == nil:
+		priceStatus, priceCode = "failed", "tencent_storage_price_response_invalid"
+		priceFacts["providerErrorClass"] = "invalid_response"
+	case strings.TrimSpace(stringValue(price.Response.RequestId)) == "":
+		priceStatus, priceCode = "failed", "tencent_storage_price_request_id_missing"
+		priceFacts["providerErrorClass"] = "missing_request_id"
+	case price.Response.DiskPrice == nil || price.Response.DiskPrice.DiscountPrice == nil:
+		priceStatus, priceCode = "failed", "tencent_storage_price_missing"
+		priceFacts["providerErrorClass"] = "missing_price"
+	default:
 		providerPriceCNY = *price.Response.DiskPrice.DiscountPrice
 		priceRequestID = stringValue(price.Response.RequestId)
+		priceFacts["providerPriceCny"] = providerPriceCNY
+		if providerPriceCNY <= 0 {
+			priceStatus, priceCode = "failed", "tencent_storage_price_non_positive"
+			priceFacts["providerErrorClass"] = "non_positive_price"
+		}
 	}
-	pricePassed := providerPriceCNY > 0 && priceRequestID != ""
-	priceStatus, priceCode := "passed", ""
-	if !pricePassed {
-		priceStatus, priceCode = "failed", "tencent_storage_price_unavailable"
-	}
-	stages = append(stages, completedPreflightStage("cbs_price", priceStatus, priceCode, priceStarted, nil, map[string]any{"zone": storage.Zone, "diskType": storage.DiskType, "sizeGb": storage.SizeGB, "providerPriceCny": providerPriceCNY}))
+	stages = append(stages, completedPreflightStage("cbs_price", priceStatus, priceCode, priceStarted, nil, priceFacts))
 	if !allPreflightStagesPassed(stages) {
 		return failedPreflightResponse(stages)
 	}
@@ -5662,6 +5680,25 @@ func stringValue(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// Tencent SDK codes are copied into redacted admission evidence. Keep only a
+// bounded provider code; SDK messages and request IDs remain out of receipts.
+func safeTencentProviderErrorCode(err error) string {
+	var sdkErr *tcerrors.TencentCloudSDKError
+	if err == nil || !errors.As(err, &sdkErr) || sdkErr == nil {
+		return ""
+	}
+	code := strings.TrimSpace(sdkErr.Code)
+	if code == "" || len(code) > 128 {
+		return ""
+	}
+	for _, char := range code {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '.' && char != '_' && char != '-' {
+			return ""
+		}
+	}
+	return code
 }
 
 func firstString(values []*string) string {
