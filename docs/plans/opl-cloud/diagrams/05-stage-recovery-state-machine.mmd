@@ -1,0 +1,29 @@
+---
+title: "图 05：外部 Stage 幂等恢复状态机"
+---
+stateDiagram-v2
+    [*] --> OwnerReadback
+
+    state "Owner 权威回读" as OwnerReadback
+    state "CAS 预留 Mutation Attempt" as ReserveAttempt
+    state "持久化 reserved" as PersistReserved
+    state "执行一次外部 Mutation" as ExternalMutation
+    state "强制 Post-Mutation Readback" as PostMutationReadback
+    state "有界等待与读取授权" as Wait
+    state "推进下一 Stage" as Advance
+    state "Manual Review" as ManualReview
+
+    OwnerReadback --> Advance: ready
+    OwnerReadback --> ReserveAttempt: absent 且有 Mutation Budget
+    OwnerReadback --> Wait: pending 且有 Read Budget
+    OwnerReadback --> ManualReview: unknown 或 identity conflict
+    ReserveAttempt --> PersistReserved
+    PersistReserved --> ExternalMutation
+    ExternalMutation --> PostMutationReadback
+    PostMutationReadback --> Advance: ready
+    PostMutationReadback --> Wait: pending
+    PostMutationReadback --> ManualReview: unknown 或 conflict
+    Wait --> OwnerReadback: 获得下一次读取授权
+    Wait --> ManualReview: Read Budget 耗尽
+    Advance --> [*]
+    ManualReview --> [*]

@@ -1,0 +1,52 @@
+---
+title: "图 04：Workspace 开通端到端业务时序"
+---
+sequenceDiagram
+    autonumber
+    actor Customer as 客户
+    participant Console
+    participant CP as Control Plane
+    participant CPDB as Control Plane DB
+    participant Gateway as Sub2API
+    participant Fabric
+    participant Provider
+    participant Ledger
+
+    Customer->>Console: 选择 Package 并确认价格
+    Console->>CP: LaunchWorkspace(name, packageId, autoRenew, intentId)
+    CP->>CP: 校验 Session、CSRF、Account、Package 与 Policy
+    CP->>CPDB: 读取对账 Guard 和进行中的 Operation
+    CP->>Fabric: Catalog + Provider Preflight
+    Fabric->>Provider: 只读容量、规格、价格和可用性检查
+    Provider-->>Fabric: 权威 Preflight Facts
+    Fabric-->>CP: 可履约套餐与资源快照
+    CP->>Gateway: 读取身份、余额和账户状态
+    Gateway-->>CP: 权威 Wallet Facts
+    CP->>CPDB: Claim WorkspaceOperation
+    CP-->>Console: 202 Accepted + Operation ID
+    CP->>Gateway: 创建或收敛 Workspace Key
+    Gateway-->>CP: Key ID
+    CP->>Gateway: 幂等扣除一个月总价
+    Gateway-->>CP: Debit Readback
+
+    loop Compute、Storage、Attachment、Secret、Runtime
+        CP->>Fabric: ReadStage
+        Fabric->>Provider: 权威资源回读
+        Provider-->>Fabric: absent / pending / ready / unknown
+        Fabric-->>CP: Typed Observation
+        CP->>CPDB: CAS 预留 Stage Attempt
+        CP->>Fabric: EnsureStage + Idempotency Key
+        Fabric->>Provider: 有界资源 Mutation
+        Provider-->>Fabric: Mutation Result
+        Fabric-->>CP: Mutation 后权威回读
+        CP->>CPDB: CAS 推进 Stage Cursor
+    end
+
+    CP->>CPDB: 原子激活 Workspace Entitlement
+    CP->>Ledger: Record Purchase Receipt
+    Ledger-->>CP: Receipt ID
+    CP->>CPDB: Operation = succeeded
+    Console->>CP: 查询原 Operation
+    Console->>CP: 重新读取 Workspace
+    CP-->>Console: Workspace Ready + Access Projection
+    Console-->>Customer: 打开在线 OPL Workspace

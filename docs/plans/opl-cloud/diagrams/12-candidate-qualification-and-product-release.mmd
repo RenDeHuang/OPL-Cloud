@@ -1,0 +1,38 @@
+---
+title: "图 12：Candidate 双路径资格与正式产品发布"
+---
+flowchart LR
+    CHANGE["Product Change"]
+    VERIFY["Focused Tests<br/>verify:local / verify:local:full"]
+    MAIN["Canonical main SHA"]
+    BUILD["Build Candidate"]
+    CANDIDATE["不可变 Candidate<br/>SHA + Multi-arch Digest"]
+    BUNDLE["Portable Bundle<br/>Compose + Contracts + Manifest + SHA256SUMS"]
+    LOCAL["Local-Docker<br/>Clean-host Qualification"]
+    LOCAL_RECEIPT["Local Qualification Receipt"]
+    INSTANCE["opl-instance-medopl<br/>Protected Deployment"]
+    TKE["Tencent/TKE Qualification<br/>Readback + Executed Rollback"]
+    INSTANCE_RECEIPT["Instance Qualification Receipt"]
+    GATE["Product Release Admission"]
+    PUBLISH["授权发布者手动发布<br/>Promote Existing Bytes"]
+    OUTPUT["Output（固定）<br/>OPL Cloud Release"]
+    CURRENT_GAP["当前缺口<br/>正式 workflow 仍 rebuild"]
+
+    CHANGE --> VERIFY
+    VERIFY --> MAIN
+    MAIN --> BUILD
+    BUILD --> CANDIDATE
+    BUILD --> BUNDLE
+    CANDIDATE --> LOCAL
+    BUNDLE --> LOCAL
+    LOCAL --> LOCAL_RECEIPT
+    CANDIDATE --> INSTANCE
+    BUNDLE --> INSTANCE
+    INSTANCE --> TKE
+    TKE --> INSTANCE_RECEIPT
+    LOCAL_RECEIPT --> GATE
+    INSTANCE_RECEIPT --> GATE
+    CANDIDATE --> GATE
+    GATE --> PUBLISH
+    PUBLISH --> OUTPUT
+    CURRENT_GAP -. "必须关闭后才能发布后继版本" .-> PUBLISH

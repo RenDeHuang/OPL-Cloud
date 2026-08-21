@@ -1,0 +1,26 @@
+---
+title: "图 06：Workspace 完整业务生命周期"
+---
+stateDiagram-v2
+    [*] --> Provisioning: 客户确认购买
+    state "开通中" as Provisioning
+    state "运行中" as Running
+    state "等待续费" as RenewalDue
+    state "到期拒绝访问" as AccessDenied
+    state "永久删除中" as Deleting
+    state "已删除" as Deleted
+    state "人工复核" as ManualReview
+
+    Provisioning --> Running: Launch succeeded
+    Provisioning --> ManualReview: 外部结果未知
+    Running --> RenewalDue: 接近 paidThrough
+    RenewalDue --> Running: 续费成功并延长权益
+    RenewalDue --> AccessDenied: 到期且未成功续费
+    RenewalDue --> ManualReview: 扣款或资源续期结果未知
+    Running --> Deleting: 客户永久删除
+    AccessDenied --> Deleting: 客户永久删除
+    Deleting --> Deleted: Owner 逐项证明 absence 并写 Receipt
+    Deleting --> ManualReview: 任一 Owner 无法证明结果
+    ManualReview --> Running: Operator 授权原 Operation 收敛
+    ManualReview --> Deleting: 确认进入永久删除
+    Deleted --> [*]

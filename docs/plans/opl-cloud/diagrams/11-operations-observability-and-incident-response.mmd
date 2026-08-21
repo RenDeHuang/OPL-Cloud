@@ -1,0 +1,40 @@
+---
+title: "图 11：运维观测层级与故障响应"
+---
+flowchart LR
+    subgraph SIGNALS["运行信号"]
+        HEALTH["L1 基础健康<br/>Process / DB / HTTP"]
+        READY["L2 服务 Readiness<br/>Control Plane / Fabric / Ledger"]
+        PRODUCT["L3 产品 Readback<br/>Identity / Wallet / Provider / Runtime"]
+        BUSINESS["L4 业务一致性<br/>Operation / Debit / Resource / Receipt"]
+        TRANSITION["稳定脱敏 Transition Code"]
+    end
+
+    subgraph OBSERVE["观测与判断"]
+        INSTANCE_MONITOR["Instance Monitor<br/>基础设施告警"]
+        LOGS["Instance Log / CLS<br/>业务状态告警"]
+        RECON["Reconciliation<br/>跨 Owner 对账"]
+        RECEIPTS["Ledger Evidence<br/>不可变回执"]
+    end
+
+    subgraph RESPONSE["故障响应"]
+        CLASSIFY["按权威 Owner 分类"]
+        RECOVER["继续原 Operation<br/>有界 Readback / Resume"]
+        BLOCK["阻断新 Workspace"]
+        ROLLBACK["Instance 执行部署回滚"]
+        MANUAL["Manual Review"]
+    end
+
+    HEALTH --> INSTANCE_MONITOR
+    READY --> INSTANCE_MONITOR
+    PRODUCT --> LOGS
+    BUSINESS --> RECON
+    TRANSITION --> LOGS
+    BUSINESS --> RECEIPTS
+    INSTANCE_MONITOR --> CLASSIFY
+    LOGS --> CLASSIFY
+    RECON --> CLASSIFY
+    CLASSIFY --> RECOVER
+    CLASSIFY --> BLOCK
+    CLASSIFY --> ROLLBACK
+    CLASSIFY --> MANUAL

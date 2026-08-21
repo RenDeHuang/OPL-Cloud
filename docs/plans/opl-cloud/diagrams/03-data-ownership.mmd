@@ -1,0 +1,36 @@
+---
+title: "图 03：聚合根、数据库与数据权威"
+---
+flowchart LR
+    CONSOLE["Console<br/>无业务数据库"]
+
+    subgraph CP["Control Plane"]
+        CPAPP["Account / Workspace / WorkspaceOperation"]
+        CPDB[("Control Plane PostgreSQL<br/>accounts · users · sessions<br/>workspaces · runtime_operations<br/>billing_reconciliation<br/>客户安全投影")]
+        CPAPP --> CPDB
+    end
+
+    subgraph FABRIC["Fabric"]
+        FABAPP["Resource Fulfillment"]
+        FABDB[("Fabric PostgreSQL<br/>fabric_operations<br/>machine_ownerships<br/>资源绑定与操作事实")]
+        FABAPP --> FABDB
+    end
+
+    subgraph LEDGER["Ledger"]
+        LEDAPP["Receipt / Evidence / Reconciliation"]
+        LEDDB[("Ledger PostgreSQL<br/>evidence_receipts<br/>reconciliation_reports<br/>idempotency_keys<br/>evidence_index_entries")]
+        LEDAPP --> LEDDB
+    end
+
+    SUB2API[("Sub2API 数据库<br/>User / Wallet / Key / Usage")]
+    PROVIDER[("Provider 实际资源<br/>Docker / CVM / CBS / TKE")]
+    STORAGE[("Workspace Storage<br/>项目、文件与产物")]
+    IMAGE["不可变 OPL App 镜像"]
+
+    CONSOLE -->|"产品 API"| CPAPP
+    CPAPP -->|"类型化 Command / Query"| FABAPP
+    CPAPP -->|"Receipt / Evidence Command"| LEDAPP
+    CPAPP -->|"身份、钱包、Key、Usage"| SUB2API
+    FABAPP -->|"Provider Port"| PROVIDER
+    FABAPP --> STORAGE
+    IMAGE -->|"Digest Pin"| FABAPP

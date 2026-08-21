@@ -1,0 +1,22 @@
+---
+title: "图 07：Workspace 访问与运行时认证时序"
+---
+sequenceDiagram
+    autonumber
+    actor Customer as 客户
+    participant Browser
+    participant CP as Control Plane
+    participant Fabric
+    participant Runtime as OPL App Runtime
+    participant Storage as Workspace Storage
+
+    Customer->>Browser: 打开 /w/{workspaceId}/
+    Browser->>CP: Session + Workspace URL
+    CP->>CP: 校验 Account、Workspace 权益和 paidThrough
+    CP->>Fabric: 读取 Runtime Status
+    Fabric-->>CP: ready + Service Binding
+    CP->>Runtime: 代理 HTML / API / WebSocket
+    Runtime->>Runtime: Workspace 密码与 Session 验证
+    Runtime->>Storage: 读取项目、文件和产物
+    Storage-->>Runtime: Workspace-owned content
+    Runtime-->>Browser: 在线 OPL App

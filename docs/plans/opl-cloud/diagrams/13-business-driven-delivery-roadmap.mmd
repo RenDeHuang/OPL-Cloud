@@ -1,0 +1,29 @@
+---
+title: "图 13：OPL Cloud 业务驱动交付 Roadmap"
+---
+flowchart LR
+    M0["M0 架构基线<br/>领域、模块、数据、运维边界"]
+    M1["M1 Portable Candidate Ready<br/>显式 Profile、镜像、Secret、安装资产"]
+    C["Exact Cloud Candidate<br/>SHA + Multi-arch Digest"]
+    M2["M2 Local-Docker Qualification<br/>完整客户链"]
+    M3["M3 Instance Qualification<br/>Tencent/TKE + Rollback"]
+    M4["M4 Product Release<br/>Promote Exact Bytes"]
+    M5["M5 生命周期与运维闭环<br/>Renewal、Recovery、Observability"]
+    M6["M6 自助 SaaS 能力<br/>注册、支付、Suspend / Resume"]
+    M7["M7 OPL Serve<br/>API / Embed / Hosted UI"]
+    CONTINUOUS["持续工程治理<br/>模块内聚、安全、性能、合同测试"]
+
+    M0 --> M1
+    M1 --> C
+    C --> M2
+    C --> M3
+    M2 --> M4
+    M3 --> M4
+    M4 --> M5
+    M5 --> M6
+    M6 --> M7
+    CONTINUOUS -.-> M1
+    CONTINUOUS -.-> M2
+    CONTINUOUS -.-> M3
+    CONTINUOUS -.-> M4
+    CONTINUOUS -.-> M5

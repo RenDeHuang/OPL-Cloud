@@ -1,0 +1,33 @@
+---
+title: "图 01：OPL Cloud 业务上下文与固定输入输出"
+---
+flowchart LR
+    INPUT["Input（固定）<br/>客户需要 OPL App 云端产品"]
+
+    subgraph CLOUD["OPL Cloud 产品边界"]
+        CONSOLE["Console<br/>客户交互"]
+        CP["Control Plane<br/>商业准入与 Workspace 生命周期"]
+        FABRIC["Fabric<br/>资源与 Runtime 履约"]
+        LEDGER["Ledger<br/>回执、证据与对账"]
+        DELIVERY["Workspace Delivery<br/>运行精确 OPL App 镜像"]
+
+        CONSOLE --> CP
+        CP --> FABRIC
+        CP --> LEDGER
+        FABRIC --> DELIVERY
+    end
+
+    APP["one-person-lab-app<br/>App 产品与 Workspace 镜像 Owner"]
+    SUB2API["Sub2API<br/>身份、钱包、Key、路由、Usage Owner"]
+    PROVIDER["基础设施 Provider<br/>Local Docker / Tencent TKE"]
+    OUTPUT["Output（固定）<br/>可移植 OPL Cloud 产品<br/>镜像 + 契约 + 安装资产 + Release"]
+    INSTANCE["Instance Owner<br/>域名、Profile、Secrets、部署与回滚"]
+    RESULT["客户运行结果<br/>独立在线 OPL Workspace"]
+
+    INPUT --> CLOUD
+    APP -->|"不可变 Workspace 镜像"| DELIVERY
+    CP <-->|"身份、余额、Key、Usage"| SUB2API
+    FABRIC <-->|"计算、存储、网络、Runtime"| PROVIDER
+    CLOUD --> OUTPUT
+    OUTPUT -->|"精确 SHA / Digest"| INSTANCE
+    INSTANCE --> RESULT

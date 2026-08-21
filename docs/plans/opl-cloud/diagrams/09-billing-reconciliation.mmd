@@ -1,0 +1,20 @@
+---
+title: "图 09：跨 Owner 账务与资源对账闭环"
+---
+flowchart LR
+    CP["Control Plane<br/>Operation 与 Billing 状态"]
+    WALLET["Sub2API<br/>Debit / Refund History"]
+    FABRIC["Fabric<br/>资源与 Provider Facts"]
+    LEDGER["Ledger<br/>Purchase / Renewal / Delete Receipts"]
+    RECON["Server-computed Reconciliation<br/>只比较并记录事实"]
+    RECORD["Ledger Reconciliation Report<br/>Control Plane Guard"]
+    OK["ok<br/>允许新购买"]
+    MISMATCH["mismatch<br/>阻断新 Workspace"]
+
+    CP --> RECON
+    WALLET --> RECON
+    FABRIC --> RECON
+    LEDGER --> RECON
+    RECON --> RECORD
+    RECORD --> OK
+    RECORD --> MISMATCH

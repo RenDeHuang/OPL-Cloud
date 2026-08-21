@@ -1,0 +1,47 @@
+---
+title: "图 10：OPL Cloud 运行部署拓扑"
+---
+flowchart TB
+    CUSTOMER["客户浏览器"]
+    TLS["Instance TLS / Reverse Proxy"]
+    CONFIG["Instance-owned<br/>Domain / Provider Profile / Secrets / Image Pins"]
+
+    subgraph INSTANCE["OPL Cloud Instance"]
+        CP["Control Plane<br/>Console + Product API + Workspace Proxy"]
+        FABRIC["Fabric"]
+        LEDGER["Ledger"]
+
+        subgraph PG["PostgreSQL"]
+            CPDB[("Control Plane DB<br/>独立 Role")]
+            FABDB[("Fabric DB<br/>独立 Role")]
+            LEDDB[("Ledger DB<br/>独立 Role")]
+        end
+
+        CP --> CPDB
+        FABRIC --> FABDB
+        LEDGER --> LEDDB
+        CP -->|"Typed HTTP + Capability"| FABRIC
+        CP -->|"Typed HTTP + Capability"| LEDGER
+    end
+
+    SUB2API["Sub2API<br/>Identity / Wallet / Key / Usage"]
+
+    subgraph PROVIDERS["Fabric Provider Boundary"]
+        LOCAL["Local Docker"]
+        TKE["Tencent / TKE"]
+    end
+
+    RUNTIME["Workspace Runtime<br/>精确 OPL App 镜像"]
+    STORAGE[("Workspace Storage")]
+
+    CUSTOMER --> TLS
+    TLS --> CP
+    CONFIG --> CP
+    CONFIG --> FABRIC
+    CP -->|"Server-only API"| SUB2API
+    FABRIC --> LOCAL
+    FABRIC --> TKE
+    LOCAL --> RUNTIME
+    TKE --> RUNTIME
+    RUNTIME --> STORAGE
+    CP -->|"Workspace HTML / API / WebSocket"| RUNTIME

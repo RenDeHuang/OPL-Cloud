@@ -1,0 +1,54 @@
+---
+title: "图 02：DDD 限界上下文与模块权威"
+---
+flowchart LR
+    CUSTOMER["客户"]
+
+    subgraph CONSOLE["客户交互域：Console"]
+        UI["Workspace、套餐、余额、用量与回执界面"]
+    end
+
+    subgraph CP["核心业务域：Control Plane"]
+        IDENTITY["账号与访问<br/>Account / User / Session"]
+        OFFER["产品目录与准入<br/>Package / Quote / Policy"]
+        LIFECYCLE["Workspace 生命周期<br/>Launch / Access / Renew / Delete"]
+        SETTLEMENT["结算协调<br/>Debit / Refund / Reconciliation"]
+
+        IDENTITY --> OFFER
+        OFFER --> LIFECYCLE
+        LIFECYCLE --> SETTLEMENT
+    end
+
+    subgraph FABRIC["资源履约域：Fabric"]
+        CATALOG["资源目录与 Preflight"]
+        RESOURCE["Compute / Storage / Attachment"]
+        SECRET["Workspace Secret"]
+        RUNTIME["OPL App Runtime"]
+        ADAPTER["Provider Adapter"]
+
+        CATALOG --> RESOURCE
+        RESOURCE --> SECRET
+        SECRET --> RUNTIME
+        RESOURCE --> ADAPTER
+        RUNTIME --> ADAPTER
+    end
+
+    subgraph LEDGER["证据域：Ledger"]
+        RECEIPT["Receipt"]
+        RECON["Reconciliation"]
+        EVIDENCE["Evidence Index / Retention"]
+    end
+
+    SUB2API["外部 Gateway 域<br/>Identity / Wallet / Key / Usage"]
+    APP["OPL App Owner<br/>不可变 Workspace 镜像"]
+    PROVIDER["基础设施 Provider<br/>Local Docker / Tencent TKE"]
+
+    CUSTOMER --> UI
+    UI -->|"产品 API"| CP
+    LIFECYCLE -->|"资源履约命令与权威回读"| FABRIC
+    IDENTITY -->|"身份验证"| SUB2API
+    SETTLEMENT -->|"钱包、Key、Usage"| SUB2API
+    LIFECYCLE -->|"业务回执"| LEDGER
+    SETTLEMENT -->|"账务回执与对账"| LEDGER
+    APP -->|"镜像 Digest + Runtime ABI"| RUNTIME
+    ADAPTER --> PROVIDER

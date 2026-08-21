@@ -1,0 +1,31 @@
+---
+title: "图 08：Workspace 永久删除与零退款链路"
+---
+flowchart LR
+    VERIFY["验证原 Launch、Purchase Receipt<br/>当前 Key 与不可变资源绑定"]
+    CLAIM["Claim Delete Operation"]
+    RUNTIME["Runtime + Secret absent"]
+    ATTACHMENT["Attachment absent"]
+    STORAGE["Storage absent"]
+    COMPUTE["Compute absent"]
+    KEY["Sub2API Key absent"]
+    WORKSPACE["Control Plane Workspace absent"]
+    RECEIPT["workspace.deleted.v1 Receipt"]
+    COMPLETE["Delete complete<br/>零 Wallet Mutation · 零自动退款"]
+    REVIEW["manual_review<br/>停止后续 Mutation"]
+
+    VERIFY --> CLAIM
+    CLAIM --> RUNTIME
+    RUNTIME --> ATTACHMENT
+    ATTACHMENT --> STORAGE
+    STORAGE --> COMPUTE
+    COMPUTE --> KEY
+    KEY --> WORKSPACE
+    WORKSPACE --> RECEIPT
+    RECEIPT --> COMPLETE
+
+    RUNTIME -. "unknown / conflict" .-> REVIEW
+    ATTACHMENT -. "unknown / conflict" .-> REVIEW
+    STORAGE -. "unknown / conflict" .-> REVIEW
+    COMPUTE -. "unknown / conflict" .-> REVIEW
+    KEY -. "unknown / conflict" .-> REVIEW
