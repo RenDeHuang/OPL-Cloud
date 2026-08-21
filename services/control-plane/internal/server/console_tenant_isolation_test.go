@@ -237,7 +237,7 @@ func TestCustomerWorkspaceListContainsOnlySessionTenant(t *testing.T) {
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-beta", "accountId": "acct-beta", "status": "running"}))
 	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-beta", "accountId": "acct-beta", "status": "available"}))
 	mustStore(t, store.SaveRuntimeOperation(context.Background(), map[string]any{"id": "operation-beta", "operationId": "operation-beta", "accountId": "acct-beta", "workspaceId": "workspace-beta", "status": "succeeded"}))
-	mustStore(t, store.SaveBillingReconciliation(context.Background(), map[string]any{"id": "global", "status": "mismatch", "guardStatus": "blocked", "guardReason": "global-secret", "guardBlockNewWorkspaces": true}))
+	applyBillingReconciliationForTest(t, store, billingReconciliationRowForTest("global", "mismatch", "global-secret"), "")
 	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatal(err)
@@ -263,11 +263,9 @@ func TestCustomerWorkspaceListContainsOnlySessionTenant(t *testing.T) {
 func TestReconciliationBlockedCustomerMutationsDoNotLeakGlobalProjection(t *testing.T) {
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	mustStore(t, store.SaveBillingReconciliation(context.Background(), map[string]any{
-		"id": "global", "status": "mismatch",
-		"guard":   map[string]any{"status": "blocked", "reason": "private-operator-reason", "blockNewWorkspaces": true},
-		"message": map[string]any{"author": "operator-secret", "text": "cross-tenant-private-report"},
-	}))
+	row := billingReconciliationRowForTest("global", "mismatch", "private-operator-reason")
+	row["message"] = map[string]any{"author": "operator-secret", "text": "cross-tenant-private-report"}
+	applyBillingReconciliationForTest(t, store, row, "")
 	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatal(err)

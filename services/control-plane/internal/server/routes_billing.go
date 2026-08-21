@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"strconv"
@@ -106,6 +107,15 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
 			return
 		}
+		current, found, err := app.tables.BillingReconciliation(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		expectedCurrentGuardID := ""
+		if found {
+			expectedCurrentGuardID = stringValue(current["id"])
+		}
 		report, err := app.billingReconciliationReport(r.Context(), service, idempotencyKey)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
@@ -116,15 +126,20 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			writeUpstreamError(w, err)
 			return
 		}
-		if err := app.rememberReconciliation(result); err != nil {
+		row := reconciliationResponse(result)
+		audit := app.auditEvent(r, "billing.reconciliation", "billing_reconciliation", result.ID, "", current, row, "succeeded")
+		audit["id"] = billingReconciliationAuditID(result.ID)
+		if err := app.tables.ApplyBillingReconciliation(r.Context(), billingReconciliationMutation{
+			Row: row, AuditEvent: audit, ExpectedCurrentGuardID: expectedCurrentGuardID,
+		}); err != nil {
+			if errors.Is(err, errBillingReconciliationCASConflict) || errors.Is(err, errIdempotencyConflict) {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
-		if err := app.appendAuditEvent(r, "billing.reconciliation", "billing_reconciliation", result.ID, "", nil, result, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		writeJSON(w, http.StatusCreated, reconciliationResponse(result))
+		writeJSON(w, http.StatusCreated, row)
 	}))
 }
 

@@ -240,6 +240,16 @@ Sub2API management origin and credentials are never exposed to the browser.
   findings or prove a deployed Console path.
 - Console calls Control Plane product APIs only and projects live Sub2API,
   Fabric, Ledger, and Control Plane facts through customer-safe DTOs.
+- Control Plane keeps the latest billing-reconciliation guard and its operator
+  audit in one transaction. Reconciliation apply and Workspace Launch claim
+  share the same purchase-admission lock: a committed mismatch blocks every
+  later claim, while a claim committed first remains valid and the later
+  mismatch blocks only new purchases. Guard read failures and invalid state
+  fail closed, stale clean results cannot replace newer mismatches, and an
+  exact result replay does not refresh ordering or duplicate the audit. Ledger
+  remains the reconciliation-evidence owner; this source evidence does not
+  prove an Instance deployment, real debit, provider mutation, or production
+  qualification.
 - Control Plane, Fabric, and Ledger are separate Go processes and PostgreSQL
   schema owners. Portable Compose creates separate service databases and roles
   and maps three distinct service tokens. A source-built portable Compose

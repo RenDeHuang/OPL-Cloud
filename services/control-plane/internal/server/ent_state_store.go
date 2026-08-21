@@ -866,10 +866,6 @@ func (s *postgresEntStateStore) BillingReconciliation(ctx context.Context) (map[
 	return recordFromEnt(row, reconcileEntFields), true, nil
 }
 
-func (s *postgresEntStateStore) SaveBillingReconciliation(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.BillingReconciliation.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.BillingReconciliation.Create() }, reconcileEntFields)
-}
-
 func (s *postgresEntStateStore) ArchiveState(ctx context.Context) (map[string]any, error) {
 	auditEvents, err := loadEventRows(ctx, s.client.ArchivedAdminAuditEvent.Query().All, auditEntFields)
 	if err != nil {

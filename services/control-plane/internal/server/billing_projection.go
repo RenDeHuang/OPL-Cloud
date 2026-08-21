@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -362,22 +363,98 @@ func reconciliationLedgerReceipts(ctx context.Context, service *controlplane.Ser
 
 func (app *controlPlaneServer) reconciliationProjectionLocked() map[string]any {
 	row, ok, err := app.tables.BillingReconciliation(context.Background())
-	if err != nil || !ok {
+	if err != nil {
+		return map[string]any{"reports": 0, "guard": map[string]any{"status": "unavailable", "blockNewWorkspaces": true, "reason": "billing_reconciliation_unavailable"}}
+	}
+	if !ok {
 		return map[string]any{"reports": 0, "guard": map[string]any{"status": "not_required", "blockNewWorkspaces": false, "reason": "billing_reconciliation_not_required"}}
+	}
+	if _, err := billingReconciliationBlockState(row); err != nil {
+		return map[string]any{"reports": 0, "guard": map[string]any{"status": "unavailable", "blockNewWorkspaces": true, "reason": "billing_reconciliation_invalid"}}
 	}
 	row["reports"] = 1
 	return row
 }
 
-func (app *controlPlaneServer) reconciliationBlocksNewWorkspaces() (map[string]any, bool) {
-	projection := app.reconciliationProjectionLocked()
-	guard, _ := projection["guard"].(map[string]any)
-	blocked, _ := guard["blockNewWorkspaces"].(bool)
-	return projection, blocked
+func (app *controlPlaneServer) reconciliationBlocksNewWorkspaces(ctx context.Context) (map[string]any, bool, error) {
+	row, ok, err := app.tables.BillingReconciliation(ctx)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		projection := map[string]any{"reports": 0, "guard": map[string]any{"status": "not_required", "blockNewWorkspaces": false, "reason": "billing_reconciliation_not_required"}}
+		return projection, false, nil
+	}
+	blocked, err := billingReconciliationBlockState(row)
+	if err != nil {
+		return nil, true, err
+	}
+	row["reports"] = 1
+	return row, blocked, nil
 }
 
-func (app *controlPlaneServer) rememberReconciliation(result clients.ReconciliationResult) error {
-	return app.tables.SaveBillingReconciliation(context.Background(), reconciliationResponse(result))
+func billingReconciliationBlockState(row map[string]any) (bool, error) {
+	status := stringValue(row["status"])
+	guard := mapField(row, "guard")
+	guardStatus, reason := stringValue(guard["status"]), stringValue(guard["reason"])
+	blocked, hasBlocked := guard["blockNewWorkspaces"].(bool)
+	if stringValue(row["id"]) == "" || (status != "ok" && status != "mismatch") || guardStatus != status || reason == "" || !hasBlocked || blocked != (status == "mismatch") {
+		return true, errors.New("billing_reconciliation_guard_invalid")
+	}
+	return blocked, nil
+}
+
+func validateBillingReconciliationMutation(mutation billingReconciliationMutation) error {
+	row, audit := mutation.Row, mutation.AuditEvent
+	if _, err := billingReconciliationBlockState(row); err != nil {
+		return err
+	}
+	report := mapField(row, "report")
+	if stringValue(report["id"]) != stringValue(row["id"]) {
+		return errors.New("billing_reconciliation_report_invalid")
+	}
+	if !billingReconciliationAuditIdentityMatches(audit, row) {
+		return errors.New("billing_reconciliation_audit_invalid")
+	}
+	if _, err := time.Parse(time.RFC3339, stringValue(audit["createdAt"])); err != nil {
+		return errors.New("billing_reconciliation_audit_invalid")
+	}
+	return nil
+}
+
+func billingReconciliationIdentityMatches(current, desired map[string]any) bool {
+	currentBlocked, currentErr := billingReconciliationBlockState(current)
+	desiredBlocked, desiredErr := billingReconciliationBlockState(desired)
+	return currentErr == nil && desiredErr == nil && stringValue(current["id"]) == stringValue(desired["id"]) &&
+		stringValue(current["status"]) == stringValue(desired["status"]) && currentBlocked == desiredBlocked &&
+		stringValue(mapField(current, "guard")["reason"]) == stringValue(mapField(desired, "guard")["reason"])
+}
+
+func billingReconciliationContentMatches(current, desired map[string]any) bool {
+	if !billingReconciliationIdentityMatches(current, desired) {
+		return false
+	}
+	currentReport, currentOK := current["report"]
+	desiredReport, desiredOK := desired["report"]
+	if !currentOK || !desiredOK {
+		return false
+	}
+	currentJSON, currentErr := json.Marshal(currentReport)
+	desiredJSON, desiredErr := json.Marshal(desiredReport)
+	return currentErr == nil && desiredErr == nil && string(currentJSON) == string(desiredJSON)
+}
+
+func billingReconciliationAuditID(resultID string) string {
+	return "audit-" + stableID("billing.reconciliation", "billing_reconciliation", resultID)[:12]
+}
+
+func billingReconciliationAuditIdentityMatches(row, desired map[string]any) bool {
+	resultID := stringValue(desired["id"])
+	after, ok := row["after"].(map[string]any)
+	return stringValue(row["id"]) == billingReconciliationAuditID(resultID) && stringValue(row["actorUserId"]) != "" &&
+		stringValue(row["action"]) == "billing.reconciliation" && stringValue(row["resourceKind"]) == "billing_reconciliation" &&
+		stringValue(row["resourceId"]) == resultID && stringValue(row["result"]) == "succeeded" && ok &&
+		billingReconciliationContentMatches(after, desired)
 }
 
 func (app *controlPlaneServer) resourceLedgerEvidenceLocked(accountIDs ...string) []any {
