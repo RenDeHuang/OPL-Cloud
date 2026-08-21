@@ -358,3 +358,10 @@ new purchases only and never deletes or changes existing Workspaces. Historical
 accounts remain disabled until a product-approved migration inventory is read
 back. The Instance per-account pilot allowlist is not removed until that
 Control Plane migration and readback are complete.
+
+For a fresh deployment, this historical compatibility rule is not a
+prerequisite: an account explicitly provisioned as `full_cloud_customer` is
+enabled by the Control Plane at creation, while `gateway_only` remains
+disabled. Fresh launch admission no longer uses a per-account Pilot
+environment variable; the legacy allowlist and its historical
+migration/retirement remain deferred compatibility work only.
