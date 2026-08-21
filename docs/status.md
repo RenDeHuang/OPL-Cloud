@@ -498,11 +498,12 @@ the same run.
 The hosted Clean Host Qualification has run three times and failed each time.
 The latest run, `32154001721`, used old product SHA
 `fb2f7ed7a0038cc8698002278ea738bfbe6c62cd` and stopped on Fabric Secret-root
-`EACCES`; it is not evidence for current `main` or the TKE Candidate. The current
-local qualification tool also still validates the retired refund-on-Delete
-behavior, while canonical `workspace.delete.v2` performs zero wallet mutation
-and writes `workspace.deleted.v1`. The clean-host gate must be reconciled to the
-current Delete contract before a successful run can qualify a Release.
+`EACCES`; it is not evidence for current `main` or the TKE Candidate. The local
+qualification tool now omits client-supplied Workspace capacity, validates
+canonical `workspace.delete.v2`, preserves the post-debit wallet balance with
+zero refund, and binds the returned `workspace.deleted.v1` Receipt identity.
+This source alignment is not a successful clean-host run and does not qualify a
+Release; the gate still needs one exact-current Candidate receipt.
 
 The base Compose asset, explicit local-Workspace override, GHCR/GitHub Release
 workflow, owner-only non-Release Candidate workflow, Candidate receipt
