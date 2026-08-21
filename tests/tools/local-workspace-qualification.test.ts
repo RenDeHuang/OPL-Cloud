@@ -587,31 +587,28 @@ test("READY receipt binds the exact durable and accounting evidence", () => {
     stores: { controlPlane: "durable", fabric: "durable", ledger: "durable", ownerSeparated: true },
     identities: {
       accountId: "acct-admin", sub2apiUserId: "41", launchOperationId: "workspace-launch-alpha",
-      deleteOperationId: "workspace-delete-alpha", refundOperationId: "workspace-delete-alpha", workspaceId: "ws-alpha", runtimeId: "rt-alpha", keyId: "71",
-      debitCode: "opl:qualification-alpha", purchaseReceiptId: "receipt-alpha", refundReceiptId: "receipt-refund"
+      deleteOperationId: "workspace-delete-alpha", deletionReceiptId: "receipt-delete", workspaceId: "ws-alpha", runtimeId: "rt-alpha", keyId: "71",
+      debitCode: "opl:qualification-alpha", purchaseReceiptId: "receipt-alpha"
     },
     debit: { count: 1, accountId: "acct-admin", operationId: "workspace-launch-alpha", workspaceId: "ws-alpha", code: "opl:qualification-alpha", userId: "41", amountUsdMicros: "52580000" },
-    wallet: { beforeUsdMicros: "100000000", afterUsdMicros: "47420000", restoredUsdMicros: "100000000" },
+    wallet: { beforeUsdMicros: "100000000", afterUsdMicros: "47420000", afterDeleteUsdMicros: "47420000" },
     receipt: {
       count: 1, id: "receipt-alpha", accountId: "acct-admin", operationId: "workspace-launch-alpha", workspaceId: "ws-alpha", runtimeId: "rt-alpha",
       keyId: "71", chargeReference: "opl:qualification-alpha", amountUsdMicros: "52580000"
     },
     restart: { performed: true, operationStable: true, workspaceStable: true, runtimeStable: true, receiptStable: true },
     deletion: {
-      ownerAuthorized: true, accountId: "acct-admin", operationId: "workspace-delete-alpha", refundOperationId: "workspace-delete-alpha", workspaceId: "ws-alpha", runtimeId: "rt-alpha", keyId: "71",
+      ownerAuthorized: true, accountId: "acct-admin", operationId: "workspace-delete-alpha", deletionReceiptId: "receipt-delete", workspaceId: "ws-alpha", runtimeId: "rt-alpha", keyId: "71",
       workspaceAbsent: true, runtimeAbsent: true, workspaceKeyAbsent: true, fabricSecretAbsent: true
     },
+    deletionReceipt: {
+      count: 1, id: "receipt-delete", type: "workspace.deleted.v1", accountId: "acct-admin",
+      operationId: "workspace-delete-alpha", workspaceId: "ws-alpha", launchReceiptId: "receipt-alpha"
+    },
     residuals: { containers: 0, volumes: 0, networks: 0 },
-    authorityWriteCounts: { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 1 },
+    authorityWriteCounts: { keyCreates: 1, keyDeletes: 1, debits: 1, refunds: 0 },
     mutationCounts: { workspaceLaunchPosts: 1, workspaceDeleteRequests: 1, refundPosts: 0 },
-    refund: {
-      count: 1, accountId: "acct-admin", operationId: "workspace-delete-alpha", workspaceId: "ws-alpha", debitCode: "opl:qualification-alpha",
-      code: "opl:qualification-refund", userId: "41", amountUsdMicros: "52580000", receiptId: "receipt-refund"
-    },
-    refundReceipt: {
-      count: 1, id: "receipt-refund", type: "billing.workspace_refunded.v1", accountId: "acct-admin", operationId: "workspace-delete-alpha",
-      workspaceId: "ws-alpha", chargeReference: "opl:qualification-alpha", refundCode: "opl:qualification-refund", amountUsdMicros: "52580000"
-    },
+    refund: { count: 0 },
     usage: { source: "sub2api", status: "available", totalRequests: 0 },
     productMatrix: {
       digest: `sha256:${"e".repeat(64)}`,
@@ -637,13 +634,13 @@ test("READY receipt binds the exact durable and accounting evidence", () => {
   assert.throws(() => validateLocalQualificationReceipt({ ...fixtureReceipt, residuals: { ...fixtureReceipt.residuals, volumes: 1 } }), /residual/);
   assert.throws(() => validateLocalQualificationReceipt({ ...fixtureReceipt, mutationCounts: { ...fixtureReceipt.mutationCounts, refundPosts: 1 } }), /mutation counts/);
   assert.throws(() => validateLocalQualificationReceipt({
-    ...fixtureReceipt, refundReceipt: { ...fixtureReceipt.refundReceipt, type: "gateway.wallet_adjustment.v1" }
-  }), /refund receipt/);
+    ...fixtureReceipt, deletionReceipt: { ...fixtureReceipt.deletionReceipt, type: "billing.workspace_refunded.v1" }
+  }), /deletion receipt/);
   assert.throws(() => validateLocalQualificationReceipt({
     ...fixtureReceipt, deletion: { ...fixtureReceipt.deletion, keyId: "72" }
   }), /owner deletion/);
   assert.throws(() => validateLocalQualificationReceipt({ ...fixtureReceipt, qualification: { authorityMode: "fixture", p0Ready: true } }), /authority classification/);
-  assert.throws(() => validateLocalQualificationReceipt({ ...fixtureReceipt, wallet: { ...fixtureReceipt.wallet, afterUsdMicros: "47420001" } }), /fixture wallet/);
+  assert.throws(() => validateLocalQualificationReceipt({ ...fixtureReceipt, wallet: { ...fixtureReceipt.wallet, afterDeleteUsdMicros: "47420001" } }), /fixture wallet/);
   assert.throws(() => validateLocalQualificationReceipt({ ...fixtureReceipt, authorityWriteCounts: { ...fixtureReceipt.authorityWriteCounts, debits: 2 } }), /authority write counts/);
 });
 
@@ -729,6 +726,11 @@ test("package exposes one local Workspace qualification command", async () => {
   assert.match(runner, /if \(options\.authorityMode === "live"\)[\s\S]*runLocalWorkspaceJ1HTTPQualification[\s\S]*\} else \{[\s\S]*stage = "console_and_login"/);
   assert.doesNotMatch(runner, /runLocalWorkspaceJ1HTTPQualification\([\s\S]{0,5000}?validateQualificationSourceIdentity\([^)]*\);\s*return;/);
   assert.doesNotMatch(runner, /OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS/);
+  const pricingBodies = [...runner.matchAll(/http\.json\("\/api\/pricing\/preview",\s*\{\s*method: "POST", body: \{([^}]*)\}/g)];
+  const launchBodies = [...runner.matchAll(/http\.json\("\/api\/workspace-launches",\s*\{\s*method: "POST", headers: \{ "idempotency-key": [^}]+\},\s*body: \{([^}]*)\}/g)];
+  assert.equal(pricingBodies.length, 2);
+  assert.equal(launchBodies.length, 2);
+  for (const [, body] of [...pricingBodies, ...launchBodies]) assert.doesNotMatch(body, /\bsizeGb\b/);
   assert.match(runner, /cleanupLocalQualificationResources\(scope\.accountId, scope\.workspaceId, async \(\) => \{[\s\S]*compose\(\["down"/);
 });
 
@@ -841,6 +843,14 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
     operationId, workspaceId, status, phase: status, receiptId, url: workspaceURL,
     workspaceApiKeyId: keyId, computeAllocationId: "compute-j1", storageId: "storage-j1", attachmentId: "attachment-j1"
   });
+  const readRequestJSON = async (request) => new Promise((resolvePromise, reject) => {
+    let text = "";
+    request.on("data", (chunk) => { text += chunk; });
+    request.on("end", () => {
+      try { resolvePromise(JSON.parse(text)); } catch (error) { reject(error); }
+    });
+    request.on("error", reject);
+  });
   server = createServer(async (request, response) => {
     const url = new URL(request.url || "/", "http://qualification.test");
     const method = request.method || "GET";
@@ -869,8 +879,12 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
       const items = counts.keyCreates ? [historicalKey, { id: keyId, kind: "workspace", status: "active" }] : [historicalKey];
       return send(response, 200, envelope("sub2api", { items, total: items.length, page: 1, pageSize: 100, pages: 1 }));
     }
-    if (method === "POST" && url.pathname === "/api/pricing/preview") return send(response, 200, { resourceType: "workspace", packageId: "basic", currency: "USD", totalChargeUsdMicros: Number(amountUsdMicros) });
+    if (method === "POST" && url.pathname === "/api/pricing/preview") {
+      requests.at(-1).body = await readRequestJSON(request);
+      return send(response, 200, { resourceType: "workspace", packageId: "basic", currency: "USD", totalChargeUsdMicros: Number(amountUsdMicros) });
+    }
     if (method === "POST" && url.pathname === "/api/workspace-launches") {
+      requests.at(-1).body = await readRequestJSON(request);
       counts.workspacePosts += 1; counts.keyCreates += 1; counts.debits += 1;
       return send(response, 202, launch("pending"));
     }
@@ -932,6 +946,12 @@ test("canonical J1 HTTP preview covers every live stage and validates exact loca
     assert.deepEqual(stages, ["bootstrap_ready", "admin_login", "account_provision", "qualification_login", "wallet_usage_baseline", "pricing_preview", "workspace_launch", "terminal_readback", "workspace_open", "accounting_readback", "receipt_validation", "qualification_cleanup"]);
     assert.deepEqual(cleanupCalls, [{ accountId, workspaceId }]);
     assert.deepEqual(counts, { mappingPosts: 1, workspacePosts: 1, keyCreates: 1, debits: 1, refunds: 0, deletes: 0, restarts: 0 });
+    assert.deepEqual(requests.find((request) => request.method === "POST" && request.path === "/api/pricing/preview")?.body, {
+      resourceType: "workspace", packageId: "basic"
+    });
+    assert.deepEqual(requests.find((request) => request.method === "POST" && request.path === "/api/workspace-launches")?.body, {
+      name: "J1", packageId: "basic", autoRenew: false
+    });
     assert.equal(requests.filter((request) => request.method === "POST" && request.path === "/api/workspace-launches").length, 1);
     assert.equal(requests.some((request) => request.method === "DELETE"), false);
     assert.equal(requests.some((request) => request.path.includes("refund")), false);
