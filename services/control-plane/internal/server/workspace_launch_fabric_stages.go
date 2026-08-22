@@ -138,6 +138,8 @@ func workspaceLaunchFabricObservation(operation workspaceLaunchReconcileOperatio
 		return workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, nil
 	case result.State == workspaceLaunchStagePending && result.Reason == "provider_provisioning":
 		return workspaceLaunchStageObservation{State: workspaceLaunchStagePending}, nil
+	case operation.Stage == "ensure_compute_allocation" && result.State == workspaceLaunchStagePending && result.Reason == "ownership_pending":
+		return workspaceLaunchStageObservation{State: workspaceLaunchStageOwnershipPending}, nil
 	case result.State == workspaceLaunchStageReady && result.Reason == "none":
 		facts, err := workspaceLaunchFabricStageFacts(operation.Stage, result.Resources, operation)
 		if err != nil {

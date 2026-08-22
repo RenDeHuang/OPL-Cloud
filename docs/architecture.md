@@ -390,14 +390,31 @@ Fresh mutation continuation is a separate Control Plane system authorization,
 never an operator Resume authorization. It exists only when the mandatory first
 post-mutation owner read returns exact typed `pending`, and the same operation
 CAS binds account, Launch, Workspace, stage, original idempotency key, attempt,
-and operation version with zero mutation and replay budget. The mandatory read
-is count one and only two additional owner reads may be claimed. Each claim is
-persisted before its GET; concurrent CAS losers perform no GET, and a crashed
-claim consumes its ordinal permanently. `ready` advances the same Launch,
-`pending` consumes the finite budget, and unknown, conflict, error, or exact
-exhaustion enters `unknown/manual_review` without another external mutation.
-Legacy schema-v3 rows without these explicit authorization and claim fields
-have zero system continuation budget.
+and operation version. Each read claim is persisted before its GET; concurrent
+CAS losers perform no GET, and a crashed claim consumes its ordinal
+permanently. Non-compute stages retain zero replay budget and only two
+additional owner reads after the mandatory read.
+
+Compute allocation has a provider-latency-specific ten-minute deadline and at
+most sixty additional worker read claims after the mandatory read.
+`pending/provider_provisioning` remains read-only. Once exact Fabric/provider
+readback changes to `pending/ownership_pending`, that compute authorization may
+claim one exact-idempotency continuation of the same Fabric stage. Fabric must
+discover the already-created Machine before claiming its ownership, so this
+continuation cannot issue a second NodePool scale. `ready` advances the same
+Launch; unknown, conflict, error, or exact budget/deadline exhaustion enters
+`unknown/manual_review` without another unproven external mutation.
+
+An administrator may resume only the historical compute operation already
+parked by the former untyped provider-pending result. The existing Resume route
+first performs authoritative readback and admits only
+`provider_provisioning` or `ownership_pending`; it then restores the original
+attempt to the bounded compute continuation above. `ready`, `absent`,
+`unknown`, read failure, or identity conflict leaves the operation unchanged.
+This does not authorize a general unknown recovery path, a successor Launch, a
+new stage attempt, another debit, or direct Receipt creation. Legacy schema-v3
+rows without explicit authorization and claim fields have zero system
+continuation budget.
 
 ## Modularity And Simplification Boundary
 

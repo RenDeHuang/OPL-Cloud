@@ -81,6 +81,9 @@ func (p *TencentProvider) EnsureWorkspaceLaunchStage(ctx context.Context, reques
 			return WorkspaceLaunchProviderResult{}, firstNonNil(err, ErrWorkspaceLaunchUnavailable)
 		}
 		ownership, err := p.ensureWorkspaceLaunchComputeOwnership(ctx, allocation, prepared)
+		if errors.Is(err, ErrWorkspaceLaunchPending) {
+			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchOwnershipPending
+		}
 		if err != nil {
 			return WorkspaceLaunchProviderResult{}, err
 		}
@@ -205,6 +208,9 @@ func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request 
 			}
 		}
 		readback, err := p.DiscoverComputeAllocation(ctx, *state.Compute, *state.ComputePlan)
+		if errors.Is(err, ErrComputeAllocationPending) {
+			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchPending
+		}
 		if err != nil {
 			return WorkspaceLaunchProviderResult{}, err
 		}
@@ -221,7 +227,7 @@ func (p *TencentProvider) ReadWorkspaceLaunchStage(ctx context.Context, request 
 				(proof.NodeOwnershipState != "unallocated" && proof.NodeOwnershipState != "target_owned") {
 				return WorkspaceLaunchProviderResult{}, firstNonNil(ownershipErr, ErrLaunchStageBindingConflict)
 			}
-			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchResourceAbsent
+			return WorkspaceLaunchProviderResult{}, ErrWorkspaceLaunchOwnershipPending
 		}
 		if p.readComputeMachineOwnership(ctx, readback, *state.ComputePlan, *state.Ownership, true) != nil {
 			return WorkspaceLaunchProviderResult{}, ErrLaunchStageBindingConflict
@@ -402,10 +408,10 @@ func (p *TencentProvider) tencentWorkspaceLaunchComputeStateFromMutation(ctx con
 		return tencentWorkspaceLaunchState{}, ErrLaunchStageBindingConflict
 	}
 	allocation := mutationState.Allocation
-	if !decodeOperationResource(operation, &allocation) {
+	if ownershipErr != nil {
 		return tencentWorkspaceLaunchState{Compute: &allocation, ComputePlan: &mutationState.Plan}, nil
 	}
-	if ownershipErr != nil {
+	if !decodeOperationResource(operation, &allocation) {
 		return tencentWorkspaceLaunchState{Compute: &allocation, ComputePlan: &mutationState.Plan}, nil
 	}
 	if allocation.ID != computeID || allocation.AccountID != binding.AccountID || allocation.WorkspaceID != binding.WorkspaceID ||

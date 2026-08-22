@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -356,6 +357,19 @@ func workspaceLaunchUnknownRuntimeReadAuthorization(t *testing.T, row map[string
 	}
 }
 
+func workspaceLaunchUnknownComputeContinuationAuthorization(t *testing.T, row map[string]any, authorizationID string) workspaceLaunchResumeAuthorization {
+	t.Helper()
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workspaceLaunchResumeAuthorization{
+		AuthorizationID: authorizationID, LaunchVersion: operation.Version, AuthorizedStage: operation.Stage, AuthorizedBy: "usr-admin",
+		AuthorizedAt: "2026-08-23T01:00:00Z", Reason: "provider read proves the original compute allocation can continue",
+		MutationBudget: 0, IdempotentReplayBudget: 1, AuthoritativeReadBudget: workspaceLaunchComputeFreshContinuationAdditionalReadBudget,
+	}
+}
+
 func workspaceLaunchUnknownRuntimeWithFailedFreshContinuationRow(t *testing.T) map[string]any {
 	t.Helper()
 	row := workspaceLaunchUnknownStageManualReviewRow(t, "runtime")
@@ -438,6 +452,131 @@ func TestWorkspaceLaunchUnknownRuntimeRecoveryConvergesReadyReadOnly(t *testing.
 	replayed, err := reconciler.Resume(context.Background(), got.ID, authorization)
 	if err != nil || replayed.Version != got.Version || adapter.reads != readsBefore || adapter.mutations != 0 || stringValue(store.row["result"]) != persistedBefore {
 		t.Fatalf("consumed Runtime recovery repeated work: operation=%s reads=%d/%d mutations=%d err=%v", workspaceLaunchReconcileResultSummary(replayed), adapter.reads, readsBefore, adapter.mutations, err)
+	}
+}
+
+func TestWorkspaceLaunchUnknownComputeResumeContinuesProviderProvisioningReadOnly(t *testing.T) {
+	row := workspaceLaunchUnknownStageManualReviewRow(t, "ensure_compute_allocation")
+	store := &workspaceLaunchUnitStore{row: row}
+	pending := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStagePending}}
+	adapter := &workspaceLaunchUnitAdapter{readResultsByStage: map[string][]workspaceLaunchUnitReadResult{"ensure_compute_allocation": {pending, pending}}}
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	now := time.Date(2026, 8, 23, 1, 0, 0, 0, time.UTC)
+	reconciler.now = func() time.Time { return now }
+	authorization := workspaceLaunchUnknownComputeContinuationAuthorization(t, row, "resume-unknown-compute-provider-pending")
+
+	got, err := reconciler.Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, authorization)
+	attempt := got.Attempts["ensure_compute_allocation"]
+	if err != nil || got.Status != "pending" || got.Stage != "ensure_compute_allocation" || attempt.Attempted != 1 || attempt.Max != 1 ||
+		attempt.Confirmed != 0 || attempt.Unknown != 0 || attempt.Status != "reserved" || attempt.IdempotencyKey != workspaceLaunchStageIdempotencyKey(got, 1) ||
+		attempt.PendingReadbacks != workspaceLaunchAuthoritativeReadBudget+1 || attempt.MaxPendingReadbacks != workspaceLaunchAuthoritativeReadBudget+workspaceLaunchComputeFreshContinuationAdditionalReadBudget ||
+		attempt.PendingDeadlineAt != now.Add(workspaceLaunchComputePendingWindow).Format(time.RFC3339Nano) || adapter.reads != 2 || adapter.mutations != 0 ||
+		got.ResumeAuthorization == nil || got.ResumeAuthorization.IdempotentReplayBudget != 1 || got.ResumeAuthorizationConsumedAt != "" {
+		t.Fatalf("compute provisioning resume escaped the original read-only stage: operation=%s attempt=%#v reads=%d mutations=%d err=%v",
+			workspaceLaunchReconcileResultSummary(got), attempt, adapter.reads, adapter.mutations, err)
+	}
+}
+
+func TestWorkspaceLaunchUnknownComputeResumeAcceptsPersistedHistoricalReadbackCounts(t *testing.T) {
+	for _, pendingReadbacks := range []int{0, 1, workspaceLaunchAuthoritativeReadBudget} {
+		t.Run(strconv.Itoa(pendingReadbacks), func(t *testing.T) {
+			row := workspaceLaunchUnknownStageManualReviewRow(t, "ensure_compute_allocation")
+			operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt := operation.Attempts[operation.Stage]
+			attempt.PendingReadbacks = pendingReadbacks
+			operation.Attempts[operation.Stage] = attempt
+			row, err = workspaceLaunchReconcileOperationRow(operation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStagePending}}
+			adapter := &workspaceLaunchUnitAdapter{readResultsByStage: map[string][]workspaceLaunchUnitReadResult{operation.Stage: {pending, pending}}}
+			authorization := workspaceLaunchUnknownComputeContinuationAuthorization(t, row, "resume-compute-readbacks-"+strconv.Itoa(pendingReadbacks))
+			got, err := NewWorkspaceLaunchReconciler(&workspaceLaunchUnitStore{row: row}, adapter).Resume(context.Background(), operation.ID, authorization)
+			gotAttempt := got.Attempts[operation.Stage]
+			if err != nil || got.Status != "pending" || gotAttempt.PendingReadbacks != pendingReadbacks+1 ||
+				gotAttempt.MaxPendingReadbacks != pendingReadbacks+workspaceLaunchComputeFreshContinuationAdditionalReadBudget || gotAttempt.Unknown != 0 || adapter.mutations != 0 {
+				t.Fatalf("historical readbacks=%d did not resume: operation=%s attempt=%#v err=%v", pendingReadbacks, workspaceLaunchReconcileResultSummary(got), gotAttempt, err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchUnknownComputeResumeClaimsOwnershipWithOriginalKey(t *testing.T) {
+	row := workspaceLaunchUnknownStageManualReviewRow(t, "ensure_compute_allocation")
+	store := &workspaceLaunchUnitStore{row: row}
+	ownership := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStageOwnershipPending}}
+	adapter := &workspaceLaunchUnitAdapter{
+		readResultsByStage: map[string][]workspaceLaunchUnitReadResult{"ensure_compute_allocation": {ownership, ownership, ownership}},
+		replayableStages:   map[string]bool{"ensure_compute_allocation": true},
+	}
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	reconciler.now = func() time.Time { return time.Date(2026, 8, 23, 1, 0, 0, 0, time.UTC) }
+	authorization := workspaceLaunchUnknownComputeContinuationAuthorization(t, row, "resume-unknown-compute-ownership")
+
+	got, err := reconciler.Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, authorization)
+	attempt := got.Attempts["ensure_compute_allocation"]
+	claim := got.IdempotentReplayClaims["ensure_compute_allocation"]
+	if err != nil || got.Status != "pending" || got.Stage != "storage" || attempt.Attempted != 1 || attempt.Max != 1 || attempt.Confirmed != 1 || attempt.Unknown != 0 ||
+		attempt.IdempotencyKey != workspaceLaunchStageIdempotencyKey(operationWithStage(got, "ensure_compute_allocation"), 1) ||
+		adapter.mutationsByStage["ensure_compute_allocation"] != 1 || adapter.mutationIdempotencyKey != attempt.IdempotencyKey ||
+		claim.AuthorizationID != authorization.AuthorizationID || claim.Status != "succeeded" || got.ResumeAuthorizationConsumedAt == "" {
+		t.Fatalf("compute ownership resume changed attempt identity: operation=%s attempt=%#v claim=%#v reads=%d mutations=%#v err=%v",
+			workspaceLaunchReconcileResultSummary(got), attempt, claim, adapter.reads, adapter.mutationsByStage, err)
+	}
+	for _, stage := range []string{"storage", "attachment", "secret", "runtime", "activation", "receipt"} {
+		if adapter.mutationsByStage[stage] != 0 {
+			t.Fatalf("downstream stage %s started before compute confirmation: mutations=%#v", stage, adapter.mutationsByStage)
+		}
+	}
+
+	for err == nil && got.Status == "pending" {
+		got, err = reconciler.Reconcile(context.Background(), got.ID)
+	}
+	if err != nil || got.Status != "succeeded" || got.Stage != "succeeded" || got.stringFact("receiptId") != "receipt-unit" {
+		t.Fatalf("compute continuation did not reach the original receipt: operation=%s mutations=%#v err=%v",
+			workspaceLaunchReconcileResultSummary(got), adapter.mutationsByStage, err)
+	}
+	for _, stage := range []string{"ensure_compute_allocation", "storage", "attachment", "secret", "runtime", "activation", "receipt"} {
+		if adapter.mutationsByStage[stage] != 1 {
+			t.Fatalf("stage %s mutation count=%d want=1 after compute continuation: mutations=%#v", stage, adapter.mutationsByStage[stage], adapter.mutationsByStage)
+		}
+	}
+	mutationsBeforeReplay := adapter.mutations
+	got, err = reconciler.Reconcile(context.Background(), got.ID)
+	if err != nil || got.Status != "succeeded" || adapter.mutations != mutationsBeforeReplay {
+		t.Fatalf("terminal receipt replay performed work: operation=%s mutations=%d/%d err=%v",
+			workspaceLaunchReconcileResultSummary(got), adapter.mutations, mutationsBeforeReplay, err)
+	}
+}
+
+func TestWorkspaceLaunchUnknownComputeResumeRefusesUnprovenState(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		observation workspaceLaunchStageObservation
+		err         error
+	}{
+		{name: "ready", observation: workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: workspaceLaunchReadyFacts("ensure_compute_allocation")}},
+		{name: "absent", observation: workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}},
+		{name: "unknown", observation: workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}},
+		{name: "read error", observation: workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}, err: errors.New("read failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := workspaceLaunchUnknownStageManualReviewRow(t, "ensure_compute_allocation")
+			before := stringValue(row["result"])
+			store := &workspaceLaunchUnitStore{row: row}
+			adapter := &workspaceLaunchUnitAdapter{readResultsByStage: map[string][]workspaceLaunchUnitReadResult{
+				"ensure_compute_allocation": {{observation: tc.observation, err: tc.err}},
+			}}
+			authorization := workspaceLaunchUnknownComputeContinuationAuthorization(t, row, "resume-compute-refuse-"+strings.ReplaceAll(tc.name, " ", "-"))
+			_, err := NewWorkspaceLaunchReconciler(store, adapter).Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, authorization)
+			if !errors.Is(err, errWorkspaceLaunchGrantConflict) || adapter.reads != 1 || adapter.mutations != 0 || stringValue(store.row["result"]) != before {
+				t.Fatalf("unproven compute state changed operation: reads=%d mutations=%d err=%v", adapter.reads, adapter.mutations, err)
+			}
+		})
 	}
 }
 
@@ -679,9 +818,12 @@ func TestWorkspaceLaunchFreshTypedPendingCreatesReadOnlySystemAuthorization(t *t
 
 			got, err := NewWorkspaceLaunchReconciler(store, adapter).Reconcile(context.Background(), operation.ID)
 			attempt := got.Attempts[stage]
+			expectedReadBudget := workspaceLaunchFreshContinuationReadBudget(stage)
+			expectedReplayBudget := workspaceLaunchFreshContinuationReplayBudget(stage)
 			if err != nil || got.Status != "pending" || got.Stage != stage || attempt.Attempted != 1 || attempt.Confirmed != 0 ||
 				attempt.Unknown != 0 || attempt.Max != 1 || attempt.Status != "reserved" || attempt.PendingReadbacks != 1 ||
-				attempt.MaxPendingReadbacks != workspaceLaunchAuthoritativeReadBudget || adapter.reads != 2 || adapter.mutationsByStage[stage] != 1 ||
+				attempt.MaxPendingReadbacks != 1+expectedReadBudget || adapter.reads != 2 || adapter.mutationsByStage[stage] != 1 ||
+				(stage == "ensure_compute_allocation") != (attempt.PendingDeadlineAt != "") ||
 				got.ResumeAuthorization != nil {
 				t.Fatalf("fresh typed pending did not persist system-only continuation: operation=%s reads=%d mutations=%#v resume=%#v err=%v",
 					workspaceLaunchReconcileResultSummary(got), adapter.reads, adapter.mutationsByStage, got.ResumeAuthorization, err)
@@ -690,8 +832,8 @@ func TestWorkspaceLaunchFreshTypedPendingCreatesReadOnlySystemAuthorization(t *t
 			if !ok || authorization.AuthorizationClass != workspaceLaunchFreshContinuationAuthorizationClass || authorization.AccountID != got.stringFact("accountId") ||
 				authorization.OperationID != got.ID || authorization.WorkspaceID != got.stringFact("workspaceId") || authorization.Stage != stage ||
 				authorization.IdempotencyKey != attempt.IdempotencyKey || authorization.Attempt != 1 || authorization.OperationVersion != got.Version ||
-				authorization.MutationBudget != 0 || authorization.IdempotentReplayBudget != 0 ||
-				authorization.AuthoritativeReadBudget != workspaceLaunchFreshContinuationAdditionalReadBudget || authorization.ReadbacksAtAuthorization != 1 ||
+				authorization.MutationBudget != 0 || authorization.IdempotentReplayBudget != expectedReplayBudget ||
+				authorization.AuthoritativeReadBudget != expectedReadBudget || authorization.ReadbacksAtAuthorization != 1 ||
 				authorization.Status != "active" || len(got.ContinuationReadClaims) != 0 {
 				t.Fatalf("fresh continuation binding mismatch: authorization=%#v claims=%#v", authorization, got.ContinuationReadClaims)
 			}
@@ -750,7 +892,7 @@ func TestWorkspaceLaunchFreshTypedPendingReadTransitionMatrix(t *testing.T) {
 				authorization := got.FreshContinuationAuthorizations[stage]
 				claim := got.ContinuationReadClaims[workspaceLaunchFreshContinuationClaimKey(authorization.AuthorizationID, 2)]
 				if err != nil || got.Status != tc.wantStatus || got.Stage != tc.wantStage || attempt.Attempted != 1 || attempt.Max != 1 ||
-					attempt.PendingReadbacks != 2 || attempt.MaxPendingReadbacks != workspaceLaunchAuthoritativeReadBudget || attempt.Unknown != tc.wantUnknown ||
+					attempt.PendingReadbacks != 2 || attempt.MaxPendingReadbacks != 1+workspaceLaunchFreshContinuationReadBudget(stage) || attempt.Unknown != tc.wantUnknown ||
 					claim.Status != tc.wantClaim || adapter.reads != 3 || adapter.mutationsByStage[stage] != 1 || got.ResumeAuthorization != nil {
 					t.Fatalf("fresh continuation transition mismatch: operation=%s authorization=%#v claim=%#v reads=%d mutations=%#v err=%v",
 						workspaceLaunchReconcileResultSummary(got), authorization, claim, adapter.reads, adapter.mutationsByStage, err)
@@ -777,6 +919,55 @@ func TestWorkspaceLaunchFreshTypedPendingExhaustsExactReadBudget(t *testing.T) {
 		adapter.reads != 4 || adapter.mutationsByStage["runtime"] != 1 || got.Observations["runtime"].State != workspaceLaunchStageUnknown {
 		t.Fatalf("fresh continuation exhaustion mismatch: operation=%s authorization=%#v reads=%d mutations=%#v err=%v",
 			workspaceLaunchReconcileResultSummary(got), authorization, adapter.reads, adapter.mutationsByStage, err)
+	}
+}
+
+func TestWorkspaceLaunchFreshComputePendingClaimsOwnershipWithOneSameKeyReplay(t *testing.T) {
+	store, adapter, seeded := workspaceLaunchFreshTypedPendingForTest(t, "ensure_compute_allocation")
+	adapter.replayableStages = map[string]bool{"ensure_compute_allocation": true}
+	ownership := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStageOwnershipPending}}
+	adapter.readResultsByStage["ensure_compute_allocation"] = []workspaceLaunchUnitReadResult{ownership, ownership}
+
+	got, err := NewWorkspaceLaunchReconciler(store, adapter).Reconcile(context.Background(), seeded.ID)
+	attempt := got.Attempts["ensure_compute_allocation"]
+	authorization := got.FreshContinuationAuthorizations["ensure_compute_allocation"]
+	claim := got.IdempotentReplayClaims["ensure_compute_allocation"]
+	if err != nil || got.Status != "pending" || got.Stage != "storage" || attempt.Attempted != 1 || attempt.Max != 1 || attempt.Confirmed != 1 || attempt.Unknown != 0 ||
+		adapter.mutationsByStage["ensure_compute_allocation"] != 2 || adapter.mutationIdempotencyKey != attempt.IdempotencyKey ||
+		authorization.IdempotentReplayBudget != 1 || authorization.Status != "consumed" || claim.AuthorizationID != authorization.AuthorizationID || claim.Status != "succeeded" {
+		t.Fatalf("fresh compute ownership continuation changed logical attempt: operation=%s attempt=%#v authorization=%#v claim=%#v reads=%d mutations=%#v err=%v",
+			workspaceLaunchReconcileResultSummary(got), attempt, authorization, claim, adapter.reads, adapter.mutationsByStage, err)
+	}
+}
+
+func TestWorkspaceLaunchFreshComputePendingDeadlineFailsClosedWithoutOwnerCall(t *testing.T) {
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Version, operation.Stage, operation.Status = 4, "ensure_compute_allocation", "pending"
+	row, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absent := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}}
+	pending := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStagePending}}
+	adapter := &workspaceLaunchUnitAdapter{readResultsByStage: map[string][]workspaceLaunchUnitReadResult{"ensure_compute_allocation": {absent, pending}}}
+	store := &workspaceLaunchUnitStore{row: row}
+	startedAt := time.Date(2026, 8, 23, 1, 0, 0, 0, time.UTC)
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	reconciler.now = func() time.Time { return startedAt }
+	seeded, err := reconciler.Reconcile(context.Background(), operation.ID)
+	if err != nil || seeded.Status != "pending" {
+		t.Fatalf("seed compute pending: operation=%s err=%v", workspaceLaunchReconcileResultSummary(seeded), err)
+	}
+	readsBefore := adapter.reads
+	reconciler.now = func() time.Time { return startedAt.Add(workspaceLaunchComputePendingWindow) }
+	got, err := reconciler.Reconcile(context.Background(), operation.ID)
+	if err != nil || got.Status != "manual_review" || got.Stage != "ensure_compute_allocation" || got.Attempts[got.Stage].Unknown != 1 ||
+		got.Observations[got.Stage].State != workspaceLaunchStageUnknown || adapter.reads != readsBefore || adapter.mutationsByStage[got.Stage] != 1 {
+		t.Fatalf("compute deadline did not fail closed before another owner call: operation=%s reads=%d/%d mutations=%#v err=%v",
+			workspaceLaunchReconcileResultSummary(got), adapter.reads, readsBefore, adapter.mutationsByStage, err)
 	}
 }
 
@@ -1666,6 +1857,30 @@ func TestWorkspaceLaunchFabricBindingDriftBecomesUnknown(t *testing.T) {
 	observation, err := workspaceLaunchFabricObservation(operation, input, result)
 	if err != nil || observation.State != workspaceLaunchStageUnknown {
 		t.Fatalf("binding drift observation=%#v err=%v", observation, err)
+	}
+}
+
+func TestWorkspaceLaunchFabricComputeOwnershipPendingRemainsTyped(t *testing.T) {
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Stage = "ensure_compute_allocation"
+	input := clients.WorkspaceLaunchStageInput{Binding: clients.WorkspaceLaunchStageBinding{
+		SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, LaunchOperationID: operation.ID, Stage: operation.Stage,
+	}}
+	result := clients.WorkspaceLaunchStageResult{
+		SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, State: workspaceLaunchStagePending, Reason: "ownership_pending", Binding: input.Binding,
+	}
+	observation, err := workspaceLaunchFabricObservation(operation, input, result)
+	if err != nil || observation.State != workspaceLaunchStageOwnershipPending {
+		t.Fatalf("ownership pending observation=%#v err=%v", observation, err)
+	}
+	operation.Stage, input.Binding.Stage = "storage", "storage"
+	result.Binding, result.Binding.Stage = input.Binding, "storage"
+	observation, err = workspaceLaunchFabricObservation(operation, input, result)
+	if err != nil || observation.State != workspaceLaunchStageUnknown {
+		t.Fatalf("non-compute ownership pending escaped fail-closed: observation=%#v err=%v", observation, err)
 	}
 }
 

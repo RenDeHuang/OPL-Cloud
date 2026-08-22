@@ -842,7 +842,7 @@ func TestTencentWorkspaceLaunchComputeReadIsGETOnlyBeforeSameOperationOwnershipR
 	}
 
 	readback, err := service.ReadWorkspaceLaunchStage(context.Background(), input)
-	if err != nil || readback.State != "absent" || readCalls != 1 || truthCalls != 1 || tagCalls != 0 || patchCalls != 0 {
+	if err != nil || readback.State != "pending" || readback.Reason != "ownership_pending" || readCalls != 1 || truthCalls != 1 || tagCalls != 0 || patchCalls != 0 {
 		t.Fatalf("GET-only readback=%#v err=%v read=%d truth=%d tag=%d patch=%d", readback, err, readCalls, truthCalls, tagCalls, patchCalls)
 	}
 	if _, err := store.MachineOwnership(context.Background(), computeID); !errors.Is(err, ErrMachineOwnershipNotFound) {
@@ -863,18 +863,18 @@ func TestTencentWorkspaceLaunchComputeReadIsGETOnlyBeforeSameOperationOwnershipR
 func TestTencentWorkspaceLaunchComputeReadMissingOwnershipFailsClosedOnAuthoritativeConflictOrError(t *testing.T) {
 	providerErr := errors.New("provider unavailable")
 	for _, tc := range []struct {
-		name             string
-		cvmState         string
-		nodeOwned        bool
-		mutateProof      func(*provisionerResponse)
-		truthErr         error
-		mutateNode       func([]byte) []byte
-		wantSafeAbsent   bool
-		wantTruthReads   int
-		wantKubectlReads int
+		name                 string
+		cvmState             string
+		nodeOwned            bool
+		mutateProof          func(*provisionerResponse)
+		truthErr             error
+		mutateNode           func([]byte) []byte
+		wantOwnershipPending bool
+		wantTruthReads       int
+		wantKubectlReads     int
 	}{
-		{name: "recoverable cvm and unallocated node", cvmState: "recoverable", wantSafeAbsent: true, wantTruthReads: 1, wantKubectlReads: 1},
-		{name: "target owned cvm and node", cvmState: "target_owned", nodeOwned: true, wantSafeAbsent: true, wantTruthReads: 1, wantKubectlReads: 1},
+		{name: "recoverable cvm and unallocated node", cvmState: "recoverable", wantOwnershipPending: true, wantTruthReads: 1, wantKubectlReads: 1},
+		{name: "target owned cvm and node", cvmState: "target_owned", nodeOwned: true, wantOwnershipPending: true, wantTruthReads: 1, wantKubectlReads: 1},
 		{name: "cvm identity conflict", cvmState: "target_owned", mutateProof: func(response *provisionerResponse) {
 			response.ProviderData["machineName"] = "machine-other"
 		}, wantTruthReads: 1},
@@ -947,9 +947,9 @@ func TestTencentWorkspaceLaunchComputeReadMissingOwnershipFailsClosedOnAuthorita
 				kubectlReads != tc.wantKubectlReads || tagCalls != 0 || patchCalls != 0 {
 				t.Fatalf("read changed owner state or called mutation: result=%#v readErr=%v listErr=%v read=%d truth=%d kubectl=%d tag=%d patch=%d", result, readErr, listErr, readCalls, truthCalls, kubectlReads, tagCalls, patchCalls)
 			}
-			if tc.wantSafeAbsent {
-				if readErr != nil || result.State != "absent" {
-					t.Fatalf("safe owner state did not produce recoverable absence: result=%#v err=%v", result, readErr)
+			if tc.wantOwnershipPending {
+				if readErr != nil || result.State != "pending" || result.Reason != "ownership_pending" {
+					t.Fatalf("safe owner state did not produce ownership pending: result=%#v err=%v", result, readErr)
 				}
 			} else if readErr == nil {
 				t.Fatalf("uncertain owner state did not fail closed: result=%#v", result)

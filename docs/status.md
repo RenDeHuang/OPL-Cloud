@@ -32,6 +32,16 @@ is selected and configured by the medopl instance, not by the portable product.
 - Workspace Launch persists one Control Plane operation and coordinates Key,
   debit, Fabric resource stages, activation, and one purchase Receipt. Unknown
   external results enter manual review and resume through the same operation.
+- Source now keeps Tencent compute provisioning typed and pending for a
+  persisted ten-minute window. A Ready Machine with recoverable ownership
+  becomes compute-only `ownership_pending`; one durable same-key continuation
+  discovers that Machine and claims CVM/Node ownership without a second
+  NodePool scale. The existing administrator Resume route can return only the
+  historical matching compute-unknown operation to this same Reconciler after
+  authoritative `provider_provisioning` or `ownership_pending` readback. Local
+  Fabric, Control Plane, route, and PostgreSQL tests cover the original attempt,
+  delayed readiness, fail-closed conflicts, downstream stages, and one Receipt.
+  No current Candidate or production continuation receipt exists yet.
 - Candidate A implements a narrow audited repair for the historical schema-3
   Launch defect whose only missing canonical fact is `specDigest`. Fabric
   strictly reads the persisted preflight binding; Control Plane previews the

@@ -466,35 +466,101 @@ func computeClaimKubectlReason(err error) string {
 	return "provider_describe"
 }
 
-func computeClaimNodePatch(raw []byte, allocation ComputeAllocation, ownership MachineOwnership) ([]byte, error) {
-	var node struct {
-		Metadata struct {
-			Name            string            `json:"name"`
-			ResourceVersion string            `json:"resourceVersion"`
-			Labels          map[string]string `json:"labels"`
-		} `json:"metadata"`
-		Spec struct {
-			Taints []struct {
-				Key, Value, Effect string
-			} `json:"taints"`
-		} `json:"spec"`
+type computeClaimNodeTaint struct {
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+	Effect string `json:"effect"`
+}
+
+type computeClaimNodeDocument struct {
+	Metadata struct {
+		Name            string            `json:"name"`
+		ResourceVersion string            `json:"resourceVersion"`
+		Labels          map[string]string `json:"labels"`
+	} `json:"metadata"`
+	Spec struct {
+		Taints []computeClaimNodeTaint `json:"taints"`
+	} `json:"spec"`
+	Status struct {
+		Addresses []struct {
+			Type    string `json:"type"`
+			Address string `json:"address"`
+		} `json:"addresses"`
+	} `json:"status"`
+}
+
+func computeClaimNodeState(labels map[string]string, taints []computeClaimNodeTaint, allocation ComputeAllocation, ownership MachineOwnership) (string, string, bool) {
+	if allocation.PackageID == "" || allocation.PackageID != ownership.PackageID {
+		return "node_ownership_conflict", "", false
 	}
-	if json.Unmarshal(raw, &node) != nil || node.Metadata.Name != allocation.NodeName || node.Metadata.ResourceVersion == "" {
-		return nil, fmt.Errorf("node_identity_mismatch")
-	}
-	packageTaints := 0
-	for _, taint := range node.Spec.Taints {
-		if taint.Key == "oplcloud.cn/workspace-id" {
-			return nil, fmt.Errorf("node_ownership_conflict")
-		}
-		if taint.Key == "oplcloud.cn/package-id" {
+	packageTaints, legacyTaints := 0, 0
+	for _, taint := range taints {
+		switch taint.Key {
+		case "oplcloud.cn/package-id":
 			packageTaints++
 			if taint.Value != allocation.PackageID || taint.Effect != "NoSchedule" {
-				return nil, fmt.Errorf("node_ownership_conflict")
+				return "node_ownership_conflict", "", false
+			}
+		case "oplcloud.cn/workspace-id":
+			legacyTaints++
+			if taint.Value != "unallocated" || taint.Effect != "NoSchedule" {
+				return "node_ownership_conflict", "", false
 			}
 		}
 	}
-	if packageTaints != 1 {
+	taintState := ""
+	switch {
+	case packageTaints == 1 && legacyTaints == 0:
+		taintState = "package"
+	case packageTaints == 0 && legacyTaints == 1 && len(taints) == 1:
+		taintState = "legacy_unallocated"
+	default:
+		return "node_ownership_conflict", "", false
+	}
+
+	workload, workloadPresent := labels["medopl.cn/workload"]
+	packageID, packagePresent := labels["oplcloud.cn/package-id"]
+	if workloadPresent && workload != "workspace" || packagePresent && packageID != allocation.PackageID {
+		return "node_ownership_conflict", "", false
+	}
+	// A legacy taint is safe to adopt only when the inherited pool labels prove
+	// the exact package template that emitted it.
+	if taintState == "legacy_unallocated" && (!workloadPresent || !packagePresent) {
+		return "node_ownership_conflict", "", false
+	}
+
+	expectedOwnership := map[string]string{
+		"oplcloud.cn/resource-id":  ownership.ResourceID,
+		"oplcloud.cn/account-id":   ownership.AccountID,
+		"oplcloud.cn/workspace-id": ownership.WorkspaceID,
+	}
+	present := 0
+	for key, expected := range expectedOwnership {
+		actual, exists := labels[key]
+		if !exists {
+			continue
+		}
+		present++
+		if actual != expected {
+			return "node_ownership_conflict", "", false
+		}
+	}
+	if present == 0 {
+		return "unallocated", taintState, true
+	}
+	if present == len(expectedOwnership) && taintState == "package" && workloadPresent {
+		return "target_owned", taintState, true
+	}
+	return "node_ownership_conflict", "", false
+}
+
+func computeClaimNodePatch(raw []byte, allocation ComputeAllocation, ownership MachineOwnership) ([]byte, error) {
+	var node computeClaimNodeDocument
+	if json.Unmarshal(raw, &node) != nil || node.Metadata.Name != allocation.NodeName || node.Metadata.ResourceVersion == "" {
+		return nil, fmt.Errorf("node_identity_mismatch")
+	}
+	state, taintState, ok := computeClaimNodeState(node.Metadata.Labels, node.Spec.Taints, allocation, ownership)
+	if !ok || state != "unallocated" {
 		return nil, fmt.Errorf("node_ownership_conflict")
 	}
 	expected := []struct{ key, value string }{
@@ -503,16 +569,22 @@ func computeClaimNodePatch(raw []byte, allocation ComputeAllocation, ownership M
 		{key: "oplcloud.cn/account-id", value: ownership.AccountID},
 		{key: "oplcloud.cn/workspace-id", value: ownership.WorkspaceID},
 	}
-	for _, label := range expected {
-		if _, present := node.Metadata.Labels[label.key]; present {
-			return nil, fmt.Errorf("node_ownership_conflict")
-		}
-	}
 	patch := []map[string]any{{"op": "test", "path": "/metadata/resourceVersion", "value": node.Metadata.ResourceVersion}}
+	if taintState == "legacy_unallocated" {
+		legacy := []computeClaimNodeTaint{{Key: "oplcloud.cn/workspace-id", Value: "unallocated", Effect: "NoSchedule"}}
+		current := []computeClaimNodeTaint{{Key: "oplcloud.cn/package-id", Value: allocation.PackageID, Effect: "NoSchedule"}}
+		patch = append(patch,
+			map[string]any{"op": "test", "path": "/spec/taints", "value": legacy},
+			map[string]any{"op": "replace", "path": "/spec/taints", "value": current},
+		)
+	}
 	if node.Metadata.Labels == nil {
 		patch = append(patch, map[string]any{"op": "add", "path": "/metadata/labels", "value": map[string]string{}})
 	}
 	for _, label := range expected {
+		if actual, present := node.Metadata.Labels[label.key]; present && actual == label.value {
+			continue
+		}
 		patch = append(patch, map[string]any{"op": "add", "path": "/metadata/labels/" + strings.ReplaceAll(label.key, "/", "~1"), "value": label.value})
 	}
 	return json.Marshal(patch)
@@ -523,22 +595,7 @@ func computeClaimProviderError(reason string) error {
 }
 
 func computeClaimNodeOwnershipState(raw []byte, allocation ComputeAllocation, ownership MachineOwnership) (string, bool) {
-	var node struct {
-		Metadata struct {
-			Name   string            `json:"name"`
-			Labels map[string]string `json:"labels"`
-		} `json:"metadata"`
-		Spec struct {
-			Taints []struct {
-				Key, Value, Effect string
-			} `json:"taints"`
-		} `json:"spec"`
-		Status struct {
-			Addresses []struct {
-				Type, Address string
-			} `json:"addresses"`
-		} `json:"status"`
-	}
+	var node computeClaimNodeDocument
 	if json.Unmarshal(raw, &node) != nil || node.Metadata.Name != allocation.NodeName {
 		return "identity_mismatch", false
 	}
@@ -551,43 +608,8 @@ func computeClaimNodeOwnershipState(raw []byte, allocation ComputeAllocation, ow
 	if internalIPCount != 1 {
 		return "identity_mismatch", false
 	}
-	packageTaintCount := 0
-	for _, taint := range node.Spec.Taints {
-		if taint.Key == "oplcloud.cn/workspace-id" {
-			return "node_ownership_conflict", false
-		}
-		if taint.Key == "oplcloud.cn/package-id" {
-			packageTaintCount++
-			if taint.Value != allocation.PackageID || taint.Effect != "NoSchedule" {
-				return "node_ownership_conflict", false
-			}
-		}
-	}
-	if packageTaintCount != 1 || allocation.PackageID != ownership.PackageID {
-		return "node_ownership_conflict", false
-	}
-	expected := map[string]string{
-		"medopl.cn/workload": "workspace", "oplcloud.cn/resource-id": ownership.ResourceID,
-		"oplcloud.cn/account-id": ownership.AccountID, "oplcloud.cn/workspace-id": ownership.WorkspaceID,
-	}
-	present := 0
-	for key, value := range expected {
-		actual, exists := node.Metadata.Labels[key]
-		if !exists {
-			continue
-		}
-		present++
-		if actual != value {
-			return "node_ownership_conflict", false
-		}
-	}
-	if present == len(expected) {
-		return "target_owned", true
-	}
-	if present == 0 {
-		return "unallocated", true
-	}
-	return "node_ownership_conflict", false
+	state, _, ok := computeClaimNodeState(node.Metadata.Labels, node.Spec.Taints, allocation, ownership)
+	return state, ok
 }
 
 func (p *TencentProvider) TagComputeMachineCVM(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {

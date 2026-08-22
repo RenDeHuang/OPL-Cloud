@@ -80,6 +80,115 @@ func tencentStorageBindingReadback(t *testing.T, manifest []byte, drift bool) []
 	return mustJSON(map[string]any{"kind": "List", "items": items})
 }
 
+func TestTencentWorkspaceLaunchComputePendingContinuesSameStageToOwnership(t *testing.T) {
+	service, store, provider, preflight, image, launchHash := newTencentWorkspaceLaunchService(t)
+	provider.convergenceWait = func(context.Context, int) error { return nil }
+	input := workspaceLaunchStageFixtureInput(preflight, image, launchHash, "ensure_compute_allocation", "ensure_compute_allocation", WorkspaceLaunchResources{})
+	allocation := ComputeAllocation{
+		ID: workspaceLaunchComputeID(input.Binding), AccountID: input.Binding.AccountID, WorkspaceID: input.Binding.WorkspaceID,
+		PackageID: input.PackageID, Provider: "tencent-tke", ProviderResourceID: "ins-continuation", PoolID: "pool-basic-2c4g", NodePoolID: "np-basic",
+		MachineName: "machine-continuation", InstanceID: "ins-continuation", CVMInstanceID: "ins-continuation", NodeName: "node-continuation",
+		PrivateIP: "10.0.0.18", InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3", ChargeType: "PREPAID",
+		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-12T00:00:00Z",
+	}
+	prepared := ComputeAllocationPreparation{
+		PoolID: allocation.PoolID, PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, InstanceType: allocation.InstanceType,
+		Zone: allocation.Zone, MaxReplicas: 20, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"machine-before"},
+	}
+
+	providerReady, cvmOwned, nodeOwned := false, false, false
+	scaleCalls, tagCalls, nodePatchCalls := 0, 0, 0
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "prepare_compute_allocation":
+			return provisionerResponse{
+				OK: true, ProviderRequestID: "req-prepare", CurrentReplicas: prepared.BaselineReplicas, TargetReplicas: prepared.TargetReplicas,
+				Machines: []provisionerMachine{{MachineID: prepared.BeforeMachineNames[0]}},
+			}, nil
+		case "create_compute_allocation":
+			scaleCalls++
+			return provisionerResponse{OK: false, Retryable: true, Status: "provisioning", ProviderRequestID: "req-scale"}, nil
+		case "read_compute_allocation":
+			if !providerReady {
+				return provisionerResponse{OK: false, Retryable: true, Status: "provisioning", ProviderRequestID: "req-compute-read"}, nil
+			}
+			return tencentComputeAllocationResponse(allocation, "req-compute-read"), nil
+		case "compute_claim_truth":
+			response := tencentTargetOwnedProofResponse(allocation, prepared)
+			if !cvmOwned {
+				response.ProviderData["cvmOwnershipState"] = "recoverable"
+			}
+			return response, nil
+		case "tag_compute_machine":
+			tagCalls++
+			cvmOwned = true
+			return provisionerResponse{
+				OK: true, Status: "tagged", MutationCount: 1,
+				MutationEvidence: &ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+			}, nil
+		default:
+			t.Fatalf("unexpected provisioner action %q", request.Action)
+			return provisionerResponse{}, nil
+		}
+	}
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		ownership, err := workspaceLaunchComputeOwnership(allocation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case len(args) > 1 && args[0] == "get" && args[1] == "node/"+allocation.NodeName:
+			return tencentOwnershipNodeReadback(allocation, ownership, nodeOwned), nil
+		case len(args) > 1 && args[0] == "patch" && args[1] == "node/"+allocation.NodeName:
+			nodePatchCalls++
+			nodeOwned = true
+			return nil, nil
+		default:
+			t.Fatalf("unexpected kubectl args=%#v", args)
+			return nil, nil
+		}
+	}
+
+	result, err := service.EnsureWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || result.State != "pending" || scaleCalls != 1 || tagCalls != 0 || nodePatchCalls != 0 {
+		t.Fatalf("initial pending result=%#v err=%v scale=%d tag=%d nodePatch=%d", result, err, scaleCalls, tagCalls, nodePatchCalls)
+	}
+	result, err = service.ReadWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || result.State != "pending" || result.Reason != "provider_provisioning" || scaleCalls != 1 || tagCalls != 0 || nodePatchCalls != 0 {
+		t.Fatalf("provisioning read result=%#v err=%v scale=%d tag=%d nodePatch=%d", result, err, scaleCalls, tagCalls, nodePatchCalls)
+	}
+
+	providerReady = true
+	result, err = service.ReadWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || result.State != "pending" || result.Reason != "ownership_pending" || scaleCalls != 1 || tagCalls != 0 || nodePatchCalls != 0 {
+		t.Fatalf("ownership read result=%#v err=%v scale=%d tag=%d nodePatch=%d", result, err, scaleCalls, tagCalls, nodePatchCalls)
+	}
+	if _, ownershipErr := store.MachineOwnership(context.Background(), allocation.ID); !errors.Is(ownershipErr, ErrMachineOwnershipNotFound) {
+		t.Fatalf("read path persisted ownership: err=%v", ownershipErr)
+	}
+
+	result, err = service.EnsureWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || result.State != "ready" || result.Resources.ComputeAllocationID != allocation.ID ||
+		result.Resources.ComputeBindingRef != input.Binding.FabricOperationID || scaleCalls != 1 || tagCalls != 1 || nodePatchCalls != 1 {
+		t.Fatalf("same-stage continuation result=%#v err=%v scale=%d tag=%d nodePatch=%d", result, err, scaleCalls, tagCalls, nodePatchCalls)
+	}
+	ownership, ownershipErr := store.MachineOwnership(context.Background(), allocation.ID)
+	if ownershipErr != nil || ownership.Status != "active" || ownership.ResourceID != allocation.ID || ownership.WorkspaceID != input.Binding.WorkspaceID {
+		t.Fatalf("ownership=%#v err=%v", ownership, ownershipErr)
+	}
+	childID := providerMutationOperationID(input.Binding, "tencent_compute_allocation_create", "compute_allocation", allocation.ID, allocation.NodePoolID)
+	child, childErr := store.Get(context.Background(), childID)
+	parent, parentErr := store.Get(context.Background(), input.Binding.FabricOperationID)
+	if childErr != nil || parentErr != nil || child.Status != "succeeded" || parent.Status != "succeeded" {
+		t.Fatalf("parent=%#v err=%v child=%#v err=%v", parent, parentErr, child, childErr)
+	}
+
+	result, err = service.EnsureWorkspaceLaunchStage(context.Background(), input)
+	if err != nil || result.State != "ready" || scaleCalls != 1 || tagCalls != 1 || nodePatchCalls != 1 {
+		t.Fatalf("ready replay result=%#v err=%v scale=%d tag=%d nodePatch=%d", result, err, scaleCalls, tagCalls, nodePatchCalls)
+	}
+}
+
 func TestTencentWorkspaceLaunchStorageReplayRequiresExactCBSAndStaticBindingReadback(t *testing.T) {
 	service, store, provider, preflight, image, launchHash := newTencentWorkspaceLaunchService(t)
 	compute := ComputeAllocation{

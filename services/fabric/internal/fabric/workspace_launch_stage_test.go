@@ -270,7 +270,9 @@ func TestWorkspaceLaunchStageReadbackOwnsReplayDisposition(t *testing.T) {
 		readErr                                      error
 	}{
 		{name: "started provisioning", operationStatus: "started", readErr: ErrWorkspaceLaunchPending, wantState: "pending", wantReason: "provider_provisioning"},
+		{name: "started ownership pending", operationStatus: "started", readErr: ErrWorkspaceLaunchOwnershipPending, wantState: "pending", wantReason: "ownership_pending"},
 		{name: "failed no resource", operationStatus: "failed", readErr: ErrWorkspaceLaunchResourceAbsent, wantState: "absent", wantReason: "failed_no_resource"},
+		{name: "failed ownership pending", operationStatus: "failed", readErr: ErrWorkspaceLaunchOwnershipPending, wantState: "pending", wantReason: "ownership_pending"},
 		{name: "failed absence unproven", operationStatus: "failed", readErr: ErrWorkspaceLaunchPending, wantState: "unknown", wantReason: "failed_no_resource_unproven"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -316,13 +318,13 @@ func TestWorkspaceLaunchEnsureExistingRecordReadsBeforeIdempotentReplay(t *testi
 		t.Fatalf("unproven failed record reached mutation: result=%#v ensures=%d err=%v", blocked, provider.ensureCalls, err)
 	}
 
-	provider.readErr = ErrWorkspaceLaunchResourceAbsent
+	provider.readErr = ErrWorkspaceLaunchOwnershipPending
 	provider.ensureResult = &WorkspaceLaunchProviderResult{Resources: WorkspaceLaunchResources{
 		ComputeAllocationID: workspaceLaunchComputeID(input.Binding), ComputeBindingRef: input.Binding.FabricOperationID,
 	}}
 	replayed, err := service.EnsureWorkspaceLaunchStage(context.Background(), input)
 	if err != nil || replayed.State != "ready" || replayed.Resources.ComputeBindingRef != input.Binding.FabricOperationID || provider.ensureCalls != 1 {
-		t.Fatalf("typed absent did not permit one same-key replay: result=%#v ensures=%d err=%v", replayed, provider.ensureCalls, err)
+		t.Fatalf("typed ownership pending did not permit one same-key replay: result=%#v ensures=%d err=%v", replayed, provider.ensureCalls, err)
 	}
 	provider.readErr = nil
 	again, err := service.EnsureWorkspaceLaunchStage(context.Background(), input)
