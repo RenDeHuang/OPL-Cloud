@@ -328,6 +328,42 @@ func TestPostgresWorkspaceLaunchUnknownRuntimeRecoveryPersistsReadyReadOnly(t *t
 	}
 }
 
+func TestPostgresWorkspaceLaunchUnknownComputeResumePersistsOriginalAttemptContinuation(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+	accountID, ownerID := "acct-unit", "usr-unit"
+	account, owner := provisionedAccountRowsFor(accountID, ownerID, "compute-recovery-pg@example.com", 11)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner))
+
+	row := workspaceLaunchUnknownStageManualReviewRow(t, "ensure_compute_allocation")
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileClaim{AccountID: accountID, DesiredOperation: row}); err != nil {
+		t.Fatal(err)
+	}
+	ownership := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStageOwnershipPending}}
+	adapter := &workspaceLaunchUnitAdapter{
+		readResultsByStage: map[string][]workspaceLaunchUnitReadResult{"ensure_compute_allocation": {ownership, ownership, ownership}},
+		replayableStages:   map[string]bool{"ensure_compute_allocation": true},
+	}
+	authorization := workspaceLaunchUnknownComputeContinuationAuthorization(t, row, "resume-postgres-unknown-compute")
+	got, err := NewWorkspaceLaunchReconciler(store, adapter).Resume(ctx, operation.ID, authorization)
+	if err != nil || got.Stage != "storage" || got.Status != "pending" || got.Attempts["ensure_compute_allocation"].Attempted != 1 ||
+		got.Attempts["ensure_compute_allocation"].Confirmed != 1 || got.ResumeAuthorizationConsumedAt == "" ||
+		got.IdempotentReplayClaims["ensure_compute_allocation"].Status != "succeeded" || adapter.mutationsByStage["ensure_compute_allocation"] != 1 {
+		t.Fatalf("PostgreSQL compute continuation did not persist: operation=%s reads=%d mutations=%#v err=%v",
+			workspaceLaunchReconcileResultSummary(got), adapter.reads, adapter.mutationsByStage, err)
+	}
+	persisted, found, err := store.GetRuntimeOperation(ctx, operation.ID)
+	restarted, decodeErr := decodeWorkspaceLaunchReconcileOperation(persisted)
+	if err != nil || !found || decodeErr != nil || restarted.Version != got.Version || restarted.Stage != "storage" ||
+		restarted.Attempts["ensure_compute_allocation"].IdempotencyKey != workspaceLaunchStageIdempotencyKey(operationWithStage(restarted, "ensure_compute_allocation"), 1) {
+		t.Fatalf("PostgreSQL compute continuation restart readback found=%v operation=%s errors=%v/%v", found, workspaceLaunchReconcileResultSummary(restarted), err, decodeErr)
+	}
+}
+
 func TestPostgresWorkspaceLaunchCanonicalOperatorActivationPersistsAuthoritativeReadback(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)

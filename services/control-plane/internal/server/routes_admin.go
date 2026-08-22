@@ -209,10 +209,12 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		authoritativeReadBudget, readBudgetProvided := input["authoritativeReadBudget"].(float64)
 		exactFields := exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "authorizedStage", "reason", "mutationBudget"}) ||
 			exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "authorizedStage", "reason", "mutationBudget", "idempotentReplayBudget", "authoritativeReadBudget"})
+		validAuthoritativeReadBudget := authoritativeReadBudget == workspaceLaunchAuthoritativeReadBudget ||
+			authorizedStage == "ensure_compute_allocation" && authoritativeReadBudget == float64(workspaceLaunchComputeFreshContinuationAdditionalReadBudget)
 		if operationID == "" || !exactFields ||
 			!validVersion || launchVersion > int64(^uint(0)>>1) || authorizedStage == "" || authorizedStage != strings.TrimSpace(authorizedStage) ||
 			reason == "" || reason != strings.TrimSpace(reason) || !validBudget || mutationBudget != 0 && mutationBudget != 1 ||
-			replayProvided != readBudgetProvided || replayProvided && (idempotentReplayBudget != 0 && idempotentReplayBudget != 1 || authoritativeReadBudget != workspaceLaunchAuthoritativeReadBudget) {
+			replayProvided != readBudgetProvided || replayProvided && (idempotentReplayBudget != 0 && idempotentReplayBudget != 1 || !validAuthoritativeReadBudget) {
 			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
 			return
 		}

@@ -311,12 +311,13 @@ sole missing canonical fact is `specDigest`.
 The current recovery row keeps `Max=1` and does not reset `Attempted`. An
 operator may CAS-persist one exact-idempotency replay budget plus a finite typed
 continuation-read budget; the server binds the starting readback count. Fabric
-reports only `ready/none`, `pending/provider_provisioning`, the three explicit
-absent reasons, or the two explicit unknown reasons. Adapters perform owner
-read, child replay CAS, owner read again, then reuse the exact original key only
-for still-absent resources. Budget exhaustion records `unknown/manual_review`.
-Schema-v3 rows missing the new fields decode with zero authorization and cannot
-read or mutate until explicitly reviewed.
+reports only `ready/none`, `pending/provider_provisioning`, compute-only
+`pending/ownership_pending`, the three explicit absent reasons, or the two
+explicit unknown reasons. Adapters perform owner read, child replay CAS, owner
+read again, then reuse the exact original key only for an admitted absence or
+compute ownership continuation. Budget exhaustion records
+`unknown/manual_review`. Schema-v3 rows missing the new fields decode with zero
+authorization and cannot read or mutate until explicitly reviewed.
 
 A resource-billed Runtime already parked as `unknown/manual_review` has one
 narrow operator recovery path in the same Reconciler. It accepts only the
@@ -346,14 +347,31 @@ continues the existing Activation and Purchase Receipt stages.
 
 Fresh post-mutation typed `pending` uses a distinct system continuation record,
 not the operator Resume record. The mutation's mandatory owner read persists
-`PendingReadbacks=1`, a zero-mutation/zero-replay authorization, and an exact
+`PendingReadbacks=1`, a zero-mutation authorization, and an exact
 account/Launch/Workspace/stage/idempotency/attempt/version binding in one CAS.
-At most two subsequent reads are allowed. Before each GET, Control Plane claims
-and increments the exact ordinal by CAS; a loser stops before GET, and a crashed
-claim is never refunded or reissued. Ready consumes the authorization and
-advances, pending may claim only a remaining slot, and unknown/conflict/error or
-exact exhaustion records `unknown/manual_review`. A schema-v3 row without the
-new authorization and claim maps is explicitly zero-budget.
+Before each GET, Control Plane claims and increments the exact ordinal by CAS; a
+loser stops before GET, and a crashed claim is never refunded or reissued.
+Non-compute stages keep zero replay and at most two subsequent reads.
+
+`ensure_compute_allocation` instead persists a ten-minute deadline, at most
+sixty subsequent worker reads, and one same-key replay budget. Fabric maps a
+Tencent provisioning response to `pending/provider_provisioning`; those reads
+cannot mutate. When the existing Machine is Ready but exact ownership is
+recoverable, Fabric returns `pending/ownership_pending`. Control Plane durably
+claims the replay, reads again, and calls the same Fabric Ensure with the
+original key. Tencent Ensure discovers the persisted Machine before CVM/Node
+claim and therefore does not call `ScaleNodePool` again. Ready consumes the
+authorization and advances; unknown/conflict/error or exact budget/deadline
+exhaustion records `unknown/manual_review`.
+
+For the already parked historical compute operation, the existing operator
+Resume route accepts a sixty-read, zero-mutation, one-replay authorization only
+after an authoritative read returns `provider_provisioning` or
+`ownership_pending`. It preserves `Attempted=1`, `Max=1`, the original binding,
+and the original idempotency key. Ready, absent, unknown, conflict, and read
+failure are rejected without changing the operation. This narrow compatibility
+does not add a generic compute-unknown recovery route. A schema-v3 row without
+the new authorization and claim maps remains explicitly zero-budget.
 
 Fabric's child transport claim is a local replay epoch, not Control Plane
 operator authorization and not a second business attempt budget. It binds the

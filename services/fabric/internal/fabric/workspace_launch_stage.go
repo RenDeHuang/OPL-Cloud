@@ -16,10 +16,11 @@ const workspaceLaunchStageRecordPayloadKey = "workspaceLaunchStageRecord"
 const workspaceLaunchStageRecordSchemaVersion = 2
 
 var (
-	ErrWorkspaceLaunchInputInvalid   = errors.New("workspace_launch_input_invalid")
-	ErrWorkspaceLaunchUnavailable    = errors.New("workspace_launch_unavailable")
-	ErrWorkspaceLaunchPending        = errors.New("workspace_launch_pending")
-	ErrWorkspaceLaunchResourceAbsent = errors.New("workspace_launch_resource_absent")
+	ErrWorkspaceLaunchInputInvalid     = errors.New("workspace_launch_input_invalid")
+	ErrWorkspaceLaunchUnavailable      = errors.New("workspace_launch_unavailable")
+	ErrWorkspaceLaunchPending          = errors.New("workspace_launch_pending")
+	ErrWorkspaceLaunchOwnershipPending = errors.New("workspace_launch_ownership_pending")
+	ErrWorkspaceLaunchResourceAbsent   = errors.New("workspace_launch_resource_absent")
 )
 
 type WorkspaceLaunchPreflightInput struct {
@@ -630,6 +631,10 @@ func observedWorkspaceLaunchStageResult(input WorkspaceLaunchStageInput, state, 
 	return WorkspaceLaunchStageResult{SchemaVersion: WorkspaceLaunchFabricSchemaVersion, State: state, Reason: reason, Binding: input.Binding, Resources: input.Resources}
 }
 
+func workspaceLaunchStageMayContinueEnsure(result WorkspaceLaunchStageResult) bool {
+	return result.State == "absent" || result.State == "pending" && result.Reason == "ownership_pending"
+}
+
 func (s *Service) persistWorkspaceLaunchStageResult(ctx context.Context, current FabricOperation, record workspaceLaunchStageRecord, result WorkspaceLaunchProviderResult) error {
 	next := current
 	next.Status, next.ErrorCode, next.Retryable, next.FinishedAt = "succeeded", "", false, s.now()
@@ -676,7 +681,7 @@ func (s *Service) EnsureWorkspaceLaunchStage(ctx context.Context, input Workspac
 			return WorkspaceLaunchStageResult{}, ErrLaunchStageBindingConflict
 		} else {
 			observed, readErr := s.readWorkspaceLaunchStage(ctx, input, existing, existingRecord)
-			if readErr != nil || observed.State != "absent" {
+			if readErr != nil || !workspaceLaunchStageMayContinueEnsure(observed) {
 				return observed, readErr
 			}
 		}
@@ -694,7 +699,7 @@ func (s *Service) EnsureWorkspaceLaunchStage(ctx context.Context, input Workspac
 	}
 	if !claimed {
 		observed, readErr := s.readWorkspaceLaunchStage(ctx, input, stored, record)
-		if readErr != nil || observed.State != "absent" {
+		if readErr != nil || !workspaceLaunchStageMayContinueEnsure(observed) {
 			return observed, readErr
 		}
 	}
@@ -703,6 +708,9 @@ func (s *Service) EnsureWorkspaceLaunchStage(ctx context.Context, input Workspac
 		return WorkspaceLaunchStageResult{}, err
 	}
 	providerResult, err := stageProvider.EnsureWorkspaceLaunchStage(s.providerMutationContext(ctx, stored), request)
+	if errors.Is(err, ErrWorkspaceLaunchOwnershipPending) {
+		return pendingWorkspaceLaunchStageResult(input, "ownership_pending"), nil
+	}
 	if errors.Is(err, ErrWorkspaceLaunchPending) {
 		return pendingWorkspaceLaunchStageResult(input, stored.ErrorCode), nil
 	}
@@ -752,6 +760,9 @@ func (s *Service) readWorkspaceLaunchStage(ctx context.Context, input WorkspaceL
 		return WorkspaceLaunchStageResult{}, err
 	}
 	providerResult, err := stageProvider.ReadWorkspaceLaunchStage(s.providerReadContext(ctx, operation), request)
+	if errors.Is(err, ErrWorkspaceLaunchOwnershipPending) {
+		return pendingWorkspaceLaunchStageResult(input, "ownership_pending"), nil
+	}
 	if errors.Is(err, ErrWorkspaceLaunchResourceAbsent) {
 		if operation.Status == "started" {
 			return observedWorkspaceLaunchStageResult(input, "absent", "started_no_resource"), nil

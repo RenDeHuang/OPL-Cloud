@@ -22,6 +22,27 @@ type workspaceLaunchResumeRouteSub2API struct {
 	createCalls       int
 }
 
+type workspaceLaunchComputeResumeFabric struct {
+	fakeFabricClient
+	reads int
+}
+
+func (*workspaceLaunchComputeResumeFabric) PreflightWorkspaceLaunch(context.Context, clients.WorkspaceLaunchPreflightInput) (clients.WorkspaceLaunchPreflight, error) {
+	return clients.WorkspaceLaunchPreflight{}, errors.New("unexpected compute preflight")
+}
+
+func (f *workspaceLaunchComputeResumeFabric) ReadWorkspaceLaunchStage(_ context.Context, input clients.WorkspaceLaunchStageInput) (clients.WorkspaceLaunchStageResult, error) {
+	f.reads++
+	return clients.WorkspaceLaunchStageResult{
+		SchemaVersion: clients.WorkspaceLaunchFabricSchemaVersion, State: workspaceLaunchStagePending, Reason: "provider_provisioning",
+		Binding: input.Binding, Resources: input.Resources,
+	}, nil
+}
+
+func (*workspaceLaunchComputeResumeFabric) EnsureWorkspaceLaunchStage(context.Context, clients.WorkspaceLaunchStageInput) (clients.WorkspaceLaunchStageResult, error) {
+	return clients.WorkspaceLaunchStageResult{}, errors.New("unexpected compute ensure")
+}
+
 func (c *workspaceLaunchResumeRouteSub2API) WorkspaceKeysForConvergence(_ context.Context, userID int64, name string) ([]clients.Sub2APIWorkspaceKey, error) {
 	if userID != 41 || name == "" {
 		return nil, errors.New("wrong workspace key identity")
@@ -223,6 +244,42 @@ func TestWorkspaceLaunchResumeRouteWaitsForOriginalCallerCredential(t *testing.T
 	exactReplay := requestWithMutationKeyForTest(t, server, customer, http.MethodPost, "/api/workspace-launches", launchBody, replayLaunchKey)
 	if exactReplay.Code != http.StatusAccepted || client.createCalls != createsAfterReplay || client.convergenceReads != readsAfterReplay {
 		t.Fatalf("exact customer replay caused key work: status=%d creates=%d/%d reads=%d/%d", exactReplay.Code, client.createCalls, createsAfterReplay, client.convergenceReads, readsAfterReplay)
+	}
+}
+
+func TestWorkspaceLaunchResumeRouteAcceptsComputeWindowAndRejectsItForOtherStages(t *testing.T) {
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	fabric := &workspaceLaunchComputeResumeFabric{}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, &testSub2APIClient{}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := reservedOperatorSessionForTest(t, server)
+	row := workspaceLaunchUnknownStageManualReviewRow(t, "ensure_compute_allocation")
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), row))
+
+	invalidBody := `{"launchVersion":5,"authorizedStage":"runtime","reason":"non compute cannot widen read window","mutationBudget":0,"idempotentReplayBudget":1,"authoritativeReadBudget":60}`
+	invalid := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/operator/workspace-launches/"+operation.ID+"/resume", invalidBody, "resume-route-non-compute-window")
+	if invalid.Code != http.StatusBadRequest || fabric.reads != 0 {
+		t.Fatalf("non-compute widened read window status=%d body=%s reads=%d", invalid.Code, invalid.Body.String(), fabric.reads)
+	}
+
+	body := `{"launchVersion":5,"authorizedStage":"ensure_compute_allocation","reason":"provider read proves the original compute allocation can continue","mutationBudget":0,"idempotentReplayBudget":1,"authoritativeReadBudget":60}`
+	response := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/operator/workspace-launches/"+operation.ID+"/resume", body, "resume-route-compute-window")
+	if response.Code != http.StatusOK || fabric.reads != 2 {
+		t.Fatalf("compute resume window status=%d body=%s reads=%d", response.Code, response.Body.String(), fabric.reads)
+	}
+	persisted, found, err := store.GetRuntimeOperation(context.Background(), operation.ID)
+	got, decodeErr := decodeWorkspaceLaunchReconcileOperation(persisted)
+	if err != nil || !found || decodeErr != nil || got.Status != "pending" || got.Stage != "ensure_compute_allocation" ||
+		got.Attempts[got.Stage].Attempted != 1 || got.Attempts[got.Stage].Unknown != 0 || got.ResumeAuthorization == nil ||
+		got.ResumeAuthorization.IdempotentReplayBudget != 1 || got.ResumeAuthorization.AuthoritativeReadBudget != workspaceLaunchComputeFreshContinuationAdditionalReadBudget {
+		t.Fatalf("compute resume route did not preserve the original operation: found=%v operation=%s errors=%v/%v", found, workspaceLaunchReconcileResultSummary(got), err, decodeErr)
 	}
 }
 

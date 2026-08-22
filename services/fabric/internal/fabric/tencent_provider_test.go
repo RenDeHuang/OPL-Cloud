@@ -320,8 +320,18 @@ func TestComputeClaimNodeOwnershipUsesPackageTaintAndWorkspaceLabels(t *testing.
 			packageID: "basic", wantState: "target_owned", wantOK: true,
 		},
 		{
-			name:      "partial labels conflict",
+			name:      "preinstalled pool workload label is not ownership",
 			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "unallocated", wantOK: true,
+		},
+		{
+			name:      "preinstalled pool labels are not ownership",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/package-id":"basic"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "unallocated", wantOK: true,
+		},
+		{
+			name:      "partial ownership labels conflict",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/package-id":"basic","oplcloud.cn/resource-id":"compute-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
 			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
 		},
 		{
@@ -330,13 +340,48 @@ func TestComputeClaimNodeOwnershipUsesPackageTaintAndWorkspaceLabels(t *testing.
 			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
 		},
 		{
+			name:      "other account label conflict",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-other","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
+		},
+		{
+			name:      "other resource label conflict",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-other","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
+		},
+		{
 			name:      "duplicate package taint conflict",
 			raw:       `{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"},{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
 			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
 		},
 		{
-			name:      "legacy workspace taint conflict",
+			name:      "wrong package taint conflict",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"pro","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
+		},
+		{
+			name:      "exact legacy pool unallocated",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/package-id":"basic"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "unallocated", wantOK: true,
+		},
+		{
+			name:      "legacy taint without pool identity conflicts",
 			raw:       `{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
+		},
+		{
+			name:      "legacy wrong package label conflicts",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/package-id":"pro"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
+		},
+		{
+			name:      "legacy partial ownership conflicts",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/package-id":"basic","oplcloud.cn/account-id":"acct-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
+		},
+		{
+			name:      "real workspace taint conflicts",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/package-id":"basic"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-other","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
 			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
 		},
 	} {
@@ -376,6 +421,90 @@ func TestComputeClaimNodePatchPreservesPackageTaint(t *testing.T) {
 		if strings.HasPrefix(path, "/spec/taints") {
 			t.Fatalf("claim patch must not write the package taint, patch=%s", patch)
 		}
+	}
+}
+
+func TestComputeClaimNodePatchConvertsExactLegacyPoolTaintAtomically(t *testing.T) {
+	allocation, _, ownership := computeClaimProviderFixture()
+	raw := []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/package-id":"basic"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]}}`)
+	patch, err := computeClaimNodePatch(raw, allocation, ownership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var operations []map[string]any
+	if err := json.Unmarshal(patch, &operations); err != nil {
+		t.Fatal(err)
+	}
+	want := []map[string]any{
+		{"op": "test", "path": "/metadata/resourceVersion", "value": "7"},
+		{"op": "test", "path": "/spec/taints", "value": []any{map[string]any{"key": "oplcloud.cn/workspace-id", "value": "unallocated", "effect": "NoSchedule"}}},
+		{"op": "replace", "path": "/spec/taints", "value": []any{map[string]any{"key": "oplcloud.cn/package-id", "value": "basic", "effect": "NoSchedule"}}},
+		{"op": "add", "path": "/metadata/labels/oplcloud.cn~1resource-id", "value": "compute-alpha"},
+		{"op": "add", "path": "/metadata/labels/oplcloud.cn~1account-id", "value": "acct-alpha"},
+		{"op": "add", "path": "/metadata/labels/oplcloud.cn~1workspace-id", "value": "ws-alpha"},
+	}
+	if !reflect.DeepEqual(operations, want) {
+		t.Fatalf("legacy claim patch=%#v want=%#v", operations, want)
+	}
+}
+
+func TestTencentClaimComputeNodeLegacyConversionConvergesOrFailsClosedOnTemplateDrift(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		controllerDrift bool
+		wantErr         bool
+		wantGets        int
+	}{
+		{name: "converted target ownership replays without mutation", wantGets: 3},
+		{name: "controller restores legacy taint", controllerDrift: true, wantErr: true, wantGets: 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setProtectedResourceEnv(t)
+			allocation, _, ownership := computeClaimProviderFixture()
+			provider := NewTencentProvider()
+			provider.convergenceWait = func(context.Context, int) error { return nil }
+			legacy := []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/package-id":"basic"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)
+			target := []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/package-id":"basic","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)
+			owned, gets, patches := false, 0, 0
+			provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+				switch args[0] {
+				case "get":
+					gets++
+					if owned && !tc.controllerDrift {
+						return target, nil
+					}
+					return legacy, nil
+				case "patch":
+					patches++
+					var operations []map[string]any
+					if json.Unmarshal(stdin, &operations) != nil || len(operations) < 3 || operations[1]["op"] != "test" || operations[2]["op"] != "replace" {
+						t.Fatalf("legacy patch is not an atomic tested conversion: %s", stdin)
+					}
+					owned = true
+					return nil, nil
+				default:
+					t.Fatalf("unexpected kubectl args=%#v", args)
+					return nil, nil
+				}
+			}
+
+			err := provider.ClaimComputeNode(context.Background(), allocation, ownership)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("controller drift unexpectedly converged")
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := provider.ClaimComputeNode(context.Background(), allocation, ownership); err != nil {
+					t.Fatalf("target-owned replay: %v", err)
+				}
+			}
+			if patches != 1 || gets != tc.wantGets {
+				t.Fatalf("gets=%d patches=%d want gets=%d patches=1 err=%v", gets, patches, tc.wantGets, err)
+			}
+		})
 	}
 }
 
