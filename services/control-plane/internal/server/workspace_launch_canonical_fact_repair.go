@@ -1,12 +1,16 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"sort"
+
+	"opl-cloud/services/control-plane/internal/clients"
+	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 var errWorkspaceLaunchCanonicalFactRepairNotEligible = errors.New("workspace_launch_canonical_fact_repair_not_eligible")
@@ -35,6 +39,46 @@ type workspaceLaunchCanonicalFactRepairPreview struct {
 	DesiredOperation map[string]any
 	ChangedFields    []string
 	PreviewDigest    string
+}
+
+func (app *controlPlaneServer) previewWorkspaceLaunchCanonicalFactRepair(ctx context.Context, service *controlplane.Service, operationID string) (workspaceLaunchCanonicalFactRepairPreview, error) {
+	if app == nil || service == nil || operationID == "" {
+		return workspaceLaunchCanonicalFactRepairPreview{}, errWorkspaceLaunchCanonicalFactRepairNotEligible
+	}
+	row, found, err := app.tables.GetRuntimeOperation(ctx, operationID)
+	if err != nil || !found {
+		return workspaceLaunchCanonicalFactRepairPreview{}, errWorkspaceLaunchCanonicalFactRepairNotEligible
+	}
+	classification, err := classifyWorkspaceLaunchCanonicalFactRepair(row)
+	if err != nil || classification.OperationID != operationID {
+		return workspaceLaunchCanonicalFactRepairPreview{}, errWorkspaceLaunchCanonicalFactRepairNotEligible
+	}
+	binding, err := service.ReadWorkspaceLaunchPreflight(ctx, clients.WorkspaceLaunchPreflightReadInput{ProviderBindingRef: classification.PreflightBindingRef})
+	if err != nil || !workspaceLaunchCanonicalFactRepairBindingMatches(classification, binding) {
+		return workspaceLaunchCanonicalFactRepairPreview{}, errWorkspaceLaunchCanonicalFactRepairNotEligible
+	}
+	return buildWorkspaceLaunchCanonicalFactRepairPreview(row, binding.SpecDigest)
+}
+
+func workspaceLaunchCanonicalFactRepairBindingMatches(classification workspaceLaunchCanonicalFactRepairClassification, binding clients.WorkspaceLaunchPreflightBinding) bool {
+	return binding.SchemaVersion == clients.WorkspaceLaunchFabricSchemaVersion &&
+		binding.LaunchOperationID == classification.OperationID && binding.AccountID == classification.AccountID && binding.WorkspaceID == classification.WorkspaceID &&
+		binding.PackageID == classification.PackageID && binding.SizeGB == classification.SizeGB && binding.WorkspaceImageDigest == classification.WorkspaceImageDigest &&
+		binding.RequestHash == classification.RequestHash && binding.ProviderProfileRef == classification.ProviderProfileRef &&
+		binding.ProviderBindingRef == classification.PreflightBindingRef && workspaceProviderSpecDigestPattern.MatchString(binding.SpecDigest)
+}
+
+func workspaceLaunchCanonicalFactRepairPreviewResponse(preview workspaceLaunchCanonicalFactRepairPreview) map[string]any {
+	identity := sha256.Sum256([]byte(preview.Classification.OperationID))
+	binding := sha256.Sum256([]byte(preview.Classification.PreflightBindingRef))
+	return map[string]any{
+		"schemaVersion": 1, "eligible": true, "operationIdentityDigest": fmt.Sprintf("sha256:%x", identity[:]),
+		"operationVersion": preview.Classification.Version, "proposedVersion": preview.Classification.Version + 1,
+		"failureCategory": "missing_canonical_facts", "missingCanonicalKeys": []string{"specDigest"},
+		"fabricBindingState": "confirmed", "bindingIdentityDigest": fmt.Sprintf("sha256:%x", binding[:]),
+		"identityMatched": true, "changedFields": append([]string(nil), preview.ChangedFields...),
+		"previewDigest": preview.PreviewDigest, "mutationBudget": 0,
+	}
 }
 
 func classifyWorkspaceLaunchCanonicalFactRepair(row map[string]any) (workspaceLaunchCanonicalFactRepairClassification, error) {

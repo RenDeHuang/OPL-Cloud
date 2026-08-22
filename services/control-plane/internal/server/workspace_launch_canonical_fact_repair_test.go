@@ -1,11 +1,36 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"opl-cloud/services/control-plane/internal/clients"
+	"opl-cloud/services/control-plane/internal/controlplane"
 )
+
+type canonicalFactRepairFabric struct {
+	fakeFabricClient
+	binding clients.WorkspaceLaunchPreflightBinding
+	err     error
+	reads   int
+}
+
+func (f *canonicalFactRepairFabric) ReadWorkspaceLaunchPreflight(_ context.Context, input clients.WorkspaceLaunchPreflightReadInput) (clients.WorkspaceLaunchPreflightBinding, error) {
+	f.reads++
+	if f.err != nil {
+		return clients.WorkspaceLaunchPreflightBinding{}, f.err
+	}
+	if input.ProviderBindingRef != f.binding.ProviderBindingRef {
+		return clients.WorkspaceLaunchPreflightBinding{}, errors.New("binding mismatch")
+	}
+	return f.binding, nil
+}
 
 func historicalWorkspaceLaunchMissingSpecDigest(t *testing.T) map[string]any {
 	t.Helper()
@@ -111,5 +136,70 @@ func TestWorkspaceLaunchCanonicalFactRepairPreviewDigestBindsCurrentResultAndSpe
 	third, err := buildWorkspaceLaunchCanonicalFactRepairPreview(row, strings.Repeat("d", 64))
 	if err != nil || first.PreviewDigest == third.PreviewDigest {
 		t.Fatalf("digest ignores current result: first=%s third=%s err=%v", first.PreviewDigest, third.PreviewDigest, err)
+	}
+}
+
+func TestWorkspaceLaunchCanonicalFactRepairPreviewRouteReturnsOnlyRedactedEvidence(t *testing.T) {
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-repair", "org-repair", "usr-repair", "repair@example.com")
+	row := historicalWorkspaceLaunchMissingSpecDigest(t)
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), row))
+	classification, err := classifyWorkspaceLaunchCanonicalFactRepair(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fabric := &canonicalFactRepairFabric{binding: clients.WorkspaceLaunchPreflightBinding{
+		SchemaVersion: 1, LaunchOperationID: classification.OperationID, AccountID: classification.AccountID, WorkspaceID: classification.WorkspaceID,
+		PackageID: classification.PackageID, SizeGB: classification.SizeGB, WorkspaceImageDigest: classification.WorkspaceImageDigest,
+		RequestHash: classification.RequestHash, ProviderProfileRef: classification.ProviderProfileRef,
+		ProviderBindingRef: classification.PreflightBindingRef, SpecDigest: strings.Repeat("d", 64),
+	}}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, &testSub2APIClient{balance: 1000000, charges: map[string]int64{}}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := reservedOperatorSessionForTest(t, server)
+	req := httptest.NewRequest(http.MethodGet, "/api/operator/workspace-launches/"+classification.OperationID+"/canonical-facts-repair-preview", nil)
+	addAuth(req, operator)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || fabric.reads != 1 {
+		t.Fatalf("status=%d reads=%d body=%s", rec.Code, fabric.reads, rec.Body.String())
+	}
+	var body map[string]any
+	if json.Unmarshal(rec.Body.Bytes(), &body) != nil || body["eligible"] != true || body["mutationBudget"] != float64(0) || body["operationVersion"] != float64(5) || body["proposedVersion"] != float64(6) {
+		t.Fatalf("body=%#v", body)
+	}
+	serialized := rec.Body.String()
+	for _, secret := range []string{classification.OperationID, classification.AccountID, classification.WorkspaceID, classification.PreflightBindingRef, strings.Repeat("d", 64)} {
+		if strings.Contains(serialized, secret) {
+			t.Fatalf("response leaked %q: %s", secret, serialized)
+		}
+	}
+}
+
+func TestWorkspaceLaunchCanonicalFactRepairPreviewRejectsFabricIdentityDrift(t *testing.T) {
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-repair", "org-repair", "usr-repair", "repair@example.com")
+	row := historicalWorkspaceLaunchMissingSpecDigest(t)
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), row))
+	classification, _ := classifyWorkspaceLaunchCanonicalFactRepair(row)
+	fabric := &canonicalFactRepairFabric{binding: clients.WorkspaceLaunchPreflightBinding{
+		SchemaVersion: 1, LaunchOperationID: classification.OperationID, AccountID: "acct-other", WorkspaceID: classification.WorkspaceID,
+		PackageID: classification.PackageID, SizeGB: classification.SizeGB, WorkspaceImageDigest: classification.WorkspaceImageDigest,
+		RequestHash: classification.RequestHash, ProviderProfileRef: classification.ProviderProfileRef,
+		ProviderBindingRef: classification.PreflightBindingRef, SpecDigest: strings.Repeat("d", 64),
+	}}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, &testSub2APIClient{balance: 1000000, charges: map[string]int64{}}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := reservedOperatorSessionForTest(t, server)
+	req := httptest.NewRequest(http.MethodGet, "/api/operator/workspace-launches/"+classification.OperationID+"/canonical-facts-repair-preview", nil)
+	addAuth(req, operator)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errWorkspaceLaunchCanonicalFactRepairNotEligible.Error()) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

@@ -26,6 +26,16 @@ const (
 )
 
 func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/canonical-facts-repair-preview", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		preview, err := app.previewWorkspaceLaunchCanonicalFactRepair(r.Context(), service, operationID)
+		if err != nil {
+			writeError(w, http.StatusConflict, errWorkspaceLaunchCanonicalFactRepairNotEligible.Error())
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, workspaceLaunchCanonicalFactRepairPreviewResponse(preview))
+	}))
 	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/repair-runtime", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		key, ok := requiredMutationKey(w, r)
 		if !ok {
