@@ -792,7 +792,12 @@ func (app *controlPlaneServer) runWorkspaceDelete(ctx context.Context, service *
 				}
 				runtime, destroyErr := service.DestroyWorkspaceRuntime(ctx, operation.AccountID, operation.WorkspaceID, workspaceDeleteStageKey(operation, "runtime"))
 				runtimeObservation, secretObservation, err = observeWorkspaceDeleteRuntimeAndSecret(ctx, service, operation)
+				var residualObservation clients.WorkspaceRuntimeDeleteObservation
+				var residualErr error
 				if err == nil && workspaceDeleteRuntimeAndSecretAbsent(runtimeObservation, secretObservation) {
+					residualObservation, residualErr = service.ObserveWorkspaceDeleteRuntimeResiduals(ctx, operation.WorkspaceID)
+				}
+				if err == nil && residualErr == nil && workspaceDeleteRuntimeAndSecretAbsent(runtimeObservation, secretObservation) && workspaceDeleteRuntimeResidualsAbsent(residualObservation, operation.WorkspaceID) {
 				} else if destroyErr != nil || runtime.ID != operation.RuntimeID || runtime.WorkspaceID != operation.WorkspaceID || runtime.Status != "destroyed" {
 					return app.markWorkspaceDeleteUnconfirmed(ctx, operation, "fabric_runtime_destroy_unconfirmed")
 				} else {
@@ -1076,6 +1081,11 @@ func observeWorkspaceDeleteRuntimeAndSecret(ctx context.Context, service *contro
 func workspaceDeleteRuntimeAndSecretAbsent(runtime clients.WorkspaceRuntimeObservation, secret clients.WorkspaceRuntimeGatewaySecretObservation) bool {
 	return runtime.SchemaVersion == clients.WorkspaceOwnerObservationSchemaVersion && secret.SchemaVersion == clients.WorkspaceOwnerObservationSchemaVersion &&
 		runtime.State == clients.WorkspaceOwnerObservationAbsent && secret.State == clients.WorkspaceOwnerObservationAbsent && runtime.Runtime == nil && secret.Binding == nil
+}
+
+func workspaceDeleteRuntimeResidualsAbsent(observation clients.WorkspaceRuntimeDeleteObservation, workspaceID string) bool {
+	return observation.SchemaVersion == clients.WorkspaceRuntimeDeleteObservationSchemaVersion && observation.WorkspaceID == workspaceID &&
+		observation.State == clients.WorkspaceOwnerObservationAbsent && len(observation.Residuals) == 0
 }
 
 func workspaceDeleteRuntimeAndSecretReady(operation workspaceDeleteOperation, runtime clients.WorkspaceRuntimeObservation, secret clients.WorkspaceRuntimeGatewaySecretObservation) bool {

@@ -20,25 +20,26 @@ import (
 
 type workspaceDeleteFabric struct {
 	fakeFabricClient
-	mu                  sync.Mutex
-	calls               []string
-	failStage           string
-	failures            int
-	mismatchStage       string
-	unknownStage        string
-	storageStatus       string
-	computeReads        []string
-	computeTerminal     <-chan struct{}
-	destroyed           bool
-	runtimeResponseLost bool
-	observeState        string
-	secretObserveState  string
-	observeErr          error
-	observeRuntimeID    string
-	observeKeyID        int64
-	observeSecretRef    string
-	observeFingerprint  string
-	events              *workspaceDeleteEvents
+	mu                   sync.Mutex
+	calls                []string
+	failStage            string
+	failures             int
+	mismatchStage        string
+	unknownStage         string
+	storageStatus        string
+	computeReads         []string
+	computeTerminal      <-chan struct{}
+	destroyed            bool
+	runtimeResponseLost  bool
+	observeState         string
+	secretObserveState   string
+	residualObserveState string
+	observeErr           error
+	observeRuntimeID     string
+	observeKeyID         int64
+	observeSecretRef     string
+	observeFingerprint   string
+	events               *workspaceDeleteEvents
 }
 
 type workspaceDeleteEvents struct {
@@ -156,6 +157,38 @@ func (f *workspaceDeleteFabric) ObserveWorkspaceRuntimeGatewaySecret(_ context.C
 		observation.Binding = &clients.WorkspaceRuntimeGatewaySecretBinding{
 			WorkspaceID: workspaceID, WorkspaceAPIKeyID: keyID, SecretRef: secretRef, Fingerprint: fingerprint, Bound: state == clients.WorkspaceOwnerObservationReady,
 		}
+	}
+	return observation, nil
+}
+
+func (f *workspaceDeleteFabric) ObserveWorkspaceRuntimeDelete(_ context.Context, workspaceID string) (clients.WorkspaceRuntimeDeleteObservation, error) {
+	if err := f.call("runtime-residual-read", workspaceID, ""); err != nil {
+		return clients.WorkspaceRuntimeDeleteObservation{}, err
+	}
+	f.mu.Lock()
+	destroyed, observeErr := f.destroyed, f.observeErr
+	f.mu.Unlock()
+	if observeErr != nil {
+		return clients.WorkspaceRuntimeDeleteObservation{}, observeErr
+	}
+	state := f.residualObserveState
+	if state == "" {
+		state = clients.WorkspaceOwnerObservationAbsent
+		if !destroyed {
+			state = clients.WorkspaceRuntimeDeleteObservationPresent
+		}
+	}
+	observation := clients.WorkspaceRuntimeDeleteObservation{
+		SchemaVersion: clients.WorkspaceRuntimeDeleteObservationSchemaVersion,
+		State:         state,
+		WorkspaceID:   workspaceID,
+		Residuals: []clients.WorkspaceRuntimeDeleteResidual{
+			{Kind: "NetworkPolicy", Name: "runtime-alpha"},
+		},
+	}
+	if state == clients.WorkspaceOwnerObservationAbsent {
+		observation.State = clients.WorkspaceOwnerObservationAbsent
+		observation.Residuals = nil
 	}
 	return observation, nil
 }
@@ -647,7 +680,7 @@ func TestWorkspaceDeleteCompletesExactOwnerChain(t *testing.T) {
 	}
 	wantEvents := []string{
 		"ledger:purchase-get",
-		"fabric:runtime-read", "fabric:secret-read", "fabric:runtime", "fabric:runtime-read", "fabric:secret-read",
+		"fabric:runtime-read", "fabric:secret-read", "fabric:runtime", "fabric:runtime-read", "fabric:secret-read", "fabric:runtime-residual-read",
 		"fabric:attachment", "fabric:storage", "fabric:compute", "fabric:compute-read",
 		"sub2api:key-get", "sub2api:key-get", "sub2api:key-delete", "sub2api:key-get",
 		"control-plane:workspace-absent", "ledger:deletion-receipt",
@@ -1442,6 +1475,7 @@ func TestWorkspaceDeleteOwnerCommandIsOrderedDurableAndIdempotent(t *testing.T) 
 		"runtime:ws-alpha:" + operationID + ":runtime",
 		"runtime-read:ws-alpha:",
 		"secret-read:ws-alpha:",
+		"runtime-residual-read:ws-alpha:",
 		"attachment:attachment-alpha:" + operationID + ":attachment",
 		"storage:storage-alpha:" + operationID + ":storage",
 		"compute:compute-alpha:" + operationID + ":compute",
@@ -1506,9 +1540,27 @@ func TestWorkspaceDeletePartialFabricResultResumesWithNewTransportKey(t *testing
 		t.Fatalf("resumed operation payload=%#v err=%v", payload, err)
 	}
 	calls := fabric.recordedCalls()
-	if len(calls) != 10 || calls[6] != calls[7] || !strings.HasPrefix(calls[6], "storage:") ||
-		!strings.HasPrefix(calls[8], "compute:") || !strings.HasPrefix(calls[9], "compute-read:") {
+	if len(calls) != 11 || calls[7] != calls[8] || !strings.HasPrefix(calls[7], "storage:") ||
+		!strings.HasPrefix(calls[9], "compute:") || !strings.HasPrefix(calls[10], "compute-read:") {
 		t.Fatalf("resume calls=%#v", calls)
+	}
+}
+
+func TestWorkspaceDeleteFailsClosedOnFabricResidualObservation(t *testing.T) {
+	fabric := &workspaceDeleteFabric{residualObserveState: clients.WorkspaceRuntimeDeleteObservationPresent}
+	fixture := newWorkspaceDeleteFixture(t, newMemoryTableStore(), fabric)
+	response := requestWithMutationKeyForTest(t, fixture.server, fixture.session, http.MethodDelete, "/api/workspaces/ws-alpha", `{}`, "delete-residual-present")
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), `"status":"manual_review"`) {
+		t.Fatalf("residual status=%d body=%s", response.Code, response.Body.String())
+	}
+	for _, call := range fabric.recordedCalls() {
+		if strings.HasPrefix(call, "attachment:") || strings.HasPrefix(call, "storage:") || strings.HasPrefix(call, "compute:") {
+			t.Fatalf("delete continued after residual observation: calls=%#v", fabric.recordedCalls())
+		}
+	}
+	row, found, err := fixture.store.GetRuntimeOperation(context.Background(), workspaceDeleteOperationID("ws-alpha"))
+	if err != nil || !found || stringValue(row["status"]) != "manual_review" {
+		t.Fatalf("residual operation=%#v found=%v err=%v", row, found, err)
 	}
 }
 
@@ -1558,8 +1610,8 @@ func TestWorkspaceDeleteRejectsNonOwnerAndMismatchedFabricReadback(t *testing.T)
 			t.Fatalf("mismatch removed Workspace found=%v err=%v", found, err)
 		}
 		calls := fabric.recordedCalls()
-		if len(calls) != 6 || !strings.HasPrefix(calls[0], "runtime-read:") || !strings.HasPrefix(calls[1], "secret-read:") ||
-			!strings.HasPrefix(calls[2], "runtime:") || !strings.HasPrefix(calls[5], "attachment:") {
+		if len(calls) != 7 || !strings.HasPrefix(calls[0], "runtime-read:") || !strings.HasPrefix(calls[1], "secret-read:") ||
+			!strings.HasPrefix(calls[2], "runtime:") || !strings.HasPrefix(calls[6], "attachment:") {
 			t.Fatalf("mismatch calls=%#v", calls)
 		}
 	})

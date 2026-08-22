@@ -78,3 +78,11 @@ func (s *Service) ObserveWorkspaceDeleteRuntimeGatewaySecret(ctx context.Context
 	}
 	return client.ObserveWorkspaceRuntimeGatewaySecret(ctx, workspaceID)
 }
+
+func (s *Service) ObserveWorkspaceDeleteRuntimeResiduals(ctx context.Context, workspaceID string) (clients.WorkspaceRuntimeDeleteObservation, error) {
+	client, err := s.workspaceDeleteObservationFabric()
+	if err != nil {
+		return clients.WorkspaceRuntimeDeleteObservation{}, err
+	}
+	return client.ObserveWorkspaceRuntimeDelete(ctx, workspaceID)
+}
