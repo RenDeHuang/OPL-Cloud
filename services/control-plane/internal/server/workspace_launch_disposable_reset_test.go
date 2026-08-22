@@ -205,6 +205,34 @@ func TestWorkspaceLaunchDisposableResetTerminalEvidenceStrictDecode(t *testing.T
 	}
 }
 
+func TestWorkspaceLaunchDisposableResetTerminalEvidencePreservesFailedContinuation(t *testing.T) {
+	store, adapter, seeded := workspaceLaunchFreshTypedPendingForTest(t, "debit")
+	adapter.readResultsByStage["debit"] = []workspaceLaunchUnitReadResult{{observation: workspaceLaunchStageObservation{State: workspaceLaunchStageUnknown}}}
+	operation, err := NewWorkspaceLaunchReconciler(store, adapter).Reconcile(t.Context(), seeded.ID)
+	if err != nil || operation.Status != "manual_review" || operation.FreshContinuationAuthorizations["debit"].Status != "failed" {
+		t.Fatalf("operation=%#v err=%v", operation, err)
+	}
+	classification, err := classifyWorkspaceLaunchDisposableReset(store.row, eligibleDisposableResetFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Version++
+	operation.Status = "failed"
+	operation.DisposableReset = &workspaceLaunchDisposableResetEvidence{
+		SchemaVersion: 1, LaunchVersion: classification.Version, ResetPlanDigest: classification.ResetPlanDigest,
+		AuthorityDigest: "sha256:" + strings.Repeat("d", 64), LedgerReceiptDigest: "sha256:" + strings.Repeat("e", 64),
+		CompletedAt: "2026-08-22T08:00:00Z", MutationScopeMatchedPlan: true,
+	}
+	terminal, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeWorkspaceLaunchReconcileOperation(terminal)
+	if err != nil || decoded.FreshContinuationAuthorizations["debit"].Status != "failed" {
+		t.Fatalf("decoded=%#v err=%v", decoded, err)
+	}
+}
+
 type disposableResetReadStore struct {
 	row map[string]any
 }
