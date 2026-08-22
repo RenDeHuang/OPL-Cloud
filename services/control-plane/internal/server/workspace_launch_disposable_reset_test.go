@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -169,7 +171,7 @@ func TestWorkspaceLaunchDisposableResetTerminalEvidenceStrictDecode(t *testing.T
 	if err != nil || decoded.Status != "failed" || decoded.Stage != "debit" || decoded.DisposableReset == nil {
 		t.Fatalf("decoded=%#v err=%v", decoded, err)
 	}
-	reconciler := NewWorkspaceLaunchReconciler(&disposableResetReadStore{row: terminal}, &fakeWorkspaceLaunchAdapter{})
+	reconciler := NewWorkspaceLaunchReconciler(&disposableResetReadStore{row: terminal}, disposableResetNoopAdapter{})
 	reconciled, err := reconciler.Reconcile(t.Context(), operation.ID)
 	if err != nil || reconciled.Status != "failed" || reconciled.Version != operation.Version {
 		t.Fatalf("terminal reconcile mutated operation: %#v err=%v", reconciled, err)
@@ -217,6 +219,22 @@ func (*disposableResetReadStore) ClaimWorkspaceLaunchReconcile(context.Context, 
 
 func (*disposableResetReadStore) PersistWorkspaceLaunchReconcile(context.Context, workspaceLaunchReconcileCAS) error {
 	return errors.New("unexpected persist")
+}
+
+type disposableResetNoopAdapter struct{}
+
+func (disposableResetNoopAdapter) ReadStage(context.Context, workspaceLaunchReconcileOperation) (workspaceLaunchStageObservation, error) {
+	return workspaceLaunchStageObservation{}, errors.New("unexpected read")
+}
+
+func (disposableResetNoopAdapter) CanMutateStage(workspaceLaunchReconcileOperation) bool {
+	return false
+}
+func (disposableResetNoopAdapter) CanReplayStage(workspaceLaunchReconcileOperation) bool {
+	return false
+}
+func (disposableResetNoopAdapter) MutateStage(context.Context, workspaceLaunchReconcileOperation, string) error {
+	return errors.New("unexpected mutation")
 }
 
 func mutateDisposableResetResult(t *testing.T, row map[string]any, field string, value any) {
