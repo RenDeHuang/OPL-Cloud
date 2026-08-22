@@ -378,6 +378,9 @@ func TestPostgresWorkspaceLaunchReplayClaimSurvivesReconcilerRestartWithoutSkip(
 			if err := store.ClaimWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileClaim{AccountID: command.AccountID, DesiredOperation: row}); err != nil {
 				t.Fatal(err)
 			}
+			if stage == "receipt" {
+				mustStore(t, store.SaveWorkspace(ctx, workspaceLaunchUnitActivationProjectionRow(t, command.WorkspaceID, command.AccountID, command.OwnerUserID)))
+			}
 
 			adapter := &workspaceLaunchUnitAdapter{
 				replayableStages:     map[string]bool{stage: true},
@@ -447,6 +450,9 @@ func TestPostgresWorkspaceLaunchConcurrentReplayResumeAllowsOneWriter(t *testing
 			}
 			if err := store.ClaimWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileClaim{AccountID: command.AccountID, DesiredOperation: row}); err != nil {
 				t.Fatal(err)
+			}
+			if stage == "receipt" {
+				mustStore(t, store.SaveWorkspace(ctx, workspaceLaunchUnitActivationProjectionRow(t, command.WorkspaceID, command.AccountID, command.OwnerUserID)))
 			}
 
 			authorization := workspaceLaunchReservedStageAuthorization(t, row, "resume-postgres-concurrent-"+stage)
