@@ -208,13 +208,86 @@ func TestWorkspaceLaunchCanonicalFactRepairAuditMatchIgnoresStoreMetadataOnly(t 
 	}
 	desired := canonicalFactRepairAudit(preview, "repair-audit-identity")
 	existing := cloneMap(desired)
+	existing["createdAt"] = "2026-08-22T05:00:01Z"
 	existing["updatedAt"] = "2026-08-22T05:00:01Z"
 	if !workspaceLaunchCanonicalFactRepairAuditMatches(existing, desired) {
-		t.Fatal("store metadata changed the repair audit identity")
+		t.Fatal("server or store metadata changed the repair audit identity")
 	}
 	existing["userAgent"] = "different"
 	if workspaceLaunchCanonicalFactRepairAuditMatches(existing, desired) {
 		t.Fatal("request identity drift was accepted")
+	}
+}
+
+func TestWorkspaceLaunchCanonicalFactRepairReplayRequiresCompleteOperationAndAuditIdentity(t *testing.T) {
+	row := historicalWorkspaceLaunchMissingSpecDigest(t)
+	preview, err := buildWorkspaceLaunchCanonicalFactRepairPreview(row, strings.Repeat("d", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := decodeWorkspaceLaunchReconcileOperation(preview.DesiredOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestAudit := canonicalFactRepairAudit(preview, "request")
+	existing := canonicalFactRepairAudit(preview, "repair-replay")
+	existing["id"] = workspaceLaunchCanonicalFactRepairAuditID(operation.ID, "repair-replay")
+	previewDigest, reason := preview.PreviewDigest, "historical schema 3 operation predates required specDigest"
+	existing["after"] = map[string]any{
+		"version": 6, "stage": "debit", "status": "manual_review", "specDigestSha256": "sha256:" + strings.Repeat("d", 64),
+		"reason": reason, "previewDigest": previewDigest,
+	}
+	if !workspaceLaunchCanonicalFactRepairReplayMatches(operation, existing, requestAudit, 5, previewDigest, "repair-replay", reason) {
+		t.Fatal("exact replay was rejected")
+	}
+	for name, mutate := range map[string]func(workspaceLaunchReconcileOperation, map[string]any) (workspaceLaunchReconcileOperation, map[string]any){
+		"wrong action": func(operation workspaceLaunchReconcileOperation, audit map[string]any) (workspaceLaunchReconcileOperation, map[string]any) {
+			audit["action"] = "workspace.launch.other"
+			return operation, audit
+		},
+		"wrong resource": func(operation workspaceLaunchReconcileOperation, audit map[string]any) (workspaceLaunchReconcileOperation, map[string]any) {
+			audit["resourceId"] = "workspace-launch-other"
+			return operation, audit
+		},
+		"wrong after": func(operation workspaceLaunchReconcileOperation, audit map[string]any) (workspaceLaunchReconcileOperation, map[string]any) {
+			after := mapField(audit, "after")
+			after["version"] = 7
+			audit["after"] = after
+			return operation, audit
+		},
+		"wrong stage": func(operation workspaceLaunchReconcileOperation, audit map[string]any) (workspaceLaunchReconcileOperation, map[string]any) {
+			operation.Stage = "fabric_compute"
+			return operation, audit
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changedOperation, changedAudit := mutate(operation, cloneMap(existing))
+			if workspaceLaunchCanonicalFactRepairReplayMatches(changedOperation, changedAudit, requestAudit, 5, previewDigest, "repair-replay", reason) {
+				t.Fatal("drifted replay was accepted")
+			}
+		})
+	}
+}
+
+func TestMemoryWorkspaceLaunchCanonicalFactRepairPreservesNonResultColumns(t *testing.T) {
+	store := newMemoryTableStore()
+	row := historicalWorkspaceLaunchMissingSpecDigest(t)
+	preview, err := buildWorkspaceLaunchCanonicalFactRepairPreview(row, strings.Repeat("d", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row["providerRequestId"] = "request-after-preview"
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), row))
+	update := workspaceLaunchCanonicalFactRepairCAS{
+		OperationID: preview.Classification.OperationID, ExpectedOperationResult: preview.Classification.PersistedResult,
+		DesiredOperation: preview.DesiredOperation, AuditEvent: canonicalFactRepairAudit(preview, "repair-preserve-columns"),
+	}
+	if err := store.ApplyWorkspaceLaunchCanonicalFactRepair(context.Background(), update); err != nil {
+		t.Fatal(err)
+	}
+	stored, found, err := store.GetRuntimeOperation(context.Background(), preview.Classification.OperationID)
+	if err != nil || !found || stringValue(stored["providerRequestId"]) != "request-after-preview" {
+		t.Fatalf("found=%v providerRequestId=%q err=%v", found, stringValue(stored["providerRequestId"]), err)
 	}
 }
 

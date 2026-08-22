@@ -169,10 +169,27 @@ func workspaceLaunchCanonicalFactRepairAuditMatches(existing, desired map[string
 			"actorAccountId": stringValue(row["actorAccountId"]), "targetAccountId": stringValue(row["targetAccountId"]),
 			"action": stringValue(row["action"]), "resourceKind": stringValue(row["resourceKind"]), "resourceId": stringValue(row["resourceId"]),
 			"ipAddress": stringValue(row["ipAddress"]), "userAgent": stringValue(row["userAgent"]), "result": stringValue(row["result"]),
-			"createdAt": stringValue(row["createdAt"]), "before": row["before"], "after": row["after"],
+			"before": row["before"], "after": row["after"],
 		}
 	}
 	return string(mustJSON(identity(existing))) == string(mustJSON(identity(desired)))
+}
+
+func workspaceLaunchCanonicalFactRepairReplayMatches(operation workspaceLaunchReconcileOperation, existing, requestAudit map[string]any, launchVersion int, previewDigest, key, reason string) bool {
+	specDigest := operation.stringFact("specDigest")
+	if operation.ID == "" || operation.Version != launchVersion+1 || operation.Stage != "debit" || operation.Status != "manual_review" ||
+		!workspaceProviderSpecDigestPattern.MatchString(specDigest) || key == "" || reason == "" || !workspaceLaunchRepairDigestPattern.MatchString(previewDigest) {
+		return false
+	}
+	expected := cloneMap(requestAudit)
+	expected["id"] = workspaceLaunchCanonicalFactRepairAuditID(operation.ID, key)
+	expected["targetAccountId"] = operation.stringFact("accountId")
+	expected["before"] = map[string]any{"version": launchVersion, "stage": operation.Stage, "status": operation.Status}
+	expected["after"] = map[string]any{
+		"version": launchVersion + 1, "stage": operation.Stage, "status": operation.Status,
+		"specDigestSha256": "sha256:" + specDigest, "reason": reason, "previewDigest": previewDigest,
+	}
+	return workspaceLaunchCanonicalFactRepairAuditMatches(existing, expected)
 }
 
 func classifyWorkspaceLaunchCanonicalFactRepair(row map[string]any) (workspaceLaunchCanonicalFactRepairClassification, error) {

@@ -678,7 +678,9 @@ func (s *memoryTableStore) ApplyWorkspaceLaunchCanonicalFactRepair(_ context.Con
 		if err := validateWorkspaceLaunchCanonicalFactRepairCAS(update, row); err != nil {
 			return err
 		}
-		s.runtimeOps[index] = cloneMap(update.DesiredOperation)
+		repaired := cloneMap(row)
+		repaired["result"] = stringValue(update.DesiredOperation["result"])
+		s.runtimeOps[index] = repaired
 		s.auditEvents = append(s.auditEvents, cloneMap(update.AuditEvent))
 		return nil
 	}

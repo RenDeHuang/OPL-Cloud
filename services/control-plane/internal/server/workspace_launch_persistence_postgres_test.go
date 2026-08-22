@@ -184,6 +184,8 @@ func TestPostgresWorkspaceLaunchCanonicalFactRepairIsAtomicAndSingleWriter(t *te
 		OperationID: preview.Classification.OperationID, ExpectedOperationResult: preview.Classification.PersistedResult,
 		DesiredOperation: preview.DesiredOperation, AuditEvent: canonicalFactRepairAudit(preview, "repair-pg"),
 	}
+	row["providerRequestId"] = "request-after-preview"
+	mustStore(t, store.SaveRuntimeOperation(ctx, row))
 	results := make(chan error, 2)
 	var ready sync.WaitGroup
 	ready.Add(2)
@@ -204,7 +206,7 @@ func TestPostgresWorkspaceLaunchCanonicalFactRepairIsAtomicAndSingleWriter(t *te
 	stored, found, readErr := store.GetRuntimeOperation(ctx, preview.Classification.OperationID)
 	operation, decodeErr := decodeWorkspaceLaunchReconcileOperation(stored)
 	audits, auditErr := store.ListAuditEvents(ctx, preview.Classification.AccountID)
-	if !found || readErr != nil || decodeErr != nil || operation.Version != 6 || len(audits) != 1 || auditErr != nil {
+	if !found || readErr != nil || decodeErr != nil || operation.Version != 6 || stringValue(stored["providerRequestId"]) != "request-after-preview" || len(audits) != 1 || auditErr != nil {
 		t.Fatalf("operation=%#v audits=%#v errors=%v/%v/%v", operation, audits, readErr, decodeErr, auditErr)
 	}
 }

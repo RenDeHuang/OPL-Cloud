@@ -51,11 +51,12 @@ workspace-launch preflight and stage endpoints:
 POST /fabric/workspace-launches/preflight/read
 ```
 
-The request contains schema version, `providerBindingRef`, and the identity
-facts already present in the Control Plane operation. Fabric point-reads the
-operation whose ID is the binding reference and runs the existing strict
-`decodeWorkspaceLaunchPreflight` validation. It returns only verified identity
-facts and `specDigest`; it does not expose the canonical provider plan.
+The request contains only the opaque `providerBindingRef`. Fabric point-reads
+the operation whose ID is the binding reference and runs the existing strict
+`decodeWorkspaceLaunchPreflight` validation. It returns the persisted identity
+facts and `specDigest`; Control Plane then requires every returned identity fact
+to match the damaged operation before constructing a repair. The endpoint does
+not expose the canonical provider plan.
 
 The endpoint must not call `ResolveWorkspacePlan`, provider readiness, Tencent,
 or any mutation method. Current provider configuration is not authoritative for

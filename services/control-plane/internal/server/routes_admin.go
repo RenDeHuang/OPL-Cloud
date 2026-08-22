@@ -51,7 +51,7 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 				auditID := workspaceLaunchCanonicalFactRepairAuditID(operationID, key)
 				audits, auditErr := app.tables.ListAuditEvents(r.Context(), operation.stringFact("accountId"))
 				for _, existing := range audits {
-					if auditErr == nil && stringValue(existing["id"]) == auditID && stringValue(mapField(existing, "after")["previewDigest"]) == previewDigest && stringValue(mapField(existing, "after")["reason"]) == reason {
+					if auditErr == nil && workspaceLaunchCanonicalFactRepairReplayMatches(operation, existing, audit, int(launchVersion), previewDigest, key, reason) {
 						writeJSON(w, http.StatusOK, workspaceLaunchCanonicalFactRepairApplyResponse(operation, auditID))
 						return
 					}

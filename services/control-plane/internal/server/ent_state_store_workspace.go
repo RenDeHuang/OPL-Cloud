@@ -931,9 +931,7 @@ func (s *postgresEntStateStore) ApplyWorkspaceLaunchCanonicalFactRepair(ctx cont
 	if err := validateWorkspaceLaunchCanonicalFactRepairCAS(update, current); err != nil {
 		return err
 	}
-	builder := client.RuntimeOperation.UpdateOneID(update.OperationID)
-	setRecordFieldsWithEmptyText(builder, update.DesiredOperation, runtimeOpEntFields, true)
-	if err := execCreate(ctx, builder); err != nil {
+	if _, err := client.RuntimeOperation.UpdateOneID(update.OperationID).SetResult(stringValue(update.DesiredOperation["result"])).Save(ctx); err != nil {
 		return err
 	}
 	if err := saveRecord(ctx, auditID, controlPlaneRecord(update.AuditEvent), client.AdminAuditEvent.Create(), auditEntFields); err != nil {
