@@ -1,0 +1,98 @@
+---
+title: OPL Cloud A-N 公开内测最短执行 DAG
+---
+flowchart TD
+    S0["Wave 0 串行基线<br/>固定范围、SHA、Owner、DoD<br/>复验 A / B / H / I"]
+
+    subgraph W1["Wave 1 三条业务 Lane 并发"]
+        direction LR
+        subgraph R["Resource Lifecycle"]
+            direction TB
+            A["A Fabric 删除残留收敛"] --> CD["C Delete Reconciler"]
+        end
+        subgraph C["Customer Commerce"]
+            direction TB
+            I["I 产品政策复验"] --> D["D 持久化公开注册"] --> E["E 注册→充值→购买"] --> M["M 公网应用边界验收"]
+        end
+        subgraph P["Lifecycle / Delivery Prep"]
+            direction TB
+            CR["C Renewal 重激活与恢复"] --> N0["N 离线 Release Admission 设计"]
+        end
+        B["B Receipt 投影复验"]
+    end
+
+    S0 --> A
+    S0 --> I
+    S0 --> CR
+    S0 --> B
+    B --> E
+
+    F["F on-touch 类型化<br/>随 A/C/D/E/J 收紧"]
+    A -.-> F
+    CD -.-> F
+    CR -.-> F
+    D -.-> F
+    E -.-> F
+
+    J0{"业务链 Join<br/>A/B/C/D/E/I focused PASS"}
+    CD --> J0
+    CR --> J0
+    E --> J0
+    M --> J0
+    B --> J0
+    F --> J0
+
+    subgraph W2["Wave 2 三条产品 Lane 并发"]
+        direction LR
+        JL["J Operations & Recovery<br/>→ L 持久状态告警闭环"]
+        K["K 三库隔离 Restore<br/>与 Owner Readback"]
+        NG["N 可移植/原字节提升<br/>→ G Candidate 工具复验"]
+    end
+
+    J0 --> JL
+    J0 --> K
+    J0 --> NG
+    N0 --> NG
+
+    CJ{"Cloud Complete Join<br/>全部 focused PASS"}
+    JL --> CJ
+    K --> CJ
+    NG --> CJ
+
+    FM["Wave 3 串行集成<br/>fresh main 合并<br/>verify:local:full"]
+    G["G 冻结一个 SHA/tree<br/>构建一个 Candidate digest"]
+    CJ --> FM --> G
+
+    subgraph Q["同一 Candidate 的串行资格链"]
+        direction LR
+        GL["Cloud：Local-Docker Receipt"] --> GI["Instance external_owner：<br/>Tencent/TKE Receipt"]
+    end
+    G --> GL
+
+    X["Instance 串行生产回执<br/>Restore → Alert/On-call<br/>→ Public Edge → Rollback"]
+    GI --> X
+
+    N["N 串行正式发布<br/>Admission 全回执<br/>提升原 Digest，禁止 rebuild"]
+    GL --> N
+    X --> N
+
+    H["H Trigger-gated P2<br/>仅 maxInFlight > 1 等触发后<br/>复验既有 NodePool Lease + TKE 并发"]
+    S0 -. "不进当前关键路径" .-> H
+
+    classDef baseline fill:#f4f4f5,stroke:#3f3f46,color:#18181b;
+    classDef resource fill:#e8f5e9,stroke:#2e7d32,color:#17351b;
+    classDef commerce fill:#fff3e0,stroke:#e65100,color:#4e2600;
+    classDef lifecycle fill:#e3f2fd,stroke:#1565c0,color:#0d3158;
+    classDef product fill:#f3e5f5,stroke:#7b1fa2,color:#35103f;
+    classDef gate fill:#fffde7,stroke:#827717,color:#383500;
+    classDef external fill:#fce4ec,stroke:#ad1457,color:#4f0928;
+    classDef deferred fill:#eceff1,stroke:#546e7a,color:#263238,stroke-dasharray: 5 5;
+
+    class S0,FM baseline;
+    class A,CD resource;
+    class I,D,E,M,B commerce;
+    class CR,N0 lifecycle;
+    class F,JL,K,NG product;
+    class J0,CJ,G,GL,N gate;
+    class GI,X external;
+    class H deferred;

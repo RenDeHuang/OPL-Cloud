@@ -43,6 +43,23 @@ is selected and configured by the medopl instance, not by the portable product.
 - Workspace Delete is permanent under the current contract. It removes the
   owned runtime/resource path, performs no refund or wallet mutation, and writes
   `workspace.deleted.v1` after authoritative cleanup.
+- Fabric now exposes typed Local-Docker and Tencent/TKE Runtime delete
+  observations, and Control Plane keeps Delete fail closed until the typed
+  Runtime, Secret, and resource facts confirm absence. Asymmetric PV/PVC
+  residue and the complete Tencent Gateway Secret deletion path remain open
+  outcomes rather than proven cleanup.
+- Fabric persists `compute_pool_key`, FIFO pool-head ownership, lease owner, and
+  lease expiry for compute allocation. Memory and PostgreSQL-focused source
+  tests cover same-pool serialization, cross-pool parallelism, database-clock
+  fencing, and crash recovery. Current Control Plane admission remains one
+  in-flight Launch, so a higher-concurrency Tencent receipt is trigger-gated.
+- A successful Launch Receipt is now projected to the Workspace inside the
+  owning PostgreSQL CAS transaction. Exact replay preserves the same Receipt;
+  a different Receipt or mismatched Account/Workspace identity fails closed.
+- Control Plane exposes a protected, read-only disposable Launch reset preview.
+  It composes redacted Control Plane, Fabric/provider, Kubernetes, Sub2API, and
+  Ledger observations into a deterministic plan digest. It performs no reset,
+  refund, Key deletion, provider deletion, Ledger append, or terminalization.
 - Workspace renewal authorization is persisted and exposed through Control
   Plane and Console. Expired-Workspace reactivation and live renewal evidence
   are not implemented end to end.
@@ -136,9 +153,11 @@ separate.
 
 Source and local tests cover the current service boundaries, money and
 idempotency rules, persistence paths, provider adapters, portable assets, and
-Local-Docker lifecycle. The remaining release blockers are the exact-current
-clean-host lifecycle, explicit installation-owned image/profile inputs, the
-same-Candidate medopl qualification receipt, and exact-byte formal promotion.
+Local-Docker lifecycle. The accepted public-beta target additionally requires
+public registration, lifecycle recovery, operator/data/alert closure, and the
+same-byte Candidate/Release path. Their current evidence and open outcomes are
+projected through the A-N packages in [roadmap.md](./roadmap.md); none is
+upgraded by an older Candidate or Instance receipt.
 
 The evidence meanings are defined in [invariants.md](./invariants.md). A test,
 document, Candidate, Release, or Instance receipt proves only the layer and exact
