@@ -299,6 +299,13 @@ type workspaceLaunchReconcileCAS struct {
 	DesiredOperation        map[string]any
 }
 
+type workspaceLaunchCanonicalFactRepairCAS struct {
+	OperationID             string
+	ExpectedOperationResult string
+	DesiredOperation        map[string]any
+	AuditEvent              map[string]any
+}
+
 type workspaceLaunchReconcileStore interface {
 	GetRuntimeOperation(context.Context, string) (map[string]any, bool, error)
 	ClaimWorkspaceLaunchReconcile(context.Context, workspaceLaunchReconcileClaim) error

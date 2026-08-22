@@ -81,6 +81,44 @@ func workspaceLaunchCanonicalFactRepairPreviewResponse(preview workspaceLaunchCa
 	}
 }
 
+func validateWorkspaceLaunchCanonicalFactRepairCAS(update workspaceLaunchCanonicalFactRepairCAS, current map[string]any) error {
+	classification, err := classifyWorkspaceLaunchCanonicalFactRepair(current)
+	if err != nil || update.OperationID != classification.OperationID || update.ExpectedOperationResult != classification.PersistedResult || stringValue(current["result"]) != update.ExpectedOperationResult {
+		return errWorkspaceLaunchCASConflict
+	}
+	desired, err := decodeWorkspaceLaunchReconcileOperation(update.DesiredOperation)
+	if err != nil || desired.ID != classification.OperationID || desired.Version != classification.Version+1 || desired.Stage != classification.Stage || desired.Status != classification.Status {
+		return errWorkspaceLaunchCASConflict
+	}
+	var currentRaw, desiredRaw map[string]json.RawMessage
+	if json.Unmarshal([]byte(classification.PersistedResult), &currentRaw) != nil || json.Unmarshal([]byte(stringValue(update.DesiredOperation["result"])), &desiredRaw) != nil {
+		return errWorkspaceLaunchCASConflict
+	}
+	changed := workspaceLaunchCanonicalFactRepairChangedFields(currentRaw, desiredRaw)
+	if len(changed) != 2 || changed[0] != "specDigest" || changed[1] != "version" || !workspaceProviderSpecDigestPattern.MatchString(desired.stringFact("specDigest")) {
+		return errWorkspaceLaunchCASConflict
+	}
+	if !workspaceLaunchCanonicalFactRepairAuditValid(update, classification, desired.stringFact("specDigest")) {
+		return errIdempotencyConflict
+	}
+	return nil
+}
+
+func workspaceLaunchCanonicalFactRepairAuditValid(update workspaceLaunchCanonicalFactRepairCAS, classification workspaceLaunchCanonicalFactRepairClassification, specDigest string) bool {
+	audit := update.AuditEvent
+	before, after := mapField(audit, "before"), mapField(audit, "after")
+	return stringValue(audit["id"]) != "" && stringValue(audit["actorUserId"]) != "" && stringValue(audit["action"]) == "workspace.launch.canonical_fact_repair" &&
+		stringValue(audit["resourceKind"]) == "workspace_launch" && stringValue(audit["resourceId"]) == classification.OperationID &&
+		stringValue(audit["targetAccountId"]) == classification.AccountID && stringValue(audit["result"]) == "succeeded" && stringValue(audit["createdAt"]) != "" &&
+		numberField(before, "version", 0) == float64(classification.Version) && stringValue(before["status"]) == classification.Status && stringValue(before["stage"]) == classification.Stage &&
+		numberField(after, "version", 0) == float64(classification.Version+1) && stringValue(after["status"]) == classification.Status && stringValue(after["stage"]) == classification.Stage &&
+		stringValue(after["specDigestSha256"]) == "sha256:"+specDigest
+}
+
+func workspaceLaunchCanonicalFactRepairAuditMatches(existing, desired map[string]any) bool {
+	return string(mustJSON(existing)) == string(mustJSON(desired))
+}
+
 func classifyWorkspaceLaunchCanonicalFactRepair(row map[string]any) (workspaceLaunchCanonicalFactRepairClassification, error) {
 	result := stringValue(row["result"])
 	var raw map[string]json.RawMessage

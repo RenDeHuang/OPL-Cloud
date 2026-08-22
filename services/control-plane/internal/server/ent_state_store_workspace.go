@@ -898,6 +898,54 @@ func (s *postgresEntStateStore) PersistWorkspaceLaunchReconcile(ctx context.Cont
 	return tx.Commit()
 }
 
+func (s *postgresEntStateStore) ApplyWorkspaceLaunchCanonicalFactRepair(ctx context.Context, update workspaceLaunchCanonicalFactRepairCAS) error {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	auditID := stringValue(update.AuditEvent["id"])
+	if auditID == "" {
+		return errIdempotencyConflict
+	}
+	existingAudit, auditErr := client.AdminAuditEvent.Query().Where(adminauditevent.IDEQ(auditID), lockRowForUpdate).Only(ctx)
+	if auditErr == nil {
+		entity, rowErr := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(update.OperationID), lockRowForUpdate).Only(ctx)
+		if rowErr != nil || stringValue(recordFromEnt(entity, runtimeOpEntFields)["result"]) != stringValue(update.DesiredOperation["result"]) ||
+			!workspaceLaunchCanonicalFactRepairAuditMatches(recordFromEnt(existingAudit, auditEntFields), update.AuditEvent) {
+			return errIdempotencyConflict
+		}
+		return tx.Commit()
+	}
+	if !controlplaneent.IsNotFound(auditErr) {
+		return auditErr
+	}
+	entity, err := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(update.OperationID), lockRowForUpdate).Only(ctx)
+	if err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errWorkspaceLaunchCASConflict
+		}
+		return err
+	}
+	current := recordFromEnt(entity, runtimeOpEntFields)
+	if err := validateWorkspaceLaunchCanonicalFactRepairCAS(update, current); err != nil {
+		return err
+	}
+	builder := client.RuntimeOperation.UpdateOneID(update.OperationID)
+	setRecordFieldsWithEmptyText(builder, update.DesiredOperation, runtimeOpEntFields, true)
+	if err := execCreate(ctx, builder); err != nil {
+		return err
+	}
+	if err := saveRecord(ctx, auditID, controlPlaneRecord(update.AuditEvent), client.AdminAuditEvent.Create(), auditEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			return errIdempotencyConflict
+		}
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *postgresEntStateStore) ClaimWorkspaceRenewal(ctx context.Context, claim workspaceRenewalClaimCAS) error {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {

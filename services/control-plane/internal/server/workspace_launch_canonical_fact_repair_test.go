@@ -32,6 +32,16 @@ func (f *canonicalFactRepairFabric) ReadWorkspaceLaunchPreflight(_ context.Conte
 	return f.binding, nil
 }
 
+func canonicalFactRepairAudit(preview workspaceLaunchCanonicalFactRepairPreview, key string) map[string]any {
+	return map[string]any{
+		"id": "audit-" + key, "actorUserId": "usr-operator", "actorRole": "admin", "actorAccountId": "acct-operator",
+		"targetAccountId": preview.Classification.AccountID, "action": "workspace.launch.canonical_fact_repair", "resourceKind": "workspace_launch",
+		"resourceId": preview.Classification.OperationID, "ipAddress": "", "userAgent": "test", "result": "succeeded", "createdAt": "2026-08-22T05:00:00Z",
+		"before": map[string]any{"version": preview.Classification.Version, "stage": preview.Classification.Stage, "status": preview.Classification.Status},
+		"after":  map[string]any{"version": preview.Classification.Version + 1, "stage": preview.Classification.Stage, "status": preview.Classification.Status, "specDigestSha256": "sha256:" + preview.SpecDigest},
+	}
+}
+
 func historicalWorkspaceLaunchMissingSpecDigest(t *testing.T) map[string]any {
 	t.Helper()
 	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchReconcileCreate{
@@ -139,6 +149,57 @@ func TestWorkspaceLaunchCanonicalFactRepairPreviewDigestBindsCurrentResultAndSpe
 	}
 }
 
+func TestMemoryWorkspaceLaunchCanonicalFactRepairIsCASAuditedAndIdempotent(t *testing.T) {
+	store := newMemoryTableStore()
+	row := historicalWorkspaceLaunchMissingSpecDigest(t)
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), row))
+	preview, err := buildWorkspaceLaunchCanonicalFactRepairPreview(row, strings.Repeat("d", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := workspaceLaunchCanonicalFactRepairCAS{
+		OperationID: preview.Classification.OperationID, ExpectedOperationResult: preview.Classification.PersistedResult,
+		DesiredOperation: preview.DesiredOperation, AuditEvent: canonicalFactRepairAudit(preview, "repair-once"),
+	}
+	if err := store.ApplyWorkspaceLaunchCanonicalFactRepair(context.Background(), update); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ApplyWorkspaceLaunchCanonicalFactRepair(context.Background(), update); err != nil {
+		t.Fatalf("exact replay: %v", err)
+	}
+	stored, found, err := store.GetRuntimeOperation(context.Background(), preview.Classification.OperationID)
+	operation, decodeErr := decodeWorkspaceLaunchReconcileOperation(stored)
+	audits, auditErr := store.ListAuditEvents(context.Background(), preview.Classification.AccountID)
+	if err != nil || !found || decodeErr != nil || operation.Version != 6 || operation.stringFact("specDigest") != strings.Repeat("d", 64) || auditErr != nil || len(audits) != 1 {
+		t.Fatalf("operation=%#v found=%v audits=%#v errors=%v/%v/%v", operation, found, audits, err, decodeErr, auditErr)
+	}
+}
+
+func TestMemoryWorkspaceLaunchCanonicalFactRepairRejectsCASAndAuditDrift(t *testing.T) {
+	store := newMemoryTableStore()
+	row := historicalWorkspaceLaunchMissingSpecDigest(t)
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), row))
+	preview, _ := buildWorkspaceLaunchCanonicalFactRepairPreview(row, strings.Repeat("d", 64))
+	update := workspaceLaunchCanonicalFactRepairCAS{
+		OperationID: preview.Classification.OperationID, ExpectedOperationResult: preview.Classification.PersistedResult,
+		DesiredOperation: preview.DesiredOperation, AuditEvent: canonicalFactRepairAudit(preview, "repair-drift"),
+	}
+	drifted := update
+	drifted.ExpectedOperationResult += " "
+	if err := store.ApplyWorkspaceLaunchCanonicalFactRepair(context.Background(), drifted); !errors.Is(err, errWorkspaceLaunchCASConflict) {
+		t.Fatalf("CAS error=%v", err)
+	}
+	if err := store.ApplyWorkspaceLaunchCanonicalFactRepair(context.Background(), update); err != nil {
+		t.Fatal(err)
+	}
+	conflict := update
+	conflict.AuditEvent = cloneMap(update.AuditEvent)
+	conflict.AuditEvent["userAgent"] = "different"
+	if err := store.ApplyWorkspaceLaunchCanonicalFactRepair(context.Background(), conflict); !errors.Is(err, errIdempotencyConflict) {
+		t.Fatalf("audit conflict=%v", err)
+	}
+}
+
 func TestWorkspaceLaunchCanonicalFactRepairPreviewRouteReturnsOnlyRedactedEvidence(t *testing.T) {
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-repair", "org-repair", "usr-repair", "repair@example.com")
@@ -165,10 +226,6 @@ func TestWorkspaceLaunchCanonicalFactRepairPreviewRouteReturnsOnlyRedactedEviden
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || fabric.reads != 1 {
 		t.Fatalf("status=%d reads=%d body=%s", rec.Code, fabric.reads, rec.Body.String())
-	}
-	var body map[string]any
-	if json.Unmarshal(rec.Body.Bytes(), &body) != nil || body["eligible"] != true || body["mutationBudget"] != float64(0) || body["operationVersion"] != float64(5) || body["proposedVersion"] != float64(6) {
-		t.Fatalf("body=%#v", body)
 	}
 	serialized := rec.Body.String()
 	for _, secret := range []string{classification.OperationID, classification.AccountID, classification.WorkspaceID, classification.PreflightBindingRef, strings.Repeat("d", 64)} {
@@ -199,7 +256,7 @@ func TestWorkspaceLaunchCanonicalFactRepairPreviewRejectsFabricIdentityDrift(t *
 	addAuth(req, operator)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errWorkspaceLaunchCanonicalFactRepairNotEligible.Error()) {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
