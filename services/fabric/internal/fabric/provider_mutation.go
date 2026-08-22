@@ -1,11 +1,14 @@
 package fabric
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -187,7 +190,18 @@ func sameProviderMutationState(current, expected FabricOperation) bool {
 	if !currentOK {
 		return true
 	}
-	return hashInput(currentState) == hashInput(expectedState)
+	currentPersisted, currentOK := decodePersistedProviderMutationState(currentState)
+	expectedPersisted, expectedOK := decodePersistedProviderMutationState(expectedState)
+	if !currentOK || !expectedOK || currentPersisted.Digest != expectedPersisted.Digest ||
+		!sameJSONObject(currentPersisted.Value, expectedPersisted.Value) {
+		return false
+	}
+	if currentPersisted.Digest == hashInput(currentPersisted.Value) || expectedPersisted.Digest == hashInput(expectedPersisted.Value) {
+		return true
+	}
+	// A store transition can compare two identical JSONB-normalized copies whose
+	// preserved typed digest no longer matches either reordered raw value.
+	return bytes.Equal(currentPersisted.Value, expectedPersisted.Value)
 }
 
 func decodeProviderMutationBinding(operation FabricOperation) (providerMutationBinding, bool) {
@@ -290,15 +304,62 @@ func decodeProviderMutationState(operation FabricOperation, target any) bool {
 	if !ok {
 		return false
 	}
+	persisted, ok := decodePersistedProviderMutationState(value)
+	targetValue := reflect.ValueOf(target)
+	if !ok || !targetValue.IsValid() || targetValue.Kind() != reflect.Pointer || targetValue.IsNil() {
+		return false
+	}
+	decodedTarget := reflect.New(targetValue.Elem().Type())
+	if !decodeStrictJSON(persisted.Value, decodedTarget.Interface()) {
+		return false
+	}
+	typedValue, err := json.Marshal(decodedTarget.Interface())
+	if err != nil || !sameJSONObject(persisted.Value, typedValue) || persisted.Digest != hashInput(json.RawMessage(typedValue)) {
+		return false
+	}
+	targetValue.Elem().Set(decodedTarget.Elem())
+	return true
+}
+
+func decodePersistedProviderMutationState(value any) (persistedProviderMutationState, bool) {
 	body, err := json.Marshal(value)
 	if err != nil {
-		return false
+		return persistedProviderMutationState{}, false
 	}
 	var persisted persistedProviderMutationState
-	if json.Unmarshal(body, &persisted) != nil || persisted.Digest == "" || persisted.Digest != hashInput(persisted.Value) {
+	if !decodeStrictJSON(body, &persisted) || persisted.Digest == "" || len(persisted.Value) == 0 {
+		return persistedProviderMutationState{}, false
+	}
+	return persisted, true
+}
+
+func decodeStrictJSON(body []byte, target any) bool {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
 		return false
 	}
-	return json.Unmarshal(persisted.Value, target) == nil
+	return decoder.Decode(&struct{}{}) == io.EOF
+}
+
+func sameJSONObject(left, right []byte) bool {
+	leftCanonical, leftOK := canonicalJSONObject(left)
+	rightCanonical, rightOK := canonicalJSONObject(right)
+	return leftOK && rightOK && bytes.Equal(leftCanonical, rightCanonical)
+}
+
+func canonicalJSONObject(body []byte) ([]byte, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, false
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return nil, false
+	}
+	canonical, err := json.Marshal(value)
+	return canonical, err == nil
 }
 
 func (a *providerMutationAttempt) complete(ctx context.Context, providerRequestID string, resource any, mutationErr error) error {

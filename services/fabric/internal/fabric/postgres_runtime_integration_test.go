@@ -1353,6 +1353,70 @@ func TestPostgresProviderMutationReplayEpochSurvivesRestartAndCAS(t *testing.T) 
 	}
 }
 
+func TestPostgresProviderMutationStateSurvivesJSONBRoundTrip(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	now := time.Date(2026, 8, 23, 8, 0, 0, 0, time.UTC)
+	parent := testWorkspaceLaunchBinding("ensure_compute_allocation", "ensure_compute_allocation", "launch-postgres-state:compute")
+	parent.LaunchOperationID = "launch-postgres-state"
+	parent.IdempotencyKey = "launch-postgres-state:compute"
+	parent.RequestHash = hashInput(map[string]string{"launch": parent.LaunchOperationID, "stage": parent.Stage})
+	operation := newOperation(parent.Action, "workspace_launch_stage", parent.FabricOperationID, parent.AccountID, parent.WorkspaceID, parent.IdempotencyKey, parent.RequestHash, now)
+	operation.ID, operation.OperationID, operation.Status = parent.FabricOperationID, parent.FabricOperationID, "started"
+	if err := bindLaunchStageOperation(&operation, &parent); err != nil {
+		t.Fatal(err)
+	}
+	state := tencentComputeMutationState{
+		Allocation: ComputeAllocation{
+			ID: "ca-postgres-state", OperationID: parent.FabricOperationID, AccountID: parent.AccountID, WorkspaceID: parent.WorkspaceID,
+			PackageID: "basic", Provider: "tencent-tke", PoolID: "pool-basic-2c4g", NodePoolID: "np-postgres-state",
+			MachineName: "machine-postgres-state", InstanceID: "ins-postgres-state", CVMInstanceID: "ins-postgres-state", NodeName: "node-postgres-state",
+			PrivateIP: "10.0.0.23", InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3", Status: "ready",
+		},
+		Plan: ComputeAllocationPreparation{
+			PoolID: "pool-basic-2c4g", PackageID: "basic", NodePoolID: "np-postgres-state", InstanceType: "SA5.MEDIUM4",
+			MaxReplicas: 20, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"machine-before"},
+		},
+	}
+	firstService := NewServiceWithOperationStore(testProvider{}, firstStore)
+	firstService.now = func() time.Time { return now }
+	firstCtx := firstService.providerMutationContext(ctx, operation)
+	fresh, err := beginProviderMutationWithState(firstCtx, "provider_compute_create", "compute_allocation", "ca-postgres-state", "np-postgres-state", state)
+	if err != nil || fresh == nil || !fresh.Fresh {
+		t.Fatalf("fresh=%#v err=%v", fresh, err)
+	}
+
+	persisted, err := secondStore.Get(ctx, fresh.operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded tencentComputeMutationState
+	if !decodeProviderMutationState(persisted, &decoded) || !reflect.DeepEqual(decoded, state) {
+		t.Fatalf("persisted state=%#v want=%#v", decoded, state)
+	}
+	secondService := NewServiceWithOperationStore(testProvider{}, secondStore)
+	secondService.now = func() time.Time { return now }
+	restarted, err := beginProviderMutationWithState(secondService.providerMutationContext(ctx, operation), "provider_compute_create", "compute_allocation", "ca-postgres-state", "np-postgres-state", state)
+	if err != nil || restarted == nil || restarted.Fresh {
+		t.Fatalf("restarted=%#v err=%v", restarted, err)
+	}
+	if claimed, claimErr := restarted.claimReplay(ctx); claimErr != nil || !claimed {
+		t.Fatalf("claim=%v err=%v", claimed, claimErr)
+	}
+}
+
 func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	first, err := newTestPostgresOperationStore(databaseURL)
