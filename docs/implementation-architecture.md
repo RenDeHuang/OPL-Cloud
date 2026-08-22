@@ -370,8 +370,13 @@ after an authoritative read returns `provider_provisioning` or
 `ownership_pending`. It preserves `Attempted=1`, `Max=1`, the original binding,
 and the original idempotency key. Ready, absent, unknown, conflict, and read
 failure are rejected without changing the operation. This narrow compatibility
-does not add a generic compute-unknown recovery route. A schema-v3 row without
-the new authorization and claim maps remains explicitly zero-budget.
+may replace one terminal failed replay claim once, using a new single-use
+administrator authorization, only when the failed claim and consumed
+authorization match that exact stage and idempotency identity and no earlier
+replacement exists. The previous authorization is retained in history; another
+replacement is refused. This does not add a generic compute-unknown recovery
+route. A schema-v3 row without the new authorization and claim maps remains
+explicitly zero-budget.
 
 Fabric's child transport claim is a local replay epoch, not Control Plane
 operator authorization and not a second business attempt budget. It binds the

@@ -370,6 +370,30 @@ func workspaceLaunchUnknownComputeContinuationAuthorization(t *testing.T, row ma
 	}
 }
 
+func workspaceLaunchUnknownComputeAfterFailedReplayRow(t *testing.T) map[string]any {
+	t.Helper()
+	row := workspaceLaunchUnknownStageManualReviewRow(t, "ensure_compute_allocation")
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := workspaceLaunchUnknownComputeContinuationAuthorization(t, row, "resume-unknown-compute-failed-original")
+	completedAt := "2026-08-23T01:01:00Z"
+	operation.ResumeAuthorization = &previous
+	operation.ResumeAuthorizationConsumedAt = completedAt
+	operation.IdempotentReplayClaims[operation.Stage] = workspaceLaunchIdempotentReplayClaim{
+		AuthorizationID: previous.AuthorizationID, Stage: operation.Stage,
+		IdempotencyKey: operation.Attempts[operation.Stage].IdempotencyKey,
+		Status:         "failed", CompletedAt: completedAt,
+	}
+	operation.Version++
+	row, err = workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
 func workspaceLaunchUnknownRuntimeWithFailedFreshContinuationRow(t *testing.T) map[string]any {
 	t.Helper()
 	row := workspaceLaunchUnknownStageManualReviewRow(t, "runtime")
@@ -550,6 +574,73 @@ func TestWorkspaceLaunchUnknownComputeResumeClaimsOwnershipWithOriginalKey(t *te
 	if err != nil || got.Status != "succeeded" || adapter.mutations != mutationsBeforeReplay {
 		t.Fatalf("terminal receipt replay performed work: operation=%s mutations=%d/%d err=%v",
 			workspaceLaunchReconcileResultSummary(got), adapter.mutations, mutationsBeforeReplay, err)
+	}
+}
+
+func TestWorkspaceLaunchUnknownComputeResumeReauthorizesOneFailedReplayWithOriginalKey(t *testing.T) {
+	row := workspaceLaunchUnknownComputeAfterFailedReplayRow(t)
+	before, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &workspaceLaunchUnitStore{row: row}
+	ownership := workspaceLaunchUnitReadResult{observation: workspaceLaunchStageObservation{State: workspaceLaunchStageOwnershipPending}}
+	adapter := &workspaceLaunchUnitAdapter{
+		readResultsByStage: map[string][]workspaceLaunchUnitReadResult{"ensure_compute_allocation": {ownership, ownership, ownership}},
+		replayableStages:   map[string]bool{"ensure_compute_allocation": true},
+	}
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	reconciler.now = func() time.Time { return time.Date(2026, 8, 23, 2, 0, 0, 0, time.UTC) }
+	authorization := workspaceLaunchUnknownComputeContinuationAuthorization(t, row, "resume-unknown-compute-failed-replacement")
+
+	got, err := reconciler.Resume(context.Background(), before.ID, authorization)
+	attempt := got.Attempts["ensure_compute_allocation"]
+	claim := got.IdempotentReplayClaims["ensure_compute_allocation"]
+	if err != nil || got.Status != "pending" || got.Stage != "storage" || attempt.Attempted != 1 || attempt.Max != 1 ||
+		attempt.Confirmed != 1 || attempt.Unknown != 0 || attempt.Status != "confirmed" ||
+		attempt.IdempotencyKey != before.Attempts["ensure_compute_allocation"].IdempotencyKey ||
+		adapter.mutationsByStage["ensure_compute_allocation"] != 1 || adapter.mutationIdempotencyKey != attempt.IdempotencyKey ||
+		claim.AuthorizationID != authorization.AuthorizationID || claim.Status != "succeeded" || got.ResumeAuthorizationConsumedAt == "" ||
+		len(got.ConsumedResumeAuthorizations) != 1 || got.ConsumedResumeAuthorizations[0].Authorization.AuthorizationID != before.ResumeAuthorization.AuthorizationID {
+		t.Fatalf("failed compute replay was not replaced in the original attempt: operation=%s attempt=%#v claim=%#v history=%#v reads=%d mutations=%#v err=%v",
+			workspaceLaunchReconcileResultSummary(got), attempt, claim, got.ConsumedResumeAuthorizations, adapter.reads, adapter.mutationsByStage, err)
+	}
+}
+
+func TestWorkspaceLaunchUnknownComputeResumeRefusesASecondFailedReplayReplacement(t *testing.T) {
+	row := workspaceLaunchUnknownComputeAfterFailedReplayRow(t)
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := *operation.ResumeAuthorization
+	operation.ConsumedResumeAuthorizations = append(operation.ConsumedResumeAuthorizations, workspaceLaunchConsumedResumeAuthorization{
+		Authorization: first, ConsumedAt: operation.ResumeAuthorizationConsumedAt,
+	})
+	second := first
+	second.AuthorizationID = "resume-unknown-compute-failed-replacement"
+	second.LaunchVersion = operation.Version
+	operation.ResumeAuthorization = &second
+	operation.ResumeAuthorizationConsumedAt = "2026-08-23T02:01:00Z"
+	claim := operation.IdempotentReplayClaims[operation.Stage]
+	claim.AuthorizationID = second.AuthorizationID
+	claim.CompletedAt = operation.ResumeAuthorizationConsumedAt
+	operation.IdempotentReplayClaims[operation.Stage] = claim
+	operation.Version++
+	row, err = workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := stringValue(row["result"])
+	store := &workspaceLaunchUnitStore{row: row}
+	adapter := &workspaceLaunchUnitAdapter{stageObservations: map[string]workspaceLaunchStageObservation{
+		"ensure_compute_allocation": {State: workspaceLaunchStageOwnershipPending},
+	}, replayableStages: map[string]bool{"ensure_compute_allocation": true}}
+	authorization := workspaceLaunchUnknownComputeContinuationAuthorization(t, row, "resume-unknown-compute-third")
+
+	_, err = NewWorkspaceLaunchReconciler(store, adapter).Resume(context.Background(), operation.ID, authorization)
+	if !errors.Is(err, errWorkspaceLaunchGrantConflict) || adapter.reads != 0 || adapter.mutations != 0 || stringValue(store.row["result"]) != before {
+		t.Fatalf("second failed replay replacement changed operation: reads=%d mutations=%d err=%v", adapter.reads, adapter.mutations, err)
 	}
 }
 
