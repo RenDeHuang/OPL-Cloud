@@ -243,6 +243,16 @@ type workspaceLaunchRuntimeRepair struct {
 	ImageDigest     string `json:"imageDigest"`
 }
 
+type workspaceLaunchDisposableResetEvidence struct {
+	SchemaVersion            int    `json:"schemaVersion"`
+	LaunchVersion            int    `json:"launchVersion"`
+	ResetPlanDigest          string `json:"resetPlanDigest"`
+	AuthorityDigest          string `json:"authorityDigest"`
+	LedgerReceiptDigest      string `json:"ledgerReceiptDigest"`
+	CompletedAt              string `json:"completedAt"`
+	MutationScopeMatchedPlan bool   `json:"mutationScopeMatchedPlan"`
+}
+
 type workspaceLaunchReconcileOperation struct {
 	ID                              string                                                   `json:"-"`
 	Status                          string                                                   `json:"-"`
@@ -260,6 +270,7 @@ type workspaceLaunchReconcileOperation struct {
 	FreshContinuationAuthorizations map[string]workspaceLaunchFreshContinuationAuthorization `json:"freshContinuationAuthorizations,omitempty"`
 	ContinuationReadClaims          map[string]workspaceLaunchContinuationReadClaim          `json:"continuationReadClaims,omitempty"`
 	RuntimeRepair                   *workspaceLaunchRuntimeRepair                            `json:"runtimeRepair,omitempty"`
+	DisposableReset                 *workspaceLaunchDisposableResetEvidence                  `json:"disposableReset,omitempty"`
 	raw                             map[string]json.RawMessage
 }
 
@@ -408,7 +419,7 @@ func (r *WorkspaceLaunchReconciler) Reconcile(ctx context.Context, operationID s
 			return workspaceLaunchReconcileOperation{}, err
 		}
 	}
-	if operation.Status == "manual_review" || operation.Status == "succeeded" {
+	if operation.Status == "manual_review" || terminalWorkspaceLaunchStatus(operation.Status) {
 		return operation, nil
 	}
 	attempt := operation.Attempts[operation.Stage]
@@ -1137,6 +1148,12 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_runtime_repair")
 		}
 	}
+	if value := raw["disposableReset"]; len(value) > 0 && json.Unmarshal(value, &operation.DisposableReset) != nil {
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_disposable_reset")
+	}
+	if operation.DisposableReset != nil && !validWorkspaceLaunchDisposableResetEvidence(*operation.DisposableReset, operation.Version) {
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_disposable_reset")
+	}
 	if value := raw["idempotentReplayClaims"]; len(value) > 0 && json.Unmarshal(value, &operation.IdempotentReplayClaims) != nil {
 		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 	}
@@ -1234,7 +1251,8 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 		case "failed":
-			if !validWorkspaceLaunchResumeAuthorizationConsumedAt(authorization.ConsumedAt) || operation.Stage != stage || operation.Status != "manual_review" ||
+			if !validWorkspaceLaunchResumeAuthorizationConsumedAt(authorization.ConsumedAt) || operation.Stage != stage ||
+				(operation.Status != "manual_review" && (operation.Status != "failed" || operation.DisposableReset == nil)) ||
 				attempt.Confirmed != 0 || attempt.Unknown != 1 || attempt.Status != "unknown" || operation.Observations[stage].State != workspaceLaunchStageUnknown {
 				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
@@ -1303,10 +1321,25 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 		if operation.Status != "succeeded" {
 			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("status_stage_mismatch")
 		}
-	} else if operation.Status != "pending" && operation.Status != "manual_review" {
+	} else if operation.Status == "failed" {
+		if operation.Stage != "debit" || operation.DisposableReset == nil {
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("status_stage_mismatch")
+		}
+	} else if operation.Status != "pending" && operation.Status != "manual_review" || operation.DisposableReset != nil {
 		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("status_stage_mismatch")
 	}
 	return operation, nil
+}
+
+func validWorkspaceLaunchDisposableResetEvidence(evidence workspaceLaunchDisposableResetEvidence, operationVersion int) bool {
+	if evidence.SchemaVersion != 1 || evidence.LaunchVersion <= 0 || evidence.LaunchVersion+1 != operationVersion ||
+		!workspaceLaunchDisposableResetDigestPattern.MatchString(evidence.ResetPlanDigest) ||
+		!workspaceLaunchDisposableResetDigestPattern.MatchString(evidence.AuthorityDigest) || !workspaceLaunchDisposableResetDigestPattern.MatchString(evidence.LedgerReceiptDigest) ||
+		!evidence.MutationScopeMatchedPlan {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, evidence.CompletedAt)
+	return err == nil
 }
 
 func workspaceLaunchReconcileOperationRow(operation workspaceLaunchReconcileOperation) (map[string]any, error) {
@@ -1325,14 +1358,15 @@ func workspaceLaunchReconcileOperationRow(operation workspaceLaunchReconcileOper
 		"observations": operation.Observations, "consumedResumeAuthorizations": operation.ConsumedResumeAuthorizations, "resumeAuthorization": operation.ResumeAuthorization,
 		"resumeAuthorizationConsumedAt": operation.ResumeAuthorizationConsumedAt, "idempotentReplayClaims": operation.IdempotentReplayClaims,
 		"freshContinuationAuthorizations": operation.FreshContinuationAuthorizations, "continuationReadClaims": operation.ContinuationReadClaims,
-		"runtimeRepair": operation.RuntimeRepair,
+		"runtimeRepair":   operation.RuntimeRepair,
+		"disposableReset": operation.DisposableReset,
 	} {
 		if key == "consumedResumeAuthorizations" && len(operation.ConsumedResumeAuthorizations) == 0 ||
 			key == "resumeAuthorization" && operation.ResumeAuthorization == nil || key == "resumeAuthorizationConsumedAt" && operation.ResumeAuthorizationConsumedAt == "" ||
 			key == "idempotentReplayClaims" && len(operation.IdempotentReplayClaims) == 0 ||
 			key == "freshContinuationAuthorizations" && len(operation.FreshContinuationAuthorizations) == 0 ||
 			key == "continuationReadClaims" && len(operation.ContinuationReadClaims) == 0 ||
-			key == "runtimeRepair" && operation.RuntimeRepair == nil {
+			key == "runtimeRepair" && operation.RuntimeRepair == nil || key == "disposableReset" && operation.DisposableReset == nil {
 			delete(raw, key)
 			continue
 		}

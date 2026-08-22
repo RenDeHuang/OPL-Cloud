@@ -26,6 +26,20 @@ const (
 )
 
 func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/disposable-reset-preview", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		preview, err := app.previewWorkspaceLaunchDisposableReset(r.Context(), service, operationID)
+		w.Header().Set("Cache-Control", "no-store")
+		if err != nil {
+			if preview.SchemaVersion == 1 {
+				writeJSON(w, http.StatusOK, preview)
+				return
+			}
+			writeError(w, http.StatusConflict, errWorkspaceLaunchDisposableResetNotEligible.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, preview)
+	}))
 	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/canonical-facts-repair", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		key, ok := requiredMutationKey(w, r)
 		if !ok {
