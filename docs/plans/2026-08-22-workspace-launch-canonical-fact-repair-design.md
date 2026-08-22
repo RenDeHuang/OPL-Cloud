@@ -127,8 +127,11 @@ The same idempotency identity with different input fails closed.
 
 ## Evidence And Errors
 
-Responses contain digests and bounded summaries, never account IDs, workspace
-IDs, operation IDs, email addresses, provider plans, tokens, or database rows.
+Operator-facing responses contain digests and bounded summaries, never account
+IDs, workspace IDs, operation IDs, email addresses, provider plans, tokens, or
+database rows. The internal Control Plane-to-Fabric typed contract carries the
+exact identities required for owner verification over the existing authenticated
+service boundary; those identities are not projected into operator evidence.
 
 Stable failure classes distinguish:
 
@@ -173,4 +176,3 @@ Candidate A does not add:
 - debit convergence, operation termination, or launch resume;
 - Instance workflow or validator changes;
 - provider, billing, Key, Workspace, or Receipt mutation.
-
