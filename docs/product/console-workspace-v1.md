@@ -8,14 +8,16 @@ contracts own field-level facts and permissions.
 ## User Job
 
 ```text
-sign in -> list Workspaces -> select Basic or Pro -> confirm one Workspace total
-        -> provision -> reveal/copy that Workspace access -> open Workspace
+register -> sign in -> observe zero balance -> receive administrator top-up
+         -> list Workspaces -> select Basic or Pro -> confirm one Workspace total
+         -> provision -> reveal/copy that Workspace access -> open Workspace
 ```
 
-The operator-provisioned Pilot allows multiple independent Workspaces per account. Each
-Workspace has its own launch identity, resources, Key, Secret, entitlement,
-Runtime, and Receipt. Public Home and Login may evolve with the generic OPL
-Cloud experience without changing this Workspace capability boundary.
+The public beta allows one customer to register one Account and create multiple
+independent Workspaces after an administrator funds its Sub2API wallet. A new
+Account starts at zero balance, and registration performs no purchase or Fabric
+mutation. Each Workspace has its own launch identity, resources, Key, Secret,
+entitlement, Runtime, and Receipt.
 
 ## Owner Surface
 

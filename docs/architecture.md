@@ -144,13 +144,18 @@ Instance consumes an exact Cloud release and independently owns deployment
 approval and production readback. A content digest establishes immutability; an
 approved repository or release manifest establishes source trust.
 
-## Current MVP Cut
+## Current Public Beta Cut
 
-The current reusable Cloud MVP is deliberately narrow: a thin Console, one
+The reusable Cloud Core remains deliberately narrow: a thin Console, one
 `local-docker` OPL Workspace path, and OPL Gateway accounting projected without
-creating a second wallet. Self-service registration, recharge/payment, refined
-Console presentation, public Agent Service publication, and broader managed
-resource orchestration are later product layers, not MVP prerequisites.
+creating a second wallet. The current delivery target adds public account
+registration with zero initial balance, administrator-operated wallet top-up,
+and controlled Workspace purchase. Registration never purchases resources by
+itself; the authoritative quote and Sub2API balance gate every purchase.
+
+Customer-operated payment/top-up, shared multi-user Workspaces, HA, GPU, public
+Agent Service publication, and broader managed-resource orchestration remain
+later product layers rather than public-beta prerequisites.
 
 Tencent/TKE is a medopl instance provider choice and migration surface. Existing
 Tencent/TKE source and workflow evidence may remain current implementation
@@ -273,12 +278,14 @@ path. Delete performs no wallet mutation; Sub2API remains the only spendable
 wallet, and Ledger does not become a second wallet or accounting engine.
 
 Extensions include Tencent/TKE and generic Kubernetes provider adapters,
-managed or institution-owned resources, OPL Serve, self-service signup,
-payment/top-up, detailed Console refinement, and Ledger evidence verticals not
-required by the Core path. An instance selects extensions without redefining
-the Core product. `opl-instance-medopl` selects the Tencent/TKE extension for
-the medopl instance; Tencent/TKE is not an MVP prerequisite for the local Core
-journey, but it is a supported adapter of the portable Release.
+managed or institution-owned resources, OPL Serve, customer-operated payment,
+detailed Console refinement, and Ledger evidence verticals not required by the
+Core path. The current public-beta cut selects self-service signup and
+administrator top-up while retaining Sub2API as the single wallet authority.
+An instance selects deployment extensions without redefining the Core product.
+`opl-instance-medopl` selects the Tencent/TKE extension for the medopl instance;
+Tencent/TKE is not a prerequisite for the local Core journey, but it is a
+supported adapter of the portable Release.
 
 This section owns the stable Core/Extension technical boundary. Current
 capability belongs to [status](status.md), while gaps and priority belong only

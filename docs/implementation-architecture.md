@@ -586,7 +586,7 @@ the installation assets and manifest. The bundle validator recomputes every
 digest. Installation owners bind Workspace image, Provider Profile, domain, and
 deployment evidence in their qualification receipts. The bundle still carries
 the current `opl-cloud.env.example`; removing its installation defaults is the
-`PORTABLE-INSTALL-01` roadmap gap.
+`PB-N-DISTRIBUTION-RELEASE-01` roadmap gap.
 
 The formal Release workflow still cannot promote those already qualified bytes.
 It builds and validates the OCI layout in a read-only job, passes one
