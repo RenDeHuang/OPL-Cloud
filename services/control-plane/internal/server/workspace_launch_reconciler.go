@@ -294,9 +294,17 @@ type workspaceLaunchReconcileClaim struct {
 }
 
 type workspaceLaunchReconcileCAS struct {
-	OperationID             string
-	ExpectedOperationResult string
-	DesiredOperation        map[string]any
+	OperationID                string
+	ExpectedOperationResult    string
+	DesiredOperation           map[string]any
+	WorkspaceReceiptProjection *workspaceLaunchReceiptProjection
+}
+
+type workspaceLaunchReceiptProjection struct {
+	AccountID   string
+	OwnerUserID string
+	WorkspaceID string
+	ReceiptID   string
 }
 
 type workspaceLaunchCanonicalFactRepairCAS struct {
@@ -974,13 +982,32 @@ func (r *WorkspaceLaunchReconciler) persist(ctx context.Context, operation works
 	if err != nil {
 		return workspaceLaunchReconcileOperation{}, err
 	}
+	projection, err := workspaceLaunchReceiptProjectionFor(operation)
+	if err != nil {
+		return workspaceLaunchReconcileOperation{}, err
+	}
 	if err := r.store.PersistWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileCAS{
-		OperationID: operation.ID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: desired,
+		OperationID: operation.ID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: desired, WorkspaceReceiptProjection: projection,
 	}); err != nil {
 		return workspaceLaunchReconcileOperation{}, err
 	}
 	operation.PersistedResult = stringValue(desired["result"])
 	return operation, nil
+}
+
+func workspaceLaunchReceiptProjectionFor(operation workspaceLaunchReconcileOperation) (*workspaceLaunchReceiptProjection, error) {
+	if operation.Stage != "succeeded" {
+		return nil, nil
+	}
+	receiptID := operation.stringFact("receiptId")
+	if operation.Status != "succeeded" || strings.TrimSpace(operation.stringFact("accountId")) == "" ||
+		strings.TrimSpace(operation.stringFact("ownerUserId")) == "" || strings.TrimSpace(operation.stringFact("workspaceId")) == "" || receiptID == "" {
+		return nil, errInvalidWorkspaceLaunchOperation
+	}
+	return &workspaceLaunchReceiptProjection{
+		AccountID: operation.stringFact("accountId"), OwnerUserID: operation.stringFact("ownerUserId"),
+		WorkspaceID: operation.stringFact("workspaceId"), ReceiptID: receiptID,
+	}, nil
 }
 
 func newWorkspaceLaunchReconcileOperation(command workspaceLaunchReconcileCreate) (workspaceLaunchReconcileOperation, error) {

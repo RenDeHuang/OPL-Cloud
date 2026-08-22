@@ -169,6 +169,95 @@ func TestPostgresWorkspaceLaunchClaimPersistAndActivate(t *testing.T) {
 	}
 }
 
+func TestPostgresWorkspaceLaunchReceiptProjectionCASIsIdempotentAndFailClosed(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+	account, owner := provisionedAccountRowsFor("acct-receipt-pg", "usr-receipt-pg", "receipt-pg@example.com", 41)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner))
+
+	workspace := workspaceLaunchUnitActivationProjectionRow(t, "ws-receipt-pg", "acct-receipt-pg", "usr-receipt-pg")
+	mustStore(t, store.SaveWorkspace(ctx, workspace))
+
+	command := workspaceLaunchUnitCommand()
+	command.OperationID, command.AccountID, command.OwnerUserID = "workspace-launch-receipt-pg", "acct-receipt-pg", "usr-receipt-pg"
+	command.WorkspaceID, command.Sub2APIUserID = "ws-receipt-pg", 41
+	operation, err := newWorkspaceLaunchReconcileOperation(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-1] {
+		operation.Stage = stage
+		observation, reduceErr := reduceWorkspaceLaunchStageObservation(&operation, workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: workspaceLaunchReadyFacts(stage)})
+		if reduceErr != nil {
+			t.Fatalf("reduce %s: %v", stage, reduceErr)
+		}
+		operation.Observations[stage] = observation
+		attempt := operation.Attempts[stage]
+		attempt.Attempted, attempt.Confirmed, attempt.Status = 1, 1, "confirmed"
+		operation.Attempts[stage] = attempt
+		operation.advance()
+	}
+	if operation.Stage != "succeeded" || operation.Status != "succeeded" || operation.stringFact("receiptId") != "receipt-unit" {
+		t.Fatalf("terminal operation=%s", workspaceLaunchReconcileResultSummary(operation))
+	}
+	claimed, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileClaim{AccountID: command.AccountID, DesiredOperation: claimed}); err != nil {
+		t.Fatal(err)
+	}
+
+	projection, err := workspaceLaunchReceiptProjectionFor(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Version++
+	first, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PersistWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileCAS{
+		OperationID: command.OperationID, ExpectedOperationResult: stringValue(claimed["result"]), DesiredOperation: first, WorkspaceReceiptProjection: projection,
+	}); err != nil {
+		t.Fatalf("first projection: %v", err)
+	}
+	readback, found, err := store.GetWorkspace(ctx, command.WorkspaceID)
+	if err != nil || !found || stringValue(readback["purchaseReceiptId"]) != "receipt-unit" {
+		t.Fatalf("first projection readback found=%v workspace=%#v err=%v", found, readback, err)
+	}
+
+	operation.Version++
+	second, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PersistWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileCAS{
+		OperationID: command.OperationID, ExpectedOperationResult: stringValue(first["result"]), DesiredOperation: second, WorkspaceReceiptProjection: projection,
+	}); err != nil {
+		t.Fatalf("same receipt replay: %v", err)
+	}
+
+	readback["purchaseReceiptId"] = "receipt-other"
+	if err := store.SaveWorkspace(ctx, readback); err != nil {
+		t.Fatalf("seed conflicting workspace receipt: %v", err)
+	}
+	operation.Version++
+	conflict, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PersistWorkspaceLaunchReconcile(ctx, workspaceLaunchReconcileCAS{
+		OperationID: command.OperationID, ExpectedOperationResult: stringValue(second["result"]), DesiredOperation: conflict, WorkspaceReceiptProjection: projection,
+	}); !errors.Is(err, errIdempotencyConflict) {
+		t.Fatalf("different receipt error=%v", err)
+	}
+	readback, found, err = store.GetWorkspace(ctx, command.WorkspaceID)
+	if err != nil || !found || stringValue(readback["purchaseReceiptId"]) != "receipt-other" {
+		t.Fatalf("conflicting projection mutated workspace found=%v workspace=%#v err=%v", found, readback, err)
+	}
+}
+
 func TestPostgresWorkspaceLaunchCanonicalFactRepairIsAtomicAndSingleWriter(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)

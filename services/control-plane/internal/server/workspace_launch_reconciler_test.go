@@ -1290,6 +1290,98 @@ func TestWorkspaceLaunchReceiptOnlyReplayReachesTerminalWithoutRepeatingPriorSta
 	}
 }
 
+func TestWorkspaceLaunchReceiptProjectionCASIsIdempotentAndFailClosed(t *testing.T) {
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-1] {
+		operation.Stage = stage
+		observation, reduceErr := reduceWorkspaceLaunchStageObservation(&operation, workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: workspaceLaunchReadyFacts(stage)})
+		if reduceErr != nil {
+			t.Fatalf("reduce %s: %v", stage, reduceErr)
+		}
+		operation.Observations[stage] = observation
+		attempt := operation.Attempts[stage]
+		attempt.Attempted, attempt.Confirmed, attempt.Status = 1, 1, "confirmed"
+		operation.Attempts[stage] = attempt
+		operation.advance()
+	}
+	if operation.Stage != "succeeded" || operation.Status != "succeeded" || operation.stringFact("receiptId") != "receipt-unit" {
+		t.Fatalf("terminal operation=%s", workspaceLaunchReconcileResultSummary(operation))
+	}
+	projection, err := workspaceLaunchReceiptProjectionFor(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newMemoryTableStore()
+	store.accounts["acct-unit"] = map[string]any{"id": "acct-unit", "ownerUserId": "usr-unit", "status": "active"}
+	store.workspaces["ws-unit"] = map[string]any{
+		"id": "ws-unit", "accountId": "acct-unit", "ownerAccountId": "acct-unit", "ownerUserId": "usr-unit", "purchaseReceiptId": "",
+	}
+	claimed, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClaimWorkspaceLaunchReconcile(context.Background(), workspaceLaunchReconcileClaim{AccountID: "acct-unit", DesiredOperation: claimed}); err != nil {
+		t.Fatal(err)
+	}
+
+	operation.Version++
+	first, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PersistWorkspaceLaunchReconcile(context.Background(), workspaceLaunchReconcileCAS{
+		OperationID: operation.ID, ExpectedOperationResult: stringValue(claimed["result"]), DesiredOperation: first, WorkspaceReceiptProjection: projection,
+	}); err != nil {
+		t.Fatalf("first projection=%v", err)
+	}
+	workspace := store.workspaces["ws-unit"]
+	if stringValue(workspace["purchaseReceiptId"]) != "receipt-unit" {
+		t.Fatalf("workspace receipt=%#v", workspace)
+	}
+
+	operation.Version++
+	second, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PersistWorkspaceLaunchReconcile(context.Background(), workspaceLaunchReconcileCAS{
+		OperationID: operation.ID, ExpectedOperationResult: stringValue(first["result"]), DesiredOperation: second, WorkspaceReceiptProjection: projection,
+	}); err != nil {
+		t.Fatalf("same receipt replay=%v", err)
+	}
+
+	operation.Version++
+	conflict, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.workspaces["ws-unit"]["purchaseReceiptId"] = "receipt-other"
+	if err := store.PersistWorkspaceLaunchReconcile(context.Background(), workspaceLaunchReconcileCAS{
+		OperationID: operation.ID, ExpectedOperationResult: stringValue(second["result"]), DesiredOperation: conflict, WorkspaceReceiptProjection: projection,
+	}); !errors.Is(err, errIdempotencyConflict) {
+		t.Fatalf("different receipt error=%v", err)
+	}
+	if stringValue(store.workspaces["ws-unit"]["purchaseReceiptId"]) != "receipt-other" {
+		t.Fatalf("conflicting projection mutated workspace=%#v", store.workspaces["ws-unit"])
+	}
+
+	operation.Version++
+	identityConflict, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityProjection := *projection
+	identityProjection.OwnerUserID = "usr-other"
+	if err := store.PersistWorkspaceLaunchReconcile(context.Background(), workspaceLaunchReconcileCAS{
+		OperationID: operation.ID, ExpectedOperationResult: stringValue(second["result"]), DesiredOperation: identityConflict, WorkspaceReceiptProjection: &identityProjection,
+	}); !errors.Is(err, errWorkspaceLaunchCASConflict) {
+		t.Fatalf("identity-drift projection error=%v", err)
+	}
+}
+
 func TestWorkspaceLaunchCreateAndResumeUseReconcile(t *testing.T) {
 	createStore, createAdapter := &workspaceLaunchUnitStore{}, &workspaceLaunchUnitAdapter{}
 	created, err := NewWorkspaceLaunchReconciler(createStore, createAdapter).Create(context.Background(), workspaceLaunchUnitCommand())
