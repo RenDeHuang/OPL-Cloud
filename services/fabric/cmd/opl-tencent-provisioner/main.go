@@ -2669,10 +2669,11 @@ func computeClaimOwnershipPredicate(key string) string {
 }
 
 type cvmOwnershipTarget struct {
-	InstanceID  string
-	CurrentName string
-	TargetName  string
-	Tags        map[string]string
+	InstanceID          string
+	CurrentName         string
+	ProviderCurrentName string
+	TargetName          string
+	Tags                map[string]string
 }
 
 type cvmOwnershipConvergence struct {
@@ -2875,7 +2876,8 @@ func classifyCVMOwnership(instance *cvm2017.Instance, target cvmOwnershipTarget)
 	switch {
 	case actualName == target.TargetName:
 		states["instance_name"] = "target_owned"
-	case actualName == "" || actualName == target.CurrentName:
+	case actualName == "" || actualName == target.CurrentName ||
+		(target.ProviderCurrentName != "" && actualName == target.ProviderCurrentName):
 		states["instance_name"] = "missing"
 	default:
 		return states, tags, "instance_name", nil
@@ -3159,7 +3161,8 @@ func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]
 	}
 	converged, failure := client.convergeCVMOwnership(cvmOwnershipTarget{
 		InstanceID: instanceID, CurrentName: request.Allocation.MachineName,
-		TargetName: resourceID, Tags: request.Tags,
+		ProviderCurrentName: nativeCVMInstanceName(client.clusterId, request.Allocation.MachineName),
+		TargetName:          resourceID, Tags: request.Tags,
 	})
 	if failure != nil {
 		return tagComputeMachineFailure(*failure)
@@ -3169,6 +3172,15 @@ func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]
 		ProviderData: converged.ProviderData, MutationCount: converged.Attempted,
 		MutationEvidence: &MutationEvidence{Attempted: converged.Attempted, Confirmed: converged.Confirmed},
 	}
+}
+
+func nativeCVMInstanceName(clusterID, machineName string) string {
+	clusterID = strings.TrimSpace(clusterID)
+	machineName = strings.TrimSpace(machineName)
+	if clusterID == "" || machineName == "" {
+		return ""
+	}
+	return clusterID + "_" + machineName
 }
 
 func tagComputeMachineFailure(response Response) Response {

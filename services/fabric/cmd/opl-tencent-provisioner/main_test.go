@@ -1096,6 +1096,41 @@ func TestTencentSDKTagComputeMachineRejectsOwnershipConflictBeforeMutation(t *te
 	}
 }
 
+func TestTencentSDKTagComputeMachineAcceptsExactNativeCVMNameBeforeOwnership(t *testing.T) {
+	wantTags := computeOwnershipTags()
+	cvmAPI := &fakeNativeCvmAPI{
+		instanceName: "cls-alpha_machine-before", tags: map[string]string{}, returnedInstanceID: "ins-alpha",
+	}
+	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+	response := (&tencentSDKClient{clusterId: "cls-alpha", nativeCvmClient: cvmAPI, nativeTagClient: tagAPI}).TagComputeMachine(Request{
+		Tags: wantTags, Allocation: ComputeAllocationInput{InstanceId: "ins-alpha", MachineName: "machine-before"},
+	}, nil)
+
+	if !response.Ok || response.Status != "tagged" || response.MutationCount != 5 ||
+		!reflect.DeepEqual(cvmAPI.tags, wantTags) || cvmAPI.instanceName != "compute-alpha" {
+		t.Fatalf("native CVM ownership response=%#v name=%q tags=%#v", response, cvmAPI.instanceName, cvmAPI.tags)
+	}
+}
+
+func TestTencentSDKTagComputeMachineRejectsDifferentNativeCVMNameBeforeMutation(t *testing.T) {
+	for _, instanceName := range []string{"cls-other_machine-before", "cls-alpha_machine-other"} {
+		t.Run(instanceName, func(t *testing.T) {
+			cvmAPI := &fakeNativeCvmAPI{
+				instanceName: instanceName, tags: map[string]string{}, returnedInstanceID: "ins-alpha",
+			}
+			tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+			response := (&tencentSDKClient{clusterId: "cls-alpha", nativeCvmClient: cvmAPI, nativeTagClient: tagAPI}).TagComputeMachine(Request{
+				Tags: computeOwnershipTags(), Allocation: ComputeAllocationInput{InstanceId: "ins-alpha", MachineName: "machine-before"},
+			}, nil)
+
+			if response.Ok || response.FailureStage != "cvm_conflict_check" || response.MutationCount != 0 ||
+				len(cvmAPI.modifyInstancesRequest) != 0 || len(tagAPI.calls) != 0 {
+				t.Fatalf("different native CVM name must fail before mutation: response=%#v modify=%#v tags=%#v", response, cvmAPI.modifyInstancesRequest, tagAPI.calls)
+			}
+		})
+	}
+}
+
 func TestTencentSDKTagComputeMachineOnlyFillsMissingOwnershipFields(t *testing.T) {
 	wantTags := computeOwnershipTags()
 	cvmAPI := &fakeNativeCvmAPI{instanceName: "compute-alpha", tags: map[string]string{
