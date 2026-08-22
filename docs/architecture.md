@@ -411,6 +411,12 @@ first performs authoritative readback and admits only
 `provider_provisioning` or `ownership_pending`; it then restores the original
 attempt to the bounded compute continuation above. `ready`, `absent`,
 `unknown`, read failure, or identity conflict leaves the operation unchanged.
+If that compatibility replay itself ended `failed` before a corrected owner
+classifier could prove the existing Machine, one new explicit administrator
+authorization may replace that terminal claim exactly once after the same
+authoritative admission. The prior authorization remains in the operation
+history; the stage, attempt, Fabric operation, resource binding, and idempotency
+key cannot change, and a second replacement is refused.
 This does not authorize a general unknown recovery path, a successor Launch, a
 new stage attempt, another debit, or direct Receipt creation. Legacy schema-v3
 rows without explicit authorization and claim fields have zero system

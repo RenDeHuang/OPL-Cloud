@@ -1084,13 +1084,24 @@ func (r *WorkspaceLaunchReconciler) Resume(ctx context.Context, operationID stri
 func workspaceLaunchUnknownComputeContinuationEligible(operation workspaceLaunchReconcileOperation, attempt workspaceLaunchStageAttempt, authorization workspaceLaunchResumeAuthorization) bool {
 	_, hasFreshContinuation := operation.FreshContinuationAuthorizations[operation.Stage]
 	_, hasReplayClaim := operation.IdempotentReplayClaims[operation.Stage]
+	replayAvailable := !hasReplayClaim && !operation.idempotentReplayAuthorizationUsed(operation.Stage) ||
+		workspaceLaunchFailedComputeReplayReauthorizationEligible(operation)
 	return operation.Status == "manual_review" && operation.boolFact("resourceBillingEnabled") && operation.Stage == "ensure_compute_allocation" &&
 		authorization.AuthorizedStage == operation.Stage && authorization.MutationBudget == 0 && authorization.IdempotentReplayBudget == 1 &&
 		authorization.AuthoritativeReadBudget == workspaceLaunchComputeFreshContinuationAdditionalReadBudget && authorization.ReadbacksAtAuthorization == 0 &&
 		operation.Observations[operation.Stage].State == workspaceLaunchStageUnknown && attempt.Max == 1 && attempt.Attempted == attempt.Max &&
 		attempt.Confirmed == 0 && attempt.Unknown == 1 && attempt.Status == "unknown" &&
-		attempt.IdempotencyKey == workspaceLaunchStageIdempotencyKey(operation, 1) && !hasFreshContinuation && !hasReplayClaim &&
-		!operation.idempotentReplayAuthorizationUsed(operation.Stage)
+		attempt.IdempotencyKey == workspaceLaunchStageIdempotencyKey(operation, 1) && !hasFreshContinuation && replayAvailable
+}
+
+func workspaceLaunchFailedComputeReplayReauthorizationEligible(operation workspaceLaunchReconcileOperation) bool {
+	claim, found := operation.IdempotentReplayClaims[operation.Stage]
+	previous := operation.ResumeAuthorization
+	return found && len(operation.ConsumedResumeAuthorizations) == 0 && previous != nil && operation.ResumeAuthorizationConsumedAt != "" &&
+		claim.AuthorizationID == previous.AuthorizationID && claim.Stage == operation.Stage &&
+		claim.IdempotencyKey == workspaceLaunchStageIdempotencyKey(operation, 1) && claim.Status == "failed" && claim.CompletedAt != "" &&
+		previous.AuthorizedStage == operation.Stage && previous.MutationBudget == 0 && previous.IdempotentReplayBudget == 1 &&
+		previous.AuthoritativeReadBudget == workspaceLaunchComputeFreshContinuationAdditionalReadBudget
 }
 
 func (r *WorkspaceLaunchReconciler) recoverUnknownComputeStage(
@@ -1102,6 +1113,9 @@ func (r *WorkspaceLaunchReconciler) recoverUnknownComputeStage(
 	observation, readErr := r.adapter.ReadStage(ctx, operation)
 	if readErr != nil || observation.State != workspaceLaunchStagePending && observation.State != workspaceLaunchStageOwnershipPending {
 		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchGrantConflict
+	}
+	if workspaceLaunchFailedComputeReplayReauthorizationEligible(operation) {
+		delete(operation.IdempotentReplayClaims, operation.Stage)
 	}
 	authorization.ReadbacksAtAuthorization = attempt.PendingReadbacks
 	attempt.Unknown, attempt.Status = 0, "reserved"

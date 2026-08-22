@@ -38,10 +38,12 @@ is selected and configured by the medopl instance, not by the portable product.
   discovers that Machine and claims CVM/Node ownership without a second
   NodePool scale. The existing administrator Resume route can return only the
   historical matching compute-unknown operation to this same Reconciler after
-  authoritative `provider_provisioning` or `ownership_pending` readback. Local
-  Fabric, Control Plane, route, and PostgreSQL tests cover the original attempt,
-  delayed readiness, fail-closed conflicts, downstream stages, and one Receipt.
-  No current Candidate or production continuation receipt exists yet.
+  authoritative `provider_provisioning` or `ownership_pending` readback. One
+  terminal failed compatibility replay can be replaced exactly once by a new
+  single-use administrator authorization without changing the original stage,
+  attempt, Fabric operation, resource binding, or idempotency key. Local Fabric,
+  Control Plane, route, and PostgreSQL tests cover the original attempt, delayed
+  readiness, fail-closed conflicts, downstream stages, and one Receipt.
 - Candidate A implements a narrow audited repair for the historical schema-3
   Launch defect whose only missing canonical fact is `specDigest`. Fabric
   strictly reads the persisted preflight binding; Control Plane previews the
