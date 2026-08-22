@@ -75,6 +75,7 @@ type FabricWorkspaceDeleteClient interface {
 type FabricWorkspaceDeleteObservationClient interface {
 	ObserveWorkspaceRuntime(context.Context, string) (WorkspaceRuntimeObservation, error)
 	ObserveWorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretObservation, error)
+	ObserveWorkspaceRuntimeDelete(context.Context, string) (WorkspaceRuntimeDeleteObservation, error)
 }
 
 type FabricHTTPError struct {
@@ -276,6 +277,22 @@ type WorkspaceRuntimeGatewaySecretObservation struct {
 	State         string                                `json:"state"`
 	WorkspaceID   string                                `json:"workspaceId"`
 	Binding       *WorkspaceRuntimeGatewaySecretBinding `json:"binding,omitempty"`
+}
+
+const WorkspaceRuntimeDeleteObservationSchemaVersion = 1
+
+const WorkspaceRuntimeDeleteObservationPresent = "present"
+
+type WorkspaceRuntimeDeleteResidual struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
+type WorkspaceRuntimeDeleteObservation struct {
+	SchemaVersion int                              `json:"schemaVersion"`
+	State         string                           `json:"state"`
+	WorkspaceID   string                           `json:"workspaceId"`
+	Residuals     []WorkspaceRuntimeDeleteResidual `json:"residuals,omitempty"`
 }
 
 type ProviderFactInput struct {
@@ -533,6 +550,18 @@ func (c *fabricHTTPClient) ObserveWorkspaceRuntimeGatewaySecret(ctx context.Cont
 	return result, nil
 }
 
+func (c *fabricHTTPClient) ObserveWorkspaceRuntimeDelete(ctx context.Context, workspaceID string) (WorkspaceRuntimeDeleteObservation, error) {
+	var result WorkspaceRuntimeDeleteObservation
+	err := c.get(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(workspaceID)+"/delete-observation", &result)
+	if err != nil {
+		return WorkspaceRuntimeDeleteObservation{}, err
+	}
+	if !validWorkspaceRuntimeDeleteObservation(result, workspaceID) {
+		return WorkspaceRuntimeDeleteObservation{}, errors.New("fabric_workspace_runtime_delete_observation_invalid")
+	}
+	return result, nil
+}
+
 func validWorkspaceOwnerObservationState(state string) bool {
 	switch state {
 	case WorkspaceOwnerObservationReady, WorkspaceOwnerObservationAbsent, WorkspaceOwnerObservationPending, WorkspaceOwnerObservationConflict, WorkspaceOwnerObservationError:
@@ -574,6 +603,40 @@ func validWorkspaceRuntimeGatewaySecretObservation(observation WorkspaceRuntimeG
 		return observation.Binding == nil
 	}
 	return observation.Binding != nil && observation.Binding.WorkspaceID == workspaceID && observation.Binding.WorkspaceAPIKeyID > 0 && strings.TrimSpace(observation.Binding.SecretRef) != "" && strings.TrimSpace(observation.Binding.Fingerprint) != "" && observation.Binding.Bound == (observation.State == WorkspaceOwnerObservationReady)
+}
+
+func validWorkspaceRuntimeDeleteObservation(observation WorkspaceRuntimeDeleteObservation, workspaceID string) bool {
+	if observation.SchemaVersion != WorkspaceRuntimeDeleteObservationSchemaVersion || observation.WorkspaceID != workspaceID {
+		return false
+	}
+	switch observation.State {
+	case WorkspaceOwnerObservationAbsent:
+		if len(observation.Residuals) != 0 {
+			return false
+		}
+	case WorkspaceRuntimeDeleteObservationPresent:
+		if len(observation.Residuals) == 0 {
+			return false
+		}
+	case WorkspaceOwnerObservationPending, WorkspaceOwnerObservationConflict, WorkspaceOwnerObservationError:
+		if len(observation.Residuals) != 0 {
+			return false
+		}
+	default:
+		return false
+	}
+	for index, residual := range observation.Residuals {
+		if strings.TrimSpace(residual.Kind) == "" || strings.TrimSpace(residual.Name) == "" {
+			return false
+		}
+		if index > 0 {
+			previous := observation.Residuals[index-1]
+			if previous.Kind > residual.Kind || previous.Kind == residual.Kind && previous.Name >= residual.Name {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (c *fabricHTTPClient) ProviderFactsBatch(ctx context.Context, input ProviderFactsBatchInput) (ProviderFactsBatch, error) {

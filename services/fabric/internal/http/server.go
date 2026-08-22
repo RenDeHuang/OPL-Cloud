@@ -477,6 +477,10 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		observation := service.ObserveWorkspaceRuntime(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
 		writeJSON(w, http.StatusOK, observation)
 	})
+	mux.HandleFunc("GET /fabric/workspace-runtimes/{workspaceId}/delete-observation", func(w http.ResponseWriter, r *http.Request) {
+		observation := service.ObserveWorkspaceRuntimeDelete(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
+		writeJSON(w, http.StatusOK, observation)
+	})
 	mux.HandleFunc("POST /fabric/workspace-runtimes/{workspaceId}/credentials/reveal", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			AccountID   string `json:"accountId"`

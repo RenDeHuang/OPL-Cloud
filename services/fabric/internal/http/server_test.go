@@ -45,6 +45,8 @@ type workspaceOwnerObservationHTTPProvider struct {
 	runtimeErr    error
 	secretBinding fabric.WorkspaceRuntimeGatewaySecretBinding
 	secretErr     error
+	delete        fabric.WorkspaceRuntimeDeleteObservation
+	deleteErr     error
 }
 
 func (p workspaceOwnerObservationHTTPProvider) WorkspaceRuntimeStatus(_ context.Context, _ string) (fabric.WorkspaceRuntime, error) {
@@ -53,6 +55,10 @@ func (p workspaceOwnerObservationHTTPProvider) WorkspaceRuntimeStatus(_ context.
 
 func (p workspaceOwnerObservationHTTPProvider) WorkspaceRuntimeGatewaySecret(_ context.Context, _ string) (fabric.WorkspaceRuntimeGatewaySecretBinding, error) {
 	return p.secretBinding, p.secretErr
+}
+
+func (p workspaceOwnerObservationHTTPProvider) ObserveWorkspaceRuntimeDelete(_ context.Context, _ string) (fabric.WorkspaceRuntimeDeleteObservation, error) {
+	return p.delete, p.deleteErr
 }
 
 func (p workspaceOwnerObservationHTTPProvider) BindWorkspaceRuntimeGatewaySecret(_ context.Context, input fabric.WorkspaceRuntimeGatewaySecretInput) (fabric.WorkspaceRuntimeGatewaySecretBinding, error) {
@@ -1114,6 +1120,14 @@ func TestServerReturnsTypedWorkspaceOwnerObservations(t *testing.T) {
 		secretBinding: fabric.WorkspaceRuntimeGatewaySecretBinding{
 			WorkspaceID: "workspace-alpha", WorkspaceAPIKeyID: 19, SecretRef: "opl-gateway-a0ba8c07d0462e6b", Fingerprint: "sha256:alpha", Bound: true,
 		},
+		delete: fabric.WorkspaceRuntimeDeleteObservation{
+			SchemaVersion: fabric.WorkspaceRuntimeDeleteObservationSchemaVersion,
+			State:         fabric.WorkspaceRuntimeDeleteObservationPresent,
+			WorkspaceID:   "workspace-alpha",
+			Residuals: []fabric.WorkspaceRuntimeDeleteResidual{
+				{Kind: "NetworkPolicy", Name: "runtime-alpha"},
+			},
+		},
 	}
 	server := newTestServer(fabric.NewService(provider), "internal-secret")
 	for _, testCase := range []struct {
@@ -1137,6 +1151,16 @@ func TestServerReturnsTypedWorkspaceOwnerObservations(t *testing.T) {
 				var observation fabric.WorkspaceRuntimeGatewaySecretObservation
 				if err := decoder.Decode(&observation); err != nil || observation.Binding == nil || observation.Binding.WorkspaceAPIKeyID != 19 {
 					t.Fatalf("secret observation=%#v err=%v", observation, err)
+				}
+				return observation.State, observation.SchemaVersion, observation.WorkspaceID
+			},
+		},
+		{
+			path: "/fabric/workspace-runtimes/workspace-alpha/delete-observation", wantState: fabric.WorkspaceRuntimeDeleteObservationPresent,
+			decode: func(decoder *json.Decoder) (string, int, string) {
+				var observation fabric.WorkspaceRuntimeDeleteObservation
+				if err := decoder.Decode(&observation); err != nil || len(observation.Residuals) != 1 || observation.Residuals[0].Kind != "NetworkPolicy" {
+					t.Fatalf("delete observation=%#v err=%v", observation, err)
 				}
 				return observation.State, observation.SchemaVersion, observation.WorkspaceID
 			},

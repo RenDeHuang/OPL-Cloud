@@ -484,6 +484,71 @@ func (s *Service) ObserveWorkspaceRuntimeGatewaySecret(ctx context.Context, work
 	return workspaceRuntimeGatewaySecretOwnerObservation(workspaceID, binding, err)
 }
 
+type workspaceRuntimeDeleteObservationProvider interface {
+	ObserveWorkspaceRuntimeDelete(context.Context, string) (WorkspaceRuntimeDeleteObservation, error)
+}
+
+func (s *Service) ObserveWorkspaceRuntimeDelete(ctx context.Context, workspaceID string) WorkspaceRuntimeDeleteObservation {
+	observation := WorkspaceRuntimeDeleteObservation{
+		SchemaVersion: WorkspaceRuntimeDeleteObservationSchemaVersion,
+		State:         WorkspaceOwnerObservationError,
+		WorkspaceID:   strings.TrimSpace(workspaceID),
+	}
+	if observation.WorkspaceID == "" {
+		return observation
+	}
+	if provider, ok := s.provider.(workspaceRuntimeDeleteObservationProvider); ok {
+		result, err := provider.ObserveWorkspaceRuntimeDelete(ctx, observation.WorkspaceID)
+		if err != nil {
+			if errors.Is(err, ErrLaunchStageBindingConflict) {
+				observation.State = WorkspaceOwnerObservationConflict
+			}
+			return observation
+		}
+		if !validWorkspaceRuntimeDeleteObservation(result, observation.WorkspaceID) {
+			return observation
+		}
+		return result
+	}
+	return observation
+}
+
+func validWorkspaceRuntimeDeleteObservation(observation WorkspaceRuntimeDeleteObservation, workspaceID string) bool {
+	if observation.SchemaVersion != WorkspaceRuntimeDeleteObservationSchemaVersion || observation.WorkspaceID != workspaceID {
+		return false
+	}
+	switch observation.State {
+	case WorkspaceOwnerObservationAbsent:
+		return len(observation.Residuals) == 0
+	case WorkspaceRuntimeDeleteObservationPresent:
+		if len(observation.Residuals) == 0 {
+			return false
+		}
+	case WorkspaceOwnerObservationPending, WorkspaceOwnerObservationConflict, WorkspaceOwnerObservationError:
+		return len(observation.Residuals) == 0
+	default:
+		return false
+	}
+	seen := map[string]struct{}{}
+	for index, residual := range observation.Residuals {
+		if strings.TrimSpace(residual.Kind) == "" || strings.TrimSpace(residual.Name) == "" {
+			return false
+		}
+		key := residual.Kind + "\x00" + residual.Name
+		if _, exists := seen[key]; exists {
+			return false
+		}
+		seen[key] = struct{}{}
+		if index > 0 {
+			previous := observation.Residuals[index-1]
+			if previous.Kind > residual.Kind || previous.Kind == residual.Kind && previous.Name >= residual.Name {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (s *Service) WorkspaceRuntimeCredentials(ctx context.Context, accountID, workspaceID string) (WorkspaceRuntime, error) {
 	accountID = strings.TrimSpace(accountID)
 	runtime, owner, err := s.workspaceRuntimeStatus(ctx, workspaceID)

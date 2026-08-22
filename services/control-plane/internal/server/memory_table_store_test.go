@@ -641,7 +641,8 @@ func (s *memoryTableStore) ClaimWorkspaceLaunchReconcile(_ context.Context, clai
 func (s *memoryTableStore) PersistWorkspaceLaunchReconcile(_ context.Context, update workspaceLaunchReconcileCAS) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := decodeWorkspaceLaunchReconcileOperation(update.DesiredOperation); err != nil {
+	desired, err := decodeWorkspaceLaunchReconcileOperation(update.DesiredOperation)
+	if err != nil {
 		return errWorkspaceLaunchCASConflict
 	}
 	for i, row := range s.runtimeOps {
@@ -651,10 +652,43 @@ func (s *memoryTableStore) PersistWorkspaceLaunchReconcile(_ context.Context, up
 		if stringValue(row["result"]) != update.ExpectedOperationResult || !workspaceLaunchReconcileIdentityMatches(row, update.DesiredOperation) {
 			return errWorkspaceLaunchCASConflict
 		}
+		if update.WorkspaceReceiptProjection != nil {
+			projection := update.WorkspaceReceiptProjection
+			if projection.AccountID != desired.stringFact("accountId") || projection.OwnerUserID != desired.stringFact("ownerUserId") ||
+				projection.WorkspaceID != desired.stringFact("workspaceId") || projection.ReceiptID != desired.stringFact("receiptId") || desired.Stage != "succeeded" || desired.Status != "succeeded" {
+				return errWorkspaceLaunchCASConflict
+			}
+			if err := applyWorkspaceLaunchReceiptProjection(s.workspaces, update.WorkspaceReceiptProjection); err != nil {
+				return err
+			}
+		}
 		s.runtimeOps[i] = cloneMap(update.DesiredOperation)
 		return nil
 	}
 	return errWorkspaceLaunchCASConflict
+}
+
+func applyWorkspaceLaunchReceiptProjection(workspaces controlPlaneRecordSet, projection *workspaceLaunchReceiptProjection) error {
+	if projection == nil || projection.AccountID == "" || projection.OwnerUserID == "" || projection.WorkspaceID == "" || projection.ReceiptID == "" {
+		return errWorkspaceLaunchCASConflict
+	}
+	workspace := workspaces[projection.WorkspaceID]
+	if workspace == nil || firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) != projection.AccountID ||
+		stringValue(workspace["ownerUserId"]) != projection.OwnerUserID || stringValue(workspace["id"]) != projection.WorkspaceID {
+		return errWorkspaceLaunchCASConflict
+	}
+	existing := stringValue(workspace["purchaseReceiptId"])
+	if existing != "" && existing != projection.ReceiptID {
+		return errIdempotencyConflict
+	}
+	if existing == projection.ReceiptID {
+		return nil
+	}
+	updated := cloneMap(workspace)
+	updated["purchaseReceiptId"] = projection.ReceiptID
+	updated["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+	workspaces[projection.WorkspaceID] = updated
+	return nil
 }
 
 func (s *memoryTableStore) ApplyWorkspaceLaunchCanonicalFactRepair(_ context.Context, update workspaceLaunchCanonicalFactRepairCAS) error {

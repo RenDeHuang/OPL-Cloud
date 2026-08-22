@@ -435,6 +435,10 @@ func TestFabricHTTPClientReadsTypedWorkspaceOwnerObservations(t *testing.T) {
 				SchemaVersion: WorkspaceOwnerObservationSchemaVersion, State: WorkspaceOwnerObservationReady, WorkspaceID: "ws-alpha",
 				Binding: &WorkspaceRuntimeGatewaySecretBinding{WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, SecretRef: "opl-gateway-ws-alpha", Fingerprint: "sha256:alpha", Bound: true},
 			})
+		case "/fabric/workspace-runtimes/ws-alpha/delete-observation":
+			_ = json.NewEncoder(w).Encode(WorkspaceRuntimeDeleteObservation{
+				SchemaVersion: WorkspaceRuntimeDeleteObservationSchemaVersion, State: WorkspaceOwnerObservationAbsent, WorkspaceID: "ws-alpha",
+			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -453,9 +457,14 @@ func TestFabricHTTPClientReadsTypedWorkspaceOwnerObservations(t *testing.T) {
 	if err != nil || secret.SchemaVersion != WorkspaceOwnerObservationSchemaVersion || secret.State != WorkspaceOwnerObservationReady || secret.WorkspaceID != "ws-alpha" || secret.Binding == nil || secret.Binding.WorkspaceAPIKeyID != 19 {
 		t.Fatalf("secret observation=%#v err=%v", secret, err)
 	}
+	residuals, err := client.ObserveWorkspaceRuntimeDelete(context.Background(), "ws-alpha")
+	if err != nil || residuals.SchemaVersion != WorkspaceRuntimeDeleteObservationSchemaVersion || residuals.State != WorkspaceOwnerObservationAbsent || residuals.WorkspaceID != "ws-alpha" || len(residuals.Residuals) != 0 {
+		t.Fatalf("delete observation=%#v err=%v", residuals, err)
+	}
 	want := []string{
 		"GET /fabric/workspace-runtimes/ws-alpha/observation ",
 		"GET /fabric/workspace-runtimes/ws-alpha/gateway-secret/observation ",
+		"GET /fabric/workspace-runtimes/ws-alpha/delete-observation ",
 	}
 	if strings.Join(requests, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("observation requests=%#v want=%#v", requests, want)
@@ -496,6 +505,40 @@ func TestFabricHTTPClientRejectsInconsistentWorkspaceRuntimeObservations(t *test
 		t.Run(testCase.name, func(t *testing.T) {
 			if validWorkspaceRuntimeObservation(testCase.observation, workspaceID) {
 				t.Fatalf("accepted inconsistent observation=%#v", testCase.observation)
+			}
+		})
+	}
+}
+
+func TestFabricHTTPClientRejectsInconsistentWorkspaceRuntimeDeleteObservations(t *testing.T) {
+	workspaceID := "ws-alpha"
+	for _, testCase := range []struct {
+		name        string
+		observation WorkspaceRuntimeDeleteObservation
+	}{
+		{
+			name:        "present without residual",
+			observation: WorkspaceRuntimeDeleteObservation{SchemaVersion: 1, State: WorkspaceRuntimeDeleteObservationPresent, WorkspaceID: workspaceID},
+		},
+		{
+			name: "absent with residual",
+			observation: WorkspaceRuntimeDeleteObservation{SchemaVersion: 1, State: WorkspaceOwnerObservationAbsent, WorkspaceID: workspaceID,
+				Residuals: []WorkspaceRuntimeDeleteResidual{{Kind: "Service", Name: "runtime-alpha"}}},
+		},
+		{
+			name: "residuals not sorted",
+			observation: WorkspaceRuntimeDeleteObservation{SchemaVersion: 1, State: WorkspaceRuntimeDeleteObservationPresent, WorkspaceID: workspaceID,
+				Residuals: []WorkspaceRuntimeDeleteResidual{{Kind: "Service", Name: "runtime-alpha"}, {Kind: "Deployment", Name: "runtime-alpha"}}},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(testCase.observation)
+			}))
+			defer upstream.Close()
+			client := NewFabricHTTPClientWithCapability(upstream.URL, "internal-secret", "", upstream.Client()).(FabricWorkspaceDeleteObservationClient)
+			if _, err := client.ObserveWorkspaceRuntimeDelete(context.Background(), workspaceID); err == nil {
+				t.Fatalf("accepted invalid observation=%#v", testCase.observation)
 			}
 		})
 	}

@@ -870,7 +870,8 @@ func billingReconciliationFromClient(ctx context.Context, client *controlplaneen
 }
 
 func (s *postgresEntStateStore) PersistWorkspaceLaunchReconcile(ctx context.Context, update workspaceLaunchReconcileCAS) error {
-	if _, err := decodeWorkspaceLaunchReconcileOperation(update.DesiredOperation); err != nil {
+	desired, err := decodeWorkspaceLaunchReconcileOperation(update.DesiredOperation)
+	if err != nil {
 		return errWorkspaceLaunchCASConflict
 	}
 	tx, err := s.client.Tx(ctx)
@@ -879,6 +880,26 @@ func (s *postgresEntStateStore) PersistWorkspaceLaunchReconcile(ctx context.Cont
 	}
 	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
+	var projectedWorkspaceRow map[string]any
+	if update.WorkspaceReceiptProjection != nil {
+		projection := update.WorkspaceReceiptProjection
+		if projection.AccountID != desired.stringFact("accountId") || projection.OwnerUserID != desired.stringFact("ownerUserId") ||
+			projection.WorkspaceID != desired.stringFact("workspaceId") || projection.ReceiptID != desired.stringFact("receiptId") || desired.Stage != "succeeded" || desired.Status != "succeeded" {
+			return errWorkspaceLaunchCASConflict
+		}
+		workspaceEntity, workspaceErr := client.Workspace.Query().Where(workspace.IDEQ(projection.WorkspaceID), lockRowForUpdate).Only(ctx)
+		if controlplaneent.IsNotFound(workspaceErr) {
+			return errWorkspaceLaunchCASConflict
+		}
+		if workspaceErr != nil {
+			return workspaceErr
+		}
+		projectedWorkspaceRow = recordFromEnt(workspaceEntity, workspaceEntFields)
+		if firstNonEmpty(stringValue(projectedWorkspaceRow["accountId"]), stringValue(projectedWorkspaceRow["ownerAccountId"])) != projection.AccountID ||
+			stringValue(projectedWorkspaceRow["ownerUserId"]) != projection.OwnerUserID || stringValue(projectedWorkspaceRow["id"]) != projection.WorkspaceID {
+			return errWorkspaceLaunchCASConflict
+		}
+	}
 	entity, err := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(update.OperationID), lockRowForUpdate).Only(ctx)
 	if err != nil {
 		if controlplaneent.IsNotFound(err) {
@@ -889,6 +910,19 @@ func (s *postgresEntStateStore) PersistWorkspaceLaunchReconcile(ctx context.Cont
 	current := recordFromEnt(entity, runtimeOpEntFields)
 	if stringValue(current["result"]) != update.ExpectedOperationResult || !workspaceLaunchReconcileIdentityMatches(current, update.DesiredOperation) {
 		return errWorkspaceLaunchCASConflict
+	}
+	if update.WorkspaceReceiptProjection != nil {
+		projection := update.WorkspaceReceiptProjection
+		existingReceiptID := stringValue(projectedWorkspaceRow["purchaseReceiptId"])
+		if existingReceiptID != "" && existingReceiptID != projection.ReceiptID {
+			return errIdempotencyConflict
+		}
+		if existingReceiptID == "" {
+			workspaceUpdate := client.Workspace.UpdateOneID(projection.WorkspaceID).SetPurchaseReceiptID(projection.ReceiptID).SetUpdatedAt(time.Now().UTC())
+			if err := execCreate(ctx, workspaceUpdate); err != nil {
+				return err
+			}
+		}
 	}
 	builder := client.RuntimeOperation.UpdateOneID(update.OperationID)
 	setRecordFieldsWithEmptyText(builder, update.DesiredOperation, runtimeOpEntFields, true)

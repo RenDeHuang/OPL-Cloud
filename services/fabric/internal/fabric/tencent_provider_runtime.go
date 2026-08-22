@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -129,6 +130,61 @@ func (p *TencentProvider) DestroyWorkspaceRuntime(ctx context.Context, workspace
 		}
 	}
 	return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "destroyed", ServiceName: serviceName}, nil
+}
+
+func (p *TencentProvider) ObserveWorkspaceRuntimeDelete(ctx context.Context, workspaceID string) (WorkspaceRuntimeDeleteObservation, error) {
+	observation := WorkspaceRuntimeDeleteObservation{
+		SchemaVersion: WorkspaceRuntimeDeleteObservationSchemaVersion,
+		State:         WorkspaceOwnerObservationError,
+		WorkspaceID:   strings.TrimSpace(workspaceID),
+	}
+	if observation.WorkspaceID == "" {
+		return observation, nil
+	}
+	raw, err := p.callKubectl(ctx, []string{"get", "deployment,service,networkpolicy,secret", "-l", "oplcloud.cn/workspace-id=" + observation.WorkspaceID, "-o", "json"}, nil, protectedresource.Target{})
+	if err != nil {
+		return observation, err
+	}
+	items, err := strictKubectlItems(raw)
+	if err != nil {
+		return observation, err
+	}
+	residuals, err := workspaceRuntimeDeleteResidualsFromItems(items, observation.WorkspaceID)
+	if err != nil {
+		return observation, err
+	}
+	observation.Residuals = residuals
+	if len(residuals) == 0 {
+		observation.State = WorkspaceOwnerObservationAbsent
+	} else {
+		observation.State = WorkspaceRuntimeDeleteObservationPresent
+	}
+	return observation, nil
+}
+
+func workspaceRuntimeDeleteResidualsFromItems(items []any, workspaceID string) ([]WorkspaceRuntimeDeleteResidual, error) {
+	seenKinds := map[string]bool{}
+	residuals := make([]WorkspaceRuntimeDeleteResidual, 0)
+	for _, item := range items {
+		resource, ok := item.(map[string]any)
+		if !ok || stringValue(nested(resource, "metadata", "labels", "oplcloud.cn/workspace-id")) != workspaceID {
+			continue
+		}
+		kind := stringValue(resource["kind"])
+		name := stringValue(nested(resource, "metadata", "name"))
+		if kind == "" || name == "" || seenKinds[kind] {
+			return nil, ErrLaunchStageBindingConflict
+		}
+		seenKinds[kind] = true
+		residuals = append(residuals, WorkspaceRuntimeDeleteResidual{Kind: kind, Name: name})
+	}
+	sort.Slice(residuals, func(i, j int) bool {
+		if residuals[i].Kind == residuals[j].Kind {
+			return residuals[i].Name < residuals[j].Name
+		}
+		return residuals[i].Kind < residuals[j].Kind
+	})
+	return residuals, nil
 }
 
 func (p *TencentProvider) workspaceRuntimeResourceNameForDestroy(ctx context.Context, workspaceID string) (string, error) {
