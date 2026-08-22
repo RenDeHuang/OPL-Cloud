@@ -909,18 +909,6 @@ func (s *postgresEntStateStore) ApplyWorkspaceLaunchCanonicalFactRepair(ctx cont
 	if auditID == "" {
 		return errIdempotencyConflict
 	}
-	existingAudit, auditErr := client.AdminAuditEvent.Query().Where(adminauditevent.IDEQ(auditID), lockRowForUpdate).Only(ctx)
-	if auditErr == nil {
-		entity, rowErr := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(update.OperationID), lockRowForUpdate).Only(ctx)
-		if rowErr != nil || stringValue(recordFromEnt(entity, runtimeOpEntFields)["result"]) != stringValue(update.DesiredOperation["result"]) ||
-			!workspaceLaunchCanonicalFactRepairAuditMatches(recordFromEnt(existingAudit, auditEntFields), update.AuditEvent) {
-			return errIdempotencyConflict
-		}
-		return tx.Commit()
-	}
-	if !controlplaneent.IsNotFound(auditErr) {
-		return auditErr
-	}
 	entity, err := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(update.OperationID), lockRowForUpdate).Only(ctx)
 	if err != nil {
 		if controlplaneent.IsNotFound(err) {
@@ -929,6 +917,17 @@ func (s *postgresEntStateStore) ApplyWorkspaceLaunchCanonicalFactRepair(ctx cont
 		return err
 	}
 	current := recordFromEnt(entity, runtimeOpEntFields)
+	existingAudit, auditErr := client.AdminAuditEvent.Query().Where(adminauditevent.IDEQ(auditID), lockRowForUpdate).Only(ctx)
+	if auditErr == nil {
+		if stringValue(current["result"]) != stringValue(update.DesiredOperation["result"]) ||
+			!workspaceLaunchCanonicalFactRepairAuditMatches(recordFromEnt(existingAudit, auditEntFields), update.AuditEvent) {
+			return errIdempotencyConflict
+		}
+		return tx.Commit()
+	}
+	if !controlplaneent.IsNotFound(auditErr) {
+		return auditErr
+	}
 	if err := validateWorkspaceLaunchCanonicalFactRepairCAS(update, current); err != nil {
 		return err
 	}
