@@ -289,7 +289,8 @@ provider-specific mechanics do not add CPU, memory, or disk HTTP routes.
 
 ## Launch Boundary Integration
 
-Fabric exposes `/fabric/workspace-launches/preflight`,
+Fabric exposes `/fabric/workspace-launches/preflight`, the persisted binding
+readback `/fabric/workspace-launches/preflight/read`,
 `/fabric/workspace-launches/stages/read`, and
 `/fabric/workspace-launches/stages/ensure`. The stage DTO contains only the
 provider-neutral binding and resource refs used by the real Control Plane caller.
@@ -299,6 +300,13 @@ readback never scans operation listings or reconstructs Launch ownership from
 suffixes or provider tags. Both owners consume the same focused golden vectors,
 and the normal Launch/Resume caller is integrated. This closes the typed boundary
 slice but not the full Console-to-local-Workspace P0 vertical.
+
+The preflight readback accepts only one opaque binding reference, reuses the
+strict persisted-preflight decoder, and returns the verified launch identity
+and `specDigest` without the canonical provider plan. It is service-authenticated
+but has no mutation capability and does not call a provider. Control Plane uses
+it only for the narrow operator preview that repairs a schema-3 operation whose
+sole missing canonical fact is `specDigest`.
 
 The current recovery row keeps `Max=1` and does not reset `Attempted`. An
 operator may CAS-persist one exact-idempotency replay budget plus a finite typed

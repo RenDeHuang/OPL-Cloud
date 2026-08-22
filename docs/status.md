@@ -32,6 +32,14 @@ is selected and configured by the medopl instance, not by the portable product.
 - Workspace Launch persists one Control Plane operation and coordinates Key,
   debit, Fabric resource stages, activation, and one purchase Receipt. Unknown
   external results enter manual review and resume through the same operation.
+- Candidate A implements a narrow audited repair for the historical schema-3
+  Launch defect whose only missing canonical fact is `specDigest`. Fabric
+  strictly reads the persisted preflight binding; Control Plane previews the
+  exact two-field semantic change and atomically writes only the repaired
+  operation result plus one audit event under CAS and idempotency protection.
+  Local focused and full PostgreSQL gates pass. No production repair has been
+  executed, and the repair intentionally preserves `stage=debit` and
+  `status=manual_review`; business-state convergence remains separate work.
 - Workspace Delete is permanent under the current contract. It removes the
   owned runtime/resource path, performs no refund or wallet mutation, and writes
   `workspace.deleted.v1` after authoritative cleanup.

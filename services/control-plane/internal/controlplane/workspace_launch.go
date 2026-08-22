@@ -15,6 +15,14 @@ func (s *Service) PreflightWorkspaceLaunch(ctx context.Context, input clients.Wo
 	return client.PreflightWorkspaceLaunch(ctx, input)
 }
 
+func (s *Service) ReadWorkspaceLaunchPreflight(ctx context.Context, input clients.WorkspaceLaunchPreflightReadInput) (clients.WorkspaceLaunchPreflightBinding, error) {
+	client, ok := s.fabric.(clients.FabricWorkspaceLaunchPreflightReader)
+	if !ok {
+		return clients.WorkspaceLaunchPreflightBinding{}, errors.New("fabric_workspace_launch_preflight_read_unavailable")
+	}
+	return client.ReadWorkspaceLaunchPreflight(ctx, input)
+}
+
 func (s *Service) ReadWorkspaceLaunchStage(ctx context.Context, input clients.WorkspaceLaunchStageInput) (clients.WorkspaceLaunchStageResult, error) {
 	client, ok := s.fabric.(clients.FabricWorkspaceLaunchClient)
 	if !ok {

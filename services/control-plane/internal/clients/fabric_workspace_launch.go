@@ -13,6 +13,10 @@ type FabricWorkspaceLaunchClient interface {
 	EnsureWorkspaceLaunchStage(context.Context, WorkspaceLaunchStageInput) (WorkspaceLaunchStageResult, error)
 }
 
+type FabricWorkspaceLaunchPreflightReader interface {
+	ReadWorkspaceLaunchPreflight(context.Context, WorkspaceLaunchPreflightReadInput) (WorkspaceLaunchPreflightBinding, error)
+}
+
 type WorkspaceLaunchPreflightInput struct {
 	SchemaVersion        int    `json:"schemaVersion"`
 	LaunchOperationID    string `json:"launchOperationId"`
@@ -35,6 +39,24 @@ type WorkspaceLaunchPreflight struct {
 	// uses the provider-specific identity explicitly.
 	BindingRef string `json:"providerBindingRef"`
 	SpecDigest string `json:"specDigest"`
+}
+
+type WorkspaceLaunchPreflightReadInput struct {
+	ProviderBindingRef string `json:"providerBindingRef"`
+}
+
+type WorkspaceLaunchPreflightBinding struct {
+	SchemaVersion        int    `json:"schemaVersion"`
+	LaunchOperationID    string `json:"launchOperationId"`
+	AccountID            string `json:"accountId"`
+	WorkspaceID          string `json:"workspaceId"`
+	PackageID            string `json:"packageId"`
+	SizeGB               int    `json:"sizeGb"`
+	WorkspaceImageDigest string `json:"workspaceImageDigest"`
+	RequestHash          string `json:"requestHash"`
+	ProviderProfileRef   string `json:"providerProfileRef"`
+	ProviderBindingRef   string `json:"providerBindingRef"`
+	SpecDigest           string `json:"specDigest"`
 }
 
 type WorkspaceLaunchStageBinding struct {
@@ -99,6 +121,12 @@ type WorkspaceLaunchStageResult struct {
 func (c *fabricHTTPClient) PreflightWorkspaceLaunch(ctx context.Context, input WorkspaceLaunchPreflightInput) (WorkspaceLaunchPreflight, error) {
 	var result WorkspaceLaunchPreflight
 	err := c.post(ctx, "/fabric/workspace-launches/preflight", input, "", &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) ReadWorkspaceLaunchPreflight(ctx context.Context, input WorkspaceLaunchPreflightReadInput) (WorkspaceLaunchPreflightBinding, error) {
+	var result WorkspaceLaunchPreflightBinding
+	err := c.post(ctx, "/fabric/workspace-launches/preflight/read", input, "", &result)
 	return result, err
 }
 

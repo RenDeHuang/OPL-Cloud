@@ -657,6 +657,36 @@ func (s *memoryTableStore) PersistWorkspaceLaunchReconcile(_ context.Context, up
 	return errWorkspaceLaunchCASConflict
 }
 
+func (s *memoryTableStore) ApplyWorkspaceLaunchCanonicalFactRepair(_ context.Context, update workspaceLaunchCanonicalFactRepairCAS) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	auditID := stringValue(update.AuditEvent["id"])
+	for _, audit := range s.auditEvents {
+		if stringValue(audit["id"]) == auditID {
+			for _, row := range s.runtimeOps {
+				if stringValue(row["id"]) == update.OperationID && stringValue(row["result"]) == stringValue(update.DesiredOperation["result"]) && workspaceLaunchCanonicalFactRepairAuditMatches(audit, update.AuditEvent) {
+					return nil
+				}
+			}
+			return errIdempotencyConflict
+		}
+	}
+	for index, row := range s.runtimeOps {
+		if stringValue(row["id"]) != update.OperationID {
+			continue
+		}
+		if err := validateWorkspaceLaunchCanonicalFactRepairCAS(update, row); err != nil {
+			return err
+		}
+		repaired := cloneMap(row)
+		repaired["result"] = stringValue(update.DesiredOperation["result"])
+		s.runtimeOps[index] = repaired
+		s.auditEvents = append(s.auditEvents, cloneMap(update.AuditEvent))
+		return nil
+	}
+	return errWorkspaceLaunchCASConflict
+}
+
 func (s *memoryTableStore) ClaimWorkspaceRenewal(_ context.Context, claim workspaceRenewalClaimCAS) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

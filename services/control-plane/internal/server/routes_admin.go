@@ -26,6 +26,55 @@ const (
 )
 
 func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/canonical-facts-repair", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		if len(r.Header.Values("Idempotency-Key")) != 1 || !validBillingReviewOpaqueID(key) {
+			writeError(w, http.StatusBadRequest, errWorkspaceLaunchCanonicalFactRepairNotEligible.Error())
+			return
+		}
+		input := decodeJSON(r)
+		launchVersion, validVersion := positiveIntegerField(input, "launchVersion")
+		previewDigest, reason := strings.TrimSpace(stringValue(input["previewDigest"])), strings.TrimSpace(stringValue(input["reason"]))
+		if !validVersion || launchVersion > int64(^uint(0)>>1) || !workspaceLaunchRepairDigestPattern.MatchString(previewDigest) || reason == "" ||
+			!exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "previewDigest", "reason"}) {
+			writeError(w, http.StatusBadRequest, errWorkspaceLaunchCanonicalFactRepairNotEligible.Error())
+			return
+		}
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		audit := app.auditEvent(r, "workspace.launch.canonical_fact_repair", "workspace_launch", operationID, "", nil, nil, "succeeded")
+		row, found, err := app.tables.GetRuntimeOperation(r.Context(), operationID)
+		if err == nil && found {
+			if operation, decodeErr := decodeWorkspaceLaunchReconcileOperation(row); decodeErr == nil && operation.Version == int(launchVersion)+1 {
+				auditID := workspaceLaunchCanonicalFactRepairAuditID(operationID, key)
+				audits, auditErr := app.tables.ListAuditEvents(r.Context(), operation.stringFact("accountId"))
+				for _, existing := range audits {
+					if auditErr == nil && workspaceLaunchCanonicalFactRepairReplayMatches(operation, existing, audit, int(launchVersion), previewDigest, key, reason) {
+						writeJSON(w, http.StatusOK, workspaceLaunchCanonicalFactRepairApplyResponse(operation, auditID))
+						return
+					}
+				}
+			}
+		}
+		repaired, err := app.applyWorkspaceLaunchCanonicalFactRepair(r.Context(), service, operationID, int(launchVersion), previewDigest, key, reason, audit)
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, workspaceLaunchCanonicalFactRepairApplyResponse(repaired, workspaceLaunchCanonicalFactRepairAuditID(operationID, key)))
+	}))
+	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/canonical-facts-repair-preview", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		preview, err := app.previewWorkspaceLaunchCanonicalFactRepair(r.Context(), service, operationID)
+		if err != nil {
+			writeError(w, http.StatusConflict, errWorkspaceLaunchCanonicalFactRepairNotEligible.Error())
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, workspaceLaunchCanonicalFactRepairPreviewResponse(preview))
+	}))
 	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/repair-runtime", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		key, ok := requiredMutationKey(w, r)
 		if !ok {

@@ -44,6 +44,26 @@ type WorkspaceLaunchPreflight struct {
 	SpecDigest         string `json:"specDigest"`
 }
 
+type WorkspaceLaunchPreflightReadInput struct {
+	ProviderBindingRef string `json:"providerBindingRef"`
+}
+
+// WorkspaceLaunchPreflightBinding is the narrow, owner-authoritative identity
+// projection used to verify a persisted provider plan without exposing it.
+type WorkspaceLaunchPreflightBinding struct {
+	SchemaVersion        int    `json:"schemaVersion"`
+	LaunchOperationID    string `json:"launchOperationId"`
+	AccountID            string `json:"accountId"`
+	WorkspaceID          string `json:"workspaceId"`
+	PackageID            string `json:"packageId"`
+	SizeGB               int    `json:"sizeGb"`
+	WorkspaceImageDigest string `json:"workspaceImageDigest"`
+	RequestHash          string `json:"requestHash"`
+	ProviderProfileRef   string `json:"providerProfileRef"`
+	ProviderBindingRef   string `json:"providerBindingRef"`
+	SpecDigest           string `json:"specDigest"`
+}
+
 type workspaceLaunchPreflightAdmission struct {
 	SchemaVersion         int                           `json:"schemaVersion"`
 	Input                 WorkspaceLaunchPreflightInput `json:"input"`
@@ -253,6 +273,31 @@ func (s *Service) workspaceLaunchPreflight(ctx context.Context, ref string) (wor
 		return workspaceLaunchPreflightAdmission{}, ErrLaunchStageBindingConflict
 	}
 	return admission, nil
+}
+
+func (s *Service) ReadWorkspaceLaunchPreflight(ctx context.Context, input WorkspaceLaunchPreflightReadInput) (WorkspaceLaunchPreflightBinding, error) {
+	const prefix = "fabric-provider-binding:"
+	digest, found := strings.CutPrefix(input.ProviderBindingRef, prefix)
+	if !found || !validWorkspaceLaunchHash(digest) {
+		return WorkspaceLaunchPreflightBinding{}, ErrWorkspaceLaunchInputInvalid
+	}
+	admission, err := s.workspaceLaunchPreflight(ctx, input.ProviderBindingRef)
+	if err != nil {
+		return WorkspaceLaunchPreflightBinding{}, err
+	}
+	return WorkspaceLaunchPreflightBinding{
+		SchemaVersion:        WorkspaceLaunchFabricSchemaVersion,
+		LaunchOperationID:    admission.Input.LaunchOperationID,
+		AccountID:            admission.Input.AccountID,
+		WorkspaceID:          admission.Input.WorkspaceID,
+		PackageID:            admission.Input.PackageID,
+		SizeGB:               admission.Input.SizeGB,
+		WorkspaceImageDigest: admission.Input.WorkspaceImageDigest,
+		RequestHash:          admission.Input.RequestHash,
+		ProviderProfileRef:   admission.ProviderProfileRef,
+		ProviderBindingRef:   admission.ProviderBindingRef,
+		SpecDigest:           admission.SpecDigest,
+	}, nil
 }
 
 func (s *Service) validateWorkspaceLaunchStageInput(ctx context.Context, input WorkspaceLaunchStageInput) error {

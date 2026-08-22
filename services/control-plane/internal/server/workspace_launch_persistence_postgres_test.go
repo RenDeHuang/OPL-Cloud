@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -165,6 +166,48 @@ func TestPostgresWorkspaceLaunchClaimPersistAndActivate(t *testing.T) {
 	}
 	if len(computes) != 0 || len(storages) != 0 || len(attachments) != 0 {
 		t.Fatalf("activation copied Fabric truth: computes=%#v storages=%#v attachments=%#v", computes, storages, attachments)
+	}
+}
+
+func TestPostgresWorkspaceLaunchCanonicalFactRepairIsAtomicAndSingleWriter(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+	row := historicalWorkspaceLaunchMissingSpecDigest(t)
+	account, owner := provisionedAccountRowsFor("acct-repair", "usr-repair", "repair-pg@example.com", 41)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner))
+	mustStore(t, store.SaveRuntimeOperation(ctx, row))
+	preview, err := buildWorkspaceLaunchCanonicalFactRepairPreview(row, strings.Repeat("d", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := workspaceLaunchCanonicalFactRepairCAS{
+		OperationID: preview.Classification.OperationID, ExpectedOperationResult: preview.Classification.PersistedResult,
+		DesiredOperation: preview.DesiredOperation, AuditEvent: canonicalFactRepairAudit(preview, "repair-pg"),
+	}
+	row["providerRequestId"] = "request-after-preview"
+	mustStore(t, store.SaveRuntimeOperation(ctx, row))
+	results := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	start := make(chan struct{})
+	for range 2 {
+		go func() {
+			ready.Done()
+			<-start
+			results <- store.ApplyWorkspaceLaunchCanonicalFactRepair(ctx, update)
+		}()
+	}
+	ready.Wait()
+	close(start)
+	first, second := <-results, <-results
+	if first != nil || second != nil {
+		t.Fatalf("idempotent concurrent results=%v/%v", first, second)
+	}
+	stored, found, readErr := store.GetRuntimeOperation(ctx, preview.Classification.OperationID)
+	operation, decodeErr := decodeWorkspaceLaunchReconcileOperation(stored)
+	audits, auditErr := store.ListAuditEvents(ctx, preview.Classification.AccountID)
+	if !found || readErr != nil || decodeErr != nil || operation.Version != 6 || stringValue(stored["providerRequestId"]) != "request-after-preview" || len(audits) != 1 || auditErr != nil {
+		t.Fatalf("operation=%#v audits=%#v errors=%v/%v/%v", operation, audits, readErr, decodeErr, auditErr)
 	}
 }
 
