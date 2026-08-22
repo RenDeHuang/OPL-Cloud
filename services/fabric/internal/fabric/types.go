@@ -416,6 +416,22 @@ type WorkspaceRuntimeGatewaySecretObservation struct {
 	Binding       *WorkspaceRuntimeGatewaySecretBinding `json:"binding,omitempty"`
 }
 
+const WorkspaceRuntimeDeleteObservationSchemaVersion = 1
+
+const WorkspaceRuntimeDeleteObservationPresent = "present"
+
+type WorkspaceRuntimeDeleteResidual struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
+type WorkspaceRuntimeDeleteObservation struct {
+	SchemaVersion int                              `json:"schemaVersion"`
+	State         string                           `json:"state"`
+	WorkspaceID   string                           `json:"workspaceId"`
+	Residuals     []WorkspaceRuntimeDeleteResidual `json:"residuals,omitempty"`
+}
+
 type ProviderFactInput struct {
 	AccountID    string `json:"accountId"`
 	WorkspaceID  string `json:"workspaceId"`

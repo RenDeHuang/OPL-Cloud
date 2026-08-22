@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -954,6 +955,72 @@ func (p *LocalDockerProvider) WorkspaceRuntimeStatus(ctx context.Context, worksp
 		return WorkspaceRuntime{WorkspaceID: workspaceID}, ErrWorkspaceLaunchResourceAbsent
 	}
 	return result, nil
+}
+
+func (p *LocalDockerProvider) ObserveWorkspaceRuntimeDelete(ctx context.Context, workspaceID string) (WorkspaceRuntimeDeleteObservation, error) {
+	result := WorkspaceRuntimeDeleteObservation{
+		SchemaVersion: WorkspaceRuntimeDeleteObservationSchemaVersion,
+		State:         WorkspaceOwnerObservationError,
+		WorkspaceID:   strings.TrimSpace(workspaceID),
+	}
+	if result.WorkspaceID == "" {
+		return result, nil
+	}
+	err := p.withStorageQuotaLock(ctx, func() error {
+		container, exists, inspectErr := p.inspectContainer(ctx, localRuntimeName(result.WorkspaceID))
+		if inspectErr != nil {
+			return inspectErr
+		}
+		if exists {
+			runtime, runtimeErr := p.runtimeFromContainer(container)
+			labels := container.Config.Labels
+			if runtimeErr != nil || runtime.WorkspaceID != result.WorkspaceID || runtime.ID != localRuntimeID(result.WorkspaceID) ||
+				runtime.ServiceName != localRuntimeName(result.WorkspaceID) || labels["opl.fabric.provider"] != "local-docker" || labels["opl.fabric.kind"] != "runtime" {
+				return ErrLaunchStageBindingConflict
+			}
+			result.Residuals = append(result.Residuals, WorkspaceRuntimeDeleteResidual{Kind: "container", Name: container.Name})
+		}
+		secretRef := gatewaySecretName(result.WorkspaceID)
+		_, metadata, secretErr := p.readGatewaySecretFiles(secretRef)
+		if secretErr == nil {
+			if metadata.WorkspaceID != result.WorkspaceID || metadata.SecretRef != secretRef {
+				return ErrLaunchStageBindingConflict
+			}
+			result.Residuals = append(result.Residuals, WorkspaceRuntimeDeleteResidual{Kind: "secret", Name: secretRef})
+		} else if !errors.Is(secretErr, ErrWorkspaceLaunchResourceAbsent) {
+			return secretErr
+		}
+		root, rootErr := p.openStorageRoot()
+		if rootErr != nil {
+			return rootErr
+		}
+		reservation, reservationErr := readLocalDockerRuntimeReservation(root, localDockerRuntimeReservationName(localRuntimeID(result.WorkspaceID)))
+		closeErr := root.Close()
+		if reservationErr == nil {
+			if reservation.WorkspaceID != result.WorkspaceID || reservation.ResourceID != localRuntimeID(result.WorkspaceID) {
+				return ErrLaunchStageBindingConflict
+			}
+			result.Residuals = append(result.Residuals, WorkspaceRuntimeDeleteResidual{Kind: "reservation", Name: reservation.ResourceID})
+		} else if !errors.Is(reservationErr, ErrWorkspaceLaunchResourceAbsent) {
+			return firstNonNil(reservationErr, closeErr)
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		sort.Slice(result.Residuals, func(i, j int) bool {
+			if result.Residuals[i].Kind == result.Residuals[j].Kind {
+				return result.Residuals[i].Name < result.Residuals[j].Name
+			}
+			return result.Residuals[i].Kind < result.Residuals[j].Kind
+		})
+		if len(result.Residuals) == 0 {
+			result.State = WorkspaceOwnerObservationAbsent
+		} else {
+			result.State = WorkspaceRuntimeDeleteObservationPresent
+		}
+		return nil
+	})
+	return result, err
 }
 
 func runtimeCgroupLimitsFromReservation(reservation localDockerRuntimeReservation) (localDockerRuntimeCgroupLimits, bool) {
