@@ -216,6 +216,65 @@ func workspaceLaunchUnitCommand() workspaceLaunchReconcileCreate {
 	}
 }
 
+func TestWorkspaceLaunchDecoderClassifiesRejectedPersistedState(t *testing.T) {
+	valid, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	validRow, err := workspaceLaunchReconcileOperationRow(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		category string
+		mutate   func(map[string]any)
+	}{
+		{name: "invalid json", category: "invalid_json", mutate: func(row map[string]any) { row["result"] = "{" }},
+		{name: "schema mismatch", category: "schema_version_mismatch", mutate: func(row map[string]any) {
+			result := workspaceLaunchResultMap(t, row)
+			result["schemaVersion"] = 2
+			row["result"] = string(mustJSON(result))
+		}},
+		{name: "missing attempts", category: "missing_attempts", mutate: func(row map[string]any) {
+			result := workspaceLaunchResultMap(t, row)
+			delete(result, "attempts")
+			row["result"] = string(mustJSON(result))
+		}},
+		{name: "forbidden legacy field", category: "forbidden_legacy_fields", mutate: func(row map[string]any) {
+			result := workspaceLaunchResultMap(t, row)
+			result["phase"] = "debit_pending"
+			row["result"] = string(mustJSON(result))
+		}},
+		{name: "row identity mismatch", category: "row_identity_mismatch", mutate: func(row map[string]any) { row["accountId"] = "acct-other" }},
+		{name: "status stage mismatch", category: "status_stage_mismatch", mutate: func(row map[string]any) { row["status"] = "succeeded" }},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			row := cloneMap(validRow)
+			tc.mutate(row)
+			_, decodeErr := decodeWorkspaceLaunchReconcileOperation(row)
+			if !errors.Is(decodeErr, errInvalidWorkspaceLaunchOperation) {
+				t.Fatalf("decode error = %v", decodeErr)
+			}
+			if got := workspaceLaunchDecodeFailureCategory(decodeErr); got != tc.category {
+				t.Fatalf("category = %q, want %q", got, tc.category)
+			}
+		})
+	}
+}
+
+func workspaceLaunchResultMap(t *testing.T, row map[string]any) map[string]any {
+	t.Helper()
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stringValue(row["result"])), &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
 func workspaceLaunchManualReviewRow(t *testing.T) map[string]any {
 	t.Helper()
 	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())

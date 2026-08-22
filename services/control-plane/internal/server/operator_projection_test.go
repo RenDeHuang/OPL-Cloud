@@ -921,6 +921,89 @@ func TestOperatorProjectionReadSurfaces(t *testing.T) {
 	}
 }
 
+func TestOperatorHealthProjectsRedactedWorkspaceLaunchDecodeDiagnosticsBesidePilot(t *testing.T) {
+	t.Setenv(controlledBasicPilotEnabledEnv, "1")
+	t.Setenv(controlledBasicPilotMaxInFlightEnv, "1")
+	store := newMemoryTableStore()
+	secretOperationID := "workspace-launch-secret-operation"
+	secretAccountID := "acct-secret-diagnostic"
+	secretWorkspaceID := "ws-secret-diagnostic"
+	result := map[string]any{
+		"schemaVersion":    2,
+		"phase":            "debit_pending",
+		"diagnosticSecret": "hidden-result-value",
+		"requestHash":      strings.Repeat("a", 64),
+		"accountId":        secretAccountID,
+		"workspaceId":      secretWorkspaceID,
+		"attempts": map[string]any{
+			"storage":          map[string]any{"attempted": 1, "confirmed": 0, "unknown": 1, "status": "unknown"},
+			"hiddenattemptkey": map[string]any{"status": "hiddenattemptstatus"},
+		},
+		"observations": map[string]any{
+			"storage":              map[string]any{"state": "unknown"},
+			"hiddenobservationkey": map[string]any{"state": "hiddenobservationstate"},
+		},
+	}
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), map[string]any{
+		"id": secretOperationID, "operationId": secretOperationID, "accountId": secretAccountID, "workspaceId": secretWorkspaceID,
+		"action": workspaceLaunchAction, "status": "hidden-operation-status", "result": string(mustJSON(result)),
+		"createdAt": "hidden-created-at", "updatedAt": "2026-08-12T00:01:00Z",
+	}))
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, newOperatorProjectionClient()), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodGet, "/api/operator/health", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("health status=%d body=%s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	for _, secret := range []string{
+		secretOperationID, secretAccountID, secretWorkspaceID, "hidden-result-value", "hidden-created-at",
+		"hidden-operation-status", "hiddenattemptkey", "hiddenattemptstatus", "hiddenobservationkey", "hiddenobservationstate",
+	} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("health leaked %q: %s", secret, body)
+		}
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	health := mapField(envelope, "data")
+	pilotEnvelope := mapField(health, "controlledBasicPilot")
+	pilot := mapField(pilotEnvelope, "data")
+	wantPilotKeys := []string{"accountEligibilityAuthority", "alerts", "availableCapacity", "configured", "disableRequired", "enabled", "failures", "inFlight", "manualReview", "maxInFlight", "stages"}
+	gotPilotKeys := make([]string, 0, len(pilot))
+	for key := range pilot {
+		gotPilotKeys = append(gotPilotKeys, key)
+	}
+	slices.Sort(gotPilotKeys)
+	if !slices.Equal(gotPilotKeys, wantPilotKeys) {
+		t.Fatalf("pilot keys=%#v", gotPilotKeys)
+	}
+	diagnosticEnvelope := mapField(health, "workspaceLaunchOperationDiagnostics")
+	diagnostic := mapField(diagnosticEnvelope, "data")
+	if diagnostic["schemaVersion"] != float64(1) || diagnostic["failedOperationCount"] != float64(1) {
+		t.Fatalf("diagnostic=%#v", diagnostic)
+	}
+	items := diagnostic["operations"].([]any)
+	item := items[0].(map[string]any)
+	if item["failureCategory"] != "schema_version_mismatch" || item["schemaVersion"] != float64(2) ||
+		item["attemptsKeyCount"] != float64(2) || item["observationsKeyCount"] != float64(2) || item["updatedAt"] != "2026-08-12T00:01:00Z" {
+		t.Fatalf("diagnostic item=%#v", item)
+	}
+	if _, exists := item["status"]; exists {
+		t.Fatalf("diagnostic included unknown status: %#v", item)
+	}
+	if _, exists := item["createdAt"]; exists {
+		t.Fatalf("diagnostic included invalid createdAt: %#v", item)
+	}
+	if digest := stringValue(item["operationIdentityDigest"]); !strings.HasPrefix(digest, "sha256:") || len(digest) != 71 {
+		t.Fatalf("identity digest=%q", digest)
+	}
+}
+
 func TestOperatorReconciliationOnlyProjectsBillingReviewFacts(t *testing.T) {
 	store := newMemoryTableStore()
 	for _, operation := range []map[string]any{
