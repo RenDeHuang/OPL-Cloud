@@ -1,0 +1,33 @@
+---
+title: "图 17：Tencent/TKE Candidate 到 Release 证据链"
+---
+flowchart LR
+    MAIN["Canonical main SHA<br/>Owner: Cloud repository owner<br/>职责: 固定精确 source revision/tree<br/>状态: SOURCE"]
+    BUILD["Build Portable Candidate<br/>Owner: Cloud Candidate owner<br/>职责: 构建 linux/amd64 + linux/arm64 index 与 checksum-bound bundle<br/>状态: SOURCE + BLOCKED<br/>Gap: PRODUCT-RELEASE-01<br/>Next Evidence: hosted current Candidate manifest"]
+    CANDIDATE["Immutable Candidate Identity<br/>Owner: Cloud Candidate manifest<br/>职责: 绑定 SHA、index digest、child digests、assets、workflow provenance<br/>状态: TARGET/SOURCE；尚无 current 双路径资格"]
+
+    LOCAL["Local-Docker Clean-host Qualification<br/>Owner: local installer + CP/Fabric/Ledger/Sub2API fixture<br/>职责: create/readback/WebUI/restart/Delete/final absence/zero wallet mutation/Receipt<br/>状态: LOCAL + BLOCKED（历史 runs 非 exact-current 全链）<br/>Gap: LOCAL-WORKSPACE-LIFECYCLE-01（P0）<br/>Next Evidence: exact-current Linux Candidate receipt"]
+    TKE["medopl Tencent/TKE Qualification<br/>Owner: opl-instance-medopl<br/>职责: 显式 Profile/domain/image、generic admission、normal purchase、owner readback<br/>状态: BLOCKED（旧 Candidate 证据不能提升 current）<br/>Gap: PORTABLE-INSTALL-01、INSTANCE-MEDOPL-01（P0）<br/>Next Evidence: same-Candidate qualification receipt"]
+    ROLLBACK["Executed Rollback + Re-verify<br/>Owner: opl-instance-medopl<br/>职责: 执行回滚并回读恢复后的 exact image/runtime/provider state<br/>状态: BLOCKED<br/>Gap: INSTANCE-MEDOPL-01<br/>Next Evidence: executed rollback receipt"]
+    VERIFIED["workspace_verified<br/>Owner: opl-instance-medopl<br/>职责: 绑定 authenticated WebUI、Ready Pod imageID、billing/provider readback<br/>状态: BLOCKED<br/>Gap: INSTANCE-MEDOPL-01<br/>Next Evidence: exact Candidate receipt field"]
+
+    GATE["Product Release Admission<br/>Owner: Cloud Release owner<br/>职责: 验证 Local + Instance receipts 指向同一 SHA/index digest<br/>状态: BLOCKED<br/>Gap: PRODUCT-RELEASE-01（P0）<br/>Next Evidence: 双回执合同校验通过"]
+    PROMOTE["Promote Existing Bytes<br/>Owner: allowlisted Cloud publisher<br/>职责: 不 rebuild，提升已验收 digest、bundle、attestation<br/>状态: BLOCKED（当前 formal workflow 仍 rebuild）<br/>Gap: PRODUCT-RELEASE-01<br/>Next Evidence: exact-byte promotion workflow readback"]
+    OUTPUT["Output（固定）<br/>Owner: OPL Cloud product owner<br/>职责: 发布同一已验收字节的 Formal Release<br/>状态: current successor BLOCKED<br/>历史事实: v0.1.7 RELEASED，但不证明 current main/TKE readiness"]
+
+    PROFILE["Instance-owned Inputs<br/>Owner: opl-instance-medopl<br/>职责: Provider Profile、domain、Workspace image、Secrets<br/>状态: BLOCKED<br/>Gap: PORTABLE-INSTALL-01<br/>Next Evidence: 缺失即 fail closed，无 medopl fallback"]
+    EVIDENCE["Evidence Rule<br/>Owner: Cloud architecture + Release + Instance owners<br/>职责: 限定 Tests/源码/Candidate/Instance/Release 的证据层级<br/>只有同一 immutable identity 可向上提升<br/>生产状态只能由 Instance owner runtime readback 声明"]
+
+    MAIN --> BUILD --> CANDIDATE
+    CANDIDATE --> LOCAL --> GATE
+    CANDIDATE --> TKE --> ROLLBACK --> VERIFIED --> GATE
+    PROFILE --> TKE
+    GATE --> PROMOTE --> OUTPUT
+    EVIDENCE -. "约束所有 Gate" .-> GATE
+
+    classDef source fill:#e9f7ef,stroke:#2f7d5c,color:#173b2d,stroke-width:2px;
+    classDef blocked fill:#fff4d6,stroke:#a67c00,color:#493b14,stroke-width:2px;
+    classDef rule fill:#e8f0fe,stroke:#3566a8,color:#172b4d,stroke-width:2px;
+    class MAIN source;
+    class BUILD,CANDIDATE,LOCAL,TKE,ROLLBACK,VERIFIED,GATE,PROMOTE,OUTPUT,PROFILE blocked;
+    class EVIDENCE rule;

@@ -1,0 +1,44 @@
+---
+title: "图 14：Tencent/TKE 产品链完成度与 Owner 总览"
+---
+flowchart TB
+    INPUT["Input（固定）<br/>Owner: Product owner / Customer<br/>职责: 定义客户需要 OPL App 云端产品的业务结果<br/>状态: TARGET"]
+
+    subgraph PRODUCT["Cloud 产品业务链"]
+        CONSOLE["Console<br/>Owner: apps/console-ui<br/>职责: 展示 Basic/Pro、按 server quote 校验余额、提交命令、轮询原 Operation<br/>状态: SOURCE<br/>Gap: 无当前一致性缺口<br/>Next Evidence: 同一 Candidate 的浏览器购买验收"]
+        CP["Control Plane<br/>Owner: services/control-plane<br/>职责: Session、报价/准入、Launch/Delete Saga、客户投影<br/>状态: SOURCE + BLOCKED<br/>Gap: WORKSPACE-PURCHASE-RECEIPT-PROJECTION-01（P1）<br/>Next Evidence: Workspace/Billing/Admin 同一 Ledger Receipt ref"]
+        SUB2["Identity / Wallet / Key / Usage<br/>Owner: Sub2API（外部权威）<br/>职责: 可花余额、扣款、Key、路由、Usage<br/>状态: SOURCE integration + BLOCKED<br/>Gap: INSTANCE-MEDOPL-01<br/>Next Evidence: TKE 正常购买后的余额、Key、Usage readback"]
+        FABRIC["Resource Fulfillment<br/>Owner: services/fabric<br/>职责: provider-neutral stage、资源身份、mutation/readback<br/>状态: SOURCE<br/>Gap: FABRIC-OPERATION-HISTORY-01（P2 verify）<br/>Next Evidence: current source sealed scan + TKE owner receipt"]
+        TENCENT["Tencent/TKE Adapter<br/>Owner: Fabric adapter；配置 Owner: opl-instance-medopl<br/>职责: CVM/TKE/CBS/Kubernetes ACL 与权威回读<br/>状态: SOURCE + BLOCKED<br/>Gap: PORTABLE-INSTALL-01、INSTANCE-MEDOPL-01<br/>Next Evidence: 显式 Profile/domain/image + same-Candidate TKE receipt"]
+        LEDGER["Receipt / Evidence / Reconciliation<br/>Owner: services/ledger<br/>职责: append-only Receipt、Evidence Index、对账事实<br/>状态: SOURCE<br/>Gap: INSTANCE-MEDOPL-01（缺 Instance receipt set）<br/>Next Evidence: purchase/delete/qualification refs 绑定同一 Candidate"]
+        WORKSPACE["在线 OPL Workspace<br/>Owner: Fabric 管 Runtime binding；OPL App 管工作台行为<br/>职责: 认证 WebUI、项目/文件/产物连续工作<br/>状态: SOURCE + BLOCKED<br/>Gap: INSTANCE-MEDOPL-01<br/>Next Evidence: authenticated session + Ready Pod imageID + workspace_verified"]
+    end
+
+    subgraph DELIVERY["实例与产品交付链"]
+        INSTANCE["medopl Tencent/TKE Qualification<br/>Owner: opl-instance-medopl<br/>职责: Profile、Secrets、部署、readback、执行回滚、receipt<br/>状态: BLOCKED<br/>Gap: INSTANCE-MEDOPL-01（P0）<br/>Next Evidence: generic admission + normal purchase + post-activation readback + rollback"]
+        RELEASE["Current Candidate -> Formal Release<br/>Owner: Cloud Candidate / Release owner<br/>职责: 校验双路径回执并提升原 Candidate bytes<br/>状态: SOURCE + BLOCKED<br/>Gap: LOCAL-WORKSPACE-LIFECYCLE-01、PRODUCT-RELEASE-01（P0）<br/>Next Evidence: same digest 双路径 receipts + exact-byte promotion"]
+        OUTPUT["Output（固定）<br/>Owner: OPL Cloud product owner<br/>职责: 交付可移植、可治理、可追溯的 OPL Cloud 产品<br/>状态: v0.1.7 历史 RELEASED；current successor BLOCKED<br/>不声明 current TKE production-proven"]
+    end
+
+    LATER["Later（不阻断当前 Workspace Release）<br/>Owner: Product owner（尚未选入当前 Release）<br/>职责: 后续选择自助注册/支付、共享 Workspace、HA/GPU、Connect、Serve、Runway<br/>状态: LATER"]
+    VERDICT["架构判断<br/>Owner: Cloud architecture owner<br/>职责: 约束业务核心、履约域、Provider ACL、证据域与钱包权威<br/>三个 PostgreSQL owner 独立，无跨库写入<br/>状态: 链路与 DDD / Clean Architecture 方向合理"]
+
+    INPUT --> CONSOLE --> CP
+    CP --> SUB2
+    CP --> FABRIC --> TENCENT --> WORKSPACE
+    CP --> LEDGER
+    SUB2 --> WORKSPACE
+    LEDGER --> INSTANCE
+    WORKSPACE --> INSTANCE --> RELEASE --> OUTPUT
+    OUTPUT -. "后续产品层" .-> LATER
+    VERDICT -. "约束所有模块" .-> PRODUCT
+
+    classDef target fill:#f7f8fa,stroke:#6b7785,color:#172b4d,stroke-width:2px;
+    classDef source fill:#e9f7ef,stroke:#2f7d5c,color:#173b2d,stroke-width:2px;
+    classDef blocked fill:#fff4d6,stroke:#a67c00,color:#493b14,stroke-width:2px;
+    classDef later fill:#eef2f6,stroke:#8795a1,color:#34495e,stroke-dasharray:5 5;
+
+    class INPUT target;
+    class CONSOLE,FABRIC,LEDGER,VERDICT source;
+    class CP,SUB2,TENCENT,WORKSPACE,INSTANCE,RELEASE,OUTPUT blocked;
+    class LATER later;

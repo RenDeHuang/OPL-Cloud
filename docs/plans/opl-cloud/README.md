@@ -26,6 +26,10 @@ listed in `docs/README.md`.
 | 11 | 运维观测层级与故障响应 | Process, service, product, and business evidence leading to bounded response | Instance owner, `docs/runtime/**` | [Mermaid](./diagrams/11-operations-observability-and-incident-response.mmd) | [SVG](./diagrams/11-operations-observability-and-incident-response.svg) |
 | 12 | Candidate 双路径资格与正式产品发布 | Exact SHA/digest qualification, receipts, release admission, and exact-byte promotion | `docs/decisions.md`, `docs/roadmap.md` | [Mermaid](./diagrams/12-candidate-qualification-and-product-release.mmd) | [SVG](./diagrams/12-candidate-qualification-and-product-release.svg) |
 | 13 | 业务驱动交付 Roadmap | Outcome-based milestones from architecture baseline through Workspace Core and later Serve | `docs/roadmap.md` | [Mermaid](./diagrams/13-business-driven-delivery-roadmap.mmd) | [SVG](./diagrams/13-business-driven-delivery-roadmap.svg) |
+| 14 | Tencent/TKE 产品链完成度与 Owner 总览 | Current evidence level, responsibility, gap, and next evidence for each TKE-facing capability | Source, `docs/status.md`, `docs/roadmap.md`, Instance owner | [Mermaid](./diagrams/14-tencent-tke-completion-overview.mmd) | [SVG](./diagrams/14-tencent-tke-completion-overview.svg) |
+| 15 | Tencent/TKE Workspace Launch 持久化业务链 | What each owner persists before mutation and which readback permits stage progression | Source, schemas, `docs/invariants.md` | [Mermaid](./diagrams/15-tencent-tke-launch-persistence-chain.mmd) | [SVG](./diagrams/15-tencent-tke-launch-persistence-chain.svg) |
+| 16 | Tencent/TKE 恢复、删除与对账收敛 | How uncertain results, permanent Delete, and cross-owner reconciliation converge | Source, `docs/invariants.md`, `docs/roadmap.md` | [Mermaid](./diagrams/16-tencent-tke-recovery-delete-reconciliation.mmd) | [SVG](./diagrams/16-tencent-tke-recovery-delete-reconciliation.svg) |
+| 17 | Tencent/TKE Candidate 到 Release 证据链 | Which exact-identity receipts are still required before current bytes can become a formal Release | `docs/status.md`, `docs/roadmap.md`, Instance owner | [Mermaid](./diagrams/17-tencent-tke-candidate-release-evidence-chain.mmd) | [SVG](./diagrams/17-tencent-tke-candidate-release-evidence-chain.svg) |
 
 ## Reading Order
 
@@ -33,6 +37,30 @@ listed in `docs/README.md`.
 2. Read diagrams 04-09 to understand customer commands and lifecycle behavior.
 3. Read diagrams 10-12 to understand deployment, operations, and publication.
 4. Read diagram 13 as a projection of the canonical roadmap, not a second gap owner.
+5. Read diagrams 14-17 when reviewing the current product from the Tencent/TKE
+   extension perspective. These are completion overlays, not target-architecture
+   replacements.
+
+## Completion Evidence Legend
+
+The completion overlays use evidence levels instead of subjective percentages:
+
+| Level | Meaning |
+| --- | --- |
+| `TARGET` | Target is defined; no current implementation claim |
+| `SOURCE` | Current source, schema, and focused tests implement the capability |
+| `LOCAL` | Retained local runtime evidence exists for the named identity |
+| `CANDIDATE` | One exact SHA and multi-architecture digest passed qualification |
+| `INSTANCE` | The Instance owner deployed and authoritatively read back that identity |
+| `RELEASED` | The same qualified bytes were formally published |
+| `BLOCKED` | A named gap or higher-layer owner receipt is missing |
+| `LATER` | Outside the current Workspace Release |
+
+Canonical current-document conflicts must be reconciled in their owner before
+the overlay is finalized; the diagram package does not retain a parallel
+`SSOT_REVIEW` conclusion. Evidence never upgrades implicitly. In particular,
+Tencent adapter source and tests do not prove a TKE Instance deployment, and an
+old Candidate receipt does not qualify the current Candidate.
 
 ## Render Rules
 
@@ -97,3 +125,19 @@ listed in `docs/README.md`.
 ### 13. 业务驱动交付 Roadmap
 
 ![业务驱动交付 Roadmap](./diagrams/13-business-driven-delivery-roadmap.svg)
+
+### 14. Tencent/TKE 产品链完成度与 Owner 总览
+
+![Tencent/TKE 产品链完成度与 Owner 总览](./diagrams/14-tencent-tke-completion-overview.svg)
+
+### 15. Tencent/TKE Workspace Launch 持久化业务链
+
+![Tencent/TKE Workspace Launch 持久化业务链](./diagrams/15-tencent-tke-launch-persistence-chain.svg)
+
+### 16. Tencent/TKE 恢复、删除与对账收敛
+
+![Tencent/TKE 恢复、删除与对账收敛](./diagrams/16-tencent-tke-recovery-delete-reconciliation.svg)
+
+### 17. Tencent/TKE Candidate 到 Release 证据链
+
+![Tencent/TKE Candidate 到 Release 证据链](./diagrams/17-tencent-tke-candidate-release-evidence-chain.svg)

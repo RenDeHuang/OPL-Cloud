@@ -32,6 +32,12 @@ is selected and configured by the medopl instance, not by the portable product.
 - Workspace Launch persists one Control Plane operation and coordinates Key,
   debit, Fabric resource stages, activation, and one purchase Receipt. Unknown
   external results enter manual review and resume through the same operation.
+- Activation writes the Workspace projection before Ledger confirms the purchase
+  Receipt. The succeeded Launch Operation and Ledger retain the exact Receipt ID,
+  and permanent Delete validates those two authorities directly. The current
+  Workspace `purchase_receipt_id` projection is not populated after Receipt
+  success, so billing and operator read models can omit the Receipt reference
+  even though the Launch and Delete authority chain remains intact.
 - Workspace Delete is permanent under the current contract. It removes the
   owned runtime/resource path, performs no refund or wallet mutation, and writes
   `workspace.deleted.v1` after authoritative cleanup.

@@ -1,0 +1,59 @@
+---
+title: "图 15：Tencent/TKE Workspace Launch 持久化业务链"
+---
+flowchart TB
+    CUSTOMER["客户确认购买<br/>Owner: Customer / Console<br/>职责: 提交 packageId、name、autoRenew、intentId<br/>状态: SOURCE"]
+
+    subgraph ADMISSION["A. 只读准入与业务 Operation"]
+        PREFLIGHT["Preflight<br/>Owner: Control Plane + Fabric<br/>职责: Session/CSRF/Account/Package/Guard、Provider capacity/plan<br/>持久化: 外部写入前只读；不创建 Provider 资源<br/>状态: SOURCE"]
+        CLAIM["Claim one Workspace Launch Operation<br/>Owner: Control Plane PostgreSQL<br/>职责: 固定 Account/Workspace/Package/价格/镜像/Request Hash<br/>持久化: stage + version + attempts + observations + lease/CAS<br/>状态: SOURCE"]
+    end
+
+    subgraph SETTLEMENT["B. 外部账户阶段"]
+        KEY["Key Stage<br/>Owner: Sub2API；协调 Owner: Control Plane<br/>职责: 创建/收敛 exact Workspace Key<br/>持久化: CP 先 reserve attempt/idempotency，再保存 Key ID/fingerprint readback<br/>状态: SOURCE"]
+        DEBIT["Debit Stage<br/>Owner: Sub2API；协调 Owner: Control Plane<br/>职责: 幂等扣除一个月 accepted quote<br/>持久化: CP 保存 pre/post balance、confirmation、period facts<br/>状态: SOURCE"]
+    end
+
+    subgraph PROTOCOL["C. 每个 Fabric 资源 Stage 共用的持久化协议"]
+        READ["1. Authoritative Read<br/>Owner: Fabric -> Tencent provider<br/>职责: 先判断 absent / pending / ready / unknown<br/>状态: SOURCE"]
+        RESERVE["2. Reserve Attempt<br/>Owner: Control Plane PostgreSQL<br/>职责: CAS 保存 attempt=1、idempotency key、有限 read budget<br/>规则: CAS loser 不调用外部系统<br/>状态: SOURCE"]
+        BIND["3. Persist Immutable Binding<br/>Owner: Fabric PostgreSQL<br/>职责: provider 写入前 claim Fabric Operation<br/>保存: Launch/Account/Workspace/stage/action/op ID/key/hash/expected binding<br/>状态: SOURCE"]
+        MUTATE["4. Bounded Mutation<br/>Owner: Tencent adapter<br/>职责: 仅操作已授权 exact CVM/TKE/CBS/Kubernetes target<br/>规则: prepaid monthly；不推断 owner<br/>状态: SOURCE"]
+        READBACK["5. Provider Readback<br/>Owner: Tencent Cloud / Kubernetes authority<br/>职责: 返回 ownership、status、identity、Ready/imageID 等事实<br/>规则: API 未报错不等于成功<br/>状态: SOURCE"]
+        FABPERSIST["6. Persist Provider Result<br/>Owner: Fabric PostgreSQL<br/>职责: 保存 provider state、resource refs、status/error<br/>规则: identity drift -> conflict；unknown 不伪装 absent<br/>状态: SOURCE"]
+        ADVANCE["7. Advance Same Business Operation<br/>Owner: Control Plane PostgreSQL<br/>职责: 校验 typed observation 后 CAS 推进 stage cursor<br/>规则: 只推进原 Operation，不创建 successor Launch<br/>状态: SOURCE"]
+    end
+
+    subgraph RESOURCES["D. Tencent/TKE 资源顺序（均使用协议 C）"]
+        COMPUTE["Compute<br/>Owner: Fabric / Tencent adapter<br/>职责: CVM/TKE allocation + Machine Ownership<br/>持久化: Fabric Operation + machine_ownership<br/>状态: SOURCE + BLOCKED<br/>Gap: INSTANCE-MEDOPL-01"]
+        COMPUTE_CONCURRENCY["Compute Concurrency Review<br/>Owner: Fabric + Instance qualification owner<br/>职责: 证明同 NodePool 并发 Launch 不重复 scale/claim<br/>当前约束: Pilot 有限 in-flight；typed Launch 未单独证明 pool-head 并发链<br/>状态: SOURCE + BLOCKED<br/>Gap: TENCENT-COMPUTE-POOL-CONCURRENCY-01<br/>Next Evidence: same-nodepool concurrency receipt"]
+        STORAGE["Storage<br/>Owner: Fabric / Tencent adapter<br/>职责: CBS volume + static storage binding<br/>持久化: Fabric provider state + Storage ref<br/>状态: SOURCE + BLOCKED<br/>Gap: INSTANCE-MEDOPL-01"]
+        ATTACH["Attachment<br/>Owner: Fabric / Tencent adapter<br/>职责: exact Compute/Volume attachment<br/>持久化: exact attachment ID + Operation binding<br/>状态: SOURCE + BLOCKED<br/>Gap: INSTANCE-MEDOPL-01"]
+        SECRET["Secret<br/>Owner: Fabric / Tencent adapter<br/>职责: 将 Workspace Key 写入 Kubernetes Secret<br/>持久化: 只保存 Secret ref/version/fingerprint；不保存 raw Key<br/>状态: SOURCE + BLOCKED<br/>Gap: INSTANCE-MEDOPL-01"]
+        RUNTIME["Runtime<br/>Owner: Fabric / Tencent adapter<br/>职责: Deployment/Pod/Service、password auth、Workspace URL readback<br/>持久化: Runtime ID/service/access refs + Ready facts<br/>状态: SOURCE + BLOCKED<br/>Gap: PORTABLE-INSTALL-01、INSTANCE-MEDOPL-01"]
+    end
+
+    subgraph COMMIT["E. 产品激活与证据"]
+        ACTIVATE["Activation<br/>Owner: Control Plane PostgreSQL<br/>职责: 原子写 Workspace entitlement 与资源/访问投影<br/>前提: Runtime authoritative ready<br/>状态: SOURCE"]
+        RECEIPT["Purchase Receipt<br/>Owner: Ledger PostgreSQL<br/>职责: append-only receipt + idempotency key + request hash<br/>Control Plane 将 Receipt ID 保存到原 Launch Operation<br/>状态: SOURCE"]
+        CROSSDB["Activation -> Receipt 一致性窗口<br/>Owner: Control Plane projection + Ledger<br/>职责: 中断后只补原 Receipt；Ledger 保持 Receipt 权威<br/>当前行为: budget exhausted 可进入 manual_review；Workspace purchase_receipt_id 未同步<br/>影响: Billing/Admin 读模型漏 ref；Permanent Delete 仍由 Launch Operation + Ledger 校验<br/>状态: SOURCE + BLOCKED<br/>Gap: WORKSPACE-PURCHASE-RECEIPT-PROJECTION-01<br/>Next Evidence: Operation/Ledger/Workspace 同一 Receipt ref + 零重复 mutation"]
+        INSTANCE_EVIDENCE["TKE End-to-End Evidence<br/>Owner: opl-instance-medopl<br/>职责: 正常购买、Provider/Runtime/Billing readback、workspace_verified<br/>状态: BLOCKED<br/>Gap: INSTANCE-MEDOPL-01<br/>Next Evidence: 同一 current Candidate 的受保护 workflow receipt"]
+    end
+
+    CUSTOMER --> PREFLIGHT --> CLAIM --> KEY --> DEBIT
+    DEBIT --> COMPUTE --> STORAGE --> ATTACH --> SECRET --> RUNTIME
+    COMPUTE -. "扩容前必须补证" .-> COMPUTE_CONCURRENCY
+    READ --> RESERVE --> BIND --> MUTATE --> READBACK --> FABPERSIST --> ADVANCE
+    PROTOCOL -. "逐 Stage 套用" .-> COMPUTE
+    PROTOCOL -. "逐 Stage 套用" .-> STORAGE
+    PROTOCOL -. "逐 Stage 套用" .-> ATTACH
+    PROTOCOL -. "逐 Stage 套用" .-> SECRET
+    PROTOCOL -. "逐 Stage 套用" .-> RUNTIME
+    RUNTIME --> ACTIVATE --> RECEIPT --> INSTANCE_EVIDENCE
+    ACTIVATE -. "跨库非原子" .-> CROSSDB
+    CROSSDB -. "恢复后确认原 Receipt" .-> RECEIPT
+
+    classDef source fill:#e9f7ef,stroke:#2f7d5c,color:#173b2d,stroke-width:2px;
+    classDef blocked fill:#fff4d6,stroke:#a67c00,color:#493b14,stroke-width:2px;
+    class CUSTOMER,PREFLIGHT,CLAIM,KEY,DEBIT,READ,RESERVE,BIND,MUTATE,READBACK,FABPERSIST,ADVANCE,ACTIVATE,RECEIPT source;
+    class COMPUTE,COMPUTE_CONCURRENCY,STORAGE,ATTACH,SECRET,RUNTIME,CROSSDB,INSTANCE_EVIDENCE blocked;

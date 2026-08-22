@@ -1,0 +1,64 @@
+---
+title: "图 16：Tencent/TKE 恢复、删除与对账收敛"
+---
+flowchart TB
+    subgraph RECOVERY["A. Launch Recovery：继续原 Operation，不生成第二套资源"]
+        R0["Persisted Launch Identity<br/>Owner: Control Plane PostgreSQL<br/>职责: 原 stage、attempt、idempotency key、binding、version/lease/CAS<br/>状态: SOURCE"]
+        R1["Owner-authoritative Read<br/>Owner: Fabric -> Tencent provider / Sub2API / Ledger<br/>职责: 读取 exact owner 的 absent/pending/ready/unknown<br/>状态: SOURCE"]
+        READY["ready<br/>Owner: Control Plane<br/>职责: 校验 identity/facts 后 CAS 推进同一 stage<br/>状态: SOURCE"]
+        ABSENT["absent<br/>Owner: Control Plane + owning service<br/>职责: 先 CAS reserve，再以原 key 执行唯一 mutation<br/>状态: SOURCE"]
+        PENDING["pending<br/>Owner: Control Plane<br/>职责: 每次 GET 前持久化 continuation claim；总预算有限<br/>状态: SOURCE"]
+        UNKNOWN["unknown / conflict / budget exhausted<br/>Owner: Control Plane<br/>职责: 进入 manual_review；禁止第二次扣款或猜测性重建<br/>状态: SOURCE"]
+        PARTIAL["Kubernetes Partial State Review<br/>Owner: Fabric / Tencent adapter + Instance operator<br/>职责: 以 exact binding 识别 PV/PVC/Secret/Runtime 残留<br/>规则: fail closed；不得模糊批量清理<br/>状态: SOURCE + BLOCKED<br/>Gap: TENCENT-PARTIAL-APPLY-RECOVERY-01<br/>Next Evidence: partial apply 的只读诊断与 bounded cleanup receipt"]
+        R_GAP["TKE Recovery 真实证据<br/>Owner: opl-instance-medopl<br/>职责: 在受保护环境证明原 Operation 的中断与恢复<br/>状态: BLOCKED<br/>Gap: INSTANCE-MEDOPL-01<br/>Next Evidence: same-Candidate 中断、恢复、readback receipt"]
+
+        R0 --> R1
+        R1 --> READY
+        R1 --> ABSENT
+        R1 --> PENDING
+        R1 --> UNKNOWN
+        UNKNOWN --> PARTIAL
+        ABSENT --> R1
+        PENDING --> R1
+        READY --> R_GAP
+        PARTIAL --> R_GAP
+    end
+
+    subgraph DELETE["B. Permanent Delete：按 Owner 权威 absence 顺序收敛"]
+        D0["Claim workspace.delete.v2<br/>Owner: Control Plane PostgreSQL<br/>职责: 从唯一 succeeded Launch 取 receiptId，并向 Ledger 精确校验；绑定 current Key/Secret lineage<br/>不依赖 Workspace purchase_receipt_id 投影<br/>状态: SOURCE"]
+        D1["Runtime + Secret absent<br/>Owner: Fabric / Tencent adapter<br/>职责: 删除并回读 Kubernetes Runtime 与 Secret absence<br/>状态: SOURCE + BLOCKED"]
+        D2["Attachment absent<br/>Owner: Fabric / Tencent adapter<br/>职责: 回读 exact attachment absence<br/>状态: SOURCE + BLOCKED"]
+        D3["Storage absent<br/>Owner: Fabric / Tencent adapter<br/>职责: 回读 exact CBS/storage absence<br/>状态: SOURCE + BLOCKED"]
+        D4["Compute absent<br/>Owner: Fabric / Tencent adapter<br/>职责: 回读 exact compute/ownership release<br/>状态: SOURCE + BLOCKED"]
+        D5["Workspace Key absent<br/>Owner: Sub2API<br/>职责: 删除 exact current Key；wallet mutation = 0<br/>状态: SOURCE + BLOCKED"]
+        D6["Workspace projection absent<br/>Owner: Control Plane PostgreSQL<br/>职责: 原子移除 exact Workspace/compute/storage/attachment projections<br/>状态: SOURCE"]
+        D7["workspace.deleted.v1 Receipt<br/>Owner: Ledger PostgreSQL<br/>职责: 追加非财务删除 Receipt；不退款<br/>状态: SOURCE"]
+        D_GAP["TKE Delete Evidence<br/>Owner: opl-instance-medopl<br/>职责: 证明 exact Provider/Key absence 与非财务删除收据<br/>状态: BLOCKED<br/>Gap: INSTANCE-MEDOPL-01<br/>Next Evidence: final Provider/Key absence + zero wallet mutation + one deletion Receipt"]
+
+        D0 --> D1 --> D2 --> D3 --> D4 --> D5 --> D6 --> D7 --> D_GAP
+    end
+
+    subgraph RECON["C. Cross-owner Reconciliation：不建立共享总账或跨库事务"]
+        C1["Expected Purchase Facts<br/>Owner: Control Plane<br/>职责: quote、Workspace、Operation、activation projection<br/>状态: SOURCE + BLOCKED<br/>Gap: WORKSPACE-PURCHASE-RECEIPT-PROJECTION-01（Workspace/Billing/Admin Receipt ref 未同步）"]
+        C2["Money / Key / Usage Facts<br/>Owner: Sub2API<br/>职责: debit、balance、Key、Usage 权威 readback<br/>状态: SOURCE integration"]
+        C3["Resource Facts<br/>Owner: Fabric / Tencent provider<br/>职责: Compute/Storage/Attachment/Secret/Runtime 权威 readback<br/>状态: SOURCE + BLOCKED"]
+        C4["Receipt / Evidence Facts<br/>Owner: Ledger<br/>职责: append-only receipt/evidence refs<br/>状态: SOURCE"]
+        C5["Purchase Admission Guard<br/>Owner: Control Plane PostgreSQL<br/>职责: 单事务比较 owner facts；committed mismatch 阻断新购买<br/>状态: SOURCE"]
+        C_GAP["TKE Reconciliation Evidence<br/>Owner: opl-instance-medopl + Cloud owners<br/>职责: 汇集同一时点的 Runtime/provider/billing owner readback<br/>状态: BLOCKED<br/>Gap: INSTANCE-MEDOPL-01<br/>Next Evidence: post-activation Runtime/provider/billing 同一时点 readback"]
+
+        C1 --> C5
+        C2 --> C5
+        C3 --> C5
+        C4 --> C5
+        C5 --> C_GAP
+    end
+
+    RULE["统一规则<br/>Owner: Cloud architecture + 各数据 owner<br/>职责: 约束 persist -> owner mutation -> readback -> CAS/append<br/>unknown 不等于 absent；调用成功不等于业务成功；每个服务只写自己的数据库<br/>状态: Saga + ACL + append-only evidence 符合 DDD 与 Clean Architecture"]
+    RULE -.-> RECOVERY
+    RULE -.-> DELETE
+    RULE -.-> RECON
+
+    classDef source fill:#e9f7ef,stroke:#2f7d5c,color:#173b2d,stroke-width:2px;
+    classDef blocked fill:#fff4d6,stroke:#a67c00,color:#493b14,stroke-width:2px;
+    class R0,R1,READY,ABSENT,PENDING,UNKNOWN,D0,D6,D7,C2,C4,C5,RULE source;
+    class PARTIAL,R_GAP,D1,D2,D3,D4,D5,D_GAP,C1,C3,C_GAP blocked;

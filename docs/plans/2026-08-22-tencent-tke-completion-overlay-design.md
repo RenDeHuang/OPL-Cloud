@@ -30,8 +30,9 @@ Tencent/TKE 完成度覆盖图，回答以下问题：
 - `opl-instance-medopl`：TKE 环境、Provider Profile、Secrets、部署、回滚、
   运行回读和 Instance receipt。
 
-图中若 `docs/status.md` 与 `docs/roadmap.md` 对同一当前事实冲突，只标记
-`SSOT_REVIEW`，不由支持性图稿替任一 owner 决策。
+图中若 `docs/status.md` 与 `docs/roadmap.md` 对同一当前事实冲突，必须先按
+源码、focused tests 和 Git history 复核，再由 canonical owner 消除重复当前
+写者，支持性图稿不得自行保留另一套结论。
 
 ## Evidence Levels
 
@@ -47,7 +48,6 @@ Tencent/TKE 完成度覆盖图，回答以下问题：
 | `RELEASED` | 同一已验收字节已正式发布 |
 | `BLOCKED` | 存在明确 Gap 或缺少上层 owner 回执 |
 | `LATER` | 不属于当前 Workspace Release |
-| `SSOT_REVIEW` | 权威当前文档之间存在冲突，需要 owner 复核 |
 
 `SOURCE + BLOCKED` 表示实现存在，但目标上层证据尚未取得。低层证据不能
 自动提升为 `INSTANCE` 或 `RELEASED`。
@@ -80,7 +80,8 @@ Workspace Launch 是跨限界上下文 Saga，不使用分布式事务：
 6. Control Plane 通过 CAS 推进同一个业务 Operation；
 7. Activation 原子写 Control Plane Workspace projection；
 8. Ledger 以独立 idempotency key 和 request hash 追加 Receipt，Control
-   Plane 只保存 Receipt ID。
+   Plane 将 Receipt ID 保存到原 Launch Operation；当前尚未同步到 Workspace
+   `purchase_receipt_id` 读模型投影。
 
 恢复规则是 `readback -> decide -> reserve -> mutate -> readback -> persist`。
 `pending` 只允许有限次、预先持久化的 continuation read；`unknown`、身份
@@ -121,9 +122,24 @@ Workspace projection -> workspace.deleted.v1 Receipt`。Delete 不退款，也�
   显式提供 Provider Profile、domain 和 immutable Workspace image；
 - `PRODUCT-RELEASE-01` 仍需将 formal Release 从 rebuild 改为提升已验收的
   exact bytes；
-- `docs/status.md` 已声明 Basic/Pro 和 exact-balance 行为一致，而
-  `docs/roadmap.md` 的 `CONSOLE-LAUNCH-CONSISTENCY-01` 仍描述相反事实，应由
-  Control Plane product policy owner 复核并消除重复当前写者。
+- Activation 与 Purchase Receipt 分属 Control Plane 和 Ledger 数据库，存在
+  合法但必须观测的一致性窗口：Workspace projection 可能已经 running，Receipt
+  尚未确认。恢复只能追加原 Receipt，不得重复 Debit、资源 mutation 或
+  Activation；当前 Receipt 成功后会把 ID 保存到原 Launch Operation，但还未
+  回写 Workspace `purchase_receipt_id` projection，导致 Billing/Admin 读模型
+  可能漏掉 Receipt ref。Permanent Delete 不依赖该投影，而是用唯一 succeeded
+  Launch Operation 的 `receiptId` 向 Ledger 做精确校验。该问题是 P1 投影完整性
+  Gap，不是 Delete 或当前 Release 的 P0 blocker；
+- typed Tencent Launch 的 Compute 路径具备 parent/child operation、mutation
+  journal、ownership CAS 和 provider readback，但未单独证明同 NodePool 的并发
+  Launch 不会重复扩容。当前 Pilot 的有限并发不能替代扩容后的验收；
+- Kubernetes PV/PVC、Secret、Runtime 多对象 apply 发生 partial state 时会
+  fail closed 到 `manual_review`。Instance 运维链必须证明如何基于 exact owner
+  identity 处理残留，不能采用模糊批量清理；
+- `docs/status.md` 的 Basic/Pro 和 exact-balance 描述已由当前 Console
+  `>=` 判断、Console focused test 和 Control Plane Basic/Pro exact-balance
+  admission test 证实；陈旧的 `CONSOLE-LAUNCH-CONSISTENCY-01` 已从 canonical
+  Roadmap 移除。
 
 ## Completion Evidence
 
