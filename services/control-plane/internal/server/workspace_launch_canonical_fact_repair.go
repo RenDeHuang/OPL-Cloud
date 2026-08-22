@@ -43,10 +43,8 @@ func classifyWorkspaceLaunchCanonicalFactRepair(row map[string]any) (workspaceLa
 	if result == "" || json.Unmarshal([]byte(result), &raw) != nil || raw == nil {
 		return workspaceLaunchCanonicalFactRepairClassification{}, errWorkspaceLaunchCanonicalFactRepairNotEligible
 	}
-	if workspaceLaunchDecodeFailureCategory(func() error {
-		_, err := decodeWorkspaceLaunchReconcileOperation(row)
-		return err
-	}()) != "missing_canonical_facts" {
+	_, decodeErr := decodeWorkspaceLaunchReconcileOperation(row)
+	if workspaceLaunchDecodeFailureCategory(decodeErr) != "missing_canonical_facts" {
 		return workspaceLaunchCanonicalFactRepairClassification{}, errWorkspaceLaunchCanonicalFactRepairNotEligible
 	}
 	if missing := workspaceLaunchMissingCanonicalKeys(raw); len(missing) != 1 || missing[0] != "specDigest" {
