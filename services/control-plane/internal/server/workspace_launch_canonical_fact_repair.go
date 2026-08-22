@@ -163,7 +163,16 @@ func workspaceLaunchCanonicalFactRepairAuditValid(update workspaceLaunchCanonica
 }
 
 func workspaceLaunchCanonicalFactRepairAuditMatches(existing, desired map[string]any) bool {
-	return string(mustJSON(existing)) == string(mustJSON(desired))
+	identity := func(row map[string]any) map[string]any {
+		return map[string]any{
+			"id": stringValue(row["id"]), "actorUserId": stringValue(row["actorUserId"]), "actorRole": stringValue(row["actorRole"]),
+			"actorAccountId": stringValue(row["actorAccountId"]), "targetAccountId": stringValue(row["targetAccountId"]),
+			"action": stringValue(row["action"]), "resourceKind": stringValue(row["resourceKind"]), "resourceId": stringValue(row["resourceId"]),
+			"ipAddress": stringValue(row["ipAddress"]), "userAgent": stringValue(row["userAgent"]), "result": stringValue(row["result"]),
+			"createdAt": stringValue(row["createdAt"]), "before": row["before"], "after": row["after"],
+		}
+	}
+	return string(mustJSON(identity(existing))) == string(mustJSON(identity(desired)))
 }
 
 func classifyWorkspaceLaunchCanonicalFactRepair(row map[string]any) (workspaceLaunchCanonicalFactRepairClassification, error) {

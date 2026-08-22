@@ -200,6 +200,24 @@ func TestMemoryWorkspaceLaunchCanonicalFactRepairRejectsCASAndAuditDrift(t *test
 	}
 }
 
+func TestWorkspaceLaunchCanonicalFactRepairAuditMatchIgnoresStoreMetadataOnly(t *testing.T) {
+	row := historicalWorkspaceLaunchMissingSpecDigest(t)
+	preview, err := buildWorkspaceLaunchCanonicalFactRepairPreview(row, strings.Repeat("d", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired := canonicalFactRepairAudit(preview, "repair-audit-identity")
+	existing := cloneMap(desired)
+	existing["updatedAt"] = "2026-08-22T05:00:01Z"
+	if !workspaceLaunchCanonicalFactRepairAuditMatches(existing, desired) {
+		t.Fatal("store metadata changed the repair audit identity")
+	}
+	existing["userAgent"] = "different"
+	if workspaceLaunchCanonicalFactRepairAuditMatches(existing, desired) {
+		t.Fatal("request identity drift was accepted")
+	}
+}
+
 func TestWorkspaceLaunchCanonicalFactRepairPreviewRouteReturnsOnlyRedactedEvidence(t *testing.T) {
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-repair", "org-repair", "usr-repair", "repair@example.com")
