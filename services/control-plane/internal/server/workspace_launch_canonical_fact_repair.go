@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -39,6 +40,40 @@ type workspaceLaunchCanonicalFactRepairPreview struct {
 	DesiredOperation map[string]any
 	ChangedFields    []string
 	PreviewDigest    string
+}
+
+func workspaceLaunchCanonicalFactRepairAuditID(operationID, key string) string {
+	return "audit-" + stableID("workspace.launch.canonical_fact_repair", operationID, key)[:12]
+}
+
+func (app *controlPlaneServer) applyWorkspaceLaunchCanonicalFactRepair(ctx context.Context, service *controlplane.Service, operationID string, launchVersion int, previewDigest, key, reason string, audit map[string]any) (workspaceLaunchReconcileOperation, error) {
+	preview, err := app.previewWorkspaceLaunchCanonicalFactRepair(ctx, service, operationID)
+	if err != nil || preview.Classification.Version != launchVersion || preview.PreviewDigest != previewDigest || key == "" || reason == "" {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchCanonicalFactRepairNotEligible
+	}
+	audit["id"] = workspaceLaunchCanonicalFactRepairAuditID(operationID, key)
+	audit["targetAccountId"] = preview.Classification.AccountID
+	audit["createdAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+	audit["before"] = map[string]any{"version": preview.Classification.Version, "stage": preview.Classification.Stage, "status": preview.Classification.Status}
+	audit["after"] = map[string]any{
+		"version": preview.Classification.Version + 1, "stage": preview.Classification.Stage, "status": preview.Classification.Status,
+		"specDigestSha256": "sha256:" + preview.SpecDigest, "reason": reason, "previewDigest": preview.PreviewDigest,
+	}
+	if err := app.tables.ApplyWorkspaceLaunchCanonicalFactRepair(ctx, workspaceLaunchCanonicalFactRepairCAS{
+		OperationID: operationID, ExpectedOperationResult: preview.Classification.PersistedResult,
+		DesiredOperation: preview.DesiredOperation, AuditEvent: audit,
+	}); err != nil {
+		return workspaceLaunchReconcileOperation{}, err
+	}
+	row, found, err := app.tables.GetRuntimeOperation(ctx, operationID)
+	if err != nil || !found {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchCASConflict
+	}
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil || operation.Version != launchVersion+1 || operation.stringFact("specDigest") != preview.SpecDigest {
+		return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchCASConflict
+	}
+	return operation, nil
 }
 
 func (app *controlPlaneServer) previewWorkspaceLaunchCanonicalFactRepair(ctx context.Context, service *controlplane.Service, operationID string) (workspaceLaunchCanonicalFactRepairPreview, error) {
@@ -78,6 +113,18 @@ func workspaceLaunchCanonicalFactRepairPreviewResponse(preview workspaceLaunchCa
 		"fabricBindingState": "confirmed", "bindingIdentityDigest": fmt.Sprintf("sha256:%x", binding[:]),
 		"identityMatched": true, "changedFields": append([]string(nil), preview.ChangedFields...),
 		"previewDigest": preview.PreviewDigest, "mutationBudget": 0,
+	}
+}
+
+func workspaceLaunchCanonicalFactRepairApplyResponse(operation workspaceLaunchReconcileOperation, auditID string) map[string]any {
+	identity := sha256.Sum256([]byte(operation.ID))
+	audit := sha256.Sum256([]byte(auditID))
+	return map[string]any{
+		"schemaVersion": 1, "status": "repaired", "operationIdentityDigest": fmt.Sprintf("sha256:%x", identity[:]),
+		"operationVersion": operation.Version, "stage": operation.Stage, "operationStatus": operation.Status,
+		"changedFields": []string{"specDigest", "version"}, "strictDecoder": "passed",
+		"auditIdentityDigest": fmt.Sprintf("sha256:%x", audit[:]), "operationMutationCount": 1, "auditMutationCount": 1,
+		"providerMutationCount": 0, "debitMutationCount": 0, "workspaceMutationCount": 0, "receiptMutationCount": 0,
 	}
 }
 

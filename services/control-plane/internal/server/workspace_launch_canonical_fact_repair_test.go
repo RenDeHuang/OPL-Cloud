@@ -260,3 +260,41 @@ func TestWorkspaceLaunchCanonicalFactRepairPreviewRejectsFabricIdentityDrift(t *
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestWorkspaceLaunchCanonicalFactRepairApplyRouteRepairsAndReplays(t *testing.T) {
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-repair", "org-repair", "usr-repair", "repair@example.com")
+	row := historicalWorkspaceLaunchMissingSpecDigest(t)
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), row))
+	classification, _ := classifyWorkspaceLaunchCanonicalFactRepair(row)
+	fabric := &canonicalFactRepairFabric{binding: clients.WorkspaceLaunchPreflightBinding{
+		SchemaVersion: 1, LaunchOperationID: classification.OperationID, AccountID: classification.AccountID, WorkspaceID: classification.WorkspaceID,
+		PackageID: classification.PackageID, SizeGB: classification.SizeGB, WorkspaceImageDigest: classification.WorkspaceImageDigest,
+		RequestHash: classification.RequestHash, ProviderProfileRef: classification.ProviderProfileRef,
+		ProviderBindingRef: classification.PreflightBindingRef, SpecDigest: strings.Repeat("d", 64),
+	}}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, &testSub2APIClient{balance: 1000000, charges: map[string]int64{}}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := reservedOperatorSessionForTest(t, server)
+	previewReq := httptest.NewRequest(http.MethodGet, "/api/operator/workspace-launches/"+classification.OperationID+"/canonical-facts-repair-preview", nil)
+	addAuth(previewReq, operator)
+	previewRec := httptest.NewRecorder()
+	server.ServeHTTP(previewRec, previewReq)
+	var previewBody map[string]any
+	_ = json.Unmarshal(previewRec.Body.Bytes(), &previewBody)
+	body := `{"launchVersion":5,"previewDigest":"` + stringValue(previewBody["previewDigest"]) + `","reason":"historical schema 3 operation predates required specDigest"}`
+	path := "/api/operator/workspace-launches/" + classification.OperationID + "/canonical-facts-repair"
+	first := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, path, body, "canonical-repair-once")
+	replay := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, path, body, "canonical-repair-once")
+	if first.Code != http.StatusOK || replay.Code != http.StatusOK || first.Body.String() != replay.Body.String() {
+		t.Fatalf("first=%d %s replay=%d %s", first.Code, first.Body.String(), replay.Code, replay.Body.String())
+	}
+	stored, found, readErr := store.GetRuntimeOperation(context.Background(), classification.OperationID)
+	operation, decodeErr := decodeWorkspaceLaunchReconcileOperation(stored)
+	audits, auditErr := store.ListAuditEvents(context.Background(), classification.AccountID)
+	if !found || readErr != nil || decodeErr != nil || operation.Version != 6 || operation.Status != "manual_review" || operation.Stage != "debit" || len(audits) != 1 || auditErr != nil {
+		t.Fatalf("operation=%#v audits=%#v errors=%v/%v/%v", operation, audits, readErr, decodeErr, auditErr)
+	}
+}
