@@ -42,6 +42,36 @@ worktrees. The coordinator reserves those files, reconciles both narrow store
 contracts in one integration commit, and reruns both focused suites before
 either capability is declared complete.
 
+## Verification Schedule
+
+Focused acceptance, not a repository-wide command, closes each work package.
+Every implementation and review loop runs only the affected domain,
+application, persistence, UI, or contract tests. A persistence owner runs its
+exact PostgreSQL tests against a task-owned isolated database and records zero
+skips; it does not use the whole PostgreSQL suite as a substitute.
+
+Each PR runs `npm run verify:local` once after its focused evidence is green and
+the diff is frozen. For this A-N program, the persistence/cross-module
+integration checkpoints named by `docs/roadmap.md` are the Wave 1 fresh-main
+join, the Wave 2 fresh-main join, and, only when its identity changed, the
+Pre-Candidate gate. The Wave coordinator alone runs
+`npm run verify:local:full`; capability implementers and reviewers do not run or
+request it per task.
+
+A reviewer may require another focused scenario for a concrete current caller,
+observed failure, authority conflict, or reachable invariant violation. It may
+not request a full run, a defensive test catalog, or unrelated refactoring as
+capability acceptance.
+
+Completion states remain distinct:
+
+```text
+module_complete   = focused + exact PostgreSQL where applicable + verify:local
+wave_integrated   = fresh-main verify:local:full bound to exact SHA/tree
+candidate_ready   = frozen Candidate SHA/tree equals the latest integrated gate
+public_beta_ready = Candidate and all required Instance/Release receipts agree
+```
+
 ## Wave 0: Freeze And Baseline
 
 ### Task 1: Land the accepted design and test baseline
@@ -60,10 +90,10 @@ either capability is declared complete.
 **Steps:**
 1. Confirm the four accepted user decisions and exact Candidate bridge rule are represented once in their canonical owners.
 2. Run A focused Fabric observation tests.
-3. Run B memory Receipt CAS and the full PostgreSQL harness.
+3. Run B memory and exact PostgreSQL Receipt CAS tests against one isolated database.
 4. Run H same-pool, different-pool, and expired-lease focused tests without changing capacity policy.
 5. Run I catalog, quote, Basic/Pro admission, exact-balance, and Console focused tests.
-6. Run `npm run verify:local:full`; require every PostgreSQL package group to report zero skips.
+6. Run `npm run verify:local`; do not create a Wave full gate for a documentation-only baseline.
 7. Run `git diff --check`, commit, push, open the roadmap PR, wait for `validate`, merge, and read back remote `main` SHA/tree.
 
 ## Wave 1 Lane 1: Resource Lifecycle
@@ -134,7 +164,7 @@ npm run verify:local
 5. Add startup plus ticker scanning of non-terminal `workspace.delete.v2` operations, with fixed page and per-tick budgets. Never retry `unknown` or `conflict` mutation results without a decisive readback.
 6. Prove two workers have one CAS winner and restart completes without duplicate Key deletion, Fabric mutation, Workspace projection, or Receipt.
 7. Prove `manual_review` appears with a bounded allowed action and does not block unrelated work.
-8. Run focused tests, then `npm run verify:local:full` with zero skips.
+8. Run the focused Delete reducer/worker tests and exact PostgreSQL Delete restart tests with zero skips, then run `npm run verify:local` once.
 9. Commit/review/push/PR/merge/readback as a separate C-Delete change.
 
 ## Wave 1 Lane 2: Customer Commerce
@@ -208,10 +238,12 @@ cd ../..
 node --test tests/ui/public-registration.test.ts tests/ui/console-model.test.ts tests/ui/console-browser-acceptance.test.ts
 npm run typecheck
 npm run build
-npm run verify:local:full
+npm run verify:local
 ```
 
-The full command must execute `TestPostgresRegistration*` with zero skips.
+Run `TestPostgresRegistration*` separately against the task-owned isolated
+PostgreSQL database and require zero skips. Do not invoke the full PostgreSQL
+suite for Registration acceptance.
 11. Commit/review/push/PR/merge/readback.
 
 ### Task 5: E - prove register, insufficient balance, top-up, and purchase
@@ -235,10 +267,10 @@ cd services/control-plane
 go test -count=1 ./internal/server -run '^TestPublicBetaRegisterTopupPurchase'
 cd ../..
 node --test tests/ui/console-model.test.ts tests/ui/pricing-preview.test.ts
-npm run verify:local:full
+npm run verify:local
 ```
 
-Require the PostgreSQL restart variant to run with zero skips, then commit/review/PR/merge.
+Require the exact PostgreSQL restart variant to run with zero skips, then commit/review/PR/merge.
 
 ### Task 6: M - close Cloud public application boundaries
 
@@ -270,9 +302,9 @@ cd ../..
 node --test tests/ui/public-registration.test.ts tests/ui/console-browser-acceptance.test.ts
 npm run typecheck
 npm run build
-npm run verify:local:full
+npm run verify:local
 ```
-7. Commit/review/PR/merge/readback. TLS, ingress, and real-client edge limiting remain Instance receipts.
+7. Run only the exact limiter/migration PostgreSQL tests with zero skips; commit/review/PR/merge/readback. TLS, ingress, and real-client edge limiting remain Instance receipts.
 
 ## Wave 1 Lane 3: Renewal And Distribution Preparation
 
@@ -299,10 +331,11 @@ npm run verify:local:full
 cd services/control-plane
 go test -count=1 ./internal/server -run '^TestWorkspaceRenewalReactivation'
 cd ../..
-npm run verify:local:full
+npm run verify:local
 ```
 
-Require all PostgreSQL reactivation tests to run with zero skips, then commit/review/PR/merge/readback.
+Run the exact PostgreSQL reactivation tests separately against the task-owned
+isolated database, require zero skips, then commit/review/PR/merge/readback.
 
 ### Task 7a: serialize D and C-Renewal TableStore wiring
 
@@ -314,7 +347,7 @@ Require all PostgreSQL reactivation tests to run with zero skips, then commit/re
 1. Freeze the Registration and Reactivation method signatures from their typed reducers and PostgreSQL implementations.
 2. Add both narrow methods to the shared store interface in one commit and add equivalent memory behavior/tests without copying either reducer.
 3. Rebase both capabilities on that commit one at a time and resolve no other file.
-4. Run both focused suites and `npm run verify:local:full` before either PR is mergeable.
+4. Run both focused suites, their exact PostgreSQL tests, and one `npm run verify:local` after the integration diff freezes. Do not run a full gate here.
 
 ### Task 8: N - freeze exact qualification and Release admission contracts offline
 
@@ -339,7 +372,23 @@ Require all PostgreSQL reactivation tests to run with zero skips, then commit/re
 4. Validate every successful GitHub run and artifact: event/path, repository/ref, head branch/SHA, actor/triggering actor, run attempt, artifact ID/digest, expiry, and OIDC attestation where required. Candidate additionally validates bridge parent/diff shape.
 5. Recompute the downloaded Candidate bundle, canonical manifest, portable asset checksums, GHCR index/children/revision, and receipt digest.
 6. Keep this task read-only with fixture artifacts/attestations. It must not build, tag, publish, deploy, or call Instance.
-7. Run all candidate, qualification, admission, distribution, and product-boundary tests; commit/review/PR only after the receipt enum is reconciled with J/K/L/M.
+7. Run the exact candidate, qualification, admission, distribution, and product-boundary tests followed by `npm run verify:local`; commit/review/PR only after the receipt enum is reconciled with J/K/L/M.
+
+## Wave 1 Integration Gate
+
+1. Wait until A, C Delete, D, E, M, C Renewal, the serialized TableStore join,
+   and the offline N contract preparation accepted for this Wave are merged.
+2. Fetch fresh canonical `main` and require a clean worktree. Record exact
+   `HEAD` and `HEAD^{tree}` before verification.
+3. Rerun only any alias-focused command whose merge resolution changed its
+   owning files.
+4. Run `npm run verify:local:full` once. Require every PostgreSQL package group
+   to execute with zero skips and remove all temporary containers on success or
+   failure.
+5. Read back canonical remote `main`; if SHA/tree changed during the gate, the
+   result is stale and must not be recorded as `wave_integrated`.
+6. Record the exact SHA/tree and successful full-gate evidence, then begin Wave
+   2. Do not construct a Candidate from this intermediate identity.
 
 ## Wave 2: Product Recovery, Restore, And Distribution
 
@@ -358,7 +407,7 @@ Require all PostgreSQL reactivation tests to run with zero skips, then commit/re
 3. Add bounded, typed, idempotent recovery commands that read owner state and write only the operation owner's state.
 4. Complete Reset Apply from the existing preview with exact authority, CAS, owner readback, deterministic audit, and no mutation on residual conflict/unknown.
 5. Prove restart reconstruction, bounded pages/actions, no duplicate audit/side effects, and clean closure.
-6. Run focused tests and `npm run verify:local:full`; commit/review/PR/merge.
+6. Run the focused reducer/projection/recovery tests, exact PostgreSQL recovery tests with zero skips, and one `npm run verify:local`; commit/review/PR/merge.
 
 ### Task 10: L - emit stable active/recovered Cloud signals from persisted facts
 
@@ -373,7 +422,7 @@ Require all PostgreSQL reactivation tests to run with zero skips, then commit/re
 2. Emit deterministic redacted `active` and `recovered` facts; rebuild active state on restart and close only when the owning fact is terminally healthy.
 3. Do not use the existing process-local dedupe map as the authority. Persist or deterministically project the transition cursor required to prove closure across restart using existing RuntimeOperation/audit persistence; do not add a migration after Schema Freeze.
 4. Test repeated projection, restart, active-before-recovered ordering, no secret/customer identifier leakage, and unrelated-operation isolation.
-5. Run focused/full tests, commit/review/PR/merge. External routing/ack/on-call remains an Instance receipt.
+5. Run the focused signal/projection/restart tests and one `npm run verify:local`; commit/review/PR/merge. External routing/ack/on-call remains an Instance receipt.
 
 ### Task 11: K - verify three isolated database restores through owner APIs
 
@@ -393,8 +442,8 @@ Require all PostgreSQL reactivation tests to run with zero skips, then commit/re
 5. Read back Account/Registration/Workspace/operation, Fabric binding/operation, and Ledger Receipt/reconciliation through the owning HTTP API. Compare canonical typed facts, not table dumps.
 6. Prove cross-database isolation by making each other owner database unavailable during the current restore.
 7. Reject wrong owner, stale schema journal, missing row, duplicate Receipt, and identity drift.
-8. Integrate into `verify:local:full` after ordinary PostgreSQL zero-skip tests. Clean all containers/volumes on success and failure.
-9. Run focused tool tests and full restore verification; commit/review/PR/merge.
+8. Expose a standalone focused restore-qualification command rather than hiding restore evidence inside every module's full suite. Clean all containers/volumes on success and failure.
+9. Run focused tool tests, the standalone three-owner restore qualification, and `npm run verify:local`; commit/review/PR/merge.
 
 ### Task 12: N/G - remove Release rebuild and consume the exact Candidate
 
@@ -421,17 +470,40 @@ docker buildx imagetools create \
 
 7. Read back the tag digest and require exact equality with the Candidate digest. Reuse original portable asset bytes; generated release metadata must refer to their unchanged checksums.
 8. Assert workflow permissions, publisher identity, protected environment, authority-rooted receipt admission, no `buildx build`, and publication/readback/attestation behavior in contract tests.
-9. Run `npm run verify:local:full`, commit/review/PR/merge/readback.
+9. Run the exact workflow, admission, qualification, and distribution contract tests followed by `npm run verify:local`; commit/review/PR/merge/readback.
+
+## Wave 2 Integration Gate
+
+1. Wait until F/J, L, K, and N/G Cloud implementation are merged and no schema,
+   contract, workflow, or portable-asset writer remains active.
+2. Fetch fresh canonical `main`, require a clean worktree, and record exact
+   `HEAD` and `HEAD^{tree}`.
+3. Run every A-N focused command whose final merge resolution changed owning
+   files, then run the standalone K restore qualification.
+4. Run `npm run verify:local:full` once with zero PostgreSQL skips and complete
+   cleanup on success or failure.
+5. Read back remote `main`. Record this SHA/tree and gate evidence only when the
+   remote identity remains exact. This result may serve as the Pre-Candidate
+   full gate if no tracked Product byte changes afterward.
 
 ## Wave 3: Canonical Join And Exact Candidate
 
-### Task 13: serialize final integration
+### Task 13: freeze final identity and admit the Pre-Candidate gate
 
-1. Fetch fresh remote `main`; merge/replay one accepted PR at a time. Shared `server.go`, `routes_admin.go`, `table_store.go`, migration registry, and machine-contract joins must already have their named serialized integration commits; Wave 3 verifies and replays those commits rather than inventing a last-writer resolution.
-2. Run every alias-focused command, `npm run verify:local`, then `npm run verify:local:full` with zero skips.
-3. Require clean status and `git diff --check`.
-4. Ordinary-push canonical `main`, then read back remote SHA/tree and verify the local tree is identical.
-5. Freeze that exact SHA/tree. No later Cloud code or portable asset change may reuse its Candidate receipts.
+1. Fetch fresh remote `main`. Shared `server.go`, `routes_admin.go`,
+   `table_store.go`, migration registry, and machine-contract joins must already
+   be integrated; do not invent last-writer resolution here.
+2. Require clean status and `git diff --check`, then compare exact `HEAD` and
+   `HEAD^{tree}` with the successful Wave 2 Integration Gate.
+3. If both identities are unchanged, revalidate the retained Wave 2 evidence
+   and reuse it as the Pre-Candidate full gate. Do not rerun a byte-identical
+   full suite.
+4. If any source, schema, contract, workflow, portable asset, or generated byte
+   changed, rerun the affected focused commands, `npm run verify:local`, and one
+   `npm run verify:local:full` with zero skips. Bind the replacement evidence to
+   the new exact SHA/tree.
+5. Read back remote canonical `main`, then freeze the admitted SHA/tree. No
+   later Product byte may reuse its Candidate or qualification receipts.
 
 ### Task 14: construct one strict Candidate bridge and qualify locally
 
