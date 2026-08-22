@@ -59,6 +59,30 @@ var workspaceLaunchReconcileForbiddenFields = []string{
 	"operatorGrant",
 }
 
+type workspaceLaunchDecodeError struct {
+	category string
+}
+
+func (err workspaceLaunchDecodeError) Error() string {
+	return errInvalidWorkspaceLaunchOperation.Error()
+}
+
+func (err workspaceLaunchDecodeError) Unwrap() error {
+	return errInvalidWorkspaceLaunchOperation
+}
+
+func invalidWorkspaceLaunchDecode(category string) error {
+	return workspaceLaunchDecodeError{category: category}
+}
+
+func workspaceLaunchDecodeFailureCategory(err error) string {
+	var decodeErr workspaceLaunchDecodeError
+	if errors.As(err, &decodeErr) {
+		return decodeErr.category
+	}
+	return "unknown_decode_failure"
+}
+
 type workspaceLaunchCanonicalFactKind string
 
 const (
@@ -1010,8 +1034,11 @@ func newWorkspaceLaunchReconcileOperation(command workspaceLaunchReconcileCreate
 func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunchReconcileOperation, error) {
 	result := stringValue(row["result"])
 	var raw map[string]json.RawMessage
-	if result == "" || json.Unmarshal([]byte(result), &raw) != nil || raw == nil {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	if result == "" {
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("empty_result")
+	}
+	if json.Unmarshal([]byte(result), &raw) != nil || raw == nil {
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_json")
 	}
 	operation := workspaceLaunchReconcileOperation{
 		ID:     firstNonEmpty(stringValue(row["operationId"]), stringValue(row["id"])),
@@ -1019,11 +1046,20 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 		Attempts: map[string]workspaceLaunchStageAttempt{}, Observations: map[string]workspaceLaunchStageObservation{}, IdempotentReplayClaims: map[string]workspaceLaunchIdempotentReplayClaim{},
 		FreshContinuationAuthorizations: map[string]workspaceLaunchFreshContinuationAuthorization{}, ContinuationReadClaims: map[string]workspaceLaunchContinuationReadClaim{},
 	}
-	if json.Unmarshal(raw["schemaVersion"], &operation.SchemaVersion) != nil || operation.SchemaVersion != workspaceLaunchReconcileSchemaVersion ||
-		json.Unmarshal(raw["version"], &operation.Version) != nil || operation.Version <= 0 ||
-		json.Unmarshal(raw["stage"], &operation.Stage) != nil || !workspaceLaunchReconcileStageValid(operation.Stage) ||
-		json.Unmarshal(raw["attempts"], &operation.Attempts) != nil || len(operation.Attempts) != len(workspaceLaunchReconcileStages)-1 {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+	if json.Unmarshal(raw["schemaVersion"], &operation.SchemaVersion) != nil || operation.SchemaVersion != workspaceLaunchReconcileSchemaVersion {
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("schema_version_mismatch")
+	}
+	if json.Unmarshal(raw["version"], &operation.Version) != nil || operation.Version <= 0 {
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_version")
+	}
+	if json.Unmarshal(raw["stage"], &operation.Stage) != nil || !workspaceLaunchReconcileStageValid(operation.Stage) {
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_stage")
+	}
+	if len(raw["attempts"]) == 0 {
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("missing_attempts")
+	}
+	if json.Unmarshal(raw["attempts"], &operation.Attempts) != nil || len(operation.Attempts) != len(workspaceLaunchReconcileStages)-1 {
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_attempts")
 	}
 	for stage, attempt := range operation.Attempts {
 		if attempt.MaxPendingReadbacks == 0 {
@@ -1032,80 +1068,80 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 		}
 	}
 	if value := raw["observations"]; len(value) > 0 && json.Unmarshal(value, &operation.Observations) != nil {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_observations")
 	}
 	if value := raw["consumedResumeAuthorizations"]; len(value) > 0 && json.Unmarshal(value, &operation.ConsumedResumeAuthorizations) != nil {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_resume_authorization")
 	}
 	for stage, observation := range operation.Observations {
 		allowed := workspaceLaunchStageCanonicalFacts[stage]
 		if allowed == nil || observation.State != workspaceLaunchStageReady && observation.State != workspaceLaunchStageAbsent && observation.State != workspaceLaunchStagePending && observation.State != workspaceLaunchStageUnknown ||
 			observation.State != workspaceLaunchStageReady && len(observation.Facts) != 0 {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_observations")
 		}
 		if observation.State == workspaceLaunchStageReady {
 			if _, err := validateWorkspaceLaunchStageFacts(stage, observation.Facts, false); err != nil {
-				return workspaceLaunchReconcileOperation{}, err
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_observations")
 			}
 		}
 	}
 	if value := raw["resumeAuthorization"]; len(value) > 0 && json.Unmarshal(value, &operation.ResumeAuthorization) != nil {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_resume_authorization")
 	}
 	if value := raw["resumeAuthorizationConsumedAt"]; len(value) > 0 && json.Unmarshal(value, &operation.ResumeAuthorizationConsumedAt) != nil {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_resume_authorization")
 	}
 	if value := raw["runtimeRepair"]; len(value) > 0 && json.Unmarshal(value, &operation.RuntimeRepair) != nil {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_runtime_repair")
 	}
 	if operation.RuntimeRepair != nil && (operation.RuntimeRepair.AuthorizationID == "" || operation.RuntimeRepair.LaunchVersion <= 0 ||
 		operation.RuntimeRepair.AuthorizedBy == "" || operation.RuntimeRepair.AuthorizedAt == "" || operation.RuntimeRepair.Reason == "" || operation.RuntimeRepair.ImageDigest == "") {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_runtime_repair")
 	}
 	if operation.RuntimeRepair != nil {
 		if _, err := time.Parse(time.RFC3339Nano, operation.RuntimeRepair.AuthorizedAt); err != nil {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_runtime_repair")
 		}
 	}
 	if value := raw["idempotentReplayClaims"]; len(value) > 0 && json.Unmarshal(value, &operation.IdempotentReplayClaims) != nil {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 	}
 	if value := raw["freshContinuationAuthorizations"]; len(value) > 0 && json.Unmarshal(value, &operation.FreshContinuationAuthorizations) != nil {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 	}
 	if value := raw["continuationReadClaims"]; len(value) > 0 && json.Unmarshal(value, &operation.ContinuationReadClaims) != nil {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 	}
 	if operation.ResumeAuthorization != nil && !validWorkspaceLaunchResumeAuthorization(*operation.ResumeAuthorization) {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_resume_authorization")
 	}
 	authorizationIDs := make(map[string]struct{}, len(operation.ConsumedResumeAuthorizations)+1)
 	for _, consumed := range operation.ConsumedResumeAuthorizations {
 		if !validWorkspaceLaunchResumeAuthorization(consumed.Authorization) || !validWorkspaceLaunchResumeAuthorizationConsumedAt(consumed.ConsumedAt) ||
 			consumed.Authorization.LaunchVersion >= operation.Version {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_resume_authorization")
 		}
 		if _, duplicate := authorizationIDs[consumed.Authorization.AuthorizationID]; duplicate {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_resume_authorization")
 		}
 		authorizationIDs[consumed.Authorization.AuthorizationID] = struct{}{}
 	}
 	if operation.ResumeAuthorizationConsumedAt != "" {
 		if !validWorkspaceLaunchResumeAuthorizationConsumedAt(operation.ResumeAuthorizationConsumedAt) || operation.ResumeAuthorization == nil {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_resume_authorization")
 		}
 	}
 	if operation.ResumeAuthorization != nil && operation.ResumeAuthorization.LaunchVersion >= operation.Version {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_resume_authorization")
 	}
 	if operation.ResumeAuthorization != nil {
 		if _, duplicate := authorizationIDs[operation.ResumeAuthorization.AuthorizationID]; duplicate {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_resume_authorization")
 		}
 	}
 	for _, field := range workspaceLaunchReconcileForbiddenFields {
 		if _, exists := raw[field]; exists {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("forbidden_legacy_fields")
 		}
 	}
 	for stage, claim := range operation.IdempotentReplayClaims {
@@ -1115,23 +1151,23 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 			claim.Status != "claimed" && claim.Status != "waiting" && claim.Status != "succeeded" && claim.Status != "failed" ||
 			!found || authorization.AuthorizedStage != stage || authorization.MutationBudget != 0 || authorization.IdempotentReplayBudget != 1 ||
 			authorization.AuthoritativeReadBudget <= 0 || authorization.AuthoritativeReadBudget > workspaceLaunchAuthoritativeReadBudget {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 		}
 		if claim.Status == "claimed" {
 			if consumed || operation.ResumeAuthorizationConsumedAt != "" || operation.ResumeAuthorization == nil || operation.ResumeAuthorization.AuthorizationID != claim.AuthorizationID ||
 				claim.CompletedAt != "" {
-				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 			if _, err := time.Parse(time.RFC3339Nano, claim.LeaseExpiresAt); err != nil {
-				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 		} else if claim.Status == "waiting" {
 			if consumed || operation.ResumeAuthorizationConsumedAt != "" || operation.ResumeAuthorization == nil || operation.ResumeAuthorization.AuthorizationID != claim.AuthorizationID ||
 				claim.LeaseExpiresAt != "" || !validWorkspaceLaunchResumeAuthorizationConsumedAt(claim.CompletedAt) {
-				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 		} else if !consumed || claim.LeaseExpiresAt != "" || !validWorkspaceLaunchResumeAuthorizationConsumedAt(claim.CompletedAt) {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 		}
 	}
 	freshAuthorizationsByID := make(map[string]workspaceLaunchFreshContinuationAuthorization, len(operation.FreshContinuationAuthorizations))
@@ -1147,29 +1183,29 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 			authorization.IdempotentReplayBudget != 0 || authorization.AuthoritativeReadBudget != workspaceLaunchFreshContinuationAdditionalReadBudget ||
 			authorization.ReadbacksAtAuthorization != 1 || attempt.Attempted != 1 || attempt.Max != 1 ||
 			attempt.MaxPendingReadbacks != workspaceLaunchAuthoritativeReadBudget || attempt.PendingReadbacks < authorization.ReadbacksAtAuthorization {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 		}
 		if _, duplicate := freshAuthorizationsByID[authorization.AuthorizationID]; duplicate {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 		}
 		freshAuthorizationsByID[authorization.AuthorizationID] = authorization
 		switch authorization.Status {
 		case "active":
 			if authorization.ConsumedAt != "" || operation.Stage != stage || operation.Status != "pending" || attempt.Status != "reserved" ||
 				attempt.Confirmed != 0 || attempt.Unknown != 0 || operation.Observations[stage].State != workspaceLaunchStagePending {
-				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 		case "consumed":
 			if !validWorkspaceLaunchResumeAuthorizationConsumedAt(authorization.ConsumedAt) || attempt.Confirmed != 1 || attempt.Unknown != 0 || attempt.Status != "confirmed" {
-				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 		case "failed":
 			if !validWorkspaceLaunchResumeAuthorizationConsumedAt(authorization.ConsumedAt) || operation.Stage != stage || operation.Status != "manual_review" ||
 				attempt.Confirmed != 0 || attempt.Unknown != 1 || attempt.Status != "unknown" || operation.Observations[stage].State != workspaceLaunchStageUnknown {
-				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 		default:
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 		}
 	}
 	for key, claim := range operation.ContinuationReadClaims {
@@ -1179,30 +1215,30 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 			claim.IdempotencyKey != authorization.IdempotencyKey || claim.Readback <= authorization.ReadbacksAtAuthorization ||
 			claim.Readback > authorization.ReadbacksAtAuthorization+authorization.AuthoritativeReadBudget ||
 			key != workspaceLaunchFreshContinuationClaimKey(claim.AuthorizationID, claim.Readback) || claim.Readback > attempt.PendingReadbacks {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 		}
 		switch claim.Status {
 		case "claimed":
 			if authorization.Status != "active" || claim.CompletedAt != "" {
-				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 			if _, err := time.Parse(time.RFC3339Nano, claim.LeaseExpiresAt); err != nil {
-				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 		case "pending", "ready", "failed", "expired":
 			if claim.LeaseExpiresAt != "" || !validWorkspaceLaunchResumeAuthorizationConsumedAt(claim.CompletedAt) ||
 				claim.Status == "ready" && authorization.Status != "consumed" || claim.Status == "failed" && authorization.Status != "failed" {
-				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 		default:
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 		}
 	}
 	for stage, authorization := range operation.FreshContinuationAuthorizations {
 		attempt := operation.Attempts[stage]
 		for readback := authorization.ReadbacksAtAuthorization + 1; readback <= attempt.PendingReadbacks; readback++ {
 			if _, exists := operation.ContinuationReadClaims[workspaceLaunchFreshContinuationClaimKey(authorization.AuthorizationID, readback)]; !exists {
-				return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+				return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_continuation_claim")
 			}
 		}
 	}
@@ -1211,11 +1247,13 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 		operation.stringFact("workspaceId") == "" || operation.stringFact("name") == "" || operation.stringFact("packageId") == "" ||
 		operation.stringFact("priceVersion") == "" || operation.intFact("sizeGb") <= 0 || operation.int64Fact("totalChargeUsdMicros") < 0 || operation.boolFact("resourceBillingEnabled") && operation.int64Fact("totalChargeUsdMicros") <= 0 ||
 		operation.stringFact("providerProfileRef") == "" || operation.stringFact("preflightBindingRef") == "" || !workspaceProviderSpecDigestPattern.MatchString(operation.stringFact("specDigest")) ||
-		operation.stringFact("workspaceImageDigest") == "" || operation.stringFact("sub2apiRedeemCode") == "" ||
-		stringValue(row["action"]) != "" && stringValue(row["action"]) != workspaceLaunchAction ||
+		operation.stringFact("workspaceImageDigest") == "" || operation.stringFact("sub2apiRedeemCode") == "" {
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("missing_canonical_facts")
+	}
+	if stringValue(row["action"]) != "" && stringValue(row["action"]) != workspaceLaunchAction ||
 		stringValue(row["accountId"]) != "" && stringValue(row["accountId"]) != operation.stringFact("accountId") ||
 		stringValue(row["workspaceId"]) != "" && stringValue(row["workspaceId"]) != operation.stringFact("workspaceId") {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("row_identity_mismatch")
 	}
 	for _, stage := range workspaceLaunchReconcileStages[:len(workspaceLaunchReconcileStages)-1] {
 		attempt, exists := operation.Attempts[stage]
@@ -1224,15 +1262,15 @@ func decodeWorkspaceLaunchReconcileOperation(row map[string]any) (workspaceLaunc
 			attempt.MaxPendingReadbacks < workspaceLaunchLegacyV3AuthoritativeReadBudget || attempt.MaxPendingReadbacks > workspaceLaunchAuthoritativeReadBudget ||
 			attempt.PendingReadbacks < 0 || attempt.PendingReadbacks > attempt.MaxPendingReadbacks ||
 			attempt.Status != "" && attempt.Status != "reserved" && attempt.Status != "confirmed" && attempt.Status != "unknown" {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("invalid_attempts")
 		}
 	}
 	if operation.Stage == "succeeded" {
 		if operation.Status != "succeeded" {
-			return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+			return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("status_stage_mismatch")
 		}
 	} else if operation.Status != "pending" && operation.Status != "manual_review" {
-		return workspaceLaunchReconcileOperation{}, errInvalidWorkspaceLaunchOperation
+		return workspaceLaunchReconcileOperation{}, invalidWorkspaceLaunchDecode("status_stage_mismatch")
 	}
 	return operation, nil
 }

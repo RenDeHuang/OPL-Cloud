@@ -1252,6 +1252,11 @@ func (app *controlPlaneServer) operatorHealth(ctx context.Context, service *cont
 	} else {
 		result["controlledBasicPilot"] = sourceEnvelope("control-plane", "unavailable", nil, "")
 	}
+	if diagnostics, err := workspaceLaunchOperationDiagnostics(ctx, app.tables); err == nil {
+		result["workspaceLaunchOperationDiagnostics"] = sourceEnvelope("control-plane", "available", diagnostics, "")
+	} else {
+		result["workspaceLaunchOperationDiagnostics"] = sourceEnvelope("control-plane", "unavailable", nil, "")
+	}
 	return result
 }
 

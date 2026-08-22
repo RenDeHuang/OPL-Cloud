@@ -34,6 +34,8 @@ const (
 	productionAcceptanceBResumeImageDigest         = "x-opl-resume-image-digest"
 )
 
+const workspaceLaunchOperationDiagnosticLimit = 20
+
 var productionAcceptanceBAllowedWrites = []string{
 	"submit_one_workspace_launch", "debit_one_basic_month", "create_one_workspace_key", "create_one_cvm",
 	"claim_one_cvm_ownership", "claim_one_node", "create_one_cbs", "create_one_attachment", "upsert_one_gateway_secret",
@@ -660,6 +662,144 @@ func controlledBasicPilotMetrics(ctx context.Context, store controlPlaneTableSto
 		"stages": stages, "failures": failures, "disableRequired": len(failures) > 0 || manualReview > 0 || !admission.Configured,
 		"alerts": alerts,
 	}, nil
+}
+
+func workspaceLaunchOperationDiagnostics(ctx context.Context, store controlPlaneTableStore) (map[string]any, error) {
+	rows, err := queryRuntimeOperations(ctx, store, runtimeOperationQuery{Action: workspaceLaunchAction})
+	if err != nil {
+		return nil, err
+	}
+	operations := make([]any, 0)
+	failedOperationCount := 0
+	for _, row := range rows {
+		if _, decodeErr := decodeWorkspaceLaunchReconcileOperation(row); decodeErr == nil {
+			continue
+		} else {
+			failedOperationCount++
+			if len(operations) < workspaceLaunchOperationDiagnosticLimit {
+				operations = append(operations, workspaceLaunchOperationDiagnostic(row, decodeErr))
+			}
+		}
+	}
+	return map[string]any{
+		"schemaVersion": 1, "failedOperationCount": failedOperationCount,
+		"truncated": failedOperationCount > len(operations), "operations": operations,
+	}, nil
+}
+
+func workspaceLaunchOperationDiagnostic(row map[string]any, decodeErr error) map[string]any {
+	identity := firstNonEmpty(stringValue(row["operationId"]), stringValue(row["id"]))
+	digest := sha256.Sum256([]byte(identity))
+	diagnostic := map[string]any{
+		"operationIdentityDigest": fmt.Sprintf("sha256:%x", digest),
+		"action":                  workspaceLaunchAction,
+		"failureCategory":         workspaceLaunchDecodeFailureCategory(decodeErr),
+		"attemptsKeys":            []string{},
+		"attemptsKeyCount":        0,
+		"attemptsSummary":         map[string]int{},
+		"observationsKeys":        []string{},
+		"observationsKeyCount":    0,
+		"observationsSummary":     map[string]int{},
+		"missingCanonicalKeys":    []string{},
+		"forbiddenLegacyKeys":     []string{},
+	}
+	if status := stringValue(row["status"]); validWorkspaceLaunchDiagnosticStatus(status) {
+		diagnostic["status"] = status
+	}
+	for _, field := range []string{"createdAt", "updatedAt"} {
+		if value := stringValue(row[field]); validWorkspaceLaunchDiagnosticTimestamp(value) {
+			diagnostic[field] = value
+		}
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal([]byte(stringValue(row["result"])), &raw) != nil || raw == nil {
+		return diagnostic
+	}
+	for _, field := range []string{"schemaVersion", "version"} {
+		var value int
+		if json.Unmarshal(raw[field], &value) == nil {
+			diagnostic[field] = value
+		}
+	}
+	var stage string
+	if json.Unmarshal(raw["stage"], &stage) == nil && workspaceLaunchReconcileStageValid(stage) {
+		diagnostic["stage"] = stage
+	}
+	diagnostic["attemptsKeys"], diagnostic["attemptsKeyCount"], diagnostic["attemptsSummary"] = workspaceLaunchDiagnosticObjectSummary(
+		raw["attempts"], "status", workspaceLaunchReconcileStageValid, validWorkspaceLaunchDiagnosticAttemptStatus,
+	)
+	diagnostic["observationsKeys"], diagnostic["observationsKeyCount"], diagnostic["observationsSummary"] = workspaceLaunchDiagnosticObjectSummary(
+		raw["observations"], "state", workspaceLaunchReconcileStageValid, validWorkspaceLaunchDiagnosticObservationState,
+	)
+	diagnostic["missingCanonicalKeys"] = workspaceLaunchMissingCanonicalKeys(raw)
+	forbidden := make([]string, 0)
+	for _, field := range workspaceLaunchReconcileForbiddenFields {
+		if _, exists := raw[field]; exists {
+			forbidden = append(forbidden, field)
+		}
+	}
+	sort.Strings(forbidden)
+	diagnostic["forbiddenLegacyKeys"] = forbidden
+	return diagnostic
+}
+
+func workspaceLaunchDiagnosticObjectSummary(encoded json.RawMessage, summaryField string, validKey, validCategory func(string) bool) ([]string, int, map[string]int) {
+	var values map[string]json.RawMessage
+	if len(encoded) == 0 || json.Unmarshal(encoded, &values) != nil || values == nil {
+		return []string{}, 0, map[string]int{}
+	}
+	keys := make([]string, 0, len(values))
+	summary := map[string]int{}
+	for key, value := range values {
+		if validKey(key) {
+			keys = append(keys, key)
+		}
+		var item map[string]json.RawMessage
+		var category string
+		if json.Unmarshal(value, &item) == nil && json.Unmarshal(item[summaryField], &category) == nil && validCategory(category) {
+			summary[category]++
+		}
+	}
+	sort.Strings(keys)
+	return keys, len(values), summary
+}
+
+func validWorkspaceLaunchDiagnosticTimestamp(value string) bool {
+	_, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil
+}
+
+func validWorkspaceLaunchDiagnosticStatus(value string) bool {
+	switch value {
+	case "pending", "manual_review", "succeeded", "failed", "refunded",
+		"running", "debit_pending", "provisioning", "completed":
+		return true
+	default:
+		return false
+	}
+}
+
+func validWorkspaceLaunchDiagnosticAttemptStatus(value string) bool {
+	return value == "" || value == "reserved" || value == "confirmed" || value == "unknown"
+}
+
+func validWorkspaceLaunchDiagnosticObservationState(value string) bool {
+	return value == workspaceLaunchStageAbsent || value == workspaceLaunchStagePending || value == workspaceLaunchStageReady || value == workspaceLaunchStageUnknown
+}
+
+func workspaceLaunchMissingCanonicalKeys(raw map[string]json.RawMessage) []string {
+	required := []string{
+		"schemaVersion", "version", "stage", "attempts", "requestHash", "accountId", "ownerUserId", "sub2apiUserId", "workspaceKeyGroupId",
+		"workspaceId", "name", "packageId", "sizeGb", "priceVersion", "totalChargeUsdMicros", "providerProfileRef", "preflightBindingRef",
+		"specDigest", "workspaceImageDigest", "sub2apiRedeemCode",
+	}
+	missing := make([]string, 0)
+	for _, field := range required {
+		if value, exists := raw[field]; !exists || len(value) == 0 || string(value) == "null" || string(value) == `""` {
+			missing = append(missing, field)
+		}
+	}
+	return missing
 }
 
 func safeControlledPilotMetricCode(value string) string {
