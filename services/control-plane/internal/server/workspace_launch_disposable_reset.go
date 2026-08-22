@@ -410,10 +410,29 @@ func readWorkspaceLaunchDisposableFabric(ctx context.Context, service *controlpl
 		result.blockers = append(result.blockers, "fabric_residual_present")
 	}
 	result.observations["fabricStages"] = workspaceLaunchDisposableObservation(stageState, 0, stageIdentities...)
-	// Fabric stage records are not provider inventory. Until Fabric exposes its
-	// owner-authoritative aggregate observation, provider absence is unknown.
-	result.observations["providerResources"] = workspaceLaunchDisposableObservation(workspaceLaunchDisposableOwnerUnknown, 0, resourceIdentities...)
-	result.blockers = append(result.blockers, "provider_resources_observation_unavailable")
+	providerObservation, providerErr := service.ObserveWorkspaceDeleteRuntimeResiduals(ctx, operation.stringFact("workspaceId"))
+	providerState := workspaceLaunchDisposableOwnerUnknown
+	providerIdentities := append([]string(nil), resourceIdentities...)
+	if providerErr != nil {
+		result.blockers = append(result.blockers, "provider_resources_observation_unavailable")
+	} else {
+		switch providerObservation.State {
+		case clients.WorkspaceOwnerObservationAbsent:
+			providerState = workspaceLaunchDisposableOwnerAbsent
+		case clients.WorkspaceRuntimeDeleteObservationPresent:
+			providerState = workspaceLaunchDisposableOwnerConflict
+			for _, residual := range providerObservation.Residuals {
+				providerIdentities = append(providerIdentities, residual.Kind+"\x00"+residual.Name)
+			}
+			result.blockers = append(result.blockers, "provider_resources_residual_present")
+		case clients.WorkspaceOwnerObservationConflict:
+			providerState = workspaceLaunchDisposableOwnerConflict
+			result.blockers = append(result.blockers, "provider_resources_conflict")
+		default:
+			result.blockers = append(result.blockers, "provider_resources_unknown")
+		}
+	}
+	result.observations["providerResources"] = workspaceLaunchDisposableObservation(providerState, 0, providerIdentities...)
 	runtime, runtimeErr := service.ObserveWorkspaceDeleteRuntime(ctx, operation.stringFact("workspaceId"))
 	secret, secretErr := service.ObserveWorkspaceDeleteRuntimeGatewaySecret(ctx, operation.stringFact("workspaceId"))
 	runtimeState, runtimeIdentities := workspaceLaunchDisposableOwnerAbsent, []string{}

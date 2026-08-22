@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -88,10 +87,11 @@ func TestWorkspaceLaunchDisposableResetClassifiesOnlyExactAbandonedLaunch(t *tes
 
 type disposableResetFabric struct {
 	fakeFabricClient
-	binding clients.WorkspaceLaunchPreflightBinding
-	stages  map[string]clients.WorkspaceLaunchStageResult
-	reads   int
-	writes  int
+	binding           clients.WorkspaceLaunchPreflightBinding
+	stages            map[string]clients.WorkspaceLaunchStageResult
+	deleteObservation clients.WorkspaceRuntimeDeleteObservation
+	reads             int
+	writes            int
 }
 
 func (f *disposableResetFabric) ReadWorkspaceLaunchPreflight(_ context.Context, input clients.WorkspaceLaunchPreflightReadInput) (clients.WorkspaceLaunchPreflightBinding, error) {
@@ -130,6 +130,15 @@ func (f *disposableResetFabric) ObserveWorkspaceRuntime(_ context.Context, works
 func (f *disposableResetFabric) ObserveWorkspaceRuntimeGatewaySecret(_ context.Context, workspaceID string) (clients.WorkspaceRuntimeGatewaySecretObservation, error) {
 	f.reads++
 	return clients.WorkspaceRuntimeGatewaySecretObservation{SchemaVersion: 1, State: clients.WorkspaceOwnerObservationAbsent, WorkspaceID: workspaceID}, nil
+}
+
+func (f *disposableResetFabric) ObserveWorkspaceRuntimeDelete(_ context.Context, workspaceID string) (clients.WorkspaceRuntimeDeleteObservation, error) {
+	f.reads++
+	observation := f.deleteObservation
+	if observation.SchemaVersion == 0 {
+		observation = clients.WorkspaceRuntimeDeleteObservation{SchemaVersion: clients.WorkspaceRuntimeDeleteObservationSchemaVersion, State: clients.WorkspaceOwnerObservationAbsent, WorkspaceID: workspaceID}
+	}
+	return observation, nil
 }
 
 type disposableResetSub2API struct {
@@ -211,7 +220,7 @@ func TestWorkspaceLaunchDisposableResetPreviewRouteInventoriesOwnersWithoutMutat
 		t.Fatalf("status=%d fabricWrites=%d ledgerWrites=%d cache=%q body=%s", rec.Code, fabric.writes, ledger.writes, rec.Header().Get("Cache-Control"), rec.Body.String())
 	}
 	var preview workspaceLaunchDisposableResetPreview
-	if json.Unmarshal(rec.Body.Bytes(), &preview) != nil || preview.Eligible || preview.MutationBudget != 0 || len(preview.PlanSteps) != 0 || preview.ResetPlanDigest != "" || preview.OwnerStates["providerResources"] != workspaceLaunchDisposableOwnerUnknown || !slices.Contains(preview.Blockers, "provider_resources_observation_unavailable") {
+	if json.Unmarshal(rec.Body.Bytes(), &preview) != nil || !preview.Eligible || preview.MutationBudget != 0 || preview.ResetPlanDigest == "" || preview.OwnerStates["providerResources"] != workspaceLaunchDisposableOwnerAbsent || len(preview.Blockers) != 0 {
 		t.Fatalf("preview=%#v body=%s", preview, rec.Body.String())
 	}
 	for _, raw := range []string{operation.ID, operation.stringFact("accountId"), operation.stringFact("workspaceId"), operation.stringFact("preflightBindingRef"), "test-key"} {
@@ -239,6 +248,22 @@ func TestWorkspaceLaunchDisposableResetPreviewFailsClosedOnFabricResidual(t *tes
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "fabric_residual_present") || strings.Contains(rec.Body.String(), "vol-residual") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkspaceLaunchDisposableResetPreviewFailsClosedOnProviderResidual(t *testing.T) {
+	server, fabric, _, operation := disposableResetPreviewFixture(t)
+	fabric.deleteObservation = clients.WorkspaceRuntimeDeleteObservation{
+		SchemaVersion: clients.WorkspaceRuntimeDeleteObservationSchemaVersion, State: clients.WorkspaceRuntimeDeleteObservationPresent,
+		WorkspaceID: operation.stringFact("workspaceId"), Residuals: []clients.WorkspaceRuntimeDeleteResidual{{Kind: "storage", Name: "vol-residual"}},
+	}
+	operator := reservedOperatorSessionForTest(t, server)
+	req := httptest.NewRequest(http.MethodGet, "/api/operator/workspace-launches/"+operation.ID+"/disposable-reset-preview", nil)
+	addAuth(req, operator)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "provider_resources_residual_present") || strings.Contains(rec.Body.String(), "vol-residual") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
