@@ -58,6 +58,15 @@ func newFabricMux(service *fabric.Service) http.Handler {
 		result, err := service.PreflightWorkspaceLaunch(r.Context(), input)
 		writeWorkspaceLaunchResult(w, result, err)
 	})
+	mux.HandleFunc("POST /fabric/workspace-launches/preflight/read", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.WorkspaceLaunchPreflightReadInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		result, err := service.ReadWorkspaceLaunchPreflight(r.Context(), input)
+		writeWorkspaceLaunchResult(w, result, err)
+	})
 	mux.HandleFunc("POST /fabric/workspace-launches/stages/read", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.WorkspaceLaunchStageInput
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

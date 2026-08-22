@@ -90,6 +90,13 @@ func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T)
 			var input WorkspaceLaunchPreflightInput
 			_ = json.NewDecoder(r.Body).Decode(&input)
 			_ = json.NewEncoder(w).Encode(WorkspaceLaunchPreflight{SchemaVersion: 1, Available: true, Reason: "none", LaunchOperationID: input.LaunchOperationID, RequestHash: input.RequestHash, ProviderProfileRef: "profile", BindingRef: "binding", SpecDigest: strings.Repeat("a", 64)})
+		case "/fabric/workspace-launches/preflight/read":
+			var input WorkspaceLaunchPreflightReadInput
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			if input.ProviderBindingRef != "binding" {
+				t.Fatalf("provider binding ref=%q", input.ProviderBindingRef)
+			}
+			_ = json.NewEncoder(w).Encode(WorkspaceLaunchPreflightBinding{SchemaVersion: 1, LaunchOperationID: "launch-1", AccountID: "acct-1", WorkspaceID: "ws-1", PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: "repo@sha256:digest", RequestHash: "request", ProviderProfileRef: "profile", ProviderBindingRef: input.ProviderBindingRef, SpecDigest: strings.Repeat("a", 64)})
 		case "/fabric/workspace-launches/stages/read", "/fabric/workspace-launches/stages/ensure":
 			var input WorkspaceLaunchStageInput
 			_ = json.NewDecoder(r.Body).Decode(&input)
@@ -132,6 +139,11 @@ func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T)
 	if _, err := client.PreflightWorkspaceLaunch(context.Background(), preflightInput); err != nil {
 		t.Fatal(err)
 	}
+	reader := client.(FabricWorkspaceLaunchPreflightReader)
+	readback, err := reader.ReadWorkspaceLaunchPreflight(context.Background(), WorkspaceLaunchPreflightReadInput{ProviderBindingRef: "binding"})
+	if err != nil || readback.LaunchOperationID != "launch-1" || readback.ProviderBindingRef != "binding" || readback.SpecDigest != strings.Repeat("a", 64) {
+		t.Fatalf("preflight readback=%#v err=%v", readback, err)
+	}
 	stageInput := WorkspaceLaunchStageInput{Binding: WorkspaceLaunchStageBinding{SchemaVersion: 1, LaunchOperationID: "launch-1", AccountID: "acct-1", WorkspaceID: "ws-1", Stage: "ensure_compute_allocation", Action: "ensure_compute_allocation", FabricOperationID: "launch-1:ensure_compute_allocation", IdempotencyKey: "launch-1:ensure_compute_allocation", RequestHash: "stage-request"}}
 	if _, err := client.ReadWorkspaceLaunchStage(context.Background(), stageInput); err != nil {
 		t.Fatal(err)
@@ -139,7 +151,7 @@ func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T)
 	if _, err := client.EnsureWorkspaceLaunchStage(context.Background(), stageInput); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/fabric/workspace-launches/preflight", "/fabric/workspace-launches/stages/read", "/fabric/workspace-launches/stages/ensure"}
+	want := []string{"/fabric/workspace-launches/preflight", "/fabric/workspace-launches/preflight/read", "/fabric/workspace-launches/stages/read", "/fabric/workspace-launches/stages/ensure"}
 	if len(paths) != len(want) {
 		t.Fatalf("paths=%#v", paths)
 	}

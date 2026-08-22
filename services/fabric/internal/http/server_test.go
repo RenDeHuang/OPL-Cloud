@@ -788,6 +788,67 @@ func TestWorkspaceLaunchTypedEnsureRequiresExactHeaderAndReturnsNeutralDTO(t *te
 	}
 }
 
+func TestWorkspaceLaunchPreflightReadReturnsNarrowPersistedBinding(t *testing.T) {
+	service := fabric.NewServiceWithOperationStore(workspaceLaunchHTTPProvider{}, fabric.NewMemoryOperationStore())
+	imageDigest := "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	launchRequestHash := strings.Repeat("b", 64)
+	preflight, err := service.PreflightWorkspaceLaunch(context.Background(), fabric.WorkspaceLaunchPreflightInput{
+		SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest, RequestHash: launchRequestHash,
+	})
+	if err != nil || !preflight.Available {
+		t.Fatalf("preflight=%#v err=%v", preflight, err)
+	}
+	body, err := json.Marshal(fabric.WorkspaceLaunchPreflightReadInput{ProviderBindingRef: preflight.ProviderBindingRef})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := testRequest(http.MethodPost, "/fabric/workspace-launches/preflight/read", bytes.NewReader(body))
+	response := httptest.NewRecorder()
+	newTestServer(service, "internal-secret").ServeHTTP(response, request)
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "canonicalProviderPlan") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var readback fabric.WorkspaceLaunchPreflightBinding
+	if err := json.NewDecoder(response.Body).Decode(&readback); err != nil || readback.LaunchOperationID != "launch-alpha" ||
+		readback.AccountID != "acct-alpha" || readback.WorkspaceID != "ws-alpha" || readback.PackageID != "basic" || readback.SizeGB != 10 ||
+		readback.WorkspaceImageDigest != imageDigest || readback.RequestHash != launchRequestHash || readback.ProviderProfileRef != "tencent-tke" ||
+		readback.ProviderBindingRef != preflight.ProviderBindingRef || readback.SpecDigest != preflight.SpecDigest {
+		t.Fatalf("readback=%#v err=%v", readback, err)
+	}
+}
+
+func TestWorkspaceLaunchPreflightReadIsAuthenticatedWithoutMutationCapability(t *testing.T) {
+	service := fabric.NewServiceWithOperationStore(workspaceLaunchHTTPProvider{}, fabric.NewMemoryOperationStore())
+	imageDigest := "ghcr.io/gaofeng21cn/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	preflight, err := service.PreflightWorkspaceLaunch(context.Background(), fabric.WorkspaceLaunchPreflightInput{
+		SchemaVersion: 1, LaunchOperationID: "launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		PackageID: "basic", SizeGB: 10, WorkspaceImageDigest: imageDigest, RequestHash: strings.Repeat("b", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(fabric.WorkspaceLaunchPreflightReadInput{ProviderBindingRef: preflight.ProviderBindingRef})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServerWithAuth(service, ServerAuthConfig{ControlPlaneToken: "internal-secret", RunnerToken: "runner-secret", CapabilityKey: testFabricCapabilityKey})
+
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/fabric/workspace-launches/preflight/read", bytes.NewReader(body)))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
+	}
+
+	request := testRequest(http.MethodPost, "/fabric/workspace-launches/preflight/read", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer internal-secret")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("read status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestWorkspaceLaunchEnsureCapabilityUsesFabricOperationOwnerIdentity(t *testing.T) {
 	store := fabric.NewMemoryOperationStore()
 	service := fabric.NewServiceWithOperationStore(workspaceLaunchHTTPProvider{}, store)

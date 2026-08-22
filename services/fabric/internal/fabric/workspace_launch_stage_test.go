@@ -45,6 +45,7 @@ func workspaceLaunchStageHashGoldenVectors(t *testing.T) []workspaceLaunchStageH
 
 type workspaceLaunchRecordingProvider struct {
 	testProvider
+	resolveCalls int
 	ensureCalls  int
 	readCalls    int
 	resolvedPlan json.RawMessage
@@ -56,6 +57,7 @@ type workspaceLaunchRecordingProvider struct {
 }
 
 func (p *workspaceLaunchRecordingProvider) ResolveWorkspacePlan(_ context.Context, input WorkspaceLaunchPlanInput) (json.RawMessage, error) {
+	p.resolveCalls++
 	if len(p.resolvedPlan) != 0 {
 		return p.resolvedPlan, nil
 	}
@@ -159,6 +161,13 @@ func workspaceLaunchStageFixtureInput(preflight WorkspaceLaunchPreflight, image,
 
 func TestWorkspaceLaunchPreflightIsDurableAndPointReadBeforeStageWrite(t *testing.T) {
 	service, store, provider, preflight, image, launchHash := workspaceLaunchStageFixture(t)
+	readback, readErr := service.ReadWorkspaceLaunchPreflight(context.Background(), WorkspaceLaunchPreflightReadInput{ProviderBindingRef: preflight.ProviderBindingRef})
+	if readErr != nil || readback.SchemaVersion != 1 || readback.LaunchOperationID != "launch-alpha" || readback.AccountID != "acct-alpha" ||
+		readback.WorkspaceID != "ws-alpha" || readback.PackageID != "basic" || readback.SizeGB != 10 || readback.WorkspaceImageDigest != image ||
+		readback.RequestHash != launchHash || readback.ProviderProfileRef != "tencent-tke" || readback.ProviderBindingRef != preflight.ProviderBindingRef ||
+		readback.SpecDigest != preflight.SpecDigest || provider.resolveCalls != 1 || provider.readCalls != 0 || provider.ensureCalls != 0 {
+		t.Fatalf("preflight readback=%#v provider resolves=%d reads=%d writes=%d err=%v", readback, provider.resolveCalls, provider.readCalls, provider.ensureCalls, readErr)
+	}
 	operation, err := store.Get(context.Background(), preflight.ProviderBindingRef)
 	admission, ok := decodeWorkspaceLaunchPreflight(operation)
 	if err != nil || !ok || operation.Status != "succeeded" || admission.ProviderBindingRef != preflight.ProviderBindingRef || admission.SpecDigest != preflight.SpecDigest ||
@@ -176,6 +185,42 @@ func TestWorkspaceLaunchPreflightIsDurableAndPointReadBeforeStageWrite(t *testin
 	operations, err := store.List(context.Background())
 	if err != nil || len(operations) != 1 || operations[0].ID != preflight.ProviderBindingRef || provider.ensureCalls != 0 {
 		t.Fatalf("forged preflight crossed stage write: operations=%#v providerCalls=%d err=%v", operations, provider.ensureCalls, err)
+	}
+}
+
+func TestWorkspaceLaunchPreflightReadbackStrictlyValidatesPersistedBinding(t *testing.T) {
+	service, store, _, preflight, _, _ := workspaceLaunchStageFixture(t)
+	before, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReadWorkspaceLaunchPreflight(context.Background(), WorkspaceLaunchPreflightReadInput{}); !errors.Is(err, ErrWorkspaceLaunchInputInvalid) {
+		t.Fatalf("empty binding error=%v", err)
+	}
+	if _, err := service.ReadWorkspaceLaunchPreflight(context.Background(), WorkspaceLaunchPreflightReadInput{ProviderBindingRef: "not-a-binding"}); !errors.Is(err, ErrWorkspaceLaunchInputInvalid) {
+		t.Fatalf("malformed binding error=%v", err)
+	}
+	if _, err := service.ReadWorkspaceLaunchPreflight(context.Background(), WorkspaceLaunchPreflightReadInput{ProviderBindingRef: "fabric-provider-binding:" + strings.Repeat("0", 64)}); !errors.Is(err, ErrLaunchStageBindingNotFound) {
+		t.Fatalf("missing binding error=%v", err)
+	}
+	operation, err := store.Get(context.Background(), preflight.ProviderBindingRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.RequestHash = strings.Repeat("0", 64)
+	store.mu.Lock()
+	for index := range store.operation {
+		if store.operation[index].ID == operation.ID {
+			store.operation[index] = operation
+		}
+	}
+	store.mu.Unlock()
+	if _, err := service.ReadWorkspaceLaunchPreflight(context.Background(), WorkspaceLaunchPreflightReadInput{ProviderBindingRef: preflight.ProviderBindingRef}); !errors.Is(err, ErrLaunchStageBindingConflict) {
+		t.Fatalf("corrupt binding error=%v", err)
+	}
+	after, err := store.List(context.Background())
+	if err != nil || len(after) != len(before) {
+		t.Fatalf("readback mutated operations before=%d after=%d err=%v", len(before), len(after), err)
 	}
 }
 
