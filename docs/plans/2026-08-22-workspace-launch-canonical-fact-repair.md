@@ -115,4 +115,3 @@
 5. Merge only after CI passes and review findings are resolved.
 6. Remove all non-main local worktrees and branches after merge, leaving only `main` clean and aligned with `origin/main`.
 7. Report the exact merged SHA/tree and ask the repository owner `gaofeng21cn` to generate the immutable Candidate. Do not dispatch Candidate as another actor.
-
