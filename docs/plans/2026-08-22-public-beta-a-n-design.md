@@ -249,18 +249,22 @@ P0 changes join would be discarded, making its receipts wasted work.
 The delegated Cloud operator does not currently satisfy the Candidate
 workflow's canonical-`main` repository-owner dispatch gate. This does not
 justify weakening the reusable workflow or rebuilding the Product on another
-branch. After the final Cloud SHA is merged and read back from canonical
-`main`, the operator may create one disposable
-`codex/candidate-<short-sha>-bridge` branch with exactly one child commit.
+branch. Before a bridge is cut, N first lands the reusable Candidate workflow
+on canonical `main` with exact `product_sha` and `product_tree` inputs, a fresh
+remote-`main` HEAD equality check, and a checked-out tree equality check. After
+the final Cloud SHA/tree is merged and read back from canonical `main`, the
+operator may create one disposable `codex/candidate-<short-sha>-bridge` branch
+with exactly one child commit.
 
 That child commit may change only the Candidate workflow dispatch expression.
 The expression binds the repository, full bridge ref, `actor`,
-`triggering_actor`, and the exact 40-character canonical Product SHA. The job
-still checks out the Product SHA rather than the bridge commit, proves that SHA
-is an ancestor of fresh remote `main`, derives its tree, archives only that
-tree, and records the bridge workflow SHA separately as provenance. Therefore
-the bridge authorizes a single build of canonical Product bytes without
-becoming a Product source or release authority.
+`triggering_actor`, the exact 40-character canonical Product SHA, and the exact
+Product tree. The job still checks out the Product SHA rather than the bridge
+commit, proves that fresh remote `main` has that exact HEAD, proves the
+checked-out tree equals the input tree, archives only that tree, and records
+the bridge workflow SHA separately as provenance. Therefore the bridge
+authorizes a single build of canonical Product bytes without becoming a
+Product source or release authority.
 
 The bridge is rejected when any identity differs, is never merged into `main`,
 and never authorizes formal Release. Its exact remote head is retained through
@@ -269,6 +273,16 @@ independently readable. It is deleted only after formal Release readback or
 after the Candidate is explicitly abandoned. Candidate retries retain the same
 Product SHA and produce a new attempt-specific manifest; only one selected
 manifest/digest may enter Local and Instance qualification.
+
+Qualification receipts are authority facts, not caller-supplied assertions.
+Release admission receives immutable artifact or attestation locators and
+fetches every Local, Instance, restore, alert/on-call, public-edge, and rollback
+receipt from an allowlisted repository/workflow/ref or GitHub OIDC attestation.
+It verifies the successful run, run attempt, actor and triggering actor,
+protected environment where applicable, artifact ID and digest, workflow SHA,
+and exact Candidate identity before validating the receipt body. A JSON value
+provided directly by the Release dispatcher is never accepted as owner
+evidence.
 
 ## Parallelism And Serialization Rules
 

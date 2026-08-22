@@ -50,7 +50,8 @@ flowchart TD
     end
 
     J0 --> JL
-    J0 --> K
+    SF["Schema Freeze<br/>全部数据库 writer 关闭"]
+    J0 --> SF --> K
     J0 --> NG
     N0 --> NG
 
@@ -93,6 +94,6 @@ flowchart TD
     class I,D,E,M,B commerce;
     class CR,N0 lifecycle;
     class F,JL,K,NG product;
-    class J0,CJ,G,GL,N gate;
+    class J0,SF,CJ,G,GL,N gate;
     class GI,X external;
     class H deferred;

@@ -18,8 +18,10 @@
 - K/L/M/N implement Cloud-owned behavior and receipt admission. Instance execution receipts remain separately owned.
 - Public Registration is explicit `full_cloud_customer` admission with `workspacePurchaseEnabled=true` and an authoritative zero-balance readback. A Sub2API identity alone never becomes a Cloud Account.
 - Background Delete uses a typed Sub2API administrator exact-Key read/delete capability. Delegated Session credentials remain memory-only and are never persisted.
-- Control Plane migration `202608220001_public_registration_limits.sql` is reserved to Lane D/M. A, C Delete, and C Renewal do not add migrations.
+- Control Plane migration `202608220001_public_registration_limits.sql` is reserved to M. Registration persists a strict typed canonical JSON result in the existing RuntimeOperation table; A, C Delete, D, and C Renewal add no schema migration.
 - The Schema/Contract writer serially owns every new or revised machine contract and both consumers.
+- `table_store.go` and `memory_table_store_test.go` have one serialized writer. D and C-Renewal may develop reducers, owner adapters, PostgreSQL methods, and dedicated tests in parallel, but their shared interface/test wiring is joined only after both method contracts are fixed.
+- J/L use existing RuntimeOperation and audit persistence. If implementation evidence forces another schema change, K waits and Schema Freeze moves after that migration.
 
 Use these initial worktrees after this plan is merged:
 
@@ -33,6 +35,12 @@ Use one narrow PR per alias or cohesive dependency. Every PR follows
 `.github/PULL_REQUEST_TEMPLATE.md`, names the `PB-*` ID, exact write set,
 overlap, SSOT reconciliation, and exact focused commands, and uses an issue
 link/close statement in the same style as PR #365 / issue #356.
+
+The first parallel pass must not edit `services/control-plane/internal/server/table_store.go`
+or `services/control-plane/internal/server/memory_table_store_test.go` in both
+worktrees. The coordinator reserves those files, reconciles both narrow store
+contracts in one integration commit, and reruns both focused suites before
+either capability is declared complete.
 
 ## Wave 0: Freeze And Baseline
 
@@ -139,10 +147,9 @@ npm run verify:local
 - Create: `services/control-plane/internal/server/registration_postgres_test.go`
 - Modify: `services/control-plane/internal/server/routes_auth.go`
 - Modify: `services/control-plane/internal/server/auth_accounts.go`
-- Modify: `services/control-plane/internal/server/table_store.go`
 - Modify: `services/control-plane/internal/server/ent_state_store_identity.go`
 - Modify: `services/control-plane/internal/server/routes_admin.go`
-- Modify: `services/control-plane/internal/server/memory_table_store_test.go`
+- Create: `services/control-plane/internal/server/registration_store_test.go`
 - Modify: `services/control-plane/internal/server/operator_projection_test.go`
 - Modify: `services/control-plane/internal/server/identity_hard_cut_test.go`
 - Modify: `services/control-plane/internal/server/provisioned_account_test.go`
@@ -171,9 +178,14 @@ intent_persisted
 
 The operation is keyed by canonical email, not by an arbitrary request key.
 `requestHash` covers only canonical non-secret input. Persist no raw password or
-password hash. Before remote identity confirmation, replay requires the caller
-to resubmit the same password; after confirmation, recovery uses persisted
-opaque remote identity and GET/readback only.
+password hash. Its typed state is canonical JSON in the existing
+RuntimeOperation `result`; current and supported historical forms are decoded
+strictly rather than promoted to new Ent columns. A public client never reads
+an operation by email. Before remote identity confirmation, and after any lost
+response, the client resubmits the same `POST` and password; the server
+authenticates that identity before returning or advancing the same operation.
+After remote identity confirmation, internal/operator recovery uses persisted
+opaque remote identity and owner GET/readback only.
 
 **Steps:**
 1. Write decoder/reducer tests for exact fields, legal phases/statuses, same-email replay, request drift, and fail-closed current-row decoding.
@@ -181,11 +193,25 @@ opaque remote identity and GET/readback only.
 3. Persist intent before Sub2API create/auth. On response loss, converge by canonical email, authentication, exact User identity, and Balance readback.
 4. Require active authoritative balance `usdMicros == 0`; a pre-existing non-zero Gateway wallet becomes operator-assisted/manual review and is never cleared.
 5. Atomically create one Account/User with `workspacePurchaseEnabled=true`, then write one deterministic audit event. Replays return the same operation and identity.
-6. Add `POST /api/auth/register` and privacy-scoped operation readback. Enforce exact JSON, same-origin, content type, request size, non-enumerating errors, and no-store responses where appropriate.
-7. Make administrator provisioning call the same use case while retaining explicit `full_cloud_customer` versus `gateway_only` semantics.
+6. Add only `POST /api/auth/register` to the pre-session surface. Enforce exact JSON, same-origin, content type, request size, non-enumerating errors, authenticated same-POST replay, and no-store responses. Do not add a public email-keyed Registration GET.
+7. Keep separate typed admission policy: public Registration is always `full_cloud_customer`, zero-balance-gated, and eligible; administrator `gateway_only` preserves any existing wallet balance and remains ineligible. The two paths share only identity convergence and atomic local-mapping primitives, not a public policy reducer.
 8. Add `/register` Console route, controlled form, pending/retry/conflict UI, and post-completion login without exposing internal operation data.
 9. Prove concurrent same-email and response loss across PostgreSQL restart create one Registration, Account, User, Sub2API identity, audit event, and zero balance.
-10. Run focused Go/UI/typecheck/build tests and `npm run verify:local:full`.
+10. Run:
+
+```bash
+cd services/control-plane
+go test -count=1 ./internal/server -run '^TestRegistration(Operation|Reducer|Decoder|Store)'
+go test -count=1 ./internal/server -run '^TestPublicRegistration'
+go test -count=1 ./internal/clients -run '^TestSub2APIIdentity'
+cd ../..
+node --test tests/ui/public-registration.test.ts tests/ui/console-model.test.ts tests/ui/console-browser-acceptance.test.ts
+npm run typecheck
+npm run build
+npm run verify:local:full
+```
+
+The full command must execute `TestPostgresRegistration*` with zero skips.
 11. Commit/review/push/PR/merge/readback.
 
 ### Task 5: E - prove register, insufficient balance, top-up, and purchase
@@ -197,12 +223,22 @@ opaque remote identity and GET/readback only.
 
 **Steps:**
 1. Register and login a new public customer; assert one admitted identity and zero wallet balance.
-2. Submit Basic and Pro launches with zero/insufficient balance. Assert no Launch operation, debit, Fabric call, or Ledger Receipt.
+2. Submit Basic and Pro launches with zero/insufficient balance. Assert no Launch operation, debit, Fabric mutation/resource chain, or Ledger Receipt; authoritative read-only quote/provider facts remain permitted.
 3. Administrator top up exactly the authoritative quote through the existing wallet adjustment operation.
 4. Launch at exact balance and require one debit, one resource chain, one projected purchase Receipt, and a zero final balance.
 5. Replay Registration, top-up, and Launch across server restart; require cardinality one for every irreversible fact.
 6. Assert Catalog, Quote, DTO, Console, and server admission still agree for Basic/Pro and `balance >= quote`.
-7. Run focused and full PostgreSQL verification, then commit/review/PR/merge.
+7. Run:
+
+```bash
+cd services/control-plane
+go test -count=1 ./internal/server -run '^TestPublicBetaRegisterTopupPurchase'
+cd ../..
+node --test tests/ui/console-model.test.ts tests/ui/pricing-preview.test.ts
+npm run verify:local:full
+```
+
+Require the PostgreSQL restart variant to run with zero skips, then commit/review/PR/merge.
 
 ### Task 6: M - close Cloud public application boundaries
 
@@ -224,7 +260,18 @@ opaque remote identity and GET/readback only.
 3. Implement operator-assisted data exit as a typed command. It must prove no active Workspace/Delete/Key/Session blockers before marking the User deleted, disabling new purchases, and revoking Sessions.
 4. Preserve Account billing/Receipt custody and never delete or rewrite the Sub2API wallet.
 5. Add Console projections/actions for operator recovery and data exit without exposing sensitive blocker details to another tenant.
-6. Run migration tests, focused security tests, UI tests, and `npm run verify:local:full`.
+6. Run:
+
+```bash
+cd services/control-plane
+go test -count=1 ./migrations
+go test -count=1 ./internal/server -run '^Test(RegistrationSecurity|PublicRegistrationRateLimit|AccountDataExit|AccountDisable|ConsoleTenantIsolation)'
+cd ../..
+node --test tests/ui/public-registration.test.ts tests/ui/console-browser-acceptance.test.ts
+npm run typecheck
+npm run build
+npm run verify:local:full
+```
 7. Commit/review/PR/merge/readback. TLS, ingress, and real-client edge limiting remain Instance receipts.
 
 ## Wave 1 Lane 3: Renewal And Distribution Preparation
@@ -234,9 +281,8 @@ opaque remote identity and GET/readback only.
 **Files:**
 - Modify: `services/control-plane/internal/server/workspace_renewal.go`
 - Modify: `services/control-plane/internal/server/routes_workspace.go`
-- Modify: `services/control-plane/internal/server/table_store.go`
 - Modify: `services/control-plane/internal/server/ent_state_store_workspace.go`
-- Modify: `services/control-plane/internal/server/memory_table_store_test.go`
+- Create: `services/control-plane/internal/server/workspace_renewal_reactivation_store_test.go`
 - Modify: `services/control-plane/internal/server/workspace_renewal_test.go`
 - Modify: `services/control-plane/internal/server/ent_state_store_test.go`
 
@@ -247,7 +293,28 @@ opaque remote identity and GET/readback only.
 4. Keep Workspace suspended, `expired_unpaid`, and `autoRenew=false` until the full renewal succeeds.
 5. Reuse the original debit, provider child, and Receipt identities. On success atomically restore paid-through/active/running and enable future auto-renew.
 6. Prove response loss, concurrent keys, audit failure rollback, every persisted phase restart, exact one debit/provider/Receipt, and no new operation for the same period.
-7. Run focused and full PostgreSQL verification, then commit/review/PR/merge/readback.
+7. Stop before shared TableStore wiring if D still owns the reserved files. After the serialized join, run:
+
+```bash
+cd services/control-plane
+go test -count=1 ./internal/server -run '^TestWorkspaceRenewalReactivation'
+cd ../..
+npm run verify:local:full
+```
+
+Require all PostgreSQL reactivation tests to run with zero skips, then commit/review/PR/merge/readback.
+
+### Task 7a: serialize D and C-Renewal TableStore wiring
+
+**Files:**
+- Modify: `services/control-plane/internal/server/table_store.go`
+- Modify: `services/control-plane/internal/server/memory_table_store_test.go`
+
+**Steps:**
+1. Freeze the Registration and Reactivation method signatures from their typed reducers and PostgreSQL implementations.
+2. Add both narrow methods to the shared store interface in one commit and add equivalent memory behavior/tests without copying either reducer.
+3. Rebase both capabilities on that commit one at a time and resolve no other file.
+4. Run both focused suites and `npm run verify:local:full` before either PR is mergeable.
 
 ### Task 8: N - freeze exact qualification and Release admission contracts offline
 
@@ -268,10 +335,11 @@ opaque remote identity and GET/readback only.
 **Steps:**
 1. Define strict Candidate, Local, Instance, restore, alerts, public-edge, rollback, and publication receipt identities. Every receipt binds Product SHA/tree, index/children, Candidate receipt digest, schema version, owner, and provenance.
 2. Reject extra/missing fields, reordered identity lists where order is canonical, malformed encodings, mismatched child digests, stale Candidate receipts, and duplicate/missing required receipt kinds.
-3. Validate GitHub Candidate run provenance: success, workflow/event/path, head branch/SHA, actor/triggering actor, run attempt, bridge parent/diff shape, unique artifact, and artifact digest.
-4. Recompute the downloaded Candidate bundle, canonical manifest, portable asset checksums, GHCR index/children/revision, and receipt digest.
-5. Keep this task read-only with fixture receipts. It must not build, tag, publish, deploy, or call Instance.
-6. Run all candidate, qualification, admission, distribution, and product-boundary tests; commit/review/PR only after the receipt enum is reconciled with J/K/L/M.
+3. Define an allowlist authority descriptor for every receipt kind: repository, workflow path/ref, protected environment when applicable, actor policy, artifact name, and attestation predicate. Admission receives only immutable locators, fetches the owner artifact/attestation, and rejects dispatcher-supplied JSON as evidence.
+4. Validate every successful GitHub run and artifact: event/path, repository/ref, head branch/SHA, actor/triggering actor, run attempt, artifact ID/digest, expiry, and OIDC attestation where required. Candidate additionally validates bridge parent/diff shape.
+5. Recompute the downloaded Candidate bundle, canonical manifest, portable asset checksums, GHCR index/children/revision, and receipt digest.
+6. Keep this task read-only with fixture artifacts/attestations. It must not build, tag, publish, deploy, or call Instance.
+7. Run all candidate, qualification, admission, distribution, and product-boundary tests; commit/review/PR only after the receipt enum is reconciled with J/K/L/M.
 
 ## Wave 2: Product Recovery, Restore, And Distribution
 
@@ -303,7 +371,7 @@ opaque remote identity and GET/readback only.
 **Steps:**
 1. Derive signal identity and state from persisted J projection, database readiness, provider/Ledger owner readback, backup-readiness, and purchase-stop facts.
 2. Emit deterministic redacted `active` and `recovered` facts; rebuild active state on restart and close only when the owning fact is terminally healthy.
-3. Do not use the existing process-local dedupe map as the authority. Persist or deterministically project the transition cursor required to prove closure across restart.
+3. Do not use the existing process-local dedupe map as the authority. Persist or deterministically project the transition cursor required to prove closure across restart using existing RuntimeOperation/audit persistence; do not add a migration after Schema Freeze.
 4. Test repeated projection, restart, active-before-recovered ordering, no secret/customer identifier leakage, and unrelated-operation isolation.
 5. Run focused/full tests, commit/review/PR/merge. External routing/ack/on-call remains an Instance receipt.
 
@@ -318,14 +386,15 @@ opaque remote identity and GET/readback only.
 - Modify: `docs/runtime/production-runbook.md`
 
 **Steps:**
-1. Use the pinned PostgreSQL image and create three separate source/restore databases for Control Plane, Fabric, and Ledger.
-2. Start each owner, seed its public/API-owned identity and operation facts, and capture exact pre-dump owner readback.
-3. `pg_dump` one owner database at a time, restore into a clean target, apply that owner's current migration chain, and start only that owner against the restored database.
-4. Read back Account/Registration/Workspace/operation, Fabric binding/operation, and Ledger Receipt/reconciliation through the owning HTTP API. Compare canonical typed facts, not table dumps.
-5. Prove cross-database isolation by making each other owner database unavailable during the current restore.
-6. Reject wrong owner, stale schema journal, missing row, duplicate Receipt, and identity drift.
-7. Integrate into `verify:local:full` after ordinary PostgreSQL zero-skip tests. Clean all containers/volumes on success and failure.
-8. Run focused tool tests and full restore verification; commit/review/PR/merge.
+1. Enter only after D/M and every other database writer are merged and the three migration sets are frozen. If J/L required a migration, move this gate after that migration rather than reusing a stale restore fixture.
+2. Use the pinned PostgreSQL image and create three separate source/restore databases for Control Plane, Fabric, and Ledger.
+3. Start each owner, seed its public/API-owned identity and operation facts, and capture exact pre-dump owner readback.
+4. `pg_dump` one owner database at a time, restore into a clean target, apply that owner's current migration chain, and start only that owner against the restored database.
+5. Read back Account/Registration/Workspace/operation, Fabric binding/operation, and Ledger Receipt/reconciliation through the owning HTTP API. Compare canonical typed facts, not table dumps.
+6. Prove cross-database isolation by making each other owner database unavailable during the current restore.
+7. Reject wrong owner, stale schema journal, missing row, duplicate Receipt, and identity drift.
+8. Integrate into `verify:local:full` after ordinary PostgreSQL zero-skip tests. Clean all containers/volumes on success and failure.
+9. Run focused tool tests and full restore verification; commit/review/PR/merge.
 
 ### Task 12: N/G - remove Release rebuild and consume the exact Candidate
 
@@ -337,10 +406,12 @@ opaque remote identity and GET/readback only.
 - Modify: `tools/local-workspace-qualification.ts`
 
 **Steps:**
-1. Make Local qualification consume a Candidate manifest and bind exact Product SHA/tree, index/children, Candidate receipt digest, portable assets, and business receipt.
-2. Change the Local business journey to public Registration, zero-balance rejection, administrator top-up, exact-balance purchase, restart/readback, Delete, and zero residue.
-3. Change Release workflow inputs to Candidate plus the required admitted receipts. Download and revalidate the original Candidate artifact and GHCR identity.
-4. Remove every image build from Release. Promote only with:
+1. Add canonical Candidate inputs `product_sha` and `product_tree`; require fresh remote `main HEAD == product_sha` and checked-out `HEAD^{tree} == product_tree` before archive/build. This lands on canonical `main` before any bridge is created.
+2. Make Local qualification consume a Candidate manifest and bind exact Product SHA/tree, index/children, Candidate receipt digest, portable assets, and business receipt.
+3. Change the Local business journey to public Registration, zero-balance rejection, administrator top-up, exact-balance purchase, restart/readback, Delete, and zero residue.
+4. Change Release workflow inputs to immutable artifact/attestation locators for Candidate and every required owner receipt. Fetch and verify their allowlisted workflow authority before parsing receipt content.
+5. Download and revalidate the original Candidate artifact and GHCR identity.
+6. Remove every image build from Release. Promote only with:
 
 ```bash
 docker buildx imagetools create \
@@ -348,15 +419,15 @@ docker buildx imagetools create \
   "$IMAGE_REPOSITORY@$CANDIDATE_DIGEST"
 ```
 
-5. Read back the tag digest and require exact equality with the Candidate digest. Reuse original portable asset bytes; generated release metadata must refer to their unchanged checksums.
-6. Assert workflow permissions, publisher identity, protected environment, receipt admission, no `buildx build`, and publication/readback/attestation behavior in contract tests.
-7. Run `npm run verify:local:full`, commit/review/PR/merge/readback.
+7. Read back the tag digest and require exact equality with the Candidate digest. Reuse original portable asset bytes; generated release metadata must refer to their unchanged checksums.
+8. Assert workflow permissions, publisher identity, protected environment, authority-rooted receipt admission, no `buildx build`, and publication/readback/attestation behavior in contract tests.
+9. Run `npm run verify:local:full`, commit/review/PR/merge/readback.
 
 ## Wave 3: Canonical Join And Exact Candidate
 
 ### Task 13: serialize final integration
 
-1. Fetch fresh remote `main`; merge/replay one accepted PR at a time. The last writer resolves `server.go`, `routes_admin.go`, `table_store.go`, migration registry, and machine contracts.
+1. Fetch fresh remote `main`; merge/replay one accepted PR at a time. Shared `server.go`, `routes_admin.go`, `table_store.go`, migration registry, and machine-contract joins must already have their named serialized integration commits; Wave 3 verifies and replays those commits rather than inventing a last-writer resolution.
 2. Run every alias-focused command, `npm run verify:local`, then `npm run verify:local:full` with zero skips.
 3. Require clean status and `git diff --check`.
 4. Ordinary-push canonical `main`, then read back remote SHA/tree and verify the local tree is identical.
@@ -365,8 +436,8 @@ docker buildx imagetools create \
 ### Task 14: construct one strict Candidate bridge and qualify locally
 
 1. Create `codex/candidate-<short-sha>-bridge` as one child of the frozen Product SHA.
-2. Change only the Candidate workflow dispatch expression. Bind literal repository, full ref, `RenDeHuang` actor and triggering actor, full Product SHA, and expected Product tree.
-3. In the workflow require fresh remote `main HEAD == PRODUCT_SHA`; checking only ancestor status is insufficient.
+2. Confirm the canonical Product SHA already contains the reusable `main HEAD == PRODUCT_SHA` and checked-out tree equality checks from Task 12.
+3. Change only the Candidate workflow dispatch expression. Bind literal repository, full ref, `RenDeHuang` actor and triggering actor, full Product SHA, and exact Product tree inputs; never add identity logic only on the bridge.
 4. Push the bridge, read back commit parent/tree/diff, dispatch exactly that ref/SHA, and wait for a successful run.
 5. Read back run actor/provenance, unique artifact ID/digest, Candidate manifest/receipt digest, bundle checksums, GHCR index/children/revisions, and bridge commit shape.
 6. Select exactly one attempt. Preserve its immutable receipt separately from the bridge source.
@@ -375,8 +446,8 @@ docker buildx imagetools create \
 
 ### Task 15: Instance handoff and formal exact-byte Release
 
-1. Send the exact Candidate manifest/digest and strict receipt contract to the Instance owner. Cloud does not dispatch deployment or access the private production network.
-2. Admit Tencent/TKE, backup/restore, alert/on-call, public-edge, and executed rollback receipts only when all exact identities match.
+1. Send the exact Candidate manifest/digest, strict receipt contract, and allowlisted protected Instance workflow authority descriptor to the Instance owner. Cloud does not dispatch deployment or access the private production network.
+2. Fetch Tencent/TKE, backup/restore, alert/on-call, public-edge, and executed rollback artifacts/attestations from the allowed owner workflows. Admit them only when run provenance, artifact digest, attestation, and all exact Candidate identities match.
 3. Missing or conflicting receipts remain `external_owner_pending`; do not infer production readiness from Cloud tests.
 4. Once all receipts and publication authority are present, dispatch Release from canonical `main` and promote the admitted Candidate digest without rebuild.
 5. Read back GHCR Release tag digest, GitHub Release target/assets/checksums/attestations, and publication Receipt. Require exact equality with the Candidate digest and original portable bytes.
